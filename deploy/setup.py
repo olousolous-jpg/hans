@@ -141,6 +141,147 @@ def _migrate(cfg, target):
     return True
 
 
+# ── osobnost přes externí LLM (uživatel popíše, LLM vrátí JSON) ──────────────
+def _personality_meta_prompt(desc):
+    """Meta-prompt, který si uživatel vloží do Claude/ChatGPT; LLM vrátí JSON."""
+    return (
+        "Jsi pomocník, který vytváří konfiguraci OSOBNOSTI pro lokálního domácího\n"
+        "AI společníka (běží na Raspberry Pi, rozpoznává tváře, mluví, má paměť).\n"
+        "Uživatel popsal, jakou postavu chce:\n"
+        "---\n"
+        f"{desc}\n"
+        "---\n"
+        "Vrať POUZE validní JSON (žádný markdown, žádné komentáře) přesně s těmito\n"
+        "klíči. Texty piš v jazyce, jakým má postava mluvit (výchozí čeština, pokud\n"
+        "uživatel neřekl jinak). Placeholdery {name}, {tod} nech PŘESNĚ takto:\n"
+        '{\n'
+        '  "name": "<jméno postavy>",\n'
+        '  "core": "<hlavní system prompt ve 2. osobě: identita, povaha, tón, styl\n'
+        "           řeči. Začni 'Tvoje jméno je {name}.' a místo jména piš {name}. 4-8 vět>\",\n"
+        '  "language_rules": "<pravidla jazyka/stylu: formálnost, emoji ano/ne… 1-3 věty>",\n'
+        '  "interests_seed": "<čím se postava zajímá, krátce>",\n'
+        '  "address_rules": "<jak oslovuje lidi; pro češtinu vokativ, např. \'Při\n'
+        "                    oslovení muže používej vokativ Petře (ne Petr)…'>\",\n"
+        '  "greeting_user_prompt": "<jak pozdraví příchozího jednou větou; smí použít {name} a {tod}>"\n'
+        '}\n'
+        "Neměň názvy klíčů. Vrať jen ten JSON."
+    )
+
+
+def _read_block(end="END"):
+    """Načte víceřádkový vstup až po řádek obsahující jen <end> (nebo EOF)."""
+    lines = []
+    while True:
+        try:
+            ln = input()
+        except EOFError:
+            break
+        if ln.strip() == end:
+            break
+        lines.append(ln)
+    return "\n".join(lines)
+
+
+def _extract_json(text):
+    """Vytáhne první JSON objekt z textu (i obalený ```json … ```)."""
+    i, j = text.find("{"), text.rfind("}")
+    if i < 0 or j <= i:
+        return None
+    try:
+        return json.loads(text[i:j + 1])
+    except Exception:
+        return None
+
+
+def _setup_personality(cfg):
+    print("── Krok 1/5: Osobnost ─────────────────────────────────────────")
+    print("Můžeš nechat výchozí postavu (Enter), nebo si nechat vygenerovat vlastní")
+    print("pomocí Claude/ChatGPT — stačí popsat, kdo má být.")
+    desc = input("\nPopiš pár větami, kdo má být (Enter = ponechat výchozí): ").strip()
+    if not desc:
+        print("  Ponechávám výchozí osobnost.\n")
+        return
+    print("\n" + "=" * 70)
+    print(">>> ZKOPÍRUJ tento prompt do Claude / ChatGPT, odpověď vlož zpět sem: <<<")
+    print("=" * 70)
+    print(_personality_meta_prompt(desc))
+    print("=" * 70)
+    print("\nVlož sem JSON odpověď od LLM a pak napiš samostatný řádek 'END':")
+    data = _extract_json(_read_block())
+    if not data or "core" not in data:
+        print("  ⚠ JSON se nepodařilo naparsovat (chybí 'core'). Osobnost ponechána výchozí.")
+        print("    Doplň ručně v config.json (persona.*) nebo spusť setup znovu.\n")
+        return
+    _set(cfg, "persona.name", data.get("name") or _get(cfg, "persona.name") or "Hans")
+    _set(cfg, "persona.core", data["core"])
+    for key, path in (("language_rules", "persona.language_rules"),
+                      ("interests_seed", "persona.interests_seed"),
+                      ("address_rules", "persona.address_rules")):
+        if data.get(key):
+            _set(cfg, path, data[key])
+    _set(cfg, "greeting.system_prompt", data["core"])          # greeting sdílí core
+    if data.get("greeting_user_prompt"):
+        _set(cfg, "greeting.user_prompt", data["greeting_user_prompt"])
+    print(f"  ✓ Osobnost nastavena: {_get(cfg, 'persona.name')}\n")
+
+
+# ── Krok 4: paměť (RAG kolekce + seed identity) ──────────────────────────────
+def _setup_memory(cfg):
+    print("── Krok 4/5: Paměť (RAG kolekce v OpenWebUI + identita) ───────")
+    if not _get(cfg, "openwebui_direct.api_token"):
+        print("  ⚠ Chybí OpenWebUI token → přeskočeno.")
+        print("    Později: python3 tools/knowledge_setup.py\n")
+        return
+    ans = input("Vytvořit teď RAG kolekce + naseedovat identitu? "
+                "(OpenWebUI musí běžet) [A/n]: ").strip().lower()
+    if ans in ("n", "ne", "no"):
+        print("    Později: python3 tools/knowledge_setup.py && "
+              "python3 tools/bootstrap_identity.py\n")
+        return
+    import subprocess
+    py = sys.executable
+    print("  → vytvářím kolekce (knowledge_setup.py)…")
+    r = subprocess.run([py, os.path.join(ROOT, "tools", "knowledge_setup.py")], cwd=ROOT)
+    if r.returncode != 0:
+        print("  ⚠ knowledge_setup selhal (běží OpenWebUI? je token správný?).")
+        print("    Identitu zatím přeskakuji.\n")
+        return
+    print("  → seeduji výchozí identitu (bootstrap_identity.py)…")
+    subprocess.run([py, os.path.join(ROOT, "tools", "bootstrap_identity.py")], cwd=ROOT)
+    print()
+
+
+# ── Krok 5: avatar (vygenerovat tvář z osobnosti) ────────────────────────────
+def _setup_avatar(cfg):
+    print("── Krok 5/5: Avatar (vygenerovat tvář z osobnosti) ────────────")
+    print("Hans si odvodí podobu ze své osobnosti a vyrenderuje ji (SDXL přes ComfyUI).")
+    ans = input("Vygenerovat teď? (vyžaduje běžící ComfyUI + Ollama, pár minut) [a/N]: "
+                ).strip().lower()
+    if ans not in ("a", "ano", "y", "yes"):
+        print("  Přeskočeno. Hans si tvář vygeneruje sám později (s ComfyUI),")
+        print("  nebo bez ComfyUI poběží bez tváře (nic se nerozbije).\n")
+        return
+    sys.path.insert(0, ROOT)
+    db = _get(cfg, "hans_idle.diary_db") or "data/hans_diary.db"
+    if not os.path.isabs(db):
+        db = os.path.join(ROOT, db)
+    try:
+        from scripts.hans_identity import IdentityStore
+        from scripts.avatar_descriptor import maybe_update_descriptor
+        from scripts.avatar_render import render_pending
+        IdentityStore(cfg, db).ensure_seed()           # identita v1 z persona.core
+        print("  → odvozuji vzhled z osobnosti (LLM)…")
+        maybe_update_descriptor(cfg, db)
+        print("  → renderuji tvář (může trvat pár minut)…")
+        ok = render_pending(cfg, db)
+        print("  ✓ Tvář vyrenderována." if ok
+              else "  ⚠ Render se nezdařil (běží ComfyUI?). Zkus později nebo nech na noční rutinu.")
+    except Exception as e:
+        print(f"  ⚠ Avatar přeskočen: {e}")
+        print("    Hans si tvář vygeneruje sám později.")
+    print()
+
+
 def main():
     if os.path.exists(CONFIG):
         base = CONFIG
@@ -154,6 +295,9 @@ def main():
     print("\n=== Hans — průvodce nastavením ===")
     print("Enter = ponechat současnou hodnotu (v závorkách). Ctrl+C = konec.\n")
 
+    _setup_personality(cfg)
+
+    print("── Krok 2/5: Připojení (IP, přihlášení, tokeny) ───────────────")
     for q in QUESTIONS:
         if q["kind"] == "ip":
             cur = _current_ip(cfg, q)
@@ -189,10 +333,17 @@ def main():
         json.dump(json.load(open(CONFIG, encoding="utf-8"), object_pairs_hook=OrderedDict),
                   open(bak, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         print(f"Záloha současného configu → {bak}")
+    print("── Krok 3/5: Zápis config.json ───────────────────────────────")
     json.dump(cfg, open(CONFIG, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    print(f"✓ Hotovo — zapsáno do {CONFIG}")
-    print("  Zkontroluj/uprav ostatní nastavení přes webadmin (localhost:7860) "
-          "nebo ručně v config.json.")
+    print(f"  ✓ zapsáno do {CONFIG}\n")
+
+    # Kroky 4 + 5 běží AŽ po zápisu (tools čtou čerstvý config.json).
+    _setup_memory(cfg)
+    _setup_avatar(cfg)
+
+    print("=== Hotovo. Hans je nastavený. ===")
+    print("  Spuštění:  ./run.sh   (nebo systemd: systemctl --user start hans)")
+    print("  Doladění:  webadmin na localhost:7860 nebo ručně v config.json.")
 
 
 if __name__ == "__main__":

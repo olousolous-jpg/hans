@@ -178,14 +178,22 @@ processing — an LLM outage must never lose data).
 ```bash
 git clone <repo>
 cd hans
-python3 deploy/setup.py        # wizard: IPs / API keys / credentials
-# starts from config.example.json → creates config.json
 pip install --break-system-packages -r deploy/requirements.txt
+python3 deploy/setup.py        # full guided wizard (below) → creates config.json
 ./run.sh                       # or the systemd user service (deploy/_systemd)
 ```
 
-`deploy/setup.py` also supports **migration** — cloning the whole of Hans (code +
-data) into a new directory with a new config.
+`deploy/setup.py` walks a new user from scratch:
+1. **Personality** — describe in a few sentences who he should be; the wizard hands
+   you a ready prompt for Claude/ChatGPT, you paste its JSON answer back and it
+   becomes Hans's persona. (Or Enter = default English butler.)
+2. **Connectivity** — IPs (PC/Kodi), OpenWebUI login + token, STT token, WOL MAC.
+3. **Write** `config.json` (based on `config.example.json`).
+4. **Memory** — creates the RAG collections in OpenWebUI and seeds the identity.
+5. **Avatar** — renders Hans's face from his personality (optional, needs ComfyUI).
+
+It also supports **migration** — cloning the whole of Hans (code + data) into a
+new directory.
 
 ---
 

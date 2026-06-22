@@ -170,14 +170,21 @@ modelu nesmí ztratit data).
 ```bash
 git clone <repo>
 cd hans
-python3 deploy/setup.py        # průvodce: IP / API klíče / přihlášení
-# vychází z config.example.json → vytvoří config.json
 pip install --break-system-packages -r deploy/requirements.txt
+python3 deploy/setup.py        # kompletní průvodce (níže) → vytvoří config.json
 ./run.sh                       # nebo systemd user služba (deploy/_systemd)
 ```
 
-`deploy/setup.py` umí i **migraci** — naklonovat celého Hanse (kód + data) do
-nového adresáře s novým configem.
+`deploy/setup.py` provede nového uživatele od nuly:
+1. **Osobnost** — popíšeš pár větami, kdo má být; průvodce ti dá hotový prompt
+   do Claude/ChatGPT, jeho JSON odpověď vložíš zpět a stane se Hansovou personou.
+   (Nebo Enter = výchozí anglický majordomus.)
+2. **Připojení** — IP (PC/Kodi), OpenWebUI login + token, STT token, WOL MAC.
+3. **Zápis** `config.json` (vychází z `config.example.json`).
+4. **Paměť** — vytvoří RAG kolekce v OpenWebUI a naseeduje identitu.
+5. **Avatar** — z osobnosti vyrenderuje Hansovu tvář (volitelné, vyžaduje ComfyUI).
+
+Umí i **migraci** — naklonovat celého Hanse (kód + data) do nového adresáře.
 
 ---
 
