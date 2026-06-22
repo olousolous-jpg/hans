@@ -125,7 +125,9 @@ similarity between a book and Hans's interests), with ~25% exploration.
 (`hans_library`, `ebook_import`)
 
 ### Self-directed creativity
-On his own initiative (not on command), in idle moments Hans **creates**:
+Nothing commands the creation. It kicks in during idle moments (at night, when
+it's quiet), but **what to create is Hans's own choice** — a weighted roulette
+across forms, shaped by what's currently on his mind:
 - **Paints his dreams** — a night dream → an SDXL image via ComfyUI, which he then
   critiques himself.
 - **Paints his day / mood** — a symbolic scene capturing the day.

@@ -118,7 +118,9 @@ Výběr knihy je **sémantický** (bge-m3 podobnost knihy ↔ Hansovy zájmy), s
 explorace. (`hans_library`, `ebook_import`)
 
 ### Sebeřízená tvorba
-Hans z vlastního popudu (ne na příkaz) ve volné chvíli **tvoří**:
+Tvorbu nikdo nezadává příkazem. Spouští se sama ve volných chvílích (v noci, když
+je klid), ale **co vytvoří, si Hans volí sám** — váženou ruletou mezi formami,
+podle toho, co se mu zrovna honí hlavou:
 - **Maluje své sny** — noční sen → SDXL obraz přes ComfyUI, který sám ohodnotí.
 - **Maluje svůj den / náladu** — symbolická scéna vystihující den.
 - **Maluje k dočteným knihám** — obraz jako ohlédnutí.
