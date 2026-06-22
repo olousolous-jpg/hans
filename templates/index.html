@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎩 Hans Admin</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:     #1e1e2e; --bg2: #2a2a3e; --bg3: #313145;
+  --accent: #89b4fa; --accent2: #cba6f7;
+  --green:  #a6e3a1; --red: #f38ba8;
+  --yellow: #f9e2af; --orange: #fab387;
+  --fg:     #cdd6f4; --fg2: #a6adc8;
+}
+/* WEBADMIN_V2 — glassmorphism (dle navrh.html): gradient pozadí + frosted karty */
+body { background: linear-gradient(160deg, #181825 0%, #1e1e2e 45%, #232338 100%); background-attachment: fixed; color: var(--fg); font-family: 'Segoe UI', sans-serif; min-height: 100vh; }
+:root { --glass: rgba(49,49,69,0.55); --glass-brd: rgba(255,255,255,0.07); }
+
+/* App shell — global left sidebar (APP_SHELL_V1) */
+.app-shell { display: flex; min-height: 100vh; }
+.app-side { width: 220px; flex-shrink: 0; background: rgba(42,42,62,0.6); border-right: 1px solid var(--glass-brd); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+.app-brand { padding: 18px 20px; font-size: 1.2rem; color: var(--accent); font-weight: bold; border-bottom: 1px solid var(--bg3); }
+.app-brand span { color: var(--fg2); font-weight: normal; font-size: 0.85rem; }
+.app-nav { display: flex; flex-direction: column; gap: 2px; padding: 12px 10px; overflow-y: auto; flex: 1; }
+.app-nav button { background: none; border: none; color: var(--fg2); text-align: left; padding: 10px 14px; border-radius: 7px; cursor: pointer; font-size: 0.92rem; display: flex; align-items: center; gap: 9px; transition: all 0.12s; }
+.app-nav button:hover { background: var(--bg3); color: var(--fg); }
+.app-nav button.active { background: var(--bg3); color: var(--accent); font-weight: 600; }
+.app-side-foot { padding: 14px 20px; border-top: 1px solid var(--bg3); display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--fg2); }
+#status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+/* AVATAR_WEB_SIDEBAR_V1 — Hansova tvář pod menu, nad status */
+.app-avatar { padding: 12px 14px; border-top: 1px solid var(--bg3); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.app-avatar img, .app-avatar video { width: 130px; height: 130px; border-radius: 10px; object-fit: cover; border: 2px solid var(--bg3); background: var(--bg); }
+.app-avatar .av-label { font-size: 0.72rem; color: var(--fg2); letter-spacing: 0.3px; }
+.app-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.app-top { position: sticky; top: 0; z-index: 50; background: rgba(42,42,62,0.6); border-bottom: 1px solid var(--glass-brd); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); padding: 16px 28px; }
+.app-top h1 { font-size: 1.3rem; color: var(--fg); }
+.app-body > main { padding: 24px 28px; max-width: 1100px; }
+@media (max-width: 768px) { .app-shell { flex-direction: column; } .app-side { width: auto; height: auto; position: static; } .app-nav { flex-direction: row; flex-wrap: wrap; } }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Cards */
+.card { background: var(--glass); border: 1px solid var(--glass-brd); border-radius: 16px; padding: 18px; margin-bottom: 16px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 6px 24px rgba(0,0,0,0.22); }
+.card h2 { font-size: 1rem; color: var(--accent2); margin-bottom: 12px; }
+
+/* Grid */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+@media (max-width: 768px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+/* Status cards */
+.stat { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 14px; text-align: center; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.stat .val { font-size: 1.8rem; font-weight: bold; color: var(--accent); }
+.stat .lbl { font-size: 0.75rem; color: var(--fg2); margin-top: 4px; }
+
+/* Table */
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th { background: var(--bg3); color: var(--accent2); padding: 8px; text-align: left; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--bg3); vertical-align: top; }
+tr:hover td { background: var(--bg3); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; background: var(--bg3); color: var(--fg2); }
+.badge.introspection { background: #2a1a4e; color: var(--accent2); }
+.badge.web_read      { background: #1a3a2e; color: var(--green); }
+.badge.movie_browsed { background: #3a2a1e; color: var(--orange); }
+.badge.idle_start    { background: #3a1a1e; color: var(--red); }
+.badge.idle_end      { background: #1a3a1e; color: var(--green); }
+.badge.observation   { background: #2a2a1e; color: var(--yellow); }
+.badge.room_description { background: #1a2a3e; color: var(--accent); }
+.badge.teddy_dialog  { background: #3a1a3e; color: var(--accent2); }
+.badge.mood_shift    { background: #2a3a1e; color: var(--green); }
+.badge.kodi_playing  { background: #1a1a3e; color: #89dceb; }
+.badge.spontaneous   { background: #2a1a2e; color: #cba6f7; }
+.badge.quantum_kolac { background: #0d0d2e; color: #89dceb; font-style: italic; }
+
+/* Forms */
+.form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.form-row label { font-size: 0.8rem; color: var(--fg2); }
+.form-row input, .form-row select, .form-row textarea {
+  background: var(--bg3); border: 1px solid #444; border-radius: 4px;
+  color: var(--fg); padding: 7px 10px; font-size: 0.9rem; font-family: inherit;
+}
+.form-row textarea { min-height: 80px; resize: vertical; }
+.form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+  outline: none; border-color: var(--accent);
+}
+.form-section { border-left: 3px solid var(--accent2); padding-left: 12px; margin-bottom: 20px; }
+.form-section h3 { font-size: 0.9rem; color: var(--accent2); margin-bottom: 10px; }
+
+/* Buttons */
+button.btn { padding: 8px 18px; border-radius: 6px; border: none; cursor: pointer; font-size: 0.9rem; transition: opacity 0.15s; }
+button.btn:hover { opacity: 0.85; }
+.btn-primary  { background: var(--accent); color: var(--bg); font-weight: bold; }
+.btn-danger   { background: var(--red); color: var(--bg); }
+.btn-success  { background: var(--green); color: var(--bg); }
+.btn-neutral  { background: var(--bg3); color: var(--fg); }
+
+/* Log */
+#log-output { background: #0d0d1a; border-radius: 6px; padding: 12px; font-family: 'Consolas', monospace; font-size: 0.78rem; height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+.log-hans     { color: var(--accent2); }
+.log-warn     { color: var(--yellow); }
+.log-error    { color: var(--red); }
+.log-info     { color: var(--fg2); }
+
+/* Thought box */
+.thought-box { background: var(--bg3); border-left: 3px solid var(--accent2); border-radius: 4px; padding: 10px 14px; font-style: italic; color: var(--fg); margin-bottom: 8px; font-size: 0.9rem; }
+
+/* Filter bar */
+.filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.filter-bar input, .filter-bar select { background: var(--bg3); border: 1px solid #444; border-radius: 4px; color: var(--fg); padding: 6px 10px; font-size: 0.85rem; }
+
+/* Saving indicator */
+#save-status { padding: 6px 14px; border-radius: 4px; font-size: 0.85rem; display: none; }
+#save-status.ok  { background: var(--green); color: var(--bg); }
+#save-status.err { background: var(--red); color: var(--bg); }
+
+/* Schema settings — sidebar layout (SCHEMA_CATEGORIES_V1) */
+.schema-shell { display: flex; background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-radius: 16px; overflow: hidden; border: 1px solid var(--glass-brd); box-shadow: 0 6px 24px rgba(0,0,0,0.22); }
+/* WEBADMIN_V2 — vnořený sloupec (kategorie nastavení) redesign */
+.schema-side { width: 224px; flex-shrink: 0; background: var(--bg); border-right: 1px solid var(--bg3); padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; position: sticky; top: 0; align-self: flex-start; max-height: 84vh; }
+.schema-side input { background: var(--bg3); border: 1px solid #444; border-radius: 8px; color: var(--fg); padding: 9px 11px; font-size: 0.85rem; }
+.schema-side input:focus { outline: none; border-color: var(--accent); }
+.schema-side-title { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.7px; color: var(--fg2); padding: 2px 8px; }
+.schema-cats { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
+.schema-cats button { position: relative; background: none; border: none; color: var(--fg2); text-align: left; padding: 9px 12px 9px 15px; border-radius: 8px; cursor: pointer; font-size: 0.88rem; transition: background 0.12s, color 0.12s; }
+.schema-cats button:hover { background: var(--bg3); color: var(--fg); }
+.schema-cats button.active { background: var(--bg3); color: var(--accent); font-weight: 600; }
+.schema-cats button.active::before { content: ''; position: absolute; left: 4px; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--accent); }
+.schema-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.schema-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--bg3); gap: 12px; }
+.schema-toolbar h2 { font-size: 1.1rem; color: var(--accent); }
+.schema-toolbar .acts { display: flex; align-items: center; gap: 10px; }
+#schema-root { padding: 18px 22px; max-height: 72vh; overflow-y: auto; }
+.schema-group { margin-bottom: 26px; max-width: 680px; }
+.schema-group > h3 { font-size: 1rem; color: var(--accent2); margin-bottom: 4px; }
+/* WEBADMIN_V2 — slider pole (číselné hodnoty) */
+.slider-field { display: flex; flex-direction: column; gap: 7px; }
+.slider-input { width: 100%; accent-color: var(--accent); cursor: pointer; height: 5px; }
+.slider-readout { display: flex; align-items: center; gap: 10px; }
+.slider-num { width: 96px; background: var(--bg3); border: 1px solid #444; border-radius: 6px; color: var(--fg); padding: 6px 9px; font-size: 0.9rem; }
+.slider-num:focus { outline: none; border-color: var(--accent); }
+.slider-reset { background: var(--bg3); border: 1px solid #444; border-radius: 6px; color: var(--fg2); cursor: pointer; padding: 5px 9px; font-size: 0.85rem; }
+.slider-reset:hover { color: var(--accent); border-color: var(--accent); }
+.slider-ends { font-size: 0.72rem; color: var(--fg2); font-variant-numeric: tabular-nums; }
+.schema-group > .intro { color: var(--fg2); font-size: 0.8rem; line-height: 1.4; margin-bottom: 14px; }
+.schema-group .expert-row { display: none; }
+.schema-group.show-expert .expert-row { display: flex; }
+.expert-toggle { background: none; border: 1px dashed var(--bg3); color: var(--accent2); border-radius: 6px; padding: 5px 12px; font-size: 0.8rem; cursor: pointer; margin-top: 6px; }
+.expert-toggle:hover { border-color: var(--accent2); }
+@media (max-width: 768px) { .schema-shell { flex-direction: column; } .schema-side { width: auto; } }
+
+/* Slider */
+.slider-row { display: flex; align-items: center; gap: 10px; }
+.slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+.slider-val { min-width: 45px; text-align: right; color: var(--accent); font-family: monospace; }
+</style>
+</head>
+<body>
+
+<!-- ── GLOBAL SHELL — levý sidebar (APP_SHELL_V1, layout dle mockupu) ─────────── -->
+<div class="app-shell">
+  <aside class="app-side">
+    <div class="app-brand">🎩 Hans <span>Admin</span></div>
+    <nav class="app-nav" id="nav">
+      <button data-tab="dashboard" class="active" onclick="showTab('dashboard')">📊 Dashboard</button>
+      <button data-tab="diary" onclick="showTab('diary')">📔 Deník</button>
+      <button data-tab="faces" onclick="showTab('faces')">😀 Obličeje</button>
+      <button data-tab="objects" onclick="showTab('objects')">📦 Objekty</button>
+      <button data-tab="conversations" onclick="showTab('conversations')">💬 Konverzace</button>
+      <button data-tab="questions" onclick="showTab('questions')">❓ Otázky<span id="q-nav-badge" style="background:var(--yellow);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:0.7em;margin-left:auto;display:none">0</span></button>
+      <button data-tab="cfg-identity" onclick="showTab('cfg-identity')">⚙ Nastavení</button>
+      <button data-tab="log" onclick="showTab('log')">📋 Log</button>
+    </nav>
+    <!-- AVATAR_WEB_SIDEBAR_V1 — Hansova tvář dle nálady; skrytá dokud se obrázek nenačte -->
+    <!-- AVATAR_WEB_ANIM_V1 — animovaný idle avatar (looping video, stejný klip
+         jako video náhled na displeji); PNG poster = fallback když video chybí -->
+    <!-- AVATAR_WEB_MIRROR_V1 — zrcadlí Pi preview stav (idle PNG / talk / klip) -->
+    <div class="app-avatar" id="app-avatar" style="display:none">
+      <div style="position:relative;width:130px;height:130px">
+        <img id="avatar-img" src="/api/avatar.png" alt=""
+             style="position:absolute;top:0;left:0">
+        <video id="avatar-vid" muted playsinline
+               style="position:absolute;top:0;left:0;opacity:0;transition:opacity 0.18s;background:transparent"></video>
+      </div>
+      <span class="av-label" id="avatar-label">Hans</span>
+    </div>
+    <div class="app-side-foot">
+      <div id="status-dot" style="background:var(--yellow)"></div>
+      <span id="status-text">načítám...</span>
+    </div>
+  </aside>
+  <div class="app-body">
+    <header class="app-top">
+      <h1 id="page-title">Dashboard</h1>
+    </header>
+    <main>
+
+<!-- ── DASHBOARD ─────────────────────────────────────────────────────────── -->
+<div id="tab-dashboard" class="tab-content active">
+  <div class="grid3" style="margin-bottom:16px">
+    <div class="stat"><div class="val" id="s-faces">—</div><div class="lbl">Známé obličeje</div></div>
+    <div class="stat"><div class="val" id="s-model">—</div><div class="lbl">Model</div></div>
+    <div class="stat"><div class="val" id="s-ollama">—</div><div class="lbl">Ollama URL</div></div>
+  </div>
+
+  <div class="grid3" style="margin-bottom:16px">
+    <div class="stat"><div class="val" id="s-temp" style="font-size:1.4rem">—</div><div class="lbl">CPU teplota (°C)</div></div>
+    <div class="stat"><div class="val" id="s-load" style="font-size:1.4rem">—</div><div class="lbl">CPU load (%)</div></div>
+    <div class="stat"><div class="val" id="s-ram" style="font-size:1.4rem">—</div><div class="lbl">RAM (%)</div></div>
+  </div>
+  <div class="grid2" style="margin-bottom:16px">
+    <div class="card" style="padding:12px 16px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="brain-dot" style="width:14px;height:14px;border-radius:50%;background:var(--yellow);flex-shrink:0"></div>
+        <span id="brain-status" style="font-size:0.9rem;color:var(--fg2)">Kontroluji Ollama...</span>
+      </div>
+    </div>
+    <div class="card" style="padding:12px 16px">
+      <div style="font-size:0.8rem;color:var(--fg2);margin-bottom:4px">Nálada</div>
+      <div id="mood-status" style="font-size:0.9rem;color:var(--accent2)">načítám...</div>
+      <div id="mood-reason" style="font-size:0.75rem;color:var(--fg2);margin-top:2px"></div>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h2> Poslední myšlenka</h2>
+      <div id="d-thought" class="thought-box">načítám...</div>
+    </div>
+    <div class="card">
+      <h2> Naposledy četl</h2>
+      <div id="d-read" class="thought-box">načítám...</div>
+    </div>
+  </div>
+
+  <!-- WEBADMIN_V2 — Právě hraje (Kodi) s bookletem -->
+  <div class="card" id="kodi-card" style="display:none;margin-bottom:16px">
+    <h2>▶ Právě hraje</h2>
+    <div style="display:flex;gap:16px">
+      <img id="kodi-poster" alt="" style="width:92px;height:138px;border-radius:8px;object-fit:cover;background:var(--bg3);flex-shrink:0">
+      <div style="min-width:0">
+        <div id="kodi-title" style="font-size:1.1rem;font-weight:600"></div>
+        <div id="kodi-meta" style="font-size:0.8rem;color:var(--fg2);margin:4px 0"></div>
+        <div id="kodi-plot" style="font-size:0.82rem;color:var(--fg2);line-height:1.4;max-height:7em;overflow:hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WEBADMIN_V2 — Filmy které viděl (booklety, Hansův názor) -->
+  <div class="card" id="movies-card" style="margin-bottom:16px">
+    <h2>🎬 Filmy které viděl</h2>
+    <div id="movies-shelf" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:6px">načítám...</div>
+  </div>
+
+  <!-- HANS_ART_V1 — obrazy, které Hans namaloval ke knihám -->
+  <div class="card" id="art-card" style="margin-bottom:16px;display:none">
+    <h2>🎨 Co Hans namaloval</h2>
+    <div id="art-shelf" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:6px"></div>
+  </div>
+
+  <!-- WEBADMIN_V2 — Chat s Hansem (odpoví i hlasem na Pi) -->
+  <div class="card" id="chat-card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <h2 style="margin:0;flex:1">💬 Chat s Hansem</h2>
+      <label style="font-size:0.78rem;color:var(--fg2)">Píše:</label>
+      <select id="chat-person" style="background:var(--bg3);border:1px solid #444;border-radius:6px;color:var(--fg);padding:5px 8px;font-size:0.85rem"></select>
+    </div>
+    <div id="chat-log" style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;min-height:40px"></div>
+    <div style="display:flex;gap:8px">
+      <input id="chat-input" type="text" placeholder="Napiš zprávu Hansovi…" onkeydown="if(event.key==='Enter')chatSend()" style="flex:1;background:var(--bg3);border:1px solid #444;border-radius:6px;color:var(--fg);padding:9px 12px;font-size:0.9rem">
+      <button class="btn btn-primary" onclick="chatSend()">Odeslat</button>
+    </div>
+    <div style="font-size:0.72rem;color:var(--fg2);margin-top:5px">Hans odpoví v okně i hlasem na Raspberry Pi.</div>
+  </div>
+
+  <div class="card">
+    <h2> Poslední záznam v deníku</h2>
+    <div id="d-diary">načítám...</div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2> Rychlé čtení URL</h2>
+    <div style="display:flex;gap:8px">
+      <input id="read-url" type="text" placeholder="https://..." style="flex:1;background:var(--bg3);border:1px solid #444;border-radius:4px;color:var(--fg);padding:8px 12px;font-size:0.9rem">
+      <button class="btn btn-primary" onclick="triggerRead()"> Přečíst</button>
+    </div>
+    <div id="read-status" style="margin-top:8px;font-size:0.85rem;color:var(--fg2)"></div>
+  </div>
+</div>
+
+<!-- ── DENÍK (WEBADMIN_V2 — karty posledních úvah s ◀▶ historií; firehose za „Rozšířené") -->
+<div id="tab-diary" class="tab-content">
+  <div class="filter-bar" style="margin-bottom:14px">
+    <button class="btn btn-neutral" onclick="loadDiaryCards()">↺ Obnovit</button>
+    <button class="btn btn-neutral" id="diary-expand-btn" onclick="toggleDiaryExpanded()" style="margin-left:auto">▾ Rozšířené (vše)</button>
+  </div>
+  <div id="diary-cards" class="grid2"></div>
+
+  <!-- Rozšířené = celý deníkový firehose (kdo přišel, koho viděl, …) -->
+  <div class="card" id="diary-expanded-card" style="display:none;margin-top:16px">
+    <div class="filter-bar">
+      <select id="diary-type" onchange="loadDiary()">
+        <option value="">Všechny typy</option>
+      </select>
+      <input id="diary-search" type="text" placeholder="Hledat..." oninput="filterDiary()">
+      <button class="btn btn-neutral" onclick="loadDiary()">↺ Obnovit</button>
+    </div>
+    <table>
+      <thead><tr><th>Čas</th><th>Typ</th><th>Titulek</th><th>Poznámka</th></tr></thead>
+      <tbody id="diary-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── OBLIČEJE ───────────────────────────────────────────────────────────── -->
+<div id="tab-faces" class="tab-content">
+  <div class="card">
+    <button class="btn btn-neutral" onclick="loadFaces()" style="margin-bottom:12px">↺ Obnovit</button>
+    <table>
+      <!-- QUICK_AUGMENT_V1 — sloupec pro per-session augment tlačítka -->
+      <thead><tr><th>Jméno</th><th>ArcFace vzorky</th><th>Cluster vzorky</th><th>Clustery</th><th>Light sessions</th></tr></thead>
+      <tbody id="faces-tbody"></tbody>
+      <tfoot><tr><td colspan="5" style="font-size:0.8rem;color:var(--fg2);padding-top:8px">
+        Light sessions: tlačítka přidají ~5 vzorků k osobě v aktuální světelné podmínce.
+        Zelené = už proběhlo (hover ukáže datum). Nová osoba: nejdřív full enroll klávesou E.
+      </td></tr></tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- ── OBJEKTY ────────────────────────────────────────────────────────────── -->
+<div id="tab-objects" class="tab-content">
+  <div class="card">
+    <button class="btn btn-neutral" onclick="loadObjects()" style="margin-bottom:12px">↺ Obnovit</button>
+    <table>
+      <thead><tr><th>Objekt</th><th>Confidence</th><th>Viděno</th><th>Naposledy</th></tr></thead>
+      <tbody id="objects-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── KONVERZACE ─────────────────────────────────────────────────────────── -->
+<div id="tab-conversations" class="tab-content">
+  <div class="card">
+    <button class="btn btn-neutral" onclick="loadConversations()" style="margin-bottom:12px">↺ Obnovit</button>
+    <table>
+      <thead><tr><th>Osoba</th><th>Počet výměn</th><th>Aktualizováno</th><th>Poslední zpráva</th><th></th></tr></thead>
+      <tbody id="conv-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── NASTAVENÍ (schema-driven, sidebar — SCHEMA_CATEGORIES_V1) ───────────────── -->
+<div id="tab-cfg-identity" class="tab-content">
+  <div class="schema-shell">
+    <aside class="schema-side">
+      <input id="schema-search" type="text" placeholder="🔍 Hledat v nastavení..."
+             oninput="schemaSearch(this.value)" autocomplete="off">
+      <div class="schema-side-title">Kategorie</div>
+      <nav id="schema-cats" class="schema-cats"></nav>
+    </aside>
+    <div class="schema-main">
+      <div class="schema-toolbar">
+        <h2 id="schema-cat-title">Nastavení</h2>
+        <div class="acts">
+          <button class="btn btn-neutral" onclick="resetSchema()">↺ Zrušit změny</button>
+          <button class="btn btn-primary" onclick="saveSchema()">💾 Uložit změny</button>
+          <span id="schema-save-status" style="font-size:0.85rem"></span>
+        </div>
+      </div>
+      <div id="schema-root"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── LOG ────────────────────────────────────────────────────────────────── -->
+<div id="tab-log" class="tab-content">
+  <div class="card">
+    <div class="filter-bar">
+      <input id="log-filter" type="text" placeholder="Filtr (hans, curiosity, error...)">
+      <button class="btn btn-neutral" onclick="loadLog()">↺ Obnovit</button>
+      <label><input type="checkbox" id="log-auto" checked> Auto-refresh 5s</label>
+    </div>
+    <div id="log-output"></div>
+  </div>
+</div>
+
+
+<!-- ── HANSOVY OTÁZKY ───────────────────────────────────────────────────── -->
+<div id="tab-questions" class="tab-content">
+  <div class="card">
+    <div class="filter-bar">
+      <select id="q-status" onchange="loadQuestions()">
+        <option value="pending">Čeká na odpověď</option>
+        <option value="answered">Zodpovězené</option>
+        <option value="expired">Promlčené</option>
+        <option value="dismissed">Zrušené</option>
+      </select>
+      <select id="q-target" onchange="loadQuestions()">
+        <option value="all">Všichni</option>
+      </select>
+      <button class="btn btn-neutral" onclick="loadQuestions()">↺ Obnovit</button>
+    </div>
+    <div id="q-stats" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap"></div>
+    <div id="q-list"></div>
+  </div>
+</div>
+
+    </main>
+  </div><!-- /.app-body -->
+</div><!-- /.app-shell -->
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let cfg = {};
+let logTimer = null;
+
+// ── Tab switching (APP_SHELL_V1) ──────────────────────────────────────────────
+const PAGE_TITLES = {
+  dashboard: 'Dashboard', diary: 'Deník', faces: 'Obličeje', objects: 'Objekty',
+  conversations: 'Konverzace', questions: 'Otázky', 'cfg-identity': 'Nastavení', log: 'Log',
+};
+function showTab(name) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.app-nav button').forEach(b => b.classList.remove('active'));
+  const tab = document.getElementById('tab-' + name);
+  if (tab) tab.classList.add('active');
+  const btn = document.querySelector('.app-nav button[data-tab="' + name + '"]');
+  if (btn) btn.classList.add('active');
+  const pt = document.getElementById('page-title');
+  if (pt) pt.textContent = PAGE_TITLES[name] || name;
+  // Lazy load
+  const loaders = {
+    'diary': loadDiaryCards, 'faces': loadFaces, 'objects': loadObjects,
+    'conversations': loadConversations, 'log': loadLog, 'questions': loadQuestions,
+  };
+  if (loaders[name]) loaders[name]();
+}
+
+// ── Config load/save ──────────────────────────────────────────────────────────
+async function loadConfig() {
+  const r = await fetch('/api/config');
+  cfg = await r.json();
+  populateAll();
+}
+
+// ── Schema-driven config (SCHEMA_DRIVEN_TABS_V1 + SCHEMA_CATEGORIES_V1) ─────────
+// Sidebar s kategoriemi + search + sticky Uložit. Inputy mají id="sekce.klic",
+// takže existující populateAll()/collectSection() je obslouží. VŠECHNY skupiny
+// se vyrenderují (kvůli zachování rozeditovaných hodnot), neaktivní kategorie skrytá.
+let schemaSections = [];
+let schemaJsonPaths = [];   // CUSTOM_EDITOR_JSON_V1 — cesty editované jako JSON text
+let schemaGroups = [];
+let schemaActiveCat = '';
+
+function schemaFieldHtml(f) {
+  const sev = f.managed_by === 'severka'
+    ? ` <span class="badge" style="background:#2a1a4e;color:var(--accent2)">🧭 Severka</span>` : '';
+  const rst = f.restart
+    ? ` <span class="badge" style="background:#3a2a1e;color:var(--orange)">restart</span>` : '';
+  const tip = f.tip
+    ? `<small style="color:var(--fg2);display:block;margin-top:4px;line-height:1.35">${f.tip}</small>` : '';
+  let input;
+  if (f.type === 'json')
+    input = `<textarea id="${f.path}" data-json="1" rows="${f.rows || 6}" style="font-family:monospace"></textarea>`;
+  else if (f.type === 'textarea')
+    input = `<textarea id="${f.path}" rows="${f.rows || 3}"></textarea>`;
+  else if (f.type === 'bool')
+    input = `<input type="checkbox" id="${f.path}">`;
+  else if (f.type === 'int' || f.type === 'float') {
+    // WEBADMIN_V2 — slider centrovaný na default (aktuální) hodnotu, ± od středu
+    const step = f.type === 'float' ? (f.step || 0.01) : (f.step || 1);
+    const dmin = (f.min != null) ? `data-fmin="${f.min}"` : '';
+    const dmax = (f.max != null) ? `data-fmax="${f.max}"` : '';
+    input =
+     `<div class="slider-field">
+        <input type="range" id="rng-${f.path}" class="slider-input" ${dmin} ${dmax}
+               data-ftype="${f.type}" data-fstep="${step}" oninput="onSlider('${f.path}')">
+        <div class="slider-readout">
+          <input type="number" id="${f.path}" class="slider-num" step="${step}" oninput="onNumberBox('${f.path}')">
+          <button type="button" class="slider-reset" onclick="resetSlider('${f.path}')" title="zpět na default">↺</button>
+          <span class="slider-ends" id="ends-${f.path}"></span>
+        </div>
+      </div>`;
+  }
+  else if (f.type === 'number')
+    input = `<input type="number" id="${f.path}" step="${f.float ? (f.step || 'any') : 1}">`;
+  else if (f.type === 'choice')
+    input = `<select id="${f.path}">${(f.choices || []).map(c => `<option>${c}</option>`).join('')}</select>`;
+  else
+    input = `<input type="text" id="${f.path}">`;
+  const cls = 'form-row' + (f.tier === 'expert' ? ' expert-row' : '');
+  const search = (f.label + ' ' + f.path).toLowerCase().replace(/"/g, '');
+  const sevBorder = f.managed_by === 'severka'
+    ? 'border-left:3px solid var(--accent2);padding-left:12px;' : '';
+  return `<div class="${cls}" data-search="${search}" style="${sevBorder}"><label>${f.label}${sev}${rst}</label>${input}${tip}</div>`;
+}
+
+function renderSchema(groups, cats) {
+  schemaGroups = groups;
+  const root = document.getElementById('schema-root');
+  const side = document.getElementById('schema-cats');
+  if (!root || !side) return;
+  side.innerHTML = cats.map(c =>
+    `<button data-cat="${c.name}" onclick="showSchemaCategory('${c.name}')">${c.icon} ${c.name}</button>`).join('');
+  root.innerHTML = '';
+  schemaJsonPaths = [];
+  const secs = new Set();
+  groups.forEach(g => {
+    const el = document.createElement('div');
+    el.className = 'schema-group';
+    el.dataset.category = g.category;
+    el.dataset.group = g.id;
+    const basic  = g.fields.filter(f => f.tier !== 'expert');
+    const expert = g.fields.filter(f => f.tier === 'expert');
+    let html = `<h3>${g.icon || ''} ${g.title}</h3>`;
+    if (g.intro) html += `<p class="intro">${g.intro}</p>`;
+    html += basic.map(schemaFieldHtml).join('');
+    html += expert.map(schemaFieldHtml).join('');
+    if (expert.length)
+      html += `<button class="expert-toggle" onclick="toggleExpert(this)">⚙ Pokročilé (${expert.length})</button>`;
+    g.fields.forEach(f => { secs.add(f.path.split('.')[0]); if (f.type === 'json') schemaJsonPaths.push(f.path); });
+    el.innerHTML = html;
+    root.appendChild(el);
+  });
+  schemaSections = [...secs];
+  if (cats.length) showSchemaCategory(cats[0].name);
+}
+
+function showSchemaCategory(cat) {
+  schemaActiveCat = cat;
+  const s = document.getElementById('schema-search'); if (s) s.value = '';
+  document.querySelectorAll('#schema-cats button').forEach(b =>
+    b.classList.toggle('active', b.dataset.cat === cat));
+  document.querySelectorAll('.schema-group').forEach(g => {
+    g.style.display = (g.dataset.category === cat) ? '' : 'none';
+    g.classList.remove('show-expert');
+    g.querySelectorAll('.form-row').forEach(r => r.style.display = '');
+    const bt = g.querySelector('.expert-toggle');
+    if (bt) bt.textContent = `⚙ Pokročilé (${g.querySelectorAll('.expert-row').length})`;
+  });
+  const t = document.getElementById('schema-cat-title'); if (t) t.textContent = cat;
+}
+
+function toggleExpert(btn) {
+  const g = btn.closest('.schema-group');
+  const on = g.classList.toggle('show-expert');
+  btn.textContent = on ? '⚙ Skrýt pokročilé'
+                       : `⚙ Pokročilé (${g.querySelectorAll('.expert-row').length})`;
+}
+
+function schemaSearch(q) {
+  q = (q || '').trim().toLowerCase();
+  if (!q) { showSchemaCategory(schemaActiveCat); return; }
+  document.querySelectorAll('#schema-cats button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.schema-group').forEach(g => {
+    let any = false;
+    g.classList.add('show-expert');
+    g.querySelectorAll('.form-row').forEach(r => {
+      const hit = (r.dataset.search || '').includes(q);
+      r.style.display = hit ? '' : 'none';
+      if (hit) any = true;
+    });
+    g.style.display = any ? '' : 'none';
+  });
+  const t = document.getElementById('schema-cat-title'); if (t) t.textContent = '🔍 ' + q;
+}
+
+async function resetSchema() {
+  await loadConfig();        // znovu načte cfg ze serveru + populateAll
+  fillSchemaJson();
+  const st = document.getElementById('schema-save-status');
+  if (st) { st.textContent = '↺ Vráceno'; st.style.color = 'var(--yellow)';
+            setTimeout(() => { st.textContent = ''; }, 2000); }
+}
+
+async function loadSchema() {
+  try {
+    const r = await fetch('/api/config/schema');
+    const data = await r.json();
+    renderSchema(data.groups || [], data.categories || []);
+  } catch (e) {
+    const root = document.getElementById('schema-root');
+    if (root) root.innerHTML = `<div class="card" style="color:var(--red)">Schéma se nepodařilo načíst: ${e}</div>`;
+  }
+}
+
+function fillSchemaJson() {   // CUSTOM_EDITOR_JSON_V1 — naplň JSON textarey z cfg
+  schemaJsonPaths.forEach(path => {
+    const el = document.getElementById(path);
+    if (!el) return;
+    const val = getNestedVal(cfg, path);
+    el.value = JSON.stringify(val === undefined ? {} : val, null, 2);
+  });
+}
+
+async function saveSchema() {
+  const updated = collectSection(schemaSections);
+  // CUSTOM_EDITOR_JSON_V1 — JSON pole naparsuj zpět na objekt (přepíše string z collectSection)
+  for (const path of schemaJsonPaths) {
+    const el = document.getElementById(path);
+    if (!el) continue;
+    try {
+      setNestedVal(updated, path, JSON.parse(el.value));
+    } catch (e) {
+      const st0 = document.getElementById('schema-save-status');
+      if (st0) { st0.textContent = '✗ Nevalidní JSON: ' + path; st0.style.color = 'var(--red)'; }
+      return;
+    }
+  }
+  const st = document.getElementById('schema-save-status');
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(updated),
+    });
+    const res = await r.json();
+    if (st) { st.textContent = res.ok ? '✓ Uloženo' : '✗ Chyba'; st.style.color = res.ok ? 'var(--green)' : 'var(--red)'; }
+    if (res.ok) cfg = updated;
+  } catch (e) {
+    if (st) { st.textContent = '✗ ' + e; st.style.color = 'var(--red)'; }
+  }
+  if (st) setTimeout(() => { st.textContent = ''; }, 3000);
+}
+
+function getNestedVal(obj, path) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (const p of parts) {
+    if (cur == null) return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+function setNestedVal(obj, path, val) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (cur[parts[i]] == null) cur[parts[i]] = {};
+    cur = cur[parts[i]];
+  }
+  cur[parts[parts.length - 1]] = val;
+}
+
+function populateAll() {
+  // Input fields (text, number, range)
+  document.querySelectorAll('input[id], select[id], textarea[id]').forEach(el => {
+    const id = el.id;
+    if (id.startsWith('v-') || ['log-filter','log-auto','diary-type',
+        'diary-search','read-url','object_remapping_json'].includes(id)) return;
+    if (el.dataset && el.dataset.json) return;   // CUSTOM_EDITOR_JSON_V1 — plní fillSchemaJson()
+    const val = getNestedVal(cfg, id);
+    if (val === undefined) return;
+    if (el.type === 'checkbox') {
+      el.checked = !!val;
+    } else {
+      el.value = val;
+      // Update slider display
+      const disp = document.getElementById('v-' + id);
+      if (disp) disp.textContent = val;
+    }
+  });
+  // CONFIG_CLEANUP_V1 — special-cases (camera_model/autofocus/hdr/remapping/persons)
+  // odstraněny; schema generický loop výše + fillSchemaJson je obslouží.
+  // WEBADMIN_V2 — nakonfiguruj slidery (centrované na aktuální = default hodnotu)
+  document.querySelectorAll('.slider-input').forEach(rng => configureSlider(rng.id.slice(4)));
+}
+
+// WEBADMIN_V2 — slider centrovaný na default; lze ± od středu (i pod/nad)
+function _fmtNum(n) { return Number.isInteger(n) ? n : parseFloat(Number(n).toFixed(4)); }
+function configureSlider(path) {
+  const num = document.getElementById(path);
+  const rng = document.getElementById('rng-' + path);
+  if (!num || !rng) return;
+  const val = parseFloat(num.value);
+  if (isNaN(val)) return;
+  const step = parseFloat(rng.dataset.fstep) || 1;
+  const fmin = rng.dataset.fmin !== undefined ? parseFloat(rng.dataset.fmin) : null;
+  const fmax = rng.dataset.fmax !== undefined ? parseFloat(rng.dataset.fmax) : null;
+  let span;
+  if (fmin !== null && fmax !== null) {
+    span = Math.min(val - fmin, fmax - val);      // symetricky v mezích → default přesně uprostřed
+    if (!(span > 0)) span = Math.max((fmax - fmin) / 4, step * 10);
+  } else {
+    span = Math.abs(val) || step * 20;             // bez mezí: ±100 % (jde i do záporu)
+  }
+  span = Math.max(span, step * 5);
+  rng.min = _fmtNum(val - span);
+  rng.max = _fmtNum(val + span);
+  rng.step = step;
+  rng.value = val;
+  rng.dataset.center = val;
+  _updateEnds(path);
+}
+function _updateEnds(path) {
+  const rng = document.getElementById('rng-' + path);
+  const ends = document.getElementById('ends-' + path);
+  if (rng && ends) ends.textContent =
+    `${_fmtNum(+rng.min)} … default ${_fmtNum(+rng.dataset.center)} … ${_fmtNum(+rng.max)}`;
+}
+function onSlider(path) {
+  const rng = document.getElementById('rng-' + path);
+  const num = document.getElementById(path);
+  if (rng && num) num.value = _fmtNum(parseFloat(rng.value));
+}
+function onNumberBox(path) { configureSlider(path); }   // přepsání ručně → re-center
+function resetSlider(path) {
+  const rng = document.getElementById('rng-' + path);
+  const num = document.getElementById(path);
+  if (rng && num && rng.dataset.center !== undefined) {
+    num.value = _fmtNum(+rng.dataset.center);
+    rng.value = rng.dataset.center;
+  }
+}
+
+function collectSection(sections) {
+  const updated = JSON.parse(JSON.stringify(cfg));
+  document.querySelectorAll('input[id], select[id], textarea[id]').forEach(el => {
+    const id = el.id;
+    if (id.startsWith('v-') || ['log-filter','log-auto','diary-type',
+        'diary-search','read-url','object_remapping_json'].includes(id)) return;
+    const top = id.split('.')[0];
+    if (!sections.includes(top) && !sections.includes(id)) return;
+    let val;
+    if (el.type === 'checkbox') val = el.checked;
+    else if (el.type === 'range' || el.type === 'number') val = parseFloat(el.value);
+    else val = el.value;
+    setNestedVal(updated, id, val);
+  });
+  return updated;   // CONFIG_CLEANUP_V1 — special-cases odstraněny (generický loop je pokrývá)
+}
+
+// CONFIG_CLEANUP_V1 — saveSection/doSave/saveObjectConfig/saveGreeting/renderPersons/
+// addPerson odstraněny (legacy konfig taby smazány; konfig vede schema saveSchema()).
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function loadStatus() {
+  const r = await fetch('/api/status');
+  const s = await r.json();
+  document.getElementById('s-faces').textContent = s.faces_count || 0;
+  document.getElementById('s-model').textContent = (s.model || '?').replace(':latest','');
+  document.getElementById('s-ollama').textContent = (s.ollama_url || '?').replace('http://','');
+  if (s.last_thought)
+    document.getElementById('d-thought').textContent = s.last_thought;
+  if (s.last_read)
+    document.getElementById('d-read').textContent =
+      s.last_read.author ? `${s.last_read.title} — ${s.last_read.author}` : (s.last_read.title || '—');
+  if (s.last_diary) {
+    document.getElementById('d-diary').innerHTML =
+      `<span class="badge ${s.last_diary.type}">${s.last_diary.type}</span> ` +
+      `<span style="color:var(--fg2);font-size:0.8rem">${s.last_diary.dt}</span><br>` +
+      `<span style="font-size:0.9rem">${s.last_diary.note}</span>`;
+  }
+  // Hardware karty
+  if (s.cpu_temp !== undefined) {
+    const t = s.cpu_temp;
+    const tEl = document.getElementById('s-temp');
+    if (tEl) { tEl.textContent = t.toFixed(1); tEl.style.color = t>=80?'var(--red)':t>=70?'var(--orange)':'var(--green)'; }
+  }
+  if (s.cpu_load !== undefined) {
+    const l = s.cpu_load;
+    const lEl = document.getElementById('s-load');
+    if (lEl) { lEl.textContent = l.toFixed(0); lEl.style.color = l>=85?'var(--red)':l>=60?'var(--orange)':'var(--green)'; }
+  }
+  if (s.ram_pct !== undefined) {
+    const r = s.ram_pct;
+    const rEl = document.getElementById('s-ram');
+    if (rEl) { rEl.textContent = r.toFixed(0); rEl.style.color = r>=80?'var(--red)':r>=60?'var(--orange)':'var(--green)'; }
+  }
+  if (s.ollama_ok !== undefined) {
+    const bdot = document.getElementById('brain-dot');
+    const bst  = document.getElementById('brain-status');
+    if (bdot) bdot.style.background = s.ollama_ok ? 'var(--green)' : 'var(--red)';
+    if (bst)  { bst.textContent = s.ollama_ok ? 'Mozek (Ollama): online' : 'Mozek (Ollama): OFFLINE — Hans funguje z pameti'; bst.style.color = s.ollama_ok ? 'var(--green)' : 'var(--red)'; }
+  }
+  // WEBADMIN_V2 — nálada JEDNOSLOVNĚ (z hans_mood přechodu v logu)
+  const moodEl = document.getElementById('mood-status');
+  const reasonEl = document.getElementById('mood-reason');
+  if (moodEl) {
+    moodEl.textContent = s.mood || '—';
+    moodEl.style.fontSize = '1.3rem';
+    moodEl.style.fontWeight = '600';
+    moodEl.style.textTransform = 'capitalize';
+  }
+  if (reasonEl) reasonEl.textContent = '';
+  document.getElementById('status-dot').style.background =
+    s.config_ok ? 'var(--green)' : 'var(--red)';
+  document.getElementById('status-text').textContent =
+    s.config_ok ? 'OK' : 'Config error';
+  // AVATAR_WEB_ANIM_V1 — ukaž blok jen když existuje avatar (probe PNG poster);
+  // video se loopuje samo, src neobnovujeme (restartovalo by smyčku).
+  const _avb = document.getElementById('app-avatar');
+  if (_avb) {
+    const _im = new Image();
+    _im.onload  = () => { _avb.style.display = 'flex'; };
+    _im.onerror = () => { _avb.style.display = 'none'; };
+    _im.src = '/api/avatar.png?t=' + Date.now();
+  }
+}
+
+async function triggerRead() {
+  const url = document.getElementById('read-url').value.trim();
+  if (!url) return;
+  document.getElementById('read-status').textContent = '⏳ Čtu...';
+  const r = await fetch('/api/web_read', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({url})
+  });
+  const res = await r.json();
+  document.getElementById('read-status').textContent =
+    res.ok ? '✓ ' + res.message : '✗ ' + (res.detail || 'Chyba');
+}
+
+// ── Diary ─────────────────────────────────────────────────────────────────────
+let diaryData = [];
+
+async function loadDiary() {
+  const type = document.getElementById('diary-type').value;
+  const url  = '/api/diary?limit=200' + (type ? '&event_type=' + type : '');
+  const r    = await fetch(url);
+  diaryData  = await r.json();
+  renderDiary(diaryData);
+
+  // Load types for filter
+  const tr = await fetch('/api/diary/types');
+  const types = await tr.json();
+  const sel = document.getElementById('diary-type');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Všechny typy</option>' +
+    types.map(t => `<option value="${t.type}" ${t.type===cur?'selected':''}>
+      ${t.type} (${t.count})</option>`).join('');
+}
+
+function filterDiary() {
+  const q = document.getElementById('diary-search').value.toLowerCase();
+  const filtered = q ? diaryData.filter(r =>
+    (r.title+r.note+r.type).toLowerCase().includes(q)) : diaryData;
+  renderDiary(filtered);
+}
+
+// WEBADMIN_V2 — Deník = karty posledních úvah (dashboard styl) s ◀▶ historií, live
+const DIARY_CARDS = [
+  {type:'introspection',      label:'🧠 Poslední úvaha'},
+  {type:'evening_reflection', label:'🌙 Večerní reflexe'},
+  {type:'work_created',       label:'✍️ Poslední dílo'},
+  {type:'narrative_chapter',  label:'📖 Životní kapitola'},
+  {type:'dream',              label:'💭 Sen'},
+  {type:'night_summary',      label:'🌃 Noční shrnutí'},
+  {type:'book_reflection',    label:'📚 Čtenářská reflexe'},
+  {type:'reading_takeaway',   label:'🔖 Ze čtení'},
+];
+const _cardOffset = {};   // type -> aktuální offset
+const _cardTs = {};       // type -> ts posledně zobrazeného (live detekce)
+
+function buildDiaryCards() {
+  const wrap = document.getElementById('diary-cards');
+  if (!wrap || wrap.dataset.built) return;
+  wrap.dataset.built = '1';
+  wrap.innerHTML = DIARY_CARDS.map(c => `
+    <div class="card" id="dc-${c.type}">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <h2 style="margin:0;flex:1;font-size:1rem">${c.label}</h2>
+        <button class="btn btn-neutral dc-prev" onclick="cardNav('${c.type}',1)" title="starší" style="padding:2px 9px">◀</button>
+        <span class="dc-pos" style="font-size:0.7rem;color:var(--fg2);min-width:52px;text-align:center">—</span>
+        <button class="btn btn-neutral dc-next" onclick="cardNav('${c.type}',-1)" title="novější" style="padding:2px 9px">▶</button>
+      </div>
+      <div class="dc-meta" style="font-size:0.72rem;color:var(--fg2);margin-bottom:5px"></div>
+      <div class="dc-text" style="font-size:0.9rem;line-height:1.5;white-space:pre-wrap;max-height:340px;overflow-y:auto">načítám...</div>
+    </div>`).join('');
+}
+async function fetchCard(type, offset) {
+  try { return await (await fetch(`/api/diary/entry?type=${encodeURIComponent(type)}&offset=${offset}`)).json(); }
+  catch (e) { return null; }
+}
+function renderCard(type, d) {
+  const card = document.getElementById('dc-' + type);
+  if (!card || !d) return;
+  const meta = card.querySelector('.dc-meta'), text = card.querySelector('.dc-text');
+  const pos = card.querySelector('.dc-pos'), prev = card.querySelector('.dc-prev'), next = card.querySelector('.dc-next');
+  if (d.empty || !d.total) {
+    meta.textContent = ''; text.textContent = '— zatím nic —'; pos.textContent = '0/0';
+    prev.disabled = true; next.disabled = true; return;
+  }
+  const off = d.offset;
+  meta.textContent = d.dt + (d.title ? ' · ' + d.title : '');
+  text.textContent = d.text || '';
+  pos.textContent = `${off + 1}/${d.total}`;
+  prev.disabled = off >= d.total - 1;
+  next.disabled = off <= 0;
+}
+async function cardNav(type, dir) {
+  const target = (_cardOffset[type] || 0) + dir;
+  if (target < 0) return;
+  const d = await fetchCard(type, target);
+  if (!d || d.empty) return;
+  _cardOffset[type] = d.offset; _cardTs[type] = d.ts;
+  renderCard(type, d);
+}
+async function loadDiaryCards() {
+  buildDiaryCards();
+  for (const c of DIARY_CARDS) {
+    const d = await fetchCard(c.type, _cardOffset[c.type] || 0);
+    if (d) { _cardOffset[c.type] = d.offset || 0; if (d.ts) _cardTs[c.type] = d.ts; renderCard(c.type, d); }
+  }
+}
+// Live: jen karty na offset 0 se přepíšou, když přibyl novější záznam (neruší listování)
+async function refreshDiaryCardsLive() {
+  const tab = document.getElementById('tab-diary');
+  if (!tab || !tab.classList.contains('active')) return;
+  for (const c of DIARY_CARDS) {
+    if ((_cardOffset[c.type] || 0) !== 0) continue;
+    const d = await fetchCard(c.type, 0);
+    if (d && !d.empty && d.ts !== _cardTs[c.type]) { _cardTs[c.type] = d.ts; renderCard(c.type, d); }
+  }
+}
+let _diaryExpandedLoaded = false;
+function toggleDiaryExpanded() {
+  const card = document.getElementById('diary-expanded-card');
+  const btn = document.getElementById('diary-expand-btn');
+  const show = card.style.display === 'none';
+  card.style.display = show ? '' : 'none';
+  btn.textContent = show ? '▴ Skrýt rozšířené' : '▾ Rozšířené (vše)';
+  if (show && !_diaryExpandedLoaded) { loadDiary(); _diaryExpandedLoaded = true; }
+}
+
+function renderDiary(data) {
+  const tbody = document.getElementById('diary-tbody');
+  tbody.innerHTML = data.map(r => `
+    <tr>
+      <td style="white-space:nowrap;color:var(--fg2);font-size:0.8rem">${r.dt}</td>
+      <td><span class="badge ${r.type}">${r.type}</span></td>
+      <td style="color:var(--accent2)">${esc(r.title)}</td>
+      <td style="font-size:0.85rem;max-width:500px">${esc(r.note)}</td>
+    </tr>`).join('');
+}
+
+// ── Faces ─────────────────────────────────────────────────────────────────────
+// QUICK_AUGMENT_V1 — render tabulky obličejů se session tlačítky
+async function loadFaces() {
+  const r = await fetch('/api/faces');
+  const faces = await r.json();
+  document.getElementById('faces-tbody').innerHTML = faces.map(f =>
+    f.error ? `<tr><td colspan="5" style="color:var(--red)">${f.error}</td></tr>` :
+    `<tr>
+      <td style="color:var(--accent)">${f.name}</td>
+      <td>${f.samples || '—'}</td>
+      <td>${f.cluster_samples || '—'}</td>
+      <td>${f.clusters || '—'}</td>
+      <td>${renderSessionButtons(f.name, f.sessions || {})}</td>
+    </tr>`).join('');
+}
+
+function renderSessionButtons(name, sessions) {
+  const defs = [
+    {key: 'morning',   label: '☀ ráno',      tip: 'slunce nesvítí do okna'},
+    {key: 'afternoon', label: '🪟 odpoledne', tip: 'slunce svítí do okna'},
+    {key: 'evening',   label: '💡 večer',     tip: 'bodové osvětlení shora'},
+  ];
+  return defs.map(d => {
+    const ts = sessions[d.key];
+    const done = !!ts;
+    const tooltip = done
+      ? `Naposledy: ${new Date(ts * 1000).toLocaleString('cs-CZ')}`
+      : `${d.tip} — zatím neprobíhalo`;
+    const bg = done ? 'var(--green, #4caf50)' : 'var(--bg4)';
+    const fg = done ? '#fff' : 'var(--fg)';
+    return `<button class="btn"
+      style="padding:3px 8px;margin-right:4px;background:${bg};color:${fg};font-size:0.8rem"
+      title="${tooltip}"
+      onclick="startQuickAugment('${name}', '${d.key}', this)">${d.label}</button>`;
+  }).join('');
+}
+
+// QUICK_AUGMENT_TTS_V1 — countdown 10s, lock všech session tlačítek
+async function startQuickAugment(name, session, btn) {
+  const origText = btn.textContent;
+  // Zablokuj všechna session tlačítka v tabulce (lock)
+  const allBtns = document.querySelectorAll(
+    '#faces-tbody button[onclick^="startQuickAugment"]');
+  allBtns.forEach(b => b.disabled = true);
+  btn.textContent = 'Začínám...';
+
+  try {
+    const r = await fetch('/api/enroll/quick_augment', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, session})
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      alert(data.detail || data.message || 'Chyba');
+      allBtns.forEach(b => b.disabled = false);
+      btn.textContent = origText;
+      return;
+    }
+
+    // Server flow: 4s intro + 6s odpočet + ~1s capture + 1s závěr ≈ 12s
+    // UI countdown matchuje server timing (10s viditelný odpočet po intro)
+    let remaining = 10;
+    btn.textContent = `${remaining}s`;
+    const tick = setInterval(() => {
+      remaining -= 1;
+      if (remaining > 0) {
+        btn.textContent = `${remaining}s`;
+      } else {
+        clearInterval(tick);
+        btn.textContent = 'Capturing...';
+      }
+    }, 1000);
+
+    // Po 13s refreshni tabulku (zachycuje i capture+TTS závěr)
+    setTimeout(() => {
+      clearInterval(tick);
+      loadFaces();  // refresh přepíše tlačítka — barva podle nového stavu
+      // (loadFaces re-rendruje celou tbody, takže allBtns reference je passé)
+    }, 13000);
+  } catch (e) {
+    alert('Síťová chyba: ' + e.message);
+    allBtns.forEach(b => b.disabled = false);
+    btn.textContent = origText;
+  }
+}
+
+// ── Objects ───────────────────────────────────────────────────────────────────
+async function loadObjects() {
+  const r = await fetch('/api/objects');
+  const objs = await r.json();
+  document.getElementById('objects-tbody').innerHTML = objs.map ? objs.map(o =>
+    `<tr>
+      <td style="color:var(--accent)">${o.name}</td>
+      <td>${o.conf}</td>
+      <td>${o.count}×</td>
+      <td style="color:var(--fg2);font-size:0.8rem">${o.seen}</td>
+    </tr>`).join('') : '';
+}
+
+// ── Conversations ─────────────────────────────────────────────────────────────
+async function loadConversations() {
+  const r = await fetch('/api/conversations');
+  const convs = await r.json();
+  document.getElementById('conv-tbody').innerHTML = convs.map(c =>
+    `<tr>
+      <td style="color:var(--accent)">${c.name}</td>
+      <td>${c.turns}</td>
+      <td style="color:var(--fg2);font-size:0.8rem">${c.updated}</td>
+      <td style="font-size:0.82rem;max-width:300px">${esc(c.last)}</td>
+      <td><button class="btn btn-danger" style="padding:3px 10px;font-size:0.8rem"
+        onclick="deleteConv('${c.name}')">Smazat</button></td>
+    </tr>`).join('');
+}
+
+async function deleteConv(name) {
+  if (!confirm(`Smazat konverzaci s ${name}?`)) return;
+  await fetch(`/api/conversations/${name}`, {method:'DELETE'});
+  loadConversations();
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+async function loadLog() {
+  const filter = document.getElementById('log-filter').value;
+  const r = await fetch(`/api/log?lines=150&filter=${encodeURIComponent(filter)}`);
+  const data = await r.json();
+  const el = document.getElementById('log-output');
+  el.innerHTML = data.lines.map(l => {
+    let cls = 'log-info';
+    if (l.includes('[hans') || l.includes('Hans') || l.includes('curiosity') ||
+        l.includes('introspect') || l.includes('diary'))
+      cls = 'log-hans';
+    else if (l.includes('WARNING') || l.includes('WARN')) cls = 'log-warn';
+    else if (l.includes('ERROR') || l.includes('FAIL')) cls = 'log-error';
+    return `<span class="${cls}">${esc(l)}</span>`;
+  }).join('\n');
+  el.scrollTop = el.scrollHeight;
+
+  // Auto-refresh
+  if (logTimer) clearTimeout(logTimer);
+  if (document.getElementById('log-auto').checked)
+    logTimer = setTimeout(loadLog, 5000);
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// WEBADMIN_V2 — Právě hraje (Kodi) s bookletem
+async function loadKodiPlaying() {
+  try {
+    const k = await (await fetch('/api/kodi/playing')).json();
+    const card = document.getElementById('kodi-card');
+    if (!card) return;
+    if (!k.playing) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    document.getElementById('kodi-title').textContent = k.title || '';
+    const meta = [];
+    if (k.showtitle) meta.push(k.showtitle + (k.season ? ` S${k.season}E${k.episode}` : ''));
+    if (k.year) meta.push(k.year);
+    if (k.genre) meta.push(k.genre);
+    document.getElementById('kodi-meta').textContent = meta.join(' · ');
+    document.getElementById('kodi-plot').textContent = k.plot || '';
+    const p = document.getElementById('kodi-poster');
+    if (k.poster) { p.src = k.poster; p.style.display = ''; } else { p.style.display = 'none'; }
+  } catch (e) {}
+}
+
+// WEBADMIN_V2 — Filmy které viděl (police bookletů)
+async function loadMoviesSeen() {
+  try {
+    const ms = await (await fetch('/api/movies_seen?limit=8')).json();
+    const shelf = document.getElementById('movies-shelf');
+    if (!shelf) return;
+    if (!Array.isArray(ms) || !ms.length) { shelf.innerHTML = '<span style="color:var(--fg2);font-size:0.85rem">zatím nic</span>'; return; }
+    shelf.innerHTML = ms.map(m => {
+      const poster = m.poster
+        ? `<img src="${m.poster}" alt="" style="width:110px;height:165px;object-fit:cover;border-radius:8px;background:var(--bg3)">`
+        : `<div style="width:110px;height:165px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;color:var(--fg2);font-size:0.75rem;padding:6px;text-align:center">${esc(m.title)}</div>`;
+      return `<div style="width:110px;flex-shrink:0" title="${esc(m.opinion)}">
+        ${poster}
+        <div style="font-size:0.78rem;margin-top:5px;line-height:1.2;font-weight:600">${esc(m.title)}</div>
+        <div style="font-size:0.7rem;color:var(--fg2);margin-top:2px;max-height:4.3em;overflow:hidden;line-height:1.25">${esc(m.opinion)}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {}
+}
+
+// HANS_ART_V1 — galerie obrazů, které Hans namaloval ke knihám
+async function loadArt() {
+  try {
+    const arts = await (await fetch('/api/art/list?limit=12')).json();
+    const card = document.getElementById('art-card');
+    const shelf = document.getElementById('art-shelf');
+    if (!shelf || !card) return;
+    if (!Array.isArray(arts) || !arts.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    shelf.innerHTML = arts.map(a => {
+      const url = '/api/art/image?f=' + encodeURIComponent(a.file);
+      return `<div style="width:210px;flex-shrink:0" title="${esc(a.caption)}">
+        <a href="${url}" target="_blank"><img src="${url}" alt="" style="width:210px;height:158px;object-fit:cover;border-radius:8px;background:var(--bg3)"></a>
+        <div style="font-size:0.78rem;margin-top:5px;line-height:1.2;font-weight:600">${esc(a.book)}</div>
+        <div style="font-size:0.68rem;color:var(--fg2);margin-top:1px">${esc(a.date)}</div>
+        <div style="font-size:0.7rem;color:var(--fg2);margin-top:3px;max-height:4.3em;overflow:hidden;line-height:1.25">${esc(a.caption)}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {}
+}
+
+// WEBADMIN_V2 — Chat s Hansem (most → odpověď + hlas na Pi)
+async function loadChatPersons() {
+  try {
+    const faces = await (await fetch('/api/faces')).json();
+    const sel = document.getElementById('chat-person');
+    if (!sel) return;
+    const names = (Array.isArray(faces) ? faces : []).map(f => f.name).filter(Boolean);
+    sel.innerHTML = (names.length ? names : ['Uživatel']).map(n => `<option>${esc(n)}</option>`).join('');
+  } catch (e) {}
+}
+function chatAppend(text, mine) {
+  const log = document.getElementById('chat-log');
+  if (!log) return null;
+  const div = document.createElement('div');
+  div.style.cssText = 'padding:7px 11px;border-radius:9px;max-width:88%;font-size:0.88rem;line-height:1.45;white-space:pre-wrap;' +
+    (mine ? 'align-self:flex-end;background:var(--accent);color:#fff' : 'align-self:flex-start;background:var(--bg3);color:var(--fg)');
+  div.textContent = text;
+  log.appendChild(div); log.scrollTop = log.scrollHeight;
+  return div;
+}
+let _chatBusy = false;
+async function chatSend() {
+  if (_chatBusy) return;
+  const input = document.getElementById('chat-input');
+  const person = (document.getElementById('chat-person').value || 'Uživatel');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  chatAppend(person + ': ' + msg, true);
+  const pending = chatAppend('Hans přemýšlí…', false);
+  _chatBusy = true;
+  try {
+    const r = await (await fetch('/api/chat/send', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({person, message: msg})
+    })).json();
+    if (!r.id) { pending.textContent = '(chyba odeslání)'; _chatBusy = false; return; }
+    let tries = 0;
+    const iv = setInterval(async () => {
+      tries++;
+      try {
+        const p = await (await fetch('/api/chat/poll?id=' + r.id)).json();
+        if (p.ready) { clearInterval(iv); pending.textContent = 'Hans: ' + (p.response || '(bez odpovědi)'); _chatBusy = false; }
+        else if (tries > 60) { clearInterval(iv); pending.textContent = '(Hans neodpověděl včas)'; _chatBusy = false; }
+      } catch (e) {}
+    }, 1500);
+  } catch (e) { pending.textContent = '(chyba spojení)'; _chatBusy = false; }
+}
+
+// AVATAR_WEB_MIRROR_V1 — zrcadli Pi preview: poll stav → přepni klip / idle PNG
+let _avMode = null, _avClip = null;
+async function pollAvatar() {
+  try {
+    const s = await (await fetch('/api/avatar/state')).json();
+    if (s.mode === _avMode && s.clip === _avClip) return;   // beze změny
+    _avMode = s.mode; _avClip = s.clip;
+    const img = document.getElementById('avatar-img');
+    const vid = document.getElementById('avatar-vid');
+    const lbl = document.getElementById('avatar-label');
+    if (!img || !vid) return;
+    // img je VŽDY pod videem → přechody řešíme jen opacitou videa (žádné černé bliknutí)
+    const hideVideo = () => {
+      vid.style.opacity = '0'; vid.pause();
+      if (lbl) lbl.textContent = 'Hans';
+    };
+    if ((s.mode === 'talk' || s.mode === 'extra' || s.mode === 'idleanim') && s.clip) {
+      vid.loop = (s.mode === 'talk');           // talk se loopuje, jednorázové dohrají
+      vid.onended = () => { if (!vid.loop) hideVideo(); };
+      // odhal video AŽ když je první snímek dekódovaný (img zatím kryje → bez bliknutí)
+      vid.onloadeddata = () => { vid.style.opacity = '1'; };
+      vid.src = '/api/avatar/clip?name=' + encodeURIComponent(s.clip);
+      vid.play().catch(() => {});
+      if (lbl) lbl.textContent = (s.mode === 'talk') ? 'Hans — mluví' : 'Hans';
+    } else {
+      hideVideo();
+    }
+  } catch (e) {}
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadSchema().then(loadConfig).then(fillSchemaJson);   // schéma → cfg → JSON pole (CUSTOM_EDITOR_JSON_V1)
+loadChatPersons();
+pollAvatar();
+setInterval(pollAvatar, 1200);
+loadStatus();
+setInterval(loadStatus, 15000);   // WEBADMIN_V2 — poslední záznam v deníku „live"
+loadKodiPlaying();
+setInterval(loadKodiPlaying, 15000);
+loadMoviesSeen();
+setInterval(loadMoviesSeen, 60000);
+loadArt();
+setInterval(loadArt, 60000);
+buildDiaryCards();
+setInterval(refreshDiaryCardsLive, 15000);   // Deník karty „live" (offset 0)
+
+// ── Hansovy otázky ────────────────────────────────────────────────────────────
+let _qTargets = new Set();
+
+async function loadQuestions() {
+  const status = document.getElementById('q-status').value;
+  const target = document.getElementById('q-target').value;
+  let data;
+  try {
+    const r = await fetch(`/questions/api?status=${status}&target=${target}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    data = await r.json();
+  } catch(e) {
+    document.getElementById('q-list').innerHTML =
+      `<div style="color:var(--red);padding:12px">Chyba: ${esc(e.message)}<br>` +
+      `Je spuštěn web_admin.py s questions modulem?</div>`;
+    return;
+  }
+  const s = data.stats || {};
+
+  // Badge v nav
+  const nb = document.getElementById('q-nav-badge');
+  if (nb) {
+    const cnt = s.pending || 0;
+    nb.textContent = cnt;
+    nb.style.display = cnt > 0 ? 'inline' : 'none';
+  }
+
+  // Stats pruhy
+  const statsEl = document.getElementById('q-stats');
+  const statMap = [
+    ['pending',   'Čeká',       'var(--yellow)'],
+    ['answered',  'Zodpovězeno','var(--green)'],
+    ['expired',   'Promlčeno',  'var(--fg2)'],
+    ['dismissed', 'Zrušeno',    'var(--red)'],
+  ];
+  statsEl.innerHTML = statMap.map(([k, lbl, clr]) =>
+    `<div class="stat" style="padding:8px 14px;min-width:90px;cursor:pointer"
+          onclick="document.getElementById('q-status').value='${k}';loadQuestions()">
+       <div class="val" style="font-size:1.3rem;color:${clr}">${s[k]||0}</div>
+       <div class="lbl">${lbl}</div>
+     </div>`).join('');
+
+  // Dynamické cíle pro dropdown
+  const sel = document.getElementById('q-target');
+  const curTarget = sel.value;
+  (data.questions || []).forEach(q => {
+    if (q.target_person && q.target_person !== 'anyone') _qTargets.add(q.target_person);
+  });
+  sel.innerHTML = '<option value="all">Všichni</option>' +
+    Array.from(_qTargets).sort().map(t =>
+      `<option value="${t}" ${t===curTarget?'selected':''}>${_qCap(t)}</option>`
+    ).join('') +
+    `<option value="anyone" ${'anyone'===curTarget?'selected':''}>pro kohokoliv</option>`;
+
+  // Karty
+  const listEl = document.getElementById('q-list');
+  if (!data.questions || !data.questions.length) {
+    listEl.innerHTML = '<div style="color:var(--fg2);padding:16px;text-align:center">Žádné otázky.</div>';
+    return;
+  }
+  listEl.innerHTML = data.questions.map(_qCard).join('');
+}
+
+function _qCap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+function _qAge(ts) {
+  if (!ts) return '';
+  const sec = Math.max(1, Date.now()/1000 - ts);
+  if (sec < 60)    return 'právě teď';
+  if (sec < 3600)  return Math.floor(sec/60) + ' min';
+  if (sec < 86400) return Math.floor(sec/3600) + ' h';
+  return Math.floor(sec/86400) + ' dní';
+}
+
+function _qSrc(q) {
+  const m = {reading:'četba',observation:'pozorování',kodi:'Kodi',
+             thought:'myšlenka',news:'zprávy',url:'odkaz'};
+  const t = m[q.source_type] || q.source_type;
+  return q.source_ref ? `${t}: ${esc(q.source_ref)}` : t;
+}
+
+function _qCard(q) {
+  const isPending = q.status === 'pending' || q.status === 'asked_voice';
+  const tgt = q.target_person === 'anyone' ? 'pro kohokoliv' : 'pro ' + _qCap(q.target_person);
+  const voice = q.status === 'asked_voice' ? ' · <em style="color:var(--accent2)">zeptal se hlasem</em>' : '';
+
+  const opts = ['anyone', ...Array.from(_qTargets).sort()].map(t =>
+    `<option value="${t}" ${t===q.target_person?'selected':''}>${t==='anyone'?'kdokoliv':_qCap(t)}</option>`
+  ).join('');
+
+  let body = '';
+  if (isPending) {
+    body = `
+      <textarea id="qa-${q.id}" placeholder="Vaše odpověď..."
+        style="width:100%;min-height:56px;margin-top:8px;padding:7px 10px;
+               background:var(--bg3);border:1px solid #444;border-radius:4px;
+               color:var(--fg);font-family:inherit;font-size:0.9rem;
+               resize:vertical;box-sizing:border-box"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="_qSubmit(${q.id})">Odeslat</button>
+        <button class="btn btn-danger" onclick="_qDismiss(${q.id})">Zrušit otázku</button>
+        <label style="font-size:0.82rem;color:var(--fg2)">Přesměrovat:
+          <select style="background:var(--bg3);border:1px solid #444;border-radius:4px;
+                         color:var(--fg);padding:4px 6px;margin-left:4px"
+            onchange="_qReassign(${q.id}, this.value)">${opts}</select>
+        </label>
+      </div>`;
+  } else if (q.status === 'answered') {
+    const via = q.answer_via === 'voice' ? ' (hlasem)' : '';
+    body = `
+      <div style="background:var(--bg3);border-radius:4px;padding:10px 12px;
+                  margin-top:8px;font-size:0.9rem">
+        <div style="font-size:0.75rem;color:var(--fg2);margin-bottom:4px;
+                    text-transform:uppercase;letter-spacing:0.5px">
+          Odpověděl${via}: ${_qCap(q.target_person)}</div>
+        ${esc(q.answer)}
+        ${q.hans_reaction ? `
+        <div style="margin-top:8px;font-style:italic;color:var(--accent2);
+                    border-left:3px solid var(--accent2);padding-left:8px;
+                    font-size:0.88rem">Hans: ${esc(q.hans_reaction)}</div>` : ''}
+      </div>`;
+  }
+
+  return `
+    <div style="background:var(--bg3);border-radius:6px;padding:12px 14px;
+                margin-bottom:10px">
+      <div style="font-size:0.78rem;color:var(--fg2);margin-bottom:4px">
+        <span style="color:var(--accent)">${esc(tgt)}</span> ·
+        před ${_qAge(q.ts_asked)}${voice} ·
+        ${_qSrc(q)}
+      </div>
+      <div style="font-size:1rem;line-height:1.4">${esc(q.question)}</div>
+      ${q.context ? `<div style="font-size:0.83rem;color:var(--fg2);
+                                 font-style:italic;margin-top:3px">${esc(q.context)}</div>` : ''}
+      ${body}
+    </div>`;
+}
+
+async function _qSubmit(qid) {
+  const ta = document.getElementById('qa-' + qid);
+  if (!ta || !ta.value.trim()) { if(ta) ta.focus(); return; }
+  ta.disabled = true;
+  try {
+    const r = await fetch(`/questions/api/${qid}/answer`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({answer: ta.value.trim(), via: 'dashboard'}),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (d.reaction) {
+      // Ukáže Hansovu reakci dočasně nad listem
+      const banner = document.createElement('div');
+      banner.style.cssText = 'background:var(--bg2);border-left:3px solid var(--accent2);' +
+        'padding:10px 14px;border-radius:4px;margin-bottom:12px;' +
+        'font-style:italic;color:var(--accent2);font-size:0.9rem';
+      banner.innerHTML = `<span style="font-size:0.75rem;color:var(--fg2);display:block;margin-bottom:3px">HANSOVA REAKCE</span>${esc(d.reaction)}`;
+      const list = document.getElementById('q-list');
+      list.prepend(banner);
+      setTimeout(() => banner.remove(), 8000);
+    }
+    loadQuestions();
+  } catch(e) { alert('Chyba: ' + e.message); ta.disabled = false; }
+}
+
+async function _qDismiss(qid) {
+  if (!confirm('Zrušit otázku? Hans se přestane ptát.')) return;
+  await fetch(`/questions/api/${qid}/dismiss`, {method: 'POST'});
+  loadQuestions();
+}
+
+async function _qReassign(qid, target) {
+  await fetch(`/questions/api/${qid}/reassign`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({target}),
+  });
+  loadQuestions();
+}
+
+// Badge refresh při inicializaci (i když záložka není aktivní)
+(async () => {
+  try {
+    const r = await fetch('/questions/api?status=pending&limit=1');
+    if (!r.ok) return;
+    const d = await r.json();
+    const cnt = (d.stats || {}).pending || 0;
+    const nb = document.getElementById('q-nav-badge');
+    if (nb && cnt > 0) { nb.textContent = cnt; nb.style.display = 'inline'; }
+  } catch(_) {}
+})();
+
+
+// CONFIG_CLEANUP_V1 — saveDefault/loadDefault odstraněny (mrtvá tlačítka v legacy
+// tabech). Backend endpointy /api/config/save_default + load_default zůstávají →
+// feature lze vrátit tlačítkem do schema toolbaru.
+
+</script>
+</body>
+</html>

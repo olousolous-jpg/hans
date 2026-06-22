@@ -1,0 +1,695 @@
+{
+  "evening_reflection": {
+    "model": "jobautomation/OpenEuroLLM-Czech:latest",
+    "_model_note": "Analytická extrakce postojů jede na base OpenEuroLLM (čistší než persona-finetune hans-czech). Chat zůstává hans-czech."
+  },
+  "debug": false,
+  "debug_verbose": false,
+  "hailo_server": {
+    "mode": "scrfd",
+    "_mode_note": "scrfd = face only, personface = face+person. Restart required.",
+    "personface_hef": "/usr/share/hailo-models/yolov5s_personface_h8l.hef",
+    "score_thresh": 0.35
+  },
+  "hailo": {
+    "detect_hef": "/usr/share/hailo-models/scrfd_2.5g_h8l.hef",
+    "recog_hef": "resources/arcface_mobilefacenet.hef",
+    "model_path": "/usr/share/hailo-models/scrfd_2.5g_h8l.hef",
+    "function_name": "scrfd_2_5g",
+    "batch_size": 1,
+    "force_writable": true,
+    "scrfd_score_thresh": 0.45,
+    "scrfd_nms_thresh": 0.45
+  },
+  "greeting": {
+    "system_prompt": "Tvoje jmeno je {name}. Vzdy odpovidas jako {name}. Jsi tichý anglický majordomus z devatenáctého století jmenem {name}. Vyjadřuješ se stručně, formálně a s důstojností. Nikdy nepoužíváš moderní výrazy. Nikdy nepoužíváš emoji, smajlíky ani žádné Unicode symboly. Píšeš pouze čistý text bez jakýchkoliv speciálních znaků. Mluvíš česky. Jsi mužského rodu. Při oslovení muže používej vokativ: Stando (ne Standa). Při oslovení ženy používej vokativ: Jano (ne Jana). Nikdy nepoužívej nominativ jako oslovení. Nikdy neopakuj jméno na konci věty.",
+    "user_prompt": "Pozdrav hosta jménem {name} jednou větou. Je {tod}. Jmeno použij pouze jednou na začátku. Pokud víš z deníku co jsi dělal když nebyl nikdo doma, zmíň to přirozeně v pozdravu. Příklad: Dobrý večer, Stando, v době vaší nepřítomnosti jsem přemýšlel o zajímavém filmu.",
+    "special_greetings": {
+      "jana": "Pozdrav Janu jednou větou. Je {tod}. Zmíň předpověď počasí na zítřek: {tomorrow} Jméno použij pouze jednou na začátku."
+    }
+  },
+  "recognition_tuning": {
+    "_comment": "Tune without touching code. Restart app after changes.",
+    "arcface_thresh": 0.42,
+    "margin": 0.12,
+    "min_norm": 0.25,
+    "ema_alpha": 0.4,
+    "ema_thresh": 0.25,
+    "ema_margin": 0.08,
+    "ema_headroom": 0.02,
+    "iou_match": 0.35,
+    "max_samples_per_person": 80,
+    "_max_samples_note": "Max vzorků na osobu. Příliš mnoho identických vzorků degraduje průměrný embedding. 30-50 různorodých vzorků je optimální.",
+    "min_sample_diversity": 0.1,
+    "_diversity_note": "Min kosínová vzdálenost mezi vzorky (0-1). 0.05 = odmítne vzorky které jsou z 95%+ stejné jako existující. Zvyš na 0.10 pro přísnější filtrování duplicit.",
+    "track_stale_s": 2,
+    "decision_after": 5,
+    "max_track_emb": 20,
+    "max_clusters": 6,
+    "cluster_thresh": 0.25,
+    "ema_decay_factor": 0.2,
+    "vote_thresh": 0.65,
+    "cluster_rescue_thresh": 0.65,
+    "cluster_rescue_margin": 0.12,
+    "_cluster_rescue_note": "CLUSTER_RESCUE_V1: cluster zachrani off-angle identitu kdyz arc slaby. rescue_thresh=min conf (sim), rescue_margin=min odstup nejblizsi vs 2. osoby (pojistka proti zamene). vote_thresh=brana ostatnich vetvi fuze."
+  },
+  "enrollment": {
+    "enrollment_frames": 30,
+    "poses": [
+      {
+        "name": "front",
+        "samples": 10
+      },
+      {
+        "name": "left",
+        "samples": 10
+      },
+      {
+        "name": "right",
+        "samples": 10
+      }
+    ]
+  },
+  "openwebui_chat": {
+    "enabled": true,
+    "base_url": "http://192.168.1.10:11434",
+    "model_name": "bge-m3:latest",
+    "greeting_mode": "once_per_session",
+    "greeting_enabled": true,
+    "popup_enabled": false,
+    "request_timeout": 120,
+    "popup_chat": {
+      "enabled": true,
+      "min_confidence": 0.55,
+      "window_cooldown": 60,
+      "max_windows": 2
+    },
+    "min_confidence": 0.3,
+    "history_max_messages": 10
+  },
+  "openwebui_direct": {
+    "base_url": "http://192.168.1.10:8080",
+    "username": "",
+    "password": "",
+    "model": "bge-m3:latest",
+    "greeting_mode": "once_per_session",
+    "min_confidence": 0.7,
+    "popup_enabled": false,
+    "enabled": true,
+    "api_token": "",
+    "synthesis_model": "hans-czech:latest"
+  },
+  "tts": {
+    "enabled": true,
+    "voice": "cs-CZ-AntoninNeural",
+    "volume": 100,
+    "max_length": 500,
+    "cache_enabled": true,
+    "alsa_device": "plughw:2,0",
+    "alsa_control": "robot-hat speaker"
+  },
+  "servo_tracking": {
+    "enable_tracking": true,
+    "pan_channel": "P0",
+    "tilt_channel": "P1",
+    "pan_min": -85.0,
+    "pan_max": 5.0,
+    "tilt_min": -40.3,
+    "tilt_max": 14.7,
+    "center_tolerance": 20,
+    "tracking_sensitivity": 1,
+    "smoothing_factor": 0.2,
+    "tracking_delay": 0.05,
+    "face_lost_timeout": 3,
+    "scanning_enabled": true,
+    "scanning_speed": 10,
+    "scanning_pan_min": -45,
+    "scanning_pan_max": 45,
+    "default_pan_offset": -5.0,
+    "default_tilt_offset": -2.5,
+    "invert_tilt": true,
+    "auto_calibrate": false,
+    "calibration_completed": true,
+    "calibrated_pan_min": -85.0,
+    "calibrated_pan_max": 5.0,
+    "calibrated_tilt_min": -40.3,
+    "calibrated_tilt_max": 14.7,
+    "max_step_degrees": 8,
+    "_max_step_note": "Max degrees per tracking update. Lower = smoother but slower. 8.0 recommended."
+  },
+  "eyes": {
+    "enabled": false,
+    "fps": 40,
+    "texture": "eye.png",
+    "blink_interval_min": 5,
+    "blink_interval_max": 10.1,
+    "look_delay": 0.35
+  },
+  "database": {
+    "faces_db_path": "data/known_faces.pkl",
+    "faces_db_path_personface": "data/known_faces_personface.pkl",
+    "faces_cluster_path": "data/known_faces_cluster.pkl",
+    "backup_on_save": true,
+    "max_backups": 5
+  },
+  "display": {
+    "window_name": "Face Recognition",
+    "headless": false,
+    "_headless_note": "true = disable video window, saves CPU at high resolution",
+    "menu_mode": true,
+    "_menu_mode_note": "HANS_MENU_V1: true = start s menu oknem, preview vypnuté (zapíná se tlačítkem/enrollem); false = legacy preview po startu"
+  },
+  "camera": {
+    "main_width": 1536,
+    "main_height": 864,
+    "lores_width": 1280,
+    "lores_height": 720,
+    "high_res_width": 1536,
+    "high_res_height": 864,
+    "framerate": 40,
+    "buffer_count": 1,
+    "rotation": 0
+  },
+  "features": {
+    "servo_tracking": true,
+    "dual_eye_display": true,
+    "tts_audio": true,
+    "voice_input": true,
+    "_note": "HW_CAPABILITIES_V1: optional HW. true=chci (pokud HW je); probe pri startu auto-vypne kdyz HW chybi. servo_tracking/dual_eye_display/tts_audio/voice_input gatovane lokalnim HW (SPI/I2C/audio/mic)."
+  },
+  "ui": {
+    "show_fps": true,
+    "show_landmarks": true,
+    "greeting_cooldown": 30,
+    "flash_duration": 0.3,
+    "enrollment_prompt_cooldown": 60,
+    "enable_debug_output": false
+  },
+  "recognition": {
+    "recognition_threshold": 0.55,
+    "strict_mode_threshold": 0.8,
+    "min_feature_similarity": 0.5,
+    "algorithm": "cosine_similarity_only",
+    "feature_extraction": "simplified",
+    "caching_enabled": true,
+    "auto_enrollment": false
+  },
+  "face_processing": {
+    "max_faces": 4,
+    "size_ratio_min": 0.001,
+    "quality_size_weight": 0.4,
+    "quality_centering_weight": 0.6,
+    "min_quality_threshold": 0.2
+  },
+  "detection_log": {
+    "path": "data/detection.log",
+    "log_every_n_frames": 10
+  },
+  "scheduler": {
+    "hailo_every_n_frames": 2,
+    "mesh_every_n_frames": 1
+  },
+  "display_controller": {
+    "lores_width": 800,
+    "lores_height": 600,
+    "detect_every": 3,
+    "enroll_countdown": 5,
+    "enroll_auto_interval": 2
+  },
+  "mediapipe": {},
+  "performance": {
+    "target_fps": 30,
+    "processing_sleep": 0.033,
+    "frame_drop_threshold": 5,
+    "memory_cleanup_interval": 100
+  },
+  "objects": {
+    "hef": "/usr/share/hailo-models/yolov8s_h8l.hef",
+    "score_thresh": 0.65
+  },
+  "object_detection": {
+    "min_confidence": 0.45,
+    "min_box_area": 0.003
+  },
+  "object_remapping": {
+    "bench": "zidle",
+    "cat": "hrnek",
+    "chair": "kreslo",
+    "tv": "TV",
+    "bird": "zmackane triko",
+    "cake": "teddy_bear",
+    "dining table": "gauc",
+    "scissors": "nuzky u monitoru",
+    "teddy bear": null
+  },
+  "hq_zoom": {
+    "_comment": "HQ zoom crop — uses main stream when box is small (far away).",
+    "enabled": true,
+    "trigger_area": 0.1,
+    "padding": 0.3,
+    "zoom_faces": true,
+    "zoom_objects": true,
+    "servo_settle_ms": 150,
+    "pip_size": 200,
+    "pip_timeout": 3,
+    "pip_refresh_interval": 2,
+    "af_obj_settle_ms": 500
+  },
+  "unknown_enrollment": {
+    "enabled": false,
+    "target_count": 60,
+    "_target_note": "Počet snímků před otevřením enrollment okna.",
+    "min_face_area": 0.005,
+    "_area_note": "Min plocha obličeje (0-1). Ignoruje příliš vzdálené tváře.",
+    "cooldown_s": 0,
+    "_cooldown_note": "Sekundy před dalším enrollment oknem po předchozím.",
+    "capture_interval_s": 0.5,
+    "_interval_note": "Seconds between captures. 0.5 = one shot per half second.",
+    "open_after": 3
+  },
+  "surroundings": {
+    "db_path": "data/surroundings.db"
+  },
+  "conversations": {
+    "dir": "data/conversations",
+    "max_turns": 50
+  },
+  "known_persons": {},
+  "fisheye": {
+    "enabled": false,
+    "fov_degrees": 140,
+    "_fov_note": "Diagonal FOV of your lens in degrees. Pi Camera v2 wide = ~160, standard = ~62.",
+    "balance": 0.5,
+    "_balance_note": "0.0 = crop black borders out, 1.0 = keep full frame with black corners.",
+    "apply_to_lores": false,
+    "_lores_note": "Undistort the 640x480 inference frame — fixes object bounding box positions.",
+    "apply_to_main": false,
+    "_main_note": "Undistort the 1280x960 display frame — expensive, usually not needed."
+  },
+  "gesture": {
+    "enabled": false,
+    "hold_frames": 1,
+    "_hold_note": "Frames gesture must be held before firing. 8 ≈ 0.5s at 15fps.",
+    "cooldown_s": 3,
+    "_cooldown_note": "Seconds before same gesture fires again.",
+    "min_confidence": 0.5,
+    "show_landmarks": true,
+    "hand_landmark_hef": "resources/hand_landmark_lite.hef",
+    "presence_threshold": 0.3,
+    "_presence_note": "Min hand presence score 0-1. Lower = detects further away.",
+    "palm_detection_hef": "resources/palm_detection_lite.hef",
+    "palm_score_threshold": 0.2,
+    "palm_padding": 1.5,
+    "hold_seconds": 0,
+    "open_hand_hold_s": 0,
+    "thumbs_up_hold_s": 1.5,
+    "fist_hold_s": 0.5
+  },
+  "kodi": {
+    "enabled": true,
+    "host": "192.168.1.20",
+    "_host_note": "Kodi hostname or IP address.",
+    "port": 80,
+    "user": "osmc",
+    "password": "",
+    "monitor_db": "data/kodi_monitor.db",
+    "monitor_interval": 30
+  },
+  "hand_landmark": {
+    "presence_threshold": 0.3
+  },
+  "headless_enrollment": {
+    "vision_model": "qwen2.5vl:7b",
+    "_vision_model_note": "Any Ollama model with vision support: llava, bakllava, llava-phi3, moondream …",
+    "describe_prompt": "Complete this sentence about the person in the image, replace the blanks with the correct values: '[man/woman], [hair color] hair, [glasses/no glasses].'",
+    "_describe_prompt_note": "Prompt sent to the vision model. Czech by default to match TTS voice.",
+    "window_timeout": 0,
+    "_window_timeout_note": "Seconds before the popup auto-skips. 0 = never.",
+    "simulate": false,
+    "_simulate_note": "true = force headless handler even when video output is on (for testing)",
+    "translate_prompt": "Přelož do češtiny jednou větou začínající 'Vidím', bez tabulek. Příklad: 'Vidím muže s tmavými vlasy bez brýlí.' Popis: {description}"
+  },
+  "camera_model": "v3_wide",
+  "_camera_model_note": "v2 = Camera Module v2 (fixed focus, FOV ~62 deg). v3_wide = Camera Module v3 Wide NoIR (continuous AF, FOV ~120 deg). Restart required after change.",
+  "camera_presets": {
+    "v2": {
+      "main_width": 1296,
+      "main_height": 972,
+      "lores_width": 1280,
+      "lores_height": 960
+    },
+    "v3_wide": {
+      "main_width": 1536,
+      "main_height": 864,
+      "lores_width": 1280,
+      "lores_height": 720
+    }
+  },
+  "_camera_presets_note": "Per-model resolution defaults applied by the GUI when camera_model changes. You can override individually in the camera block.",
+  "autofocus_mode": "triggered",
+  "_autofocus_mode_note": "v3 Wide autofocus behaviour. 'triggered' = focus once when face appears then lock (recommended, no hunting). 'continuous' = refocus every frame (may cause blur during recognition).",
+  "autofocus_lens_position": 0.67,
+  "_autofocus_lens_note": "Used when autofocus_mode=manual. Diopters = 1/distance_metres. 0.0=infinity  1.0=1m  2.0=0.5m  3.0=0.33m",
+  "hdr_mode": 3,
+  "_hdr_mode_note": "HdrMode pro Camera Module v3. 0=Off, 1=MultiExposureUnmerged, 2=MultiExposure(halvFPS), 3=SingleExposure(doporuceno), 4=Night. Pouze pro camera_model=v3_wide.",
+  "voice": {
+    "enabled": true,
+    "stt_url": "http://192.168.1.10:8080/api/v1/audio/transcriptions",
+    "stt_token": "",
+    "sample_rate": 16000,
+    "vad_aggressiveness": 0,
+    "_vad_note": "0=permissive 3=aggressive. Zvyš na 3 pokud zachytává šum.",
+    "min_speech_seconds": 0.3,
+    "max_speech_seconds": 15,
+    "silence_seconds": 1.2,
+    "_silence_note": "Sekundy ticha před odesláním. 1.2 = přirozené pauzy.",
+    "default_speaker": "",
+    "capture_rate": 44100,
+    "alsa_device": "plughw:3,0",
+    "wake_chunk_seconds": 1.5,
+    "wake_words": [
+      "hej",
+      "robot",
+      "robote",
+      "roberto",
+      "robuke",
+      "robuké",
+      "robuk"
+    ],
+    "min_recording_seconds": 1.5,
+    "wake_enabled": true,
+    "wake_model": "hey_jarvis_v0.1",
+    "wake_threshold": 0.3,
+    "_wake_note": "WAKE_WORD_OWW_V1: hands-free aktivace pres openWakeWord (lokalni). wake_model = nazev .onnx v openwakeword resources (hey_jarvis_v0.1/hey_marvin_v0.1/alexa_v0.1) nebo absolutni cesta k custom modelu. wake_words vyse jsou OBSOLETNI (oww pouziva trenovany model, ne Whisper-matching). threshold 0.5 start; zvys pri false-trigger.",
+    "transcript_popup": true
+  },
+  "face_preprocess": {
+    "enabled": true,
+    "_note": "Preprocessing pro lepsi detekci a rozpoznani v horsim osvetleni.",
+    "clahe_lores": true,
+    "_clahe_note": "CLAHE na lores frame pred SCRFD. Aktivuje se jen pri nizkem jasu.",
+    "clahe_clip": 1.5,
+    "clahe_tile": 16,
+    "lores_threshold": 160,
+    "_lores_thresh_note": "CLAHE se aktivuje jen kdyz prumerny jas < tato hodnota (0-255).",
+    "gamma_crop": true,
+    "_gamma_note": "Gamma korekce na 112x112 crop pred ArcFace. Zachova textury kuze.",
+    "gamma_auto": true,
+    "gamma_fixed": 1.2,
+    "gamma_threshold": 100,
+    "_gamma_thresh_note": "Gamma se aktivuje jen kdyz prumerny jas cropu < tato hodnota.",
+    "clahe_crop": true,
+    "clahe_crop_clip": 1.5
+  },
+  "autofocus": {
+    "retrigger_s": 4,
+    "_retrigger_note": "Interval re-triggeru AF v sekundách. 5 = zaostří každých 5s i bez pohybu.",
+    "size_change_thresh": 0.15,
+    "_size_note": "Relativní změna plochy bbox pro re-trigger. 0.3 = 30% změna (osoba se přiblížila/oddálila)."
+  },
+  "hans_idle": {
+    "check_interval_s": 180,
+    "diary_db": "data/hans_diary.db",
+    "force_teddy_visible": true,
+    "idle_timeout_min": 10,
+    "dialog_interval_min": 20,
+    "dialog_only_when_idle": true,
+    "quantum_kolac": false
+  },
+  "proactive": {
+    "enabled": true,
+    "cooldown_h": 3,
+    "max_per_day": 2,
+    "settle_s": 300
+  },
+  "routine_patterns": {
+    "window_days": 30,
+    "min_days": 7,
+    "typical_min_score": 0.35
+  },
+  "importance": {
+    "nightly_cap": 800
+  },
+  "threads": {
+    "window_hours": 26,
+    "max_open_per_person": 6
+  },
+  "person_interests": {
+    "window_hours": 26,
+    "max_per_person": 8,
+    "probe_questions": true
+  },
+  "gemini": {
+    "api_key": "",
+    "model": "gemini-2.0-flash"
+  },
+  "openrouter": {
+    "api_key": "",
+    "model": "openai/gpt-oss-20b:free",
+    "enabled": true
+  },
+  "weather": {
+    "lat": 50.04,
+    "lon": 15.78
+  },
+  "hans_dialog": {
+    "hans_personality": "Formální anglický majordomus z 19. století. Mluví česky, stručně a důstojně.",
+    "kolac_personality": "Plyšový medvídek na poličce, který si hraje na detektiva — ale ví, že je jen plyšák. Pozoruje místnost s hravou ironií, občas si dělá legraci z toho, že nemá nohy ani lupu. Mluví krátce, věcně, někdy škodolibě. Zájmy: stopy a indicie všedního dne, filmy, geologie sopek. Nepoužívá policejní fráze typu 'zahajuji vyšetřování' — radši řekne 'tady je něco zvláštního' nebo 'to mi nesedí'.",
+    "dialog_language": "Odpovídej POUZE česky. Žádná angličtina.",
+    "dialog_rules": "Každá replika reaguje na předchozí větu. Max 2 věty na repliku. Dokoncuj vety. Začni {name}. Pouze dialog.",
+    "hans_interests": "Zajímá ho správná etiketa, anglická literatura, péče o domácnost a přesný chod domácnosti. Zajima se take o filmy a geologii sopek, hlavne tech nejvetsich.",
+    "kolac_interests": "Zajímají ho detektivní případy, stopy a indicie, logické hádanky a záhady v domácnosti.",
+    "ollama_model": "hans-czech:latest",
+    "topic_min_turns": 3,
+    "topic_max_turns": 6,
+    "recent_replies_max": 40,
+    "num_ctx": 16384,
+    "toaster_mode": false
+  },
+  "room_observer": {
+    "enabled": true,
+    "interval_hours": 2,
+    "model": "qwen2.5vl:7b",
+    "prompt": "Describe this room briefly in English. Focus on: furniture, lighting, objects, atmosphere. Max 2 sentences.",
+    "translate": true
+  },
+  "hans_avatar": {
+    "descriptor_model": "qwen2.5:7b",
+    "temperature": 0.2,
+    "llm_timeout": 120,
+    "_note": "Vizualni podoba. descriptor_model = text popis; image_model = SDXL checkpoint pro render (prepinatelny pro porovnani stylu).",
+    "comfyui_url": "http://192.168.1.10:8188",
+    "image_model": "sd_xl_base_1.0.safetensors",
+    "width": 768,
+    "height": 768,
+    "steps": 28,
+    "cfg": 6.0,
+    "seed_value": 42,
+    "display_enabled": true,
+    "display_size": 200,
+    "idle_anim_s": 4,
+    "variety_s": 300,
+    "_display_note": "display_enabled=true zapne tvar na obrazovce (levy horni roh) dle nalady. Vyzaduje restart Hanse + byt u obrazovky na overeni.",
+    "seed": {
+      "role": "english butler",
+      "attire": "black tailcoat, white gloves, high collar",
+      "age_look": "late 50s",
+      "build": "tall, slim",
+      "demeanor": "formal and reserved",
+      "setting": "wood-panelled hall",
+      "palette": "black, white, dark wood",
+      "identity_anchor": "same man, consistent face, grey hair, kind eyes"
+    },
+    "overrides": {},
+    "_overrides_note": "Pole co VZDY prebiji LLM i evoluci. Napr. zmena vzhledu natrvalo: {\"attire\": \"black tailcoat, high collar, no gloves\"}",
+    "extra_locked_fields": [],
+    "_locked_note": "Dalsi pole co LLM nesmi menit (nad ramec build + identity_anchor)."
+  },
+  "hans_art": {
+    "enabled": true,
+    "_note": "HANS_ART_V1: Hans v noci namaluje 1 obraz k docetene knize (SDXL pres ComfyUI). ComfyUI url + image_model se dedi z hans_avatar kdyz nejsou zde. Rucni test: python3 -m scripts.hans_art [nazev knihy].",
+    "prompt_model": "qwen2.5:7b",
+    "image_model": "",
+    "width": 1024,
+    "height": 768,
+    "steps": 28,
+    "cfg": 6.5,
+    "llm_timeout": 90,
+    "render_timeout": 600,
+    "_render_timeout_note": "ComfyUI studeny start (RX6800/ROCm load SDXL checkpointu) + 28 kroku muze trvat >5min; 600s pokryje studeny render. Kazdy art render je studeny (comfy_free po renderu uvolni checkpoint kvuli hans-czech).",
+    "vision_model": "qwen2.5vl:7b",
+    "vision_timeout": 120,
+    "verdict_model": "hans-czech:latest",
+    "verdict_timeout": 120,
+    "_verdict_note": "HANS_ART_VERDICT_V1 + HANS_ART_LESSON_V1: po renderu llava (vision_model) popise SKUTECNY obraz, hans-czech (verdict_model) napise zda se mu povedl + reaguje na minule verdikty. Z verdiktu+vize odvodi anglicke PONAUCENI (art_lesson v deniku) ktere PRISTE ovlivni SDXL scenu (qwen) i negativni prompt -> uci se malovat lip.",
+    "lesson_timeout": 90,
+    "dreams": {
+      "enabled": true,
+      "max_age_days": 4,
+      "_note": "HANS_DREAMS_PER_DREAM_V1: Hans maluje KAZDY novy sen (mimo 2denni creative throttle). Idempotence dle dream_ts = 1x/sen; min_interval_hours = kratky odstup proti duplicitnim snum z tehoz noci.",
+      "min_interval_hours": 8
+    },
+    "day_painting": {
+      "enabled": true,
+      "min_interval_days": 4,
+      "_note": "HANS_DAY_PAINTING_V1: 3. forma sebrizene tvorby - Hans namaluje symbolickou scenu vystihujici svuj DEN a PREVAZUJICI naladu dne (vazena dobou, ne okamzita). Throttle 4 dny (rarer nez sny)."
+    }
+  },
+  "unknown_tracker": {
+    "enabled": false,
+    "target_count": 20,
+    "match_thresh": 0.45,
+    "min_face_area": 0.04,
+    "capture_interval_s": 2,
+    "cooldown_s": 120,
+    "max_unknowns": 10,
+    "open_after": 10,
+    "db_path": "data/unknown_tracker.db",
+    "stale_timeout_min": 30,
+    "gate_min_size_px": 40,
+    "gate_min_blur_var": 10,
+    "gate_min_emb_norm": 0.1
+  },
+  "hans_questions": {
+    "expires_days": 14,
+    "max_pending_per_person": 3,
+    "max_new_per_day_per_source": 1,
+    "min_age_before_voice_h": 1,
+    "voice_ask_probability": 0.3,
+    "greeting_cooldown_h": 4
+  },
+  "models": {
+    "dialog": "hans-czech:latest",
+    "utility": "hans-czech:latest",
+    "voice": "hans-czech:latest"
+  },
+  "hans_routine": {
+    "enabled": true,
+    "reflection_quiet_min": 15,
+    "wol_presence_cooldown_min": 15
+  },
+  "kolac_cases": {
+    "enabled": true,
+    "min_days": 3,
+    "max_days": 5,
+    "max_active_cases": 1
+  },
+  "relationships": {
+    "enabled": true,
+    "sighting_throttle_s": 30,
+    "reflection_interval_days": 7,
+    "rag_collection": "hans_identita"
+  },
+  "hans_library": {
+    "enabled": true,
+    "chunk_size": 3000,
+    "custom_books": [],
+    "embed_model": "bge-m3:latest",
+    "user_book_weight": 0.7,
+    "_semantic_note": "HANS_LIBRARY_SEMANTIC_V1: vyber knihy = bge-m3 kosinova podobnost (titul+tagy) vs Hansovy zajmy (fallback doslovny preryv tagu). user_book_weight = dampener nahranych knih (0.7 = nizsi priorita nez katalog). Nahrane ebooky auto-tagovany qwenem pri importu (EBOOK_AUTOTAG_V1).",
+    "wishlist_weight": 0.7
+  },
+  "knowledge": {
+    "base_url": "http://192.168.1.10:8080",
+    "_collections_note": "Nech prázdné — vyplní tools/knowledge_setup.py (vytvoří kolekce v OpenWebUI a doplní jejich ID sem + nastaví enabled=true).",
+    "collections": {},
+    "enabled": false
+  },
+  "async_recognizer": {
+    "min_face_area": 0.005
+  },
+  "sleep_start_hour": 23,
+  "sleep_end_hour": 9,
+  "wol_pc_enabled": true,
+  "wol_pc_mac": "",
+  "wol_pc_ip": "192.168.1.10",
+  "wol_minutes_before_wakeup": 30,
+  "morning_hour": 6,
+  "afternoon_hour": 12,
+  "evening_hour": 17,
+  "night_hour": 22,
+  "night_reduce_activity": true,
+  "dreams_enabled": true,
+  "night_summary": true,
+  "persona": {
+    "name": "Hans",
+    "core": "Tvoje jmeno je {name}. Vzdy odpovidas jako {name}. Jsi tichý anglický majordomus z devatenáctého století jmenem {name}. Vyjadřuješ se stručně, formálně a s důstojností.",
+    "language_rules": "Nikdy nepoužíváš moderní výrazy. Nikdy nepoužíváš emoji, smajlíky ani žádné Unicode symboly. Píšeš pouze čistý text bez jakýchkoliv speciálních znaků. Mluvíš česky. Jsi mužského rodu.",
+    "interests_seed": "Zajímá ho správná etiketa, anglická literatura, péče o domácnost a přesný chod domácnosti. Zajima se take o filmy a geologii sopek, hlavne tech nejvetsich.",
+    "address_rules": "Při oslovení muže používej vokativ: Stando (ne Standa). Při oslovení ženy používej vokativ: Jano (ne Jana). Nikdy nepoužívej nominativ jako oslovení. Nikdy neopakuj jméno na konci věty."
+  },
+  "attention_display": {
+    "cycle_s": 10
+  },
+  "film_suggest": {
+    "enabled": true,
+    "idle_hours": 1.0,
+    "present_recency_s": 600,
+    "cooldown_h": 3,
+    "max_per_day": 3,
+    "countdown_s": 30,
+    "accept_window_min": 5
+  },
+  "hans_creations": {
+    "enabled": true,
+    "impulse_interval_days": 2,
+    "musing_timeout": 120,
+    "_note": "HANS_CREATIONS_V1 (Faze 2): Hans sam voli tvurci akt (namalovat sen / napsat uvahu) ve volne nocni chvili. impulse_interval_days = tvori zridka, variace stridа formy."
+  },
+  "morning_health": {
+    "enabled": true
+  },
+  "book_mentions": {
+    "enabled": true,
+    "max_new_per_night": 3,
+    "lang_pref": [
+      "cs",
+      "en",
+      "de"
+    ]
+  },
+  "person_name_forms": {
+    "alice": [
+      "alice",
+      "alici",
+      "alicí"
+    ],
+    "bob": [
+      "bob",
+      "bobovi",
+      "boba"
+    ]
+  },
+  "relationship_seed": {
+    "alice": {
+      "display_name": "Alice",
+      "role": "head of household",
+      "family_links": {
+        "spouse": "bob",
+        "children": [
+          "carol"
+        ]
+      }
+    },
+    "bob": {
+      "display_name": "Bob",
+      "role": "head of household",
+      "family_links": {
+        "spouse": "alice",
+        "children": [
+          "carol"
+        ]
+      }
+    },
+    "carol": {
+      "display_name": "Carol",
+      "role": "child",
+      "family_links": {
+        "parents": [
+          "alice",
+          "bob"
+        ]
+      }
+    }
+  }
+}

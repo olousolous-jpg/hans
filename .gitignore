@@ -1,0 +1,54 @@
+# ── HANS — co se NIKDY nesmí dostat do gitu (soukromí + tajemství) ──
+# Reálná konfigurace s hesly/klíči/IP (sdílí se jen config.example.json)
+config.json
+config.json.*
+*.bak
+*.bak*
+
+# Logy (root i jinde)
+*.log
+
+# Veškerá runtime/soukromá data: deník, biometrie tváří, logy, avataři,
+# nahrané (autorskoprávní) ebooky, cache, snapshoty.
+data/
+# výjimka: zdroj Kodi addonu je sdílitelný kód
+!data/kodi_addon/
+!data/kodi_addon/**
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+
+# Archiv patch skriptů + snapshoty (historie vývoje, nepatří do repa)
+archive/
+.refactor_snapshots/
+
+# Lokální tooling (Claude Code) — settings.local.json apod.
+.claude/
+
+# Velké HW modely (HEF pro Hailo) — distribuují se mimo git
+resources/*.hef
+
+# Vývojový handoff — plný soukromých dat (jména/IP/historie domácnosti).
+# NEpatří na veřejný GitHub (drž lokálně / privátně).
+CLAUDE.md
+
+# Editor/OS
+.DS_Store
+*.swp
+*~
+
+# Dev / HW bring-up skripty (ne runtime Hanse — drženy lokálně)
+/test_coexist.py
+/test_eye_diag.py
+/test_eye_displays.py
+/test_orient_color.py
+/kolac 2.jpg
+tools/eye_calibr.py
+tools/eye_test.py
+tools/db_vypis.py
+tools/patch.py
+tools/test_verdict_parse.py
