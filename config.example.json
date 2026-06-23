@@ -691,5 +691,11 @@
         ]
       }
     }
+  },
+  "place": {
+    "enabled": true,
+    "vision_model": "qwen2.5vl:7b",
+    "vision_timeout": 120,
+    "photo_dir": "data/room_photos"
   }
 }

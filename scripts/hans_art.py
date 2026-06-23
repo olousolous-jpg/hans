@@ -29,6 +29,7 @@ from scripts.avatar_render import (
     _comfy_url, _comfy_workflow, _comfy_submit, _comfy_wait,
     _first_image, _comfy_fetch_image,
     _ollama_loaded, _ollama_unload, _comfy_free, _ollama_warm,
+    _comfy_upload_image, _comfy_workflow_img2img,
 )
 
 _log = logging.getLogger("hans_art")
@@ -166,6 +167,20 @@ def _log_artwork(db_path: str, title: str, caption: str, rel_path: str, prompt: 
 
 
 # ── Prompt + caption ────────────────────────────────────────────────────────
+_CJK_RE = re.compile(
+    r"[　-〿぀-ヿ㐀-䶿一-鿿"
+    r"豈-﫿＀-￯]+")
+
+
+def _strip_cjk(text: str) -> str:
+    """Odstraň CJK znaky (qwen2.5 občas ujede do čínštiny/japonštiny) a sjednoť
+    mezery/interpunkci, ať zbyde čistý anglický SDXL prompt."""
+    t = _CJK_RE.sub(" ", text or "")
+    t = re.sub(r"\s*[-–—,]\s*(?=[,\.])", " ", t)   # osamělé spojky po stripu
+    t = re.sub(r"\s+", " ", t).strip(" ,-–—")
+    return t
+
+
 def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
                   system: str = None, source_intro: str = None) -> str:
     """LLM (levný, keep_alive=0) → anglický SDXL scene prompt. Fallback šablona.
@@ -187,7 +202,7 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
         user += ("LEARNED GUIDANCE from your past paintings (respect these — they "
                  "make the next piece better):\n- " + "\n- ".join(lessons) + "\n\n")
         _log.info("art: scene prompt zohledňuje %d ponaučení", len(lessons))
-    user += "Write the SDXL prompt."
+    user += "Write the SDXL prompt. Reply in ENGLISH ONLY — no Chinese, Japanese or other non-English words."
     try:
         raw = ollama_generate(
             model, user, system=(system or _PROMPT_SYSTEM), config=config,
@@ -198,7 +213,13 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     if not raw or not raw.strip():
         return fallback
     p = raw.strip().strip('"').replace("\n", " ")
-    return p[:600]
+    # qwen2.5 občas ujede do CJK (čínština/japonština) → SDXL to nepochopí a
+    # stočí styl jinam. Odstraň CJK; když po očištění zbyde málo, použij fallback.
+    p2 = _strip_cjk(p)
+    if len(p2) < 0.6 * len(p):
+        _log.warning("art: scene prompt ujel do CJK (%d→%d zn) — fallback", len(p), len(p2))
+        return fallback
+    return p2[:600]
 
 
 def _caption(reflection: str, title: str) -> str:
@@ -589,6 +610,260 @@ def render_now(config: dict, diary_db_path: str, title: str = "") -> Optional[tu
     return rel_path, caption
 
 
+# ── HANS_PLACE_PAINT_V1 — Hans namaluje, jak si představuje svůj domov ───────
+# Věrný režim: JEDNA realistická scéna OBÝVÁKU (kde Hans je) z konkrétních popisů
+# fotek — ne celý byt (jeden obraz = jedna scéna), ne abstraktní shrnutí, fotostyl.
+_HOME_SCENE_SYSTEM = (
+    "You turn detailed descriptions of someone's real LIVING ROOM (from photos) "
+    "into ONE concise English prompt for an SDXL image model. Output ONLY the "
+    "prompt (no preamble, no quotes). Compose ONE coherent, REALISTIC wide interior "
+    "view of the MAIN LIVING ROOM from the person's own vantage point. If an explicit "
+    "LEFT / RIGHT / BACK layout is given, FOLLOW IT PRECISELY as the camera viewpoint "
+    "(place each item on the correct side). FAITHFULLY reproduce the SPECIFIC "
+    "furniture, COLORS and layout described — exact furniture colors, the wall color, "
+    "the windows with their light, and the described furniture and arrangement. Do "
+    "NOT invent extra rooms or a different style; do NOT depict adjacent rooms — "
+    "only this one main living room. Realistic, photographic, true to the "
+    "description. NO people, NO text, letters or words. End with: realistic interior "
+    "photograph, wide angle, natural daylight, true to life, detailed, sharp focus."
+)
+
+
+def _home_source(db_path: str) -> str:
+    """Zdrojový text pro CHAT/prozaické použití: preferuj syntetizovaný 'home_model',
+    fallback = spojené pohledy z fotek + fakta. '' když nic."""
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT content FROM place_facts WHERE category='home_model' "
+            "ORDER BY updated_ts DESC LIMIT 1").fetchone()
+        if row and (row["content"] or "").strip():
+            conn.close()
+            return row["content"].strip()
+        rows = conn.execute(
+            "SELECT category, content FROM place_facts "
+            "WHERE category != 'home_model' ORDER BY category, id").fetchall()
+        conn.close()
+        parts = [r["content"].strip() for r in rows if (r["content"] or "").strip()]
+        return "\n".join(parts)
+    except Exception as e:
+        _log.warning("art: _home_source selhal: %s", e)
+        return ""
+
+
+def _home_paint_source(db_path: str) -> str:
+    """Zdroj pro VĚRNÝ render. PRIORITA = autoritativní fakta od uživatele
+    (room/layout/window/door/neighbor/note — přesné rozložení a barvy); fotky
+    (mental_map) doplní vizuální detail. Fallback home_model."""
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        urows = conn.execute(
+            "SELECT content FROM place_facts WHERE category IN "
+            "('room','layout','window','door','neighbor','note') ORDER BY category, id"
+        ).fetchall()
+        mrows = conn.execute(
+            "SELECT content FROM place_facts WHERE category='mental_map' ORDER BY id"
+        ).fetchall()
+        conn.close()
+        user = [(r["content"] or "").strip() for r in urows if (r["content"] or "").strip()]
+        views = [(r["content"] or "").strip() for r in mrows if (r["content"] or "").strip()]
+        parts = []
+        if user:
+            parts.append("AUTHORITATIVE layout of my living room, from my vantage "
+                         "point — follow this precisely (Czech):\n- " + "\n- ".join(user))
+        if views:
+            parts.append("Extra visual detail from photos (colors, objects):\n- "
+                         + "\n- ".join(views))
+        if parts:
+            return "\n\n".join(parts)
+    except Exception as e:
+        _log.warning("art: _home_paint_source selhal: %s", e)
+    return _home_source(db_path)
+
+
+def paint_home(config: dict, diary_db_path: str) -> Optional[tuple]:
+    """Hans namaluje svůj obývák VĚRNĚ podle fotek (konkrétní popisy z mental_map,
+    jedna realistická scéna). Loguje do galerie jako 'home'.
+    Vrací (rel_path, caption) nebo None. Nikdy nehází."""
+    text = _home_paint_source(diary_db_path)
+    if not text:
+        _log.warning("art: žádný model domova (place_facts prázdné) — skip")
+        return None
+    title = "Můj domov"
+    scene_intro = "%s\n\n" % text
+    res = _render_image(config, title, text, diary_db_path,
+                        scene_system=_HOME_SCENE_SYSTEM, scene_intro=scene_intro)
+    if not res:
+        _log.warning("art: domov se nevyrenderoval — retry příště")
+        return None
+    rel_path, prompt, vision_desc = res
+    caption = _evaluate_artwork(config, diary_db_path, title, text, vision_desc,
+                                source_label="svým domovem, jak si ho představuje")
+    _derive_art_lesson(config, diary_db_path, title, vision_desc, caption)
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        db.execute(
+            "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
+            (time.time(), "artwork", title, caption,
+             json.dumps({"path": rel_path, "prompt": prompt, "source": "home",
+                         "painted_ts": time.time()}, ensure_ascii=False)))
+        db.commit()
+        db.close()
+    except Exception as e:
+        _log.warning("art: log home artwork failed: %s", e)
+    _log.info("art: Hans namaloval svůj domov → %s", rel_path)
+    return rel_path, caption
+
+
+def render_home_now(config: dict, diary_db_path: str) -> Optional[tuple]:
+    """Tenký veřejný wrapper pro chat (/misto obraz) — IMAGINOVANÝ z textu."""
+    return paint_home(config, diary_db_path)
+
+
+# ── img2img: přemaluj REÁLNOU fotku Hansova pohledu do uměleckého stylu ──────
+# Nejvěrnější varianta — kompozice/rozložení zůstane z fotky, SDXL jen přidá styl.
+_HOME_STYLE_PROMPT = (
+    "a cozy living room interior, the same scene and layout, warm artistic oil "
+    "painting, painterly brushwork, soft natural daylight, warm inviting "
+    "atmosphere, rich texture, fine art, masterful"
+)
+_PHOTO_EXT = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def _pick_home_photo(config: dict) -> str:
+    """Vyber reprezentativní fotku obýváku z drop-folderu — preferuj 'hansuv pohled'
+    (široký záběr z Hansova místa), jinak první."""
+    pd = (config.get("place", {}) or {}).get("photo_dir") or os.path.join("data", "room_photos")
+    if not os.path.isdir(pd):
+        return ""
+    files = [f for f in sorted(os.listdir(pd)) if f.lower().endswith(_PHOTO_EXT)]
+    for key in ("hansuv pohled", "pohled"):
+        for f in files:
+            if key in f.lower():
+                return os.path.join(pd, f)
+    return os.path.join(pd, files[0]) if files else ""
+
+
+def _resize_to_temp(path: str, max_side: int = 1024) -> Optional[str]:
+    """Zmenši fotku na ~max_side (SDXL nativní) a ulož do /tmp PNG pro upload."""
+    try:
+        import cv2
+        img = cv2.imread(path)
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        s = max_side / float(max(h, w))
+        if s < 1.0:
+            img = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+        out = os.path.join("/tmp", "hans_home_%d.png" % (int(time.time())))
+        cv2.imwrite(out, img)
+        return out
+    except Exception as e:
+        _log.warning("art: resize fotky selhal: %s", e)
+        return None
+
+
+def paint_home_from_photo(config: dict, diary_db_path: str,
+                          photo_path: str = "", denoise: float = None) -> Optional[tuple]:
+    """Přemaluj REÁLNOU fotku Hansova pohledu na pokoj do uměleckého stylu (img2img,
+    nízký denoise → kompozice zůstane z fotky). Nejvěrnější varianta. Loguje do
+    galerie jako 'home_photo'. Vrací (rel_path, caption) nebo None. Nikdy nehází."""
+    ckpt = _ckpt(config)
+    if not ckpt:
+        _log.warning("art: image_model nenastaven — skip")
+        return None
+    base = _comfy_url(config)
+    try:
+        urllib.request.urlopen(f"{base}/system_stats", timeout=10).read()
+    except Exception as e:
+        _log.warning("art: ComfyUI nedostupný (%s) — odloženo", e)
+        return None
+    photo = photo_path or _pick_home_photo(config)
+    if not photo or not os.path.exists(photo):
+        _log.warning("art: žádná fotka pokoje v drop-folderu — skip")
+        return None
+    tmp = _resize_to_temp(photo)
+    if not tmp:
+        return None
+    img_name = _comfy_upload_image(base, tmp)
+    try:
+        os.remove(tmp)
+    except Exception:
+        pass
+    if not img_name:
+        _log.warning("art: upload fotky do ComfyUI selhal")
+        return None
+
+    acfg = _acfg(config)
+    pcfg = (config.get("place", {}) or {}).get("paint", {}) or {}
+    dn = float(denoise if denoise is not None else pcfg.get("denoise", 0.5))
+    steps = int(acfg.get("steps", 28)); cfg_s = float(acfg.get("cfg", 6.5))
+    seed = uuid.uuid4().int % (2**31)
+    client_id = uuid.uuid4().hex
+    os.makedirs(ART_DIR, exist_ok=True)
+    fname = "%d_muj_domov_foto.png" % int(time.time())
+    dest = os.path.join(ART_DIR, fname)
+
+    loaded = _ollama_loaded(config)
+    _ollama_unload(config, loaded)
+    rtimeout = int(acfg.get("render_timeout", 600))
+    ok = False
+    vision_desc = ""
+    try:
+        wf = _comfy_workflow_img2img(ckpt, _HOME_STYLE_PROMPT, seed, img_name,
+                                     dn, steps, cfg_s)
+        _log.info("art: home img2img start (denoise %.2f, %d steps) z %s",
+                  dn, steps, os.path.basename(photo))
+        pid = _comfy_submit(base, wf, client_id)
+        if pid:
+            hist = _comfy_wait(base, pid, timeout=rtimeout)
+            img = _first_image(hist) if hist else None
+            if img and _comfy_fetch_image(base, img, dest):
+                ok = True
+            elif not hist:
+                _log.warning("art: home img2img vypršel (timeout %ds)", rtimeout)
+            else:
+                _log.warning("art: home img2img — bez obrázku")
+        else:
+            _log.warning("art: home img2img submit selhal")
+    except Exception as e:
+        _log.warning("art: home img2img selhal: %s", e)
+    finally:
+        _comfy_free(config)
+        if ok:
+            vision_desc = _describe_render(config, dest)
+        _ollama_warm(config, config.get("models", {}).get("dialog", "hans-czech:latest"))
+
+    if not ok:
+        return None
+    rel_path = os.path.join("data", "hans_art", fname)
+    caption = _evaluate_artwork(config, diary_db_path, "Můj domov",
+                                "Přemaloval jsem svůj pokoj z vlastního pohledu.",
+                                vision_desc,
+                                source_label="svým pokojem, jak ho vidí a přemaloval")
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        db.execute(
+            "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
+            (time.time(), "artwork", "Můj domov", caption,
+             json.dumps({"path": rel_path, "prompt": _HOME_STYLE_PROMPT,
+                         "source": "home_photo", "denoise": dn,
+                         "painted_ts": time.time()}, ensure_ascii=False)))
+        db.commit()
+        db.close()
+    except Exception as e:
+        _log.warning("art: log home_photo artwork failed: %s", e)
+    _log.info("art: Hans přemaloval svůj pokoj z fotky → %s", rel_path)
+    return rel_path, caption
+
+
+def render_home_photo_now(config: dict, diary_db_path: str) -> Optional[tuple]:
+    """Veřejný wrapper pro chat — VĚRNÝ přemalovaný pokoj z reálné fotky (img2img)."""
+    return paint_home_from_photo(config, diary_db_path)
+
+
 # ── Hlavní entry (noční) ────────────────────────────────────────────────────
 def generate_pending_artwork(config: dict, diary_db_path: str) -> bool:
     """Vyrenderuje obraz pro 1 dočtenou knihu bez obrazu. Vrací True při úspěchu.
@@ -795,6 +1070,20 @@ def _last_day_painting_ts(db_path: str) -> float:
             return float(json.loads(row[0]).get("painted_ts", 0)) or 0.0
     except Exception as e:
         _log.debug("art: last_day_painting_ts failed: %s", e)
+    return 0.0
+
+
+def _last_home_painting_ts(db_path: str) -> float:
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        row = con.execute(
+            "SELECT data FROM diary WHERE event_type='artwork' "
+            "AND data LIKE '%\"source\": \"home%' ORDER BY ts DESC LIMIT 1").fetchone()
+        con.close()
+        if row:
+            return float(json.loads(row[0]).get("painted_ts", 0)) or 0.0
+    except Exception as e:
+        _log.debug("art: last_home_painting_ts failed: %s", e)
     return 0.0
 
 

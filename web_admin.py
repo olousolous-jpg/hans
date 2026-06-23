@@ -519,10 +519,15 @@ async def art_list(limit: int = 12):
             "SELECT ts, title, note, data FROM diary WHERE event_type='artwork' "
             "ORDER BY ts DESC LIMIT ?", (int(limit),)).fetchall()
         conn.close()
+        _SRC_LABEL = {"dream": "sen", "day": "den a nálada", "home": "domov",
+                      "home_photo": "domov", "book": "kniha", "": "kniha"}
         for ts, title, note, data in rows:
             f = None
+            src = ""
             try:
-                f = _os.path.basename((json.loads(data or "{}") or {}).get("path", ""))
+                d = json.loads(data or "{}") or {}
+                f = _os.path.basename(d.get("path", ""))
+                src = d.get("source", "")
             except Exception:
                 pass
             if not f:
@@ -533,6 +538,8 @@ async def art_list(limit: int = 12):
                 "book": title or "kniha",
                 "caption": note or "",
                 "file": f,
+                "source": src,
+                "kind": _SRC_LABEL.get(src, "kniha"),
             })
     except Exception as e:
         print(f"[web_admin] art_list error: {e}")
@@ -549,6 +556,60 @@ async def art_image(f: str):
         return FileResponse(str(p), media_type="image/png",
                             headers={"Cache-Control": "max-age=3600"})
     raise HTTPException(status_code=404, detail="no art")
+
+
+@app.get("/api/place")
+async def get_place():
+    """HANS_PLACE_V1 — model domova „kde jsem": syntetizovaný model + fakta +
+    nejnovější obraz domova (pro dashboard kartu)."""
+    out = {"home_model": "", "facts": [], "image": None}
+    _LBL = {"room": "Místnost", "window": "Okno", "door": "Dveře",
+            "neighbor": "Vedle", "layout": "Rozložení", "note": "Pozn."}
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % DIARY_PATH, uri=True)
+        row = conn.execute(
+            "SELECT content FROM place_facts WHERE category='home_model' "
+            "ORDER BY updated_ts DESC LIMIT 1").fetchone()
+        if row:
+            out["home_model"] = (row[0] or "").strip()
+        for cat, content in conn.execute(
+                "SELECT category, content FROM place_facts WHERE category IN "
+                "('room','layout','window','door','neighbor','note') "
+                "ORDER BY category, id").fetchall():
+            out["facts"].append({"label": _LBL.get(cat, cat), "text": content})
+        # nejnovější obraz domova
+        for (data,) in conn.execute(
+                "SELECT data FROM diary WHERE event_type='artwork' "
+                "AND data LIKE '%\"source\": \"home%' ORDER BY ts DESC LIMIT 1").fetchall():
+            try:
+                import os as _os
+                out["image"] = _os.path.basename((json.loads(data or "{}") or {}).get("path", "")) or None
+            except Exception:
+                pass
+        conn.close()
+    except Exception as e:
+        print(f"[web_admin] get_place error: {e}")
+    return out
+
+
+@app.get("/api/musings")
+async def get_musings(limit: int = 6):
+    """Co Hans napsal sám pro sebe (diary event 'musing')."""
+    out = []
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % DIARY_PATH, uri=True)
+        rows = conn.execute(
+            "SELECT ts, note FROM diary WHERE event_type='musing' AND note<>'' "
+            "ORDER BY ts DESC LIMIT ?", (int(limit),)).fetchall()
+        conn.close()
+        for ts, note in rows:
+            out.append({
+                "date": datetime.fromtimestamp(ts).strftime("%-d.%-m.%Y"),
+                "text": note,
+            })
+    except Exception as e:
+        print(f"[web_admin] get_musings error: {e}")
+    return out
 
 
 # ── AVATAR_WEB_MIRROR_V1 — zrcadlení Pi preview stavu (mód + klip) ────────────
@@ -831,11 +892,31 @@ def _resolve_poster(title: str) -> str:
     return url
 
 
+def _clean_opinion(text: str, name: str = "Hans") -> str:
+    """Odstraň degenerovaný úvodní self-identity prefix („Jmenuji se Hans.",
+    „Jsem Hans.", „Rozumím.") z názoru — skutečný text následuje až za ním."""
+    import re as _re
+    t = (text or "").strip()
+    pat = _re.compile(
+        r'^\s*(jmenuji se %s|jsem %s|rozum[ií]m)\s*[.!]*\s*' % (
+            _re.escape(name), _re.escape(name)), _re.IGNORECASE)
+    for _ in range(6):
+        new = pat.sub('', t, count=1).strip()
+        if new == t:
+            break
+        t = new
+    return t
+
+
 @app.get("/api/movies_seen")
 async def movies_seen(limit: int = 6):
     """Filmy/epizody které Hans viděl + jeho názor + plakát (best-effort z Kodi)."""
     if not DIARY_PATH.exists():
         return []
+    try:
+        _pname = (load_config().get("persona", {}) or {}).get("name", "Hans")
+    except Exception:
+        _pname = "Hans"
     try:
         conn = sqlite3.connect(str(DIARY_PATH))
         rows = conn.execute(
@@ -853,7 +934,7 @@ async def movies_seen(limit: int = 6):
             continue
         seen.add(key)
         out.append({"dt": dt, "title": title,
-                    "opinion": (opinion or "").strip()[:240],
+                    "opinion": _clean_opinion(opinion, _pname)[:240],
                     "poster": _resolve_poster(title)})
         if len(out) >= limit:
             break

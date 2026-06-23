@@ -37,11 +37,18 @@ def _last_creation(db_path: str) -> tuple:
             "SELECT ts, event_type, data FROM diary "
             "WHERE event_type='musing' "
             "OR (event_type='artwork' AND data LIKE '%\"source\": \"day\"%') "
+            "OR (event_type='artwork' AND data LIKE '%\"source\": \"home%') "
             "ORDER BY ts DESC LIMIT 1").fetchall()
         con.close()
         if rows:
             ts, et, data = rows[0]
-            return float(ts), ("musing" if et == "musing" else "day")
+            if et == "musing":
+                form = "musing"
+            elif "\"source\": \"home" in (data or ""):
+                form = "home"
+            else:
+                form = "day"
+            return float(ts), form
     except Exception as e:
         _log.debug("creations: last_creation failed: %s", e)
     return 0.0, ""
@@ -80,6 +87,16 @@ def _musing_seed(db_path: str) -> Optional[dict]:
                 "AND event_type NOT IN ('human_chat') "
                 "ORDER BY importance DESC, ts DESC LIMIT 4", (cutoff,)).fetchall():
             cands.append(("moment", "Nedávný zážitek, který ti utkvěl: %s" % note.strip()[:200]))
+        # 4) místo, kde jsi (smysl pro místo) — občas se Hans zamyslí nad svým
+        #    domovem / okolím / světlem. Groundované v modelu místa.
+        home = con.execute(
+            "SELECT content FROM place_facts WHERE category='home_model' "
+            "ORDER BY updated_ts DESC LIMIT 1").fetchone()
+        if home and (home[0] or "").strip():
+            cands.append(("place",
+                "Tvůj domov — místo, kde žiješ: %s Zamysli se nad tím, jaké je tu "
+                "právě teď být, co kolem sebe vnímáš, jak se ti tu žije." %
+                home[0].strip()[:300]))
         con.close()
     except Exception as e:
         _log.debug("creations: musing_seed failed: %s", e)
@@ -165,6 +182,20 @@ def creative_impulse(config: dict, db_path: str) -> bool:
             forms["day"] = 1.0
     except Exception as e:
         _log.debug("creations: day form check failed: %s", e)
+    # DOMOV (obraz) — Hans občas namaluje, jak si představuje svůj domov.
+    # Statická scéna → vzácně (delší throttle), jen když má model místa.
+    try:
+        from scripts import hans_art
+        hcfg = (config.get("hans_art", {}) or {}).get("home_painting", {}) or {}
+        home_iv = float(hcfg.get("min_interval_days", 7))
+        last_home = hans_art._last_home_painting_ts(db_path)
+        home_ok = (not last_home) or (time.time() - last_home) >= home_iv * 86400
+        if (hcfg.get("enabled", True) and home_ok
+                and hans_art._home_source(db_path)
+                and hans_art.comfy_available(config)):
+            forms["home"] = 0.6   # nižší váha — vzácnější než den/úvaha
+    except Exception as e:
+        _log.debug("creations: home form check failed: %s", e)
     # ÚVAHA (text) — když je o čem psát
     seed = _musing_seed(db_path)
     if seed:
@@ -182,6 +213,9 @@ def creative_impulse(config: dict, db_path: str) -> bool:
     if pick == "day":
         from scripts import hans_art
         return hans_art.paint_day(config, db_path)
+    if pick == "home":
+        from scripts import hans_art
+        return bool(hans_art.paint_home(config, db_path))
     return write_musing(config, db_path, seed)
 
 

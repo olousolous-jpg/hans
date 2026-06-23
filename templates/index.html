@@ -251,10 +251,29 @@ button.btn:hover { opacity: 0.85; }
     <div id="movies-shelf" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:6px">načítám...</div>
   </div>
 
+  <!-- HANS_PLACE_V1 — model domova „kde jsem" -->
+  <div class="card" id="place-card" style="margin-bottom:16px;display:none">
+    <h2>🏠 Kde jsem</h2>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <a id="place-img-link" href="#" target="_blank" style="flex-shrink:0">
+        <img id="place-img" src="" alt="" style="width:240px;height:180px;object-fit:cover;border-radius:8px;background:var(--bg3);display:none">
+      </a>
+      <div style="flex:1;min-width:220px">
+        <div id="place-model" style="font-size:0.9rem;line-height:1.5"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- HANS_ART_V1 — obrazy, které Hans namaloval ke knihám -->
   <div class="card" id="art-card" style="margin-bottom:16px;display:none">
     <h2>🎨 Co Hans namaloval</h2>
     <div id="art-shelf" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:6px"></div>
+  </div>
+
+  <!-- HANS_CREATIONS_V1 — co Hans napsal sám pro sebe -->
+  <div class="card" id="musings-card" style="margin-bottom:16px;display:none">
+    <h2>✍️ Co Hans napsal</h2>
+    <div id="musings-list" style="display:flex;flex-direction:column;gap:10px"></div>
   </div>
 
   <!-- WEBADMIN_V2 — Chat s Hansem (odpoví i hlasem na Pi) -->
@@ -1136,13 +1155,48 @@ async function loadArt() {
     card.style.display = '';
     shelf.innerHTML = arts.map(a => {
       const url = '/api/art/image?f=' + encodeURIComponent(a.file);
+      const badge = a.kind ? `<span style="background:var(--bg3);color:var(--fg2);font-size:0.62rem;padding:1px 6px;border-radius:8px;text-transform:uppercase;letter-spacing:.5px">${esc(a.kind)}</span>` : '';
       return `<div style="width:210px;flex-shrink:0" title="${esc(a.caption)}">
         <a href="${url}" target="_blank"><img src="${url}" alt="" style="width:210px;height:158px;object-fit:cover;border-radius:8px;background:var(--bg3)"></a>
-        <div style="font-size:0.78rem;margin-top:5px;line-height:1.2;font-weight:600">${esc(a.book)}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:5px"><span style="font-size:0.78rem;line-height:1.2;font-weight:600">${esc(a.book)}</span>${badge}</div>
         <div style="font-size:0.68rem;color:var(--fg2);margin-top:1px">${esc(a.date)}</div>
         <div style="font-size:0.7rem;color:var(--fg2);margin-top:3px;max-height:4.3em;overflow:hidden;line-height:1.25">${esc(a.caption)}</div>
       </div>`;
     }).join('');
+  } catch (e) {}
+}
+
+// HANS_PLACE_V1 — karta „Kde jsem" (model domova + obraz domova)
+async function loadPlace() {
+  try {
+    const p = await (await fetch('/api/place')).json();
+    const card = document.getElementById('place-card');
+    if (!card) return;
+    if (!p || !p.home_model) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    document.getElementById('place-model').textContent = p.home_model || '';
+    const img = document.getElementById('place-img');
+    const link = document.getElementById('place-img-link');
+    if (p.image) {
+      const url = '/api/art/image?f=' + encodeURIComponent(p.image);
+      img.src = url; img.style.display = ''; link.href = url;
+    } else { img.style.display = 'none'; }
+  } catch (e) {}
+}
+
+// HANS_CREATIONS_V1 — karta „Co Hans napsal" (úvahy)
+async function loadMusings() {
+  try {
+    const ms = await (await fetch('/api/musings?limit=6')).json();
+    const card = document.getElementById('musings-card');
+    const list = document.getElementById('musings-list');
+    if (!card || !list) return;
+    if (!Array.isArray(ms) || !ms.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    list.innerHTML = ms.map(m => `<div style="background:var(--bg3);border-radius:8px;padding:10px 12px">
+      <div style="font-size:0.66rem;color:var(--fg2);margin-bottom:3px">${esc(m.date)}</div>
+      <div style="font-size:0.86rem;line-height:1.5;white-space:pre-wrap">${esc(m.text)}</div>
+    </div>`).join('');
   } catch (e) {}
 }
 
@@ -1238,6 +1292,10 @@ loadMoviesSeen();
 setInterval(loadMoviesSeen, 60000);
 loadArt();
 setInterval(loadArt, 60000);
+loadPlace();
+setInterval(loadPlace, 60000);
+loadMusings();
+setInterval(loadMusings, 60000);
 buildDiaryCards();
 setInterval(refreshDiaryCardsLive, 15000);   // Deník karty „live" (offset 0)
 

@@ -593,6 +593,21 @@ class OpenWebUIDirectHandler:
             self._threads = None
         return self._threads
 
+    def _place_store(self):
+        # HANS_PLACE_V1 — lazy singleton PlaceStore (smysl pro místo)
+        _ps = getattr(self, "_place", None)
+        if _ps is not None:
+            return _ps
+        try:
+            from scripts.hans_place import PlaceStore
+            _dbp = (self.config.get("diary_db")
+                    or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                    or "data/hans_diary.db")
+            self._place = PlaceStore(self.config, _dbp)
+        except Exception:
+            self._place = None
+        return self._place
+
     def _questions_store(self):
         # HANS_QUESTIONS_SURFACING_V1 — lazy singleton HansQuestionsStore
         _qs = getattr(self, "_qstore_inst", None)
@@ -704,6 +719,21 @@ class OpenWebUIDirectHandler:
             _room = _ro.get_context_string()
             if _room:
                 room_ctx = '\n\n' + _room
+
+        # HANS_PLACE_V1 — smysl pro místo „kde jsem" (groundovaný model domova).
+        # Počasí vetkneme jako „za oknem" (živé groundování), když okno znám.
+        # Do POZDRAVU se model místa NEdává (na přání uživatele — brevita).
+        place_ctx = ""
+        try:
+            _ps = self._place_store() if not for_greeting else None
+            if _ps is not None:
+                _wx = getattr(self, '_weather', None)
+                _wx_str = _wx.get_context_string() if _wx else None
+                _place = _ps.get_context_string(weather_str=_wx_str)
+                if _place:
+                    place_ctx = '\n\n' + _place
+        except Exception:
+            place_ctx = ""
 
         # Aktuální čas + fáze dne (TIME_AWARENESS_V1)
         _hi = getattr(self, '_hans_idle', None)
@@ -943,7 +973,7 @@ class OpenWebUIDirectHandler:
         # _build_system tak dodává jen to, co RAG nemůže vědět: co Hans
         # PRÁVĚ TEĎ vidí, slyší, cítí, právě čte, koho má před sebou.
         if "rag" in (self.model_name or "").lower():
-            system_msg = (time_ctx + surr_ctx + kodi_ctx + room_ctx + read_ctx
+            system_msg = (time_ctx + surr_ctx + kodi_ctx + room_ctx + place_ctx + read_ctx
                           + thought_ctx + body_ctx + mood_ctx
                           + teddy_ctx + current)
             # Lehký úvodní prompt — vysvětlí RAG modelu, co tenhle blok je.
@@ -958,7 +988,7 @@ class OpenWebUIDirectHandler:
                 system_msg = ""
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
-                          + room_ctx + diary_ctx + story_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1
+                          + room_ctx + place_ctx + diary_ctx + story_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1
                           + body_ctx + mood_ctx + health_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx)  # …/ HANS_ROUTINE_CONTEXT_V1

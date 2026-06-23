@@ -970,3 +970,118 @@ register(
     handler=_cmd_avatar,
     help_text="Vizuální podoba (descriptor): /avatar [stav|gen]. Render obrázku = fáze 3 (TBD).",
 )
+
+
+# ─── /misto — model místa „Kde jsem" (HANS_PLACE_V1, frontier #4) ─────────
+_MISTO_SUBS = {
+    "mistnost": "room", "místnost": "room", "pokoj": "room",
+    "okno": "window", "okna": "window",
+    "dvere": "door", "dveře": "door",
+    "vedle": "neighbor", "soused": "neighbor", "sousedni": "neighbor",
+    "rozlozeni": "layout", "rozložení": "layout", "layout": "layout",
+    "pozn": "note", "poznamka": "note", "poznámka": "note",
+}
+_MISTO_DEL = {"smaz", "smaž", "odeber", "zrus", "zruš", "del"}
+_MISTO_CAT_LABEL = {
+    "room": "Místnost", "window": "Okno", "door": "Dveře",
+    "neighbor": "Vedle", "layout": "Rozložení", "note": "Pozn.",
+    "mental_map": "Z fotek",
+}
+
+
+def _cmd_misto(handler, name, args) -> str:
+    """/misto — model domova (kde Hans je). Bez argumentu vypíše model.
+    /misto okno <text> | dvere <text> | vedle <text> | mistnost <text> |
+    rozlozeni <text> | pozn <text> = přidá fakt. /misto smaz <id> = odebere."""
+    cfg = getattr(handler, "config", {}) or {}
+    db = (cfg.get("diary_db")
+          or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+          or "data/hans_diary.db")
+    try:
+        from scripts.hans_place import PlaceStore
+        store = PlaceStore(cfg, db)
+    except Exception as e:
+        return "Modul místa nedostupný: %s" % e
+
+    parts = (args or "").strip().split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    # namaluj domov (HANS_PLACE_PAINT_V1) — Hans vyrenderuje, jak si dům představuje
+    if sub in {"obraz", "namaluj", "render", "nakresli"}:
+        import threading as _t
+        try:
+            from scripts import hans_art
+        except Exception as e:
+            return "Malování není dostupné: %s" % e
+        if not hans_art.comfy_available(cfg):
+            return ("Bohužel, pane — výtvarná dílna (ComfyUI na PC) teď neběží, "
+                    "tak domov namalovat nemohu. Zkuste to, až bude PC vzhůru.")
+        if not store.get_facts():
+            return ("Nemám zatím žádný model domova, pane — nejdřív mi ho popište "
+                    "(/misto …) nebo nechte fotky v data/room_photos/.")
+
+        def _worker():
+            try:
+                # Textový render (hezčí výsledek než img2img z reálné fotky).
+                # paint_home_from_photo zůstává v hans_art pro budoucí použití.
+                hans_art.render_home_now(cfg, db)
+            except Exception as _e:
+                _log.warning("/misto obraz render selhal: %s", _e)
+        _t.Thread(target=_worker, daemon=True).start()
+        return ("Dám se do toho, pane — maluji, jak si představuji svůj domov. "
+                "Za chvíli se objeví na nástěnce (Co Hans namaloval). "
+                "Chat může být asi minutu zaneprázdněný.")
+
+    # smazání faktu
+    if sub in _MISTO_DEL:
+        if not rest.isdigit():
+            return "Uveďte id: /misto smaz <id> (viz /misto)."
+        ok = store.remove_fact(int(rest))
+        return ("Fakt %s jsem odebral, pane." % rest if ok
+                else "Ten fakt se nepodařilo odebrat (špatné id?).")
+
+    # přidání faktu
+    if sub in _MISTO_SUBS:
+        if not rest:
+            return "Doplňte text: /misto %s <popis>." % sub
+        cat = _MISTO_SUBS[sub]
+        fid = store.add_fact(cat, rest, source="user")
+        if cat == "room":
+            return "Zapsal jsem, že jsem v místnosti: %s." % rest
+        return "Zapsal jsem fakt o místě [%s] (id %s)." % (
+            _MISTO_CAT_LABEL.get(cat, cat), fid)
+
+    if sub:
+        return ("Neznámá část. Použij: /misto [mistnost|okno|dvere|vedle|"
+                "rozlozeni|pozn] <text>, /misto smaz <id>, nebo /misto pro výpis.")
+
+    # výpis modelu
+    facts = store.get_facts()
+    if not facts:
+        return ("O svém místě zatím nic nevím, pane. Můžete mi to popsat: "
+                "/misto mistnost <text>, /misto okno <text>, /misto vedle <text> … "
+                "Nebo nechte širší fotku místnosti ve složce data/room_photos/ "
+                "(udělám si z ní představu při startu).")
+    by_cat: dict = {}
+    for f in facts:
+        by_cat.setdefault(f["category"], []).append(f)
+    out = ["Můj model domova (kde jsem):"]
+    order = ["room", "window", "door", "neighbor", "layout", "note", "mental_map"]
+    for cat in order:
+        for f in by_cat.get(cat, []):
+            out.append("   [%d] %s: %s" % (
+                f["id"], _MISTO_CAT_LABEL.get(cat, cat), f["content"]))
+    out.append("")
+    out.append("Přidat: /misto okno <text> (i dvere/vedle/mistnost/rozlozeni/pozn)  "
+               "|  smazat: /misto smaz <id>  |  namalovat domov: /misto obraz")
+    return NL_RUNTIME.join(out)
+
+
+register(
+    "misto",
+    slash_aliases=["misto", "místo", "kdejsem", "domov"],
+    nl_patterns=[],
+    handler=_cmd_misto,
+    help_text="Model domova (kde jsem): /misto [mistnost|okno|dvere|vedle|rozlozeni|pozn <text> | smaz <id>]",
+)

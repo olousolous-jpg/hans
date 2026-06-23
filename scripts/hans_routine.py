@@ -1004,6 +1004,19 @@ class HansRoutine:
                 except Exception as _e:
                     _log.error("Večerní reflexe selhala: %s", _e)
 
+            # HANS_PLACE_V1 — smysl pro místo: zpracuj nové širší fotky místnosti
+            # z drop-folderu data/room_photos/ na mentální mapu (qwen-VL, VRAM
+            # tanec uvnitř). Idempotentní (sidecar) — když nic nového, vrátí 0
+            # PŘED jakýmkoliv LLM voláním (levné). Gate night+quiet (jako art).
+            if (datetime.now().hour >= self._night_hour and self._chat_quiet_ok()):
+                try:
+                    from scripts.hans_place import PlaceStore
+                    _n = PlaceStore(self.config, self._diary_path).ingest_photos(self.config)
+                    if _n:
+                        _log.info("hans_place: zpracováno %d nových fotek místnosti", _n)
+                except Exception as _pe:
+                    _log.warning("hans_place: ingest fotek selhal: %s", _pe)
+
             # HANS_ART_WIRING_V1 — ve volné chvíli (v noci) namaluj obraz k
             # dočtené knize (1 obraz/knihu, SDXL přes ComfyUI). VRAM orchestrace
             # uvnitř (unload LLM → render → warm). Deferral-safe (ComfyUI dole →
