@@ -609,14 +609,82 @@ class PicamDisplayController:
 
     # ── Servo dispatch ────────────────────────────────────────────────────
 
+    def _get_eye_servo(self):
+        """EYE_SERVO_V1 — lazy singleton animatronických očí (P2/P3). Vytvoří se
+        až po startu (robot hat už inicializovaný ServoControllerem)."""
+        es = getattr(self, "_eye_servo", "unset")
+        if es != "unset":
+            return self._eye_servo
+        try:
+            from scripts.eye_servo import EyeServoController
+            self._eye_servo = EyeServoController(self.config)
+        except Exception as _e:
+            import logging
+            logging.getLogger(__name__).warning("eye_servo init selhal: %s", _e)
+            self._eye_servo = None
+        return self._eye_servo
+
+    def _pick_eye_focus(self, known, area):
+        """Více známých osob → vrať bbox JEDNÉ, na kterou se teď oči dívají.
+        Po multi_dwell_s přeskočí na další (round-robin). Stabilní podle JMÉNA
+        (ne podle pořadí/jitteru bboxů), takže pohled neposkakuje každý snímek.
+        known = [(box, identity)], identity[0] = jméno."""
+        by_name = {}
+        for b, ident in known:
+            nm = ident[0]
+            if nm not in by_name:
+                by_name[nm] = b
+        names = list(by_name.keys())
+        if len(names) == 1:
+            self._eye_focus_name = names[0]
+            return by_name[names[0]]
+
+        ecfg = self.config.get("eye_servo", {}) or {}
+        dwell = float(ecfg.get("multi_dwell_s", 3.0))
+        now = time.time()
+        cur = getattr(self, "_eye_focus_name", None)
+        since = getattr(self, "_eye_focus_ts", 0.0)
+        if cur not in names:                 # focus zmizel / poprvé → vezmi prvního
+            cur, since = names[0], now
+        elif now - since >= dwell:           # dozrál pohled → přeskoč na dalšího
+            cur = names[(names.index(cur) + 1) % len(names)]
+            since = now
+        self._eye_focus_name = cur
+        self._eye_focus_ts = since
+        return by_name[cur]
+
     def _update_servo(self, boxes, identities):
-        """Track servo to best face target. TODO: add gesture target priority."""
+        """EYE_SERVO_V1 — oči (P2/P3) VEDOU (sledují bbox osoby každý snímek),
+        kamera (P0/P1) jen DOHÁNÍ: hne se, až je osoba na kraji rámu, vycentruje
+        ji, a oči se tím samy vrátí na střed. Bez eye_servo = původní chování
+        (kamera trackuje spojitě)."""
         if not self.servo_controller:
             return
         if getattr(self.servo_controller, 'calibrating', False):
             return  # SERVO_MANUAL_CALIB_V1 — wizard owns the servo
+
+        eyes = self._get_eye_servo() if self._eyes_on() else None
+        eye_mode = eyes is not None and getattr(eyes, "available", False)
+        cam_follow = bool((self.config.get("eye_servo", {}) or {}).get("camera_follow", True))
+
         if not boxes:
-            self.servo_controller.update_face_position(None)
+            if eye_mode and not cam_follow:
+                # „najdi → zamrzni": dokud osobu nenašel, smí scanovat (hledat);
+                # po akvizici drží. Po delší nepřítomnosti akvizici zruší → příští
+                # osobu zase najde.
+                ecfg = self.config.get("eye_servo", {}) or {}
+                if getattr(self, "_cam_acquired", False):
+                    gap = float(ecfg.get("reacquire_gap_s", 20.0))
+                    if (time.time() - getattr(self, "_last_box_ts", 0.0)) > gap:
+                        self._cam_acquired = False
+                    self.servo_controller.notice_presence()
+                else:
+                    self.servo_controller.update_face_position(None)  # scan → hledá osobu
+            else:
+                self.servo_controller.update_face_position(None)
+            if eye_mode:
+                eyes.center()
+                self._cam_recenter = False
             return
 
         def cx(b): return (b[0] + b[2]) / 2
@@ -627,18 +695,59 @@ class PicamDisplayController:
         known   = [(b, i) for b, i in zip(boxes, identities) if i[0] not in _unk]
         unknown = [(b, i) for b, i in zip(boxes, identities) if i[0] in _unk]
 
-        target = None
-        if len(known) == 1:
-            b = known[0][0]
-            target = (int(cx(b)*self._MAIN_W), int(cy(b)*self._MAIN_H))
-        elif len(known) > 1:
-            target = (int(sum(cx(b) for b,_ in known)/len(known)*self._MAIN_W),
-                      int(sum(cy(b) for b,_ in known)/len(known)*self._MAIN_H))
+        fx = fy = None   # normalizovaný střed cíle (0..1)
+        if known:
+            # Více osob → oči se dívají na JEDNU a po multi_dwell_s přeskočí na
+            # další (přirozené střídání pohledu), místo centrování do prázdna.
+            b = self._pick_eye_focus(known, area)
+            fx, fy = cx(b), cy(b)
         elif unknown:
-            b, _ = max(unknown, key=lambda x: area(x[0]))
-            target = (int(cx(b)*self._MAIN_W), int(cy(b)*self._MAIN_H))
+            b, _ = max(unknown, key=lambda x: area(x[0])); fx, fy = cx(b), cy(b)
+            self._eye_focus_name = None
 
-        self.servo_controller.update_face_position(target)
+        if fx is None:
+            self.servo_controller.update_face_position(None)
+            return
+
+        target = (int(fx * self._MAIN_W), int(fy * self._MAIN_H))
+        self._last_box_ts = time.time()
+
+        # Bez animatronických očí → původní chování (kamera trackuje spojitě).
+        if not eye_mode:
+            self.servo_controller.update_face_position(target)
+            return
+
+        # OČI VEDOU — sledují bbox každý snímek.
+        eyes.look_at_frac(fx, fy)
+
+        ecfg = self.config.get("eye_servo", {}) or {}
+        cam_edge    = float(ecfg.get("cam_edge", 0.25))     # vnější pásmo (od kraje)
+        recenter_to = float(ecfg.get("recenter_to", 0.08))  # kdy přestat (od středu)
+
+        # „NAJDI → ZAMRZNI": kamera nejdřív osobu vycentruje (najde ji), pak zmrzne;
+        # dál sleduješ jen očima. Po nepřítomnosti (viz no-boxes) se akvizice zruší.
+        if not cam_follow:
+            if not getattr(self, "_cam_acquired", False):
+                self.servo_controller.update_face_position(target)
+                if abs(fx - 0.5) < recenter_to and abs(fy - 0.5) < recenter_to:
+                    self._cam_acquired = True
+                    self.servo_controller.notice_presence()
+            else:
+                self.servo_controller.notice_presence()
+            return
+
+        # KAMERA DOHÁNÍ — edge-hystereze: probuď u kraje, drž na středu.
+        off = max(abs(fx - 0.5), abs(fy - 0.5))
+        if off > (0.5 - cam_edge):
+            self._cam_recenter = True
+        if getattr(self, "_cam_recenter", False):
+            self.servo_controller.update_face_position(target)
+            if abs(fx - 0.5) < recenter_to and abs(fy - 0.5) < recenter_to:
+                self._cam_recenter = False
+                self.servo_controller.notice_presence()
+        else:
+            # osoba je tu, jen vycentrovaná → kamera DRŽÍ (oči vedou), NEscanovat
+            self.servo_controller.notice_presence()
 
     # ── Enrollment overlay ────────────────────────────────────────────────
 
@@ -1781,6 +1890,29 @@ class PicamDisplayController:
     def menu_toggle_preview(self):
         self._preview_on = not self._preview_on
         return self._preview_on
+
+    def _eyes_on(self):
+        """Runtime stav animatronických očí (default z configu eye_servo.enabled)."""
+        v = getattr(self, "_eyes_enabled", None)
+        if v is None:
+            v = bool((self.config.get("eye_servo", {}) or {}).get("enabled", False))
+            self._eyes_enabled = v
+        return v
+
+    def menu_toggle_eyes(self):
+        """Přepne sledování animatronickýma očima. Vypnuto → oči se uvolní
+        (limp, ticho) a kamera se vrátí k PŮVODNÍMU spojitému trackingu
+        (jako před instalací očí)."""
+        self._eyes_enabled = not self._eyes_on()
+        if not self._eyes_enabled:
+            eyes = getattr(self, "_eye_servo", None)
+            if eyes not in (None, "unset"):
+                try:
+                    eyes.release()
+                except Exception:
+                    pass
+            self._cam_recenter = False
+        return self._eyes_enabled
 
     def menu_current_person(self):
         """HANS_MENU_PRESELECT_V1 — nejnovější rozpoznaná známá osoba

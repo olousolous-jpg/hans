@@ -390,6 +390,21 @@ class ServoController:
                 self._smooth_cx = None
                 self._smooth_cy = None
 
+    def notice_presence(self):
+        """EYE_SERVO_V1 — osoba je v záběru, ale kameru NEHÝBAT (oči vedou).
+        Drží face-lost timer svěží → nespustí scan; zastaví běžící scan;
+        netrackuje (kamera drží polohu). Použít místo update_face_position(None),
+        když je osoba přítomná a vycentrovaná."""
+        if not self.enable_tracking or not ROBOT_HAT_AVAILABLE:
+            return
+        with self.lock:
+            self.last_face_time = time.time()
+            self.tracking_active = False
+            self.scanning_active = False
+            self.current_face_center = None
+            self._smooth_cx = None
+            self._smooth_cy = None
+
     def start_scanning(self):
         """Start scanning behavior when no face is detected - LIMITED RANGE"""
         if not self.scanning_enabled:

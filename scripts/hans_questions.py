@@ -452,10 +452,16 @@ def generate_question_via_llm(topic: str,
             f"Z tohoto čtení tě něco zaujalo. Polož {person_label} jednu "
             f"krátkou, přirozenou a vřelou otázku — v otázce LEHCE zmiň, že tě "
             f"k ní přivedla četba o tématu \u201e{topic}\u201c, ať tázaný ví, "
-            f"proč se ptáš. Mluv lidsky, žádný akademický tón. Vrať jen otázku "
-            f"i s krátkým úvodem, česky.")  # QUESTIONS_NATURAL_V1
+            f"proč se ptáš. Mluv lidsky, žádný akademický tón. "
+            f"DŮLEŽITÉ: ten, koho se ptáš, o tématu „{topic}“ nejspíš nic "
+            f"odborného neví — NEPŘEDPOKLÁDEJ u něj znalosti. Zeptej se tak, "
+            f"aby mohl odpovědět z vlastní každodenní zkušenosti, pocitu nebo "
+            f"názoru, ne na fakta či odbornost. Klidně mu krátce řekni, co tě "
+            f"zaujalo, a zeptej se, jak to vidí on nebo jestli to zná ze svého "
+            f"života. Vrať jen otázku "
+            f"i s krátkým úvodem, česky.")  # QUESTIONS_NATURAL_V1 + QUESTIONS_ACCESSIBLE_V1
     if goal:  # GOAL_ADVANCING_QUESTIONS_V1 — posouvající otázka když běží cíl
-        user += (f"\n\nPOZNÁMKA: Máš rozpracovaný tvůrčí cíl — chystáš se napsat dílo na téma \u201e{goal}\u201c. Pokud toto čtení s tvým cílem souvisí, polož místo běžné otázky takovou, která tě v cíli POSUNE: vytěží z {person_label} názor, zkušenost nebo úhel pohledu, který bys mohl využít ve svém díle. Pokud čtení s cílem nesouvisí, zeptej se přirozeně na četbu jako obvykle.")
+        user += (f"\n\nPOZNÁMKA: Máš rozpracovaný tvůrčí cíl — chystáš se napsat dílo na téma \u201e{goal}\u201c. Pokud toto čtení s tvým cílem souvisí, polož místo běžné otázky takovou, která tě v cíli POSUNE: vytěží z {person_label} jeho OSOBNÍ pohled, pocit nebo zkušenost (i laickou — nepředpokládej odborné znalosti), který bys mohl využít ve svém díle. Pokud čtení s cílem nesouvisí, zeptej se přirozeně na četbu jako obvykle.")
 
     out = _ollama_chat(ollama_url, model, system, user)
     if not out:

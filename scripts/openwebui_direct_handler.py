@@ -667,6 +667,12 @@ class OpenWebUIDirectHandler:
             if _q is None:
                 return False
             _qtext = _q.question
+            # HANS_QUESTION_CONTINUITY_V1 — zapiš položenou otázku do conv_store,
+            # aby navazující odpověď měla kontext (jinak Hans odpoví naslepo).
+            try:
+                self.conv_store.add_greeting(person, _qtext)
+            except Exception:
+                pass
             _tts = getattr(self, "tts_speaker", None)
             if _tts is not None and getattr(_tts, "enabled", False):
                 try:
@@ -992,6 +998,14 @@ class OpenWebUIDirectHandler:
                           + body_ctx + mood_ctx + health_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx)  # …/ HANS_ROUTINE_CONTEXT_V1
+            # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
+            # rozvláčnosti (jen chat; greeting má vlastní brevitu).
+            if not for_greeting:
+                system_msg += (
+                    "\n\nVšechno výše je jen tvůj vnitřní kontext — nemusíš"
+                    " ho v odpovědi vyjmenovávat ani komentovat. Reaguj"
+                    " přirozeně a k věci na to, co bylo právě řečeno;"
+                    " z kontextu vytáhni jen to, co se do hovoru hodí.")
         # region agent log
         try:
             _dbg(

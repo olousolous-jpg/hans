@@ -147,6 +147,7 @@ class HansRoutine:
         self._last_reflection_date = ""  # AUTO_EVENING_REFLECTION_V1
         self._last_severka_check = ""    # HANS_SEVERKA_V1 (3c, týdenní guard)
         self._last_narrative = ""        # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3, týdenní guard)
+        self._last_creation_reflection = ""  # HANS_CREATION_REFLECTION_V1 (D, týdenní guard)
         self._identity = None            # HANS_IDENTITY_V1 (verzování CORE)
         self._severka = None             # HANS_SEVERKA_V1 (decision engine)
         # ROUTINE_STATE_PERSIST_V1 - guardy reflexi prezijou restart
@@ -453,6 +454,7 @@ class HansRoutine:
                 "last_rel_reflection_date", "")
             self._last_severka_check = s.get("last_severka_check", "")
             self._last_narrative = s.get("last_narrative", "")
+            self._last_creation_reflection = s.get("last_creation_reflection", "")
         except FileNotFoundError:
             pass
         except Exception as _e:
@@ -468,6 +470,7 @@ class HansRoutine:
                         self._last_rel_reflection_date,
                     "last_severka_check": self._last_severka_check,
                     "last_narrative": self._last_narrative,
+                    "last_creation_reflection": self._last_creation_reflection,
                 }, f)
         except Exception as _e:
             _log.warning("routine_state: zapis selhal: %s", _e)
@@ -1096,6 +1099,26 @@ class HansRoutine:
                             _log.debug("narrative RAG upload: %s", _ue)
                 except Exception as _ne:
                     _log.warning("narrative konsolidace selhala: %s", _ne)
+
+            # HANS_CREATION_REFLECTION_V1 (D) — týdně: reflexe vlastní tvorby
+            # (sebepoznání, NE postoje). Samostatná kadence. Deferral-safe.
+            try:
+                _last_cr = self._last_creation_reflection
+                _due_cr = True
+                if _last_cr:
+                    try:
+                        _d0 = datetime.strptime(_last_cr, "%Y-%m-%d").date()
+                        _d1 = datetime.strptime(today, "%Y-%m-%d").date()
+                        _due_cr = (_d1 - _d0).days >= 7
+                    except Exception:
+                        _due_cr = True
+                if (_due_cr and self._reflection is not None
+                        and hasattr(self._reflection, 'reflect_on_creations')):
+                    self._last_creation_reflection = today
+                    self._save_routine_state()
+                    self._reflection.reflect_on_creations()
+            except Exception as _cre:
+                _log.warning("creation reflection selhala: %s", _cre)
 
     # ── Fáze dne ─────────────────────────────────────────────────────────────
 

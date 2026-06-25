@@ -67,6 +67,23 @@ _STYLE_PROMPTS: dict[str, str] = {
         "ale NEVYMÝŠLEJ si přesvědčení, postavy ani události, které v poznámkách "
         "nejsou. Bez nadpisů, bez odrážek, bez emoji."
     ),
+    "work_completion": (  # HANS_WORK_COMPLETION_V1
+        "Právě jsi dopsal vlastní esej — vytrvalou, hlubokou práci na jednom "
+        "tématu. Dostáváš její text. Napiš krátké OHLÉDNUTÍ v první osobě, 3-5 vět, "
+        "klidným přemýšlivým tónem: k čemu jsi při psaní došel, co se ti vyjasnilo, "
+        "a jaký trvalejší názor nebo přesvědčení v tobě po sepsání zůstává. Není to "
+        "shrnutí eseje; je to osobní zápis o tom, kam tě ta práce posunula. Smíš "
+        "vyslovit přesvědčení, které se ti psaním ujasnilo, ale NEVYMÝŠLEJ si fakta "
+        "ani názory, které z práce nevyplývají. Bez nadpisů, bez odrážek, bez emoji."
+    ),
+    "creation_reflection": (  # HANS_CREATION_REFLECTION_V1
+        "Díváš se zpět na to, co jsi v poslední době sám vytvořil — úvahy, obrazy, "
+        "eseje. Dostáváš jejich přehled. Napiš krátkou osobní reflexi v první osobě, "
+        "3-5 vět: co tvá tvorba prozrazuje o tom, kdo právě teď jsi, co tě zaměstnává, "
+        "k čemu se vracíš. Není to výčet ani hodnocení kvality; je to tiché "
+        "sebepoznání skrze to, co tvoříš. Drž se POUZE uvedených děl — nic si "
+        "nepřidávej. Bez nadpisů, bez odrážek, bez emoji."
+    ),
     "relationship_reflection": (
         """Máš britskou rezervovanost. Aktualizuješ si soukromý zápisník
         o jednom z obyvatel domu.

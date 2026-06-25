@@ -391,7 +391,17 @@ class HansCuriosity:
             "vřelou otázku. V otázce LEHCE zmiň, co tě k ní přivedlo, ať tázaný "
             "ví, proč se ptáš (např. „Když jsem si všiml…, napadlo mě, …?“). "
             "Žádný kvíz ani akademický tón — mluv lidsky. "
-            "Vrať jen tu otázku i s krátkým úvodem, bez uvozovek, česky."  # QUESTIONS_NATURAL_V1
+            "DŮLEŽITÉ: ten, koho se ptáš, o tom tématu nejspíš nic odborného "
+            "neví — nepředpokládej u něj znalosti. Zeptej se tak, aby mohl "
+            "odpovědět z vlastní zkušenosti, pocitu nebo názoru, ne na fakta "
+            "či odbornost. "
+            # QUESTIONS_OBSERVATION_TIDY_V1 — vyjdi JEN ze vstupu, nevymýšlej scénu
+            "Vyjdi POUZE z toho, co je ve vstupu výše — nevymýšlej si scénu, "
+            "činnost ani věci, které tam nejsou (zahlédl-li jsi jen předmět, "
+            "drž se toho předmětu). "
+            "Vrať POUZE tu jednu otázku jako jednu větu (smíš ji uvést půlvětou "
+            "proč se ptáš). NEpřevyprávěj, co jsi viděl, a nepiš žádný samostatný "
+            "úvod ani druhou větu před otázkou. Bez uvozovek, česky."  # QUESTIONS_NATURAL_V1 + QUESTIONS_ACCESSIBLE_V1
         )
         from scripts.ollama_client import ollama_chat
         try:
@@ -403,6 +413,13 @@ class HansCuriosity:
                 options={"num_predict": 80},  # QUESTIONS_NATURAL_V1 — místo na úvod
             )
             if q and len(q) > 5:
+                # QUESTIONS_OBSERVATION_TIDY_V1 — model občas předřadí
+                # převyprávěcí úvod + prázdný řádek; vezmi vlastní otázku.
+                q = q.strip()
+                if "\n" in q:
+                    _parts = [p.strip() for p in q.splitlines() if p.strip()]
+                    _ql = [p for p in _parts if "?" in p]
+                    q = (_ql[-1] if _ql else (_parts[-1] if _parts else q))
                 return q
         except Exception as e:
             _log.warning("Question generation error: %s", e)

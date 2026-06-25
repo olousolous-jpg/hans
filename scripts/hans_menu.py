@@ -35,6 +35,7 @@ class HansMenu:
         self.combo      = None
         self.status     = None
         self.preview_btn = None
+        self.eyes_btn = None
         self._last_detected = None   # HANS_MENU_PRESELECT_V1
         try:
             tk_mgr.call_soon(self._create_window)
@@ -75,6 +76,7 @@ class HansMenu:
             self._btn("Seznam tváří", self._on_list)
             self._sep()
             self.preview_btn = self._btn("Zapnout preview", self._on_preview)
+            self.eyes_btn = self._btn("Vypnout oči", self._on_eyes)
             self._btn("Nastavení (web)", self._on_settings)
             self._sep()
             self._btn("Restart Hanse", self._on_restart)
@@ -93,6 +95,7 @@ class HansMenu:
 
             self._refresh_people()
             self._sync_preview_label()
+            self._sync_eyes_label()
             self._poll_detected()  # HANS_MENU_PRESELECT_V1
         except Exception as e:
             print(f"[HansMenu] create error: {e}")
@@ -176,6 +179,18 @@ class HansMenu:
             except Exception:
                 pass
 
+    def _sync_eyes_label(self):
+        on = False
+        try:
+            on = self.controller._eyes_on()
+        except Exception:
+            pass
+        if self.eyes_btn is not None:
+            try:
+                self.eyes_btn.config(text="Vypnout oči" if on else "Zapnout oči")
+            except Exception:
+                pass
+
     # ── Actions ───────────────────────────────────────────────────────────
     def _on_chat(self):
         name = self._selected()
@@ -221,6 +236,12 @@ class HansMenu:
         on = self.controller.menu_toggle_preview()
         self._sync_preview_label()
         self._toast("Preview zapnuto" if on else "Preview vypnuto")
+
+    def _on_eyes(self):
+        on = self.controller.menu_toggle_eyes()
+        self._sync_eyes_label()
+        self._toast("Oči zapnuty — oči vedou, kamera dohání"
+                    if on else "Oči vypnuty — kamera trackuje spojitě")
 
     def _on_settings(self):
         try:

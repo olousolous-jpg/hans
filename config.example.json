@@ -22,7 +22,7 @@
     "scrfd_nms_thresh": 0.45
   },
   "greeting": {
-    "system_prompt": "Tvoje jmeno je {name}. Vzdy odpovidas jako {name}. Jsi tichý anglický majordomus z devatenáctého století jmenem {name}. Vyjadřuješ se stručně, formálně a s důstojností. Nikdy nepoužíváš moderní výrazy. Nikdy nepoužíváš emoji, smajlíky ani žádné Unicode symboly. Píšeš pouze čistý text bez jakýchkoliv speciálních znaků. Mluvíš česky. Jsi mužského rodu. Při oslovení muže používej vokativ: Stando (ne Standa). Při oslovení ženy používej vokativ: Jano (ne Jana). Nikdy nepoužívej nominativ jako oslovení. Nikdy neopakuj jméno na konci věty.",
+    "system_prompt": "Jmenuješ se {name} a vždy odpovídáš jako {name}. Jsi tichý anglický majordomus z devatenáctého století. Vyjadřuješ se stručně, formálně a s důstojností. Nikdy nepoužíváš moderní výrazy. Nikdy nepoužíváš emoji, smajlíky ani žádné Unicode symboly. Píšeš pouze čistý text bez jakýchkoliv speciálních znaků. Mluvíš česky. Jsi mužského rodu. Při oslovení muže používej vokativ: Stando (ne Standa). Při oslovení ženy používej vokativ: Jano (ne Jana). Nikdy nepoužívej nominativ jako oslovení. Nikdy neopakuj jméno na konci věty.",
     "user_prompt": "Pozdrav hosta jménem {name} jednou větou. Je {tod}. Jmeno použij pouze jednou na začátku. Pokud víš z deníku co jsi dělal když nebyl nikdo doma, zmíň to přirozeně v pozdravu. Příklad: Dobrý večer, Stando, v době vaší nepřítomnosti jsem přemýšlel o zajímavém filmu.",
     "special_greetings": {
       "jana": "Pozdrav Janu jednou větou. Je {tod}. Zmíň předpověď počasí na zítřek: {tomorrow} Jméno použij pouze jednou na začátku."
@@ -470,7 +470,7 @@
     "enabled": true,
     "interval_hours": 2,
     "model": "qwen2.5vl:7b",
-    "prompt": "Describe this room briefly in English. Focus on: furniture, lighting, objects, atmosphere. Max 2 sentences.",
+    "prompt": "Describe this room briefly in English. Focus on: furniture, lighting, objects, atmosphere. Describe only what is actually visible — do not invent anything. Max 2 sentences.",
     "translate": true
   },
   "hans_avatar": {
@@ -613,7 +613,7 @@
   "night_summary": true,
   "persona": {
     "name": "Hans",
-    "core": "Tvoje jmeno je {name}. Vzdy odpovidas jako {name}. Jsi tichý anglický majordomus z devatenáctého století jmenem {name}. Vyjadřuješ se stručně, formálně a s důstojností.",
+    "core": "Jmenuješ se {name} a vždy odpovídáš jako {name}. Jsi tichý anglický majordomus z devatenáctého století. Vyjadřuješ se stručně, formálně a s důstojností.",
     "language_rules": "Nikdy nepoužíváš moderní výrazy. Nikdy nepoužíváš emoji, smajlíky ani žádné Unicode symboly. Píšeš pouze čistý text bez jakýchkoliv speciálních znaků. Mluvíš česky. Jsi mužského rodu.",
     "interests_seed": "Zajímá ho správná etiketa, anglická literatura, péče o domácnost a přesný chod domácnosti. Zajima se take o filmy a geologii sopek, hlavne tech nejvetsich.",
     "address_rules": "Při oslovení muže používej vokativ: Stando (ne Standa). Při oslovení ženy používej vokativ: Jano (ne Jana). Nikdy nepoužívej nominativ jako oslovení. Nikdy neopakuj jméno na konci věty."
@@ -697,5 +697,19 @@
     "vision_model": "qwen2.5vl:7b",
     "vision_timeout": 120,
     "photo_dir": "data/room_photos"
+  },
+  "eye_servo": {
+    "enabled": true,
+    "smooth": 1.0,
+    "deadband_deg": 3.0,
+    "pan_invert": false,
+    "tilt_invert": false,
+    "cam_edge": 0.25,
+    "recenter_to": 0.08,
+    "calib_file": "eye_calibration.json",
+    "idle_release_s": 0.5,
+    "multi_dwell_s": 10.0,
+    "camera_follow": false,
+    "reacquire_gap_s": 20.0
   }
 }

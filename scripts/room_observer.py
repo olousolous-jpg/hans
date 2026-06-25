@@ -36,6 +36,8 @@ class RoomObserver:
         self._prompt      = cfg.get("prompt",
             "Popiš místnost na obrázku stručně česky. "
             "Zaměř se na: nábytek, osvětlení, předměty, celkovou atmosféru. "
+            "Popisuj jen to, co je na obrázku skutečně vidět — nic si "
+            "nevymýšlej. "  # PROMPT_AUDIT_C_ANTICONFAB_V1
             "Max 3 věty.")
         self._enabled     = bool(cfg.get("enabled", True))
 

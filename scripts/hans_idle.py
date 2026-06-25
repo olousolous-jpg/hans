@@ -846,6 +846,16 @@ class HansIdle:
                 self._log_entry('goal_completed', title=g.topic, note=_note)
             except Exception:
                 pass
+            # HANS_WORK_COMPLETION_V1 (B) — vlastní dokončené dílo smí formovat
+            # postoje. Ollama je v tuto chvíli prokazatelně UP (esej právě vznikla
+            # LLM voláním), takže inline reflexe bez deferralu. Gate try/except.
+            try:
+                _refl = getattr(getattr(self, '_routine', None), '_reflection', None)
+                _essay = out.get('text', '')
+                if _refl is not None and hasattr(_refl, 'reflect_on_work') and _essay:
+                    _refl.reflect_on_work(g.topic, _essay)
+            except Exception as _we:
+                _log.warning('work completion reflexe selhala (cíl OK): %s', _we)
         else:
             self._goals.close_goal(
                 g.id, STATUS_ABANDONED,
@@ -1172,6 +1182,7 @@ class HansIdle:
             out['error'] = 'prázdná esej'; return out
         essay = essay.strip()
         out['words'] = len(essay.split())
+        out['text'] = essay  # HANS_WORK_COMPLETION_V1 — esej pro reflexi díla
         # 3) Ulož soubor
         works_dir = 'data/hans_works'
         try:

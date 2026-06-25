@@ -280,6 +280,127 @@ class HansEveningReflection:
                   book_title, len(text))
         return text
 
+    def reflect_on_work(self, topic, essay_text, date_str=None):
+        """HANS_WORK_COMPLETION_V1 (B) — po dokoncení vlastního díla (esej k cíli)
+        hluboká reflexe. Vlastní vytrvalá práce = legitimní kanál tvorby postojů
+        (jako dočtená kniha). Syntéza ohlédnutí -> deník + RAG + _extract_stances."""
+        if not self._synthesis or not (topic or "").strip():
+            return None
+        essay_text = (essay_text or "").strip()
+        if not essay_text:
+            return None
+        date_str = date_str or datetime.now().strftime("%Y-%m-%d")
+        facts = (
+            "Právě jsi dopsal vlastní esej na téma " + str(topic).strip() + ". "
+            "Tvůj text:\n" + essay_text[:3000] + "\n\nOhlédni se za tím, co jsi "
+            "napsal: k čemu jsi při psaní došel a jaký trvalejší názor v tobě po "
+            "sepsání zůstává."
+        )
+        text = self._synthesis.synthesize(
+            topic="dokončené dílo " + str(topic).strip(), facts=facts,
+            style="work_completion", max_tokens=max(self._max_tokens, 700),
+            max_chars=2000, facts_max_chars=3200)
+        if not text:
+            _log.warning("work completion: prázdná reflexe pro %s", topic)
+            return None
+        try:
+            db = sqlite3.connect(self._diary_path)
+            db.execute(
+                "INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
+                (time.time(), "work_completion_reflection",
+                 "Dokončené dílo — " + str(topic).strip(), text))
+            db.commit()
+            db.close()
+        except Exception as e:
+            _log.warning("work completion diary write failed: %s", e)
+        if self._knowledge and self._knowledge.enabled:
+            try:
+                self._knowledge.upload(
+                    collection_key=self._knowledge_collection,
+                    doc_id="work_%s_%d" % (date_str.replace("-", ""),
+                                           abs(hash(topic)) % 100000),
+                    title="Dokončené dílo — " + str(topic).strip(), text=text,
+                    metadata={"datum": date_str, "typ": "reflexe dokončeného díla",
+                              "tema": str(topic).strip()})
+            except Exception as e:
+                _log.warning("work completion RAG upload failed: %s", e)
+        # STANCES — vlastní vytrvalé dílo smí formovat postoje (jako kniha)
+        self._extract_stances(text, date_str)
+        _log.info("Work completion reflexe + stances: %s (%d znaku)",
+                  topic, len(text))
+        return text
+
+    def reflect_on_creations(self, date_str=None, window_days=14):
+        """HANS_CREATION_REFLECTION_V1 (D) — periodická reflexe vlastní tvorby
+        (úvahy/obrazy/eseje) jako SEBEPOZNÁNÍ. -> deník + RAG. NEvolá _extract_stances
+        (sebepoznání, ne postoje). Krmí self-memories/narativ skrze importance."""
+        if not self._synthesis:
+            return None
+        date_str = date_str or datetime.now().strftime("%Y-%m-%d")
+        import json as _json
+        items = []
+        try:
+            since = time.time() - window_days * 86400
+            con = sqlite3.connect("file:%s?mode=ro" % self._diary_path,
+                                  uri=True, timeout=3.0)
+            for et, label in (("musing", "úvaha"), ("work_created", "esej")):
+                rows = con.execute(
+                    "SELECT title, COALESCE(note,'') FROM diary WHERE event_type=? "
+                    "AND ts>? ORDER BY ts DESC LIMIT 6", (et, since)).fetchall()
+                for t, n in rows:
+                    body = (n or t or "").strip()
+                    if body:
+                        items.append("(" + label + ") " + body[:240])
+            rows = con.execute(
+                "SELECT title, COALESCE(data,'') FROM diary WHERE event_type='artwork' "
+                "AND ts>? ORDER BY ts DESC LIMIT 6", (since,)).fetchall()
+            for t, d in rows:
+                cap = ""
+                try:
+                    cap = (_json.loads(d).get("caption") or "").strip()
+                except Exception:
+                    cap = ""
+                lab = (t or cap or "").strip()
+                if lab:
+                    items.append("(obraz) " + lab[:240])
+            con.close()
+        except Exception as _ge:
+            _log.debug("creation reflection gather failed: %s", _ge)
+        if len(items) < 2:
+            _log.info("creation reflection: málo tvorby (%d), skip", len(items))
+            return None
+        body = "\n".join("- " + s for s in items)[:2500]
+        facts = ("Tady je přehled toho, co jsi v posledních dnech sám vytvořil:\n"
+                 + body + "\n\nZamysli se, co tvá tvorba prozrazuje o tom, kdo teď jsi.")
+        text = self._synthesis.synthesize(
+            topic="má vlastní tvorba", facts=facts,
+            style="creation_reflection", max_tokens=max(self._max_tokens, 600),
+            max_chars=1800, facts_max_chars=2600)
+        if not text:
+            return None
+        try:
+            db = sqlite3.connect(self._diary_path)
+            db.execute(
+                "INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
+                (time.time(), "creation_reflection",
+                 "Ohlédnutí za vlastní tvorbou", text))
+            db.commit()
+            db.close()
+        except Exception as e:
+            _log.warning("creation reflection diary write failed: %s", e)
+        if self._knowledge and self._knowledge.enabled:
+            try:
+                self._knowledge.upload(
+                    collection_key=self._knowledge_collection,
+                    doc_id="creation_" + date_str.replace("-", ""),
+                    title="Ohlédnutí za vlastní tvorbou", text=text,
+                    metadata={"datum": date_str, "typ": "reflexe vlastní tvorby"})
+            except Exception as e:
+                _log.warning("creation reflection RAG upload failed: %s", e)
+        _log.info("Creation reflexe (sebepoznání): %d znaku z %d del",
+                  len(text), len(items))
+        return text
+
     def _extract_stances(self, text: str, date_str: str):
         """STANCE_EXTRACT_V1 — z reflexe vytahne Hansovy nazory (claim +
         confidence) do StanceStore (mimo RAG). LLM dotaz; offline/parse fail

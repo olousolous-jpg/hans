@@ -51,4 +51,6 @@ tools/eye_calibr.py
 tools/eye_test.py
 tools/db_vypis.py
 tools/patch.py
+tools/patch_*.py
 tools/test_verdict_parse.py
+eye_calibration.json
