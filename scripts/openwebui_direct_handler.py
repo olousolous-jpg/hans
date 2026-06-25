@@ -636,7 +636,8 @@ class OpenWebUIDirectHandler:
             _qs = self._questions_store()
             if _qs is None:
                 return None
-            _q = _qs.next_for_person(name)
+            # HANS_PERSONAL_QUESTIONS_V1 — osobní otázky mají lehkou přednost
+            _q = _qs.next_for_person(name, source_type="personal") or _qs.next_for_person(name)
             if _q is None:
                 return None
             _qs.mark_asked_voice(_q.id)
@@ -973,6 +974,23 @@ class OpenWebUIDirectHandler:
         except Exception:
             health_ctx = ""
 
+        # HANS_CORRECTION_LEARNING_V1 (#4) — nedávné lekce z korekcí (Hans je
+        # má v kontextu, aby chybu neopakoval; read-only, NEmění paměť/postoje).
+        lessons_ctx = ""
+        try:
+            from scripts.hans_lessons import recent_lessons as _rl
+            _dbp_l = (self.config.get("diary_db")
+                      or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                      or "data/hans_diary.db")
+            _les = _rl(_dbp_l, hours=48, limit=4)
+            if _les:
+                lessons_ctx = ("\n\nNedávno jsi byl opraven / mýlil ses v těchto "
+                               "věcech (ber to v potaz, neopakuj tytéž omyly; pokud "
+                               "to přijde přirozeně, smíš to pokorně uznat; nic si "
+                               "k tomu nevymýšlej):\n- " + "\n- ".join(_les))
+        except Exception:
+            lessons_ctx = ""
+
         # _RAG_MODE_BUILD — pro hans-rag model jen LIVE STATE.
         # Identita má vlastní system prompt v OpenWebUI, statická paměť
         # (deník, vztahové karty, známí lidé) přijde z RAG kolekcí.
@@ -995,7 +1013,7 @@ class OpenWebUIDirectHandler:
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
                           + room_ctx + place_ctx + diary_ctx + story_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1
-                          + body_ctx + mood_ctx + health_ctx + teddy_ctx + current
+                          + body_ctx + mood_ctx + health_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx)  # …/ HANS_ROUTINE_CONTEXT_V1
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti

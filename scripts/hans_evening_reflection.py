@@ -184,6 +184,14 @@ class HansEveningReflection:
         except Exception as _xe:
             _log.warning("extract_threads selhal (reflexe OK): %s", _xe)
 
+        # HANS_CORRECTION_LEARNING_V1 (#4) — lekce z korekcí (kde mě opravili).
+        # Nezávislé na ostatních; base model keep_alive=0, anti-konfabulace.
+        try:
+            from scripts.hans_lessons import extract_corrections as _xcorr
+            _xcorr(self._config, self._diary_path)
+        except Exception as _ce:
+            _log.warning("extract_corrections selhal (reflexe OK): %s", _ce)
+
         # HANS_PERSON_INTERESTS_WIRING_V1 — per-osoba zájmy (přiživeno na
         # průchod nitek, sdílí _gather_dialogs). base model keep_alive=0.
         try:
@@ -191,6 +199,14 @@ class HansEveningReflection:
             _xpi(self._config, self._diary_path)
         except Exception as _pe:
             _log.warning("extract_person_interests selhal (reflexe OK): %s", _pe)
+
+        # HANS_PERSONAL_QUESTIONS_V1 (#3) — vřelá OSOBNÍ otázka per osoba.
+        # NEZÁVISLE na dialozích: i bez konverzace chce Hans projevit zájem.
+        try:
+            from scripts.hans_person_interests import generate_personal_questions as _gpq
+            _gpq(self._config, self._diary_path)
+        except Exception as _gqe:
+            _log.warning("generate_personal_questions selhal (reflexe OK): %s", _gqe)
 
         # HANS_BOOK_MENTIONS_V1 — zmínky knih v chatu → Gutenberg → wishlist
         # (sdílí _gather_dialogs). base model keep_alive=0, síťový Gutendex lookup.

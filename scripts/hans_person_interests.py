@@ -366,6 +366,71 @@ def generate_interest_questions(config: dict, diary_db_path: str,
     return written
 
 
+def generate_personal_questions(config: dict, diary_db_path: str) -> int:
+    """HANS_PERSONAL_QUESTIONS_V1 (#3) — pro osoby z domu občas vytvoří JEDNU
+    vřelou OSOBNÍ otázku (jak se daří, co potěšilo, na co se těší) — projev zájmu
+    o člověka, ne o téma z četby. Nezávislé na tom, zda proběhl dialog. Surfacing
+    přes HANS_QUESTIONS_SURFACING_V1. Denní strop drží add_question. Vrací počet."""
+    pcfg = (config.get("personal_questions", {}) or {})
+    if not pcfg.get("enabled", True):
+        return 0
+    persons = [p for p in (config.get("known_persons", {}) or {}).keys()
+               if (p or "").strip()]
+    if not persons:
+        return 0
+    er = config.get("evening_reflection", {}) or {}
+    model = str(pcfg.get("model", er.get("model",
+                "jobautomation/OpenEuroLLM-Czech:latest")))
+    timeout = int(pcfg.get("llm_timeout", 300))
+    try:
+        from scripts.ollama_client import ollama_generate
+        from scripts.hans_questions import HansQuestionsStore
+        from scripts.hans_persona import persona_core, persona_name
+    except Exception as e:
+        _log.warning("generate_personal_questions: import selhal: %s", e)
+        return 0
+    store = PersonInterestStore(config, diary_db_path)
+    qstore = HansQuestionsStore(diary_db_path, config)
+    system = persona_core(config, with_address=False)
+    written = 0
+    for person in persons:
+        pnorm = _norm(person)
+        ints = store.interests_for(pnorm, limit=6)
+        known_block = ""
+        if ints:
+            known_block = ("Víš, že osobu " + person + " zajímá: "
+                           + ", ".join(i.interest for i in ints)
+                           + ". Můžeš na to lehce navázat, ale neptej se na fakta.\n")
+        user = (known_block
+                + "Chceš dát osobě jménem " + person + " najevo lidský zájem — ne o "
+                "nějaké téma, ale o NI samotnou. Polož JEDNU krátkou, vřelou, osobní "
+                "českou otázku: jak se jí daří, co ji v poslední době potěšilo, na co "
+                "se těší, nebo jak strávila den — něco, na co může odpovědět cokoliv "
+                "ze svého života. Žádný výslech, nic dotěrného, žádné téma z četby. "
+                "Vrať jen tu jednu otázku.")
+        try:
+            out = ollama_generate(model=model, prompt=user, system=system,
+                                  config=config, timeout=timeout,
+                                  keep_alive=0, options={"temperature": 0.6})
+        except Exception as e:
+            _log.warning("generate_personal_questions LLM (%s): %s", person, e)
+            continue
+        q = (out or "").strip()
+        if "?" in q:
+            q = q.split("?")[0].strip() + "?"
+        q = q.strip(" \"'\n\t-—")
+        if len(q) < 8 or len(q) > 240:
+            continue
+        qid = qstore.add_question(
+            question=q, target_person=pnorm, source_type="personal",
+            context=(persona_name(config) + " chce projevit osobní zájem o " + person))
+        if qid:
+            written += 1
+            _log.info("personal Q[%s] pro %s: %.60s", qid, pnorm, q)
+    _log.info("generate_personal_questions: vytvořeno %d otázek", written)
+    return written
+
+
 # ── Smoke (python3 -m scripts.hans_person_interests) ────────────────────────
 if __name__ == "__main__":
     import tempfile, os

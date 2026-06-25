@@ -77,6 +77,7 @@ class HansIdle:
         self._morning_health = None          # nález pro greeting/chat surfacing
         self._prev_routine_sleeping = None   # edge-detekce probuzení
         self._last_health_check_date = None  # idempotence 1×/den
+        self._last_lessons_check_date = None  # HANS_CORRECTION_LEARNING_V1
 
         from scripts.hans_introspection import HansIntrospection
         from scripts.hans_routine import HansRoutine
@@ -256,6 +257,37 @@ class HansIdle:
         except Exception as _e:
             _log.debug('morning_health: diary write failed: %s', _e)
 
+    def _morning_lessons_check(self):
+        """HANS_CORRECTION_LEARNING_V1 (#4) — ráno: pokud v noci vznikly lekce
+        z korekcí, pocítí jemnou pokoru (mírná nálada). 1x/den. Vědomí lekcí pro
+        chat řeší lessons_ctx (čte deník přímo). KONZERVATIVNÍ: jen nálada."""
+        from datetime import datetime as _dt
+        today = _dt.now().strftime('%Y-%m-%d')
+        if getattr(self, '_last_lessons_check_date', None) == today:
+            return
+        self._last_lessons_check_date = today
+        if not self.config.get('corrections', {}).get('enabled', True):
+            return
+        import time as _t
+        _dbp = (self.config.get('hans_idle', {}) or {}).get('diary_db',
+                                                            'data/hans_diary.db')
+        since = (getattr(self._routine, '_sleep_started_ts', None)
+                 or (_t.time() - 12 * 3600))
+        try:
+            from scripts.hans_lessons import scan_overnight_lessons as _sol
+            n = _sol(_dbp, since)
+        except Exception as _e:
+            _log.debug('morning_lessons: scan selhal: %s', _e)
+            return
+        if n <= 0:
+            return
+        _log.info('morning_lessons: %d lekci z nocnich korekci', n)
+        try:
+            self._mood._shift('worried', min(0.4 + 0.1 * n, 0.6),
+                              'ranni pokora: vcerejsi korekce')
+        except Exception as _e:
+            _log.debug('morning_lessons: mood shift failed: %s', _e)
+
     def _log_entry(self, event_type: str, title: str = "",
                    data: str = "", note: str = ""):
         with self._lock:
@@ -411,6 +443,7 @@ class HansIdle:
                 _prev = getattr(self, '_prev_routine_sleeping', None)
                 if _prev is True and _slp is False:
                     self._morning_health_check()
+                    self._morning_lessons_check()  # HANS_CORRECTION_LEARNING_V1
                 self._prev_routine_sleeping = _slp
             except Exception as _mhe:
                 _log.debug('morning_health edge check failed: %s', _mhe)

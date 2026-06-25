@@ -330,23 +330,23 @@ class HansQuestionsStore:
         return self._row_to_question(row)
 
     def next_for_person(self, person: str,
-                        min_age_h: float = 1.0) -> Optional["Question"]:
+                        min_age_h: float = 1.0,
+                        source_type: Optional[str] = None) -> Optional["Question"]:
         """HANS_QUESTIONS_SURFACING_V1 — nejstarší pending otázka pro osobu
         (target_person=osoba NEBO 'anyone'), bez voice random gate. Pro
         greeting i textový chat. min_age_h brání položit otázku těsně po
         vygenerování."""
         cutoff = time.time() - min_age_h * 3600.0
         with self._lock:
-            row = self._db.execute("""
-                SELECT * FROM hans_questions
-                 WHERE status=?
-                   AND (target_person=? OR target_person='anyone')
-                   AND ts_asked <= ?
-                   AND expires_at > ?
-                 ORDER BY ts_asked ASC
-                 LIMIT 1
-            """, (STATUS_PENDING, person.lower(), cutoff, time.time())
-            ).fetchone()
+            # HANS_PERSONAL_QUESTIONS_V1 — volitelný source_type filtr
+            _sql = ("SELECT * FROM hans_questions WHERE status=? "
+                    "AND (target_person=? OR target_person='anyone') "
+                    "AND ts_asked <= ? AND expires_at > ?")
+            _args = [STATUS_PENDING, person.lower(), cutoff, time.time()]
+            if source_type:
+                _sql += " AND source_type=?"; _args.append(source_type)
+            _sql += " ORDER BY ts_asked ASC LIMIT 1"
+            row = self._db.execute(_sql, tuple(_args)).fetchone()
         return self._row_to_question(row)
 
     # ── Limity ────────────────────────────────────────────────────────────────
