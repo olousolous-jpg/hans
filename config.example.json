@@ -312,7 +312,22 @@
     "as_person": "standa",
     "announce_online": false,
     "quiet_start_hour": 22,
-    "quiet_end_hour": 9
+    "quiet_end_hour": 9,
+    "users": [
+      {
+        "chat_id": "",
+        "as_person": "alice",
+        "role": "full",
+        "push_questions": false
+      },
+      {
+        "chat_id": "",
+        "as_person": "bob",
+        "role": "chat",
+        "push_questions": true
+      }
+    ],
+    "question_interval_h": 6
   },
   "kodi": {
     "enabled": true,
@@ -473,7 +488,10 @@
     "topic_max_turns": 6,
     "recent_replies_max": 40,
     "num_ctx": 16384,
-    "toaster_mode": false
+    "toaster_mode": false,
+    "two_minds": true,
+    "lines_per_dialog": 4,
+    "line_num_predict": 120
   },
   "room_observer": {
     "enabled": true,

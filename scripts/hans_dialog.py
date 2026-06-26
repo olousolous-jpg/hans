@@ -87,6 +87,33 @@ def _build_system_prompt(config: dict) -> str:
     return apply_name(prompt, config)  # PERSONA_NAME_CONFIGURABLE_V1 — {name} token z dialog_rules
 
 
+def _build_hans_solo_system(config: dict) -> str:
+    """HANS_KOLAC_MIND_V1 — system prompt JEN pro Hansovu repliku (dvě mysli).
+    Hans dostane svou identitu a má říct JEDNU repliku reagující na Koláče —
+    NEpíše za Koláče (ten má vlastní generaci s vlastní myslí)."""
+    from scripts.hans_persona import (persona_core, persona_interests,
+                                       persona_stances, persona_goal,
+                                       persona_name, apply_name)
+    name = persona_name(config)
+    parts = [persona_core(config, with_address=False)]
+    for extra in (persona_interests(config), persona_stances(config),
+                  persona_goal(config)):
+        if extra:
+            parts.append("\n" + extra)
+    parts.append(
+        "\n\nMluvíš s Koláčem — plyšovým medvídkem na poličce, který si hraje na "
+        "detektiva a rád ti OPONUJE (je to suchý skeptik s humorem). Bereš ho "
+        "jako svého společníka a důstojného protihráče v rozhovoru. Teď je řada "
+        f"na TOBĚ ({name}). Řekni JEDNU repliku (1-2 krátké věty), kterou "
+        "reaguješ na jeho poslední větu — věcně, ze svého pohledu; když s tebou "
+        "nesouhlasí, buď se braň, nebo uznej, že má bod. Mluv o KONKRÉTNÍCH "
+        "věcech, ne obecné úvahy. Nepiš za Koláče, žádný prefix se jménem, jen "
+        "samotnou repliku. POUZE česky, bez emoji, žádný korporátní/akademický "
+        "žargon."
+    )
+    return apply_name("".join(parts), config)
+
+
 
 # ═══════════════════════════════════════════════════════════════════
 # DIALOG_MERGED_V1 — Topic state machine (původně hans_dialog_topic.py)
@@ -476,6 +503,7 @@ class HansDialog:
         self._tts_lock = threading.Lock()
         # Historie posledních N replik pro continuity (max 8 = 2 dialogy)
         self._recent_replies: list = []
+        self._kolac_mind = None  # HANS_KOLAC_MIND_V1 (lazy)
 
         # Pocasi
         from scripts.weather_chmu import WeatherCHMU
@@ -824,7 +852,16 @@ class HansDialog:
 
             user_prompt = directive + history_block
 
-            dialog = self._call_gemini(user_prompt)
+            # HANS_KOLAC_MIND_V1 — dvě mysli (Hans ↔ Koláč zvlášť). Toaster
+            # (Švitorka) mód zůstává na jednorázovém skriptování (komediální gag).
+            # Fallback na _call_gemini, když dvě mysli selžou.
+            _two = (self.config.get("hans_dialog", {}).get("two_minds", True)
+                    and not getattr(topic, "is_toaster", False))
+            dialog = None
+            if _two:
+                dialog = self._generate_two_minds(topic, _context_str, history_block)
+            if not dialog:
+                dialog = self._call_gemini(user_prompt)
             if not dialog:
                 return
 
@@ -849,6 +886,17 @@ class HansDialog:
                         if len(_clue) > 10:
                             _cases.add_clue(_active.id, _clue[:200])
             self._topics.advance()
+            # HANS_KOLAC_MIND_V1 — Koláč si pamatuje svou pozici z dialogu
+            try:
+                _km = self._kolac()
+                if _km:
+                    _kl = [l for l in dialog.strip().split("\n")
+                           if l.strip().lower().startswith("kola") and ":" in l]
+                    if _kl:
+                        _km.remember(getattr(topic, "subject", ""),
+                                     _kl[-1].split(":", 1)[1].strip())
+            except Exception as _ke:
+                _log.debug("kolac remember: %s", _ke)
             for line in dialog.strip().split("\n"):
                 line = line.strip()
                 if line and ":" in line:
@@ -972,6 +1020,96 @@ class HansDialog:
                     "hans_dialog", {}).get("num_ctx", 8192)),
             },
         )
+
+    # ── HANS_KOLAC_MIND_V1 — dvě mysli (oddělená generace) ──────────────────
+    def _kolac(self):
+        if self._kolac_mind is None and self._diary_path:
+            try:
+                from scripts.hans_kolac import KolacMind
+                self._kolac_mind = KolacMind(self.config, self._diary_path)
+            except Exception as e:
+                _log.warning("KolacMind init: %s", e)
+        return self._kolac_mind
+
+    def _one_line(self, model: str, system: str, user: str, base: str) -> str | None:
+        """Jedna replika jednoho mluvčího. Strhne případný „Jméno:“ prefix."""
+        from scripts.ollama_client import ollama_chat
+        dc = self.config.get("hans_dialog", {}) or {}
+        try:
+            raw = ollama_chat(
+                model,
+                [{"role": "system", "content": system},
+                 {"role": "user", "content": user}],
+                ollama_url=base,
+                options={"num_predict": int(dc.get("line_num_predict", 120)),
+                         "temperature": 0.85,
+                         "num_ctx": int(dc.get("num_ctx", 8192))})
+        except Exception as e:
+            _log.warning("_one_line selhal: %s", e)
+            return None
+        if not raw:
+            return None
+        first = next((l.strip() for l in raw.strip().split("\n") if l.strip()), "")
+        if ":" in first[:18]:
+            spk, rest = first.split(":", 1)
+            if len(spk) <= 15:
+                first = rest.strip()
+        return (first[:300] or None)
+
+    def _generate_two_minds(self, topic, full_context: str,
+                            history_block: str) -> str | None:
+        """Střídavá generace: Hans (vlastní persona) ↔ Koláč (vlastní mysl) =
+        skutečná dialektika dvou myslí místo self-talku. Stejný výstupní formát
+        ('Jméno: ...\\nKolač: ...') → downstream (TTS/parsing/deník) beze změny."""
+        from scripts.hans_persona import persona_name
+        name = persona_name(self.config)
+        dc = self.config.get("hans_dialog", {}) or {}
+        base = self.config.get("openwebui_chat", {}).get(
+            "base_url", "http://127.0.0.1:11434")
+        hans_model = (self.config.get("models", {}).get("dialog")
+                      or dc.get("ollama_model")
+                      or self.config.get("openwebui_chat", {}).get(
+                          "model_name", "jobautomation/OpenEuroLLM-Czech:latest"))
+        kolac_model = dc.get("kolac_model") or hans_model  # volitelně jiný mozek
+        n_lines = int(dc.get("lines_per_dialog", 4))
+        scene = (f"Téma hovoru: {getattr(topic, 'subject', '')}\n"
+                 f"Úhel: {getattr(topic, 'angle', '')}\n")
+        if full_context:
+            scene += ("\nKonkrétní kontext (vyjdi z těchto detailů, nevymýšlej "
+                      "si nic navíc):\n" + full_context + "\n")
+        if getattr(topic, "is_debate", False):
+            scene += ("\nTOHLE JE VĚCNÝ SPOR: drž svůj názor a oponuj druhé "
+                      "straně konkrétním protiargumentem — s respektem a vtipem, "
+                      "ne hádka.\n")
+        # continuity seed (navázání na předchozí repliky, drží-li téma)
+        convo_seed = []
+        if (history_block and getattr(topic, "turns_so_far", 0) > 0
+                and self._recent_replies):
+            _hist_n = int(dc.get("history_in_prompt", 16))
+            convo_seed = list(self._recent_replies[-_hist_n:])
+        hans_sys = _build_hans_solo_system(self.config)
+        km = self._kolac()
+        convo = []
+        for i in range(max(2, n_lines)):
+            is_hans = (i % 2 == 0)
+            label = name if is_hans else "Kolač"
+            prior = convo_seed + convo
+            convo_txt = ("\n".join(prior) if prior else
+                         "(rozhovor teprve začíná — začínáš ty, konkrétním "
+                         "pozorováním, ne obecnou úvahou)")
+            if is_hans:
+                sysp, model = hans_sys, hans_model
+            else:
+                sysp = (km.build_system(getattr(topic, "subject", ""), full_context)
+                        if km else _build_system_prompt(self.config))
+                model = kolac_model
+            user = (scene + "\nDOSAVADNÍ ROZHOVOR:\n" + convo_txt
+                    + f"\n\nTeď řekni JEDNU repliku jako {label}.")
+            line = self._one_line(model, sysp, user, base)
+            if not line:
+                break
+            convo.append(f"{label}: {line}")
+        return "\n".join(convo) if convo else None
 
     def _call_gemini(self, user_prompt: str) -> str | None:
         """Zkusi nejdrive Ollama, pak OpenRouter jako fallback."""

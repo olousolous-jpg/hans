@@ -47,6 +47,26 @@ class TelegramBridge:
         self.token = str(cfg.get("bot_token", "") or "")
         self.chat_id = str(cfg.get("chat_id", "") or "")
         self.as_person = str(cfg.get("as_person", "") or "uživatel")
+        # TELEGRAM_MULTIUSER_V1 — víc povolených uživatelů.
+        # _users[cid] = {person, role, push_questions}
+        #   role: 'full' (chat + obrázky/příkazy) | 'chat' (jen chat + otázky)
+        #   push_questions: Hans jí sám posílá své otázky přes Telegram
+        # Zpětně kompat: legacy chat_id/as_person = primární full uživatel.
+        self._users: dict = {}
+        if self.chat_id:
+            self._users[self.chat_id] = {"person": self.as_person,
+                                         "role": "full", "push_questions": False}
+        for u in (cfg.get("users", []) or []):
+            _cid = str((u or {}).get("chat_id", "") or "")
+            if not _cid:
+                continue
+            self._users[_cid] = {
+                "person": str((u or {}).get("as_person", "") or self.as_person),
+                "role": str((u or {}).get("role", "full") or "full"),
+                "push_questions": bool((u or {}).get("push_questions", False)),
+            }
+        self._q_store = None  # TELEGRAM_QUESTIONS_V1 (lazy)
+        self._last_q_push: dict = {}  # cid -> ts (throttle)
         self._announce = bool(cfg.get("announce_online", False))
         self.enabled = (bool(cfg.get("enabled", False))
                         and bool(self.token) and requests is not None)
@@ -67,6 +87,17 @@ class TelegramBridge:
                 _log.warning("telegram: enabled, ale chybí bot_token → vypnuto")
 
     # ── OUTBOUND ────────────────────────────────────────────────────────────
+    def _person_for(self, cid: str) -> str:
+        """TELEGRAM_MULTIUSER_V1 — osoba podle chat_id (pro správné připsání)."""
+        u = self._users.get(str(cid))
+        return u["person"] if u else self.as_person
+
+    def _is_full(self, cid: str) -> bool:
+        """True když uživatel smí obrázky/příkazy (role 'full'). 'chat' = jen
+        chat + otázky."""
+        u = self._users.get(str(cid))
+        return (u.get("role", "full") == "full") if u else True
+
     def send(self, text: str, chat_id: str = None) -> bool:
         """Pošle zprávu na telefon. Vrací True/False. Nikdy nevyhodí."""
         if not self.enabled or not (text or "").strip():
@@ -97,18 +128,20 @@ class TelegramBridge:
             return self._quiet_start <= h < self._quiet_end
         return h >= self._quiet_start or h < self._quiet_end  # přes půlnoc
 
-    def send_proactive(self, text: str) -> bool:
-        """Hansem iniciovaná zpráva (Severka, brain-notify, announce). V tichém
-        okně se NEpošle hned, ale odloží a doručí po quiet_end (po 9:00).
-        Odpovědi na uživatele tudy NEchodí — ty jdou přes send() vždy hned."""
+    def send_proactive(self, text: str, chat_id: str = None) -> bool:
+        """Hansem iniciovaná zpráva (Severka, brain-notify, announce, otázky).
+        V tichém okně se NEpošle hned, ale odloží a doručí po quiet_end (9:00).
+        Odpovědi na uživatele tudy NEchodí — ty jdou přes send() vždy hned.
+        chat_id=None → primární uživatel; jinak konkrétní (otázky pro vedlejšího uživatele)."""
         if not self.enabled or not (text or "").strip():
             return False
+        cid = chat_id or self.chat_id
         if self._in_quiet_hours():
-            self._deferred.append(text)
+            self._deferred.append((text, cid))
             _log.info("telegram: proaktivní zpráva ODLOŽENA do %d:00 "
                       "(tiché okno, nepípat v noci)", self._quiet_end)
             return True
-        return self.send(text)
+        return self.send(text, chat_id=cid)
 
     def _flush_deferred(self):
         """Doruč odložené proaktivní zprávy, jakmile skončí tiché okno."""
@@ -116,9 +149,52 @@ class TelegramBridge:
             return
         pending = self._deferred
         self._deferred = []
-        for txt in pending:
-            self.send(txt)
+        for item in pending:
+            txt, cid = item if isinstance(item, tuple) else (item, None)
+            self.send(txt, chat_id=cid)
         _log.info("telegram: doručeno %d odložených proaktivních zpráv", len(pending))
+
+    # ── OTÁZKY PRO UŽIVATELE (TELEGRAM_QUESTIONS_V1) ────────────────────────
+    def _questions(self):
+        if self._q_store is None:
+            try:
+                from scripts.hans_questions import HansQuestionsStore
+                self._q_store = HansQuestionsStore(self._diary_path(), self.config)
+            except Exception as e:
+                _log.warning("HansQuestionsStore init: %s", e)
+        return self._q_store
+
+    def _maybe_push_questions(self):
+        """Hans pošle své čekající otázky uživatelům s push_questions=true
+        (např. vedlejší uživatel). Throttle per uživatel; tiché okno řeší send_proactive.
+        mark_asked_voice = SDÍLENÉ značení → nezeptá se 2× (ani přes popup)."""
+        interval = float((self.config.get("telegram", {}) or {}).get(
+            "question_interval_h", 6)) * 3600
+        now = time.time()
+        qs = None
+        for cid, u in self._users.items():
+            if not u.get("push_questions"):
+                continue
+            if now - self._last_q_push.get(cid, 0) < interval:
+                continue
+            if qs is None:
+                qs = self._questions()
+                if qs is None:
+                    return
+            self._last_q_push[cid] = now  # i prázdný pokus = počkej interval
+            try:
+                q = qs.next_for_person(u["person"])
+            except Exception as e:
+                _log.debug("next_for_person(%s): %s", u["person"], e)
+                continue
+            if not q or not (q.question or "").strip():
+                continue
+            if self.send_proactive(q.question, chat_id=cid):
+                try:
+                    qs.mark_asked_voice(q.id)
+                except Exception as e:
+                    _log.debug("mark_asked_voice: %s", e)
+                _log.info("telegram: otázka → %s: %.60s", u["person"], q.question)
 
     # ── INBOUND (long-poll) ─────────────────────────────────────────────────
     def start(self):
@@ -138,6 +214,7 @@ class TelegramBridge:
         while not self._stop.is_set():
             try:
                 self._flush_deferred()  # TELEGRAM_QUIET_HOURS_V1 — doruč po 9:00
+                self._maybe_push_questions()  # TELEGRAM_QUESTIONS_V1
                 params = {"timeout": 30}
                 if self._offset is not None:
                     params["offset"] = self._offset
@@ -167,33 +244,37 @@ class TelegramBridge:
         text = (msg.get("text") or "").strip()
         if not text:
             return
-        # bezpečnost: jen povolený chat_id
-        if self.chat_id and cid != self.chat_id:
+        # bezpečnost: jen povolené chat_id (TELEGRAM_MULTIUSER_V1)
+        if self._users and cid not in self._users:
             _log.warning("telegram: zpráva z neznámého chat_id %s — ignoruji", cid)
             return
-        _log.info("telegram ← %s: %.60s", self.as_person, text)
-        # HANS_TELEGRAM_CONTENT_V1 — Telegram příkazy (obraz/deník/úvaha) → pošli obsah
-        if self._handle_command(text, cid):
-            return
-        # HANS_TELEGRAM_NL_INTENT_V1 — žádost o obsah v přirozené řeči (ne /příkaz)
-        _intent = self._detect_intent(text)
-        if _intent == "artwork":
-            self._cmd_artwork(cid, self._pick_mode(text)); return
-        if _intent == "diary":
-            self._cmd_diary(cid); return
-        if _intent == "status":
-            self._cmd_status(cid); return
-        if _intent == "musing":
-            self._cmd_musing(cid); return
-        if _intent == "wol":
-            self._cmd_wol(cid); return
+        _person = self._person_for(cid)
+        _log.info("telegram ← %s: %.60s", _person, text)
+        # TELEGRAM_MULTIUSER_V1 — obrázky/příkazy jen pro 'full' uživatele.
+        # 'chat' role (např. vedlejší uživatel) → vše padá rovnou do chatu (žádné obrázky).
+        if self._is_full(cid):
+            # HANS_TELEGRAM_CONTENT_V1 — Telegram příkazy (obraz/deník/úvaha)
+            if self._handle_command(text, cid):
+                return
+            # HANS_TELEGRAM_NL_INTENT_V1 — žádost o obsah v přirozené řeči
+            _intent = self._detect_intent(text)
+            if _intent == "artwork":
+                self._cmd_artwork(cid, self._pick_mode(text)); return
+            if _intent == "diary":
+                self._cmd_diary(cid); return
+            if _intent == "status":
+                self._cmd_status(cid); return
+            if _intent == "musing":
+                self._cmd_musing(cid); return
+            if _intent == "wol":
+                self._cmd_wol(cid); return
         # běžná zpráva → chat (mozek); až teď nastav pending pro brain-notify
         self._pending_brain_notify = True  # HANS_TELEGRAM_BRAIN_NOTIFY_V1
         reply = None
         try:
             if self._handler is not None and hasattr(self._handler,
                                                      "send_chat_message"):
-                reply = self._handler.send_chat_message(self.as_person, text)
+                reply = self._handler.send_chat_message(_person, text)
         except Exception as e:
             _log.warning("telegram → chat selhal: %s", e)
             reply = None
@@ -211,11 +292,12 @@ class TelegramBridge:
         return ((self.config.get("hans_idle", {}) or {}).get("diary_db")
                 or self.config.get("diary_db") or "data/hans_diary.db")
 
-    def send_photo(self, file_path: str, caption: str = "") -> bool:
+    def send_photo(self, file_path: str, caption: str = "",
+                   chat_id: str = None) -> bool:
         """Pošle obrázek na telefon (sendPhoto, multipart). Nikdy nevyhodí."""
         if not self.enabled or not file_path or not os.path.exists(file_path):
             return False
-        cid = self.chat_id
+        cid = chat_id or self.chat_id  # TELEGRAM_MULTIUSER_V1 — komu poslat
         if not cid:
             return False
         try:
@@ -285,7 +367,7 @@ class TelegramBridge:
             path = ""
         if path and os.path.exists(path):
             cap = (note or "Můj obraz").strip()
-            if not self.send_photo(path, caption=cap):
+            if not self.send_photo(path, caption=cap, chat_id=cid):
                 self.send("Obraz se mi nepodařilo odeslat.", chat_id=cid)
         else:
             self.send("Obraz teď nemůžu najít.", chat_id=cid)
