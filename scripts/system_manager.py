@@ -233,6 +233,21 @@ class FaceRecognitionSystem:
                 except Exception as e:
                     print(f"[Chat] Preload selhal: {e}")
             threading.Thread(target=_preload, daemon=True).start()
+
+        # HANS_TELEGRAM_V1 — most na telefon (push + obousměrný chat)
+        self.telegram = None
+        try:
+            from scripts.hans_telegram import TelegramBridge
+            _tg = TelegramBridge(self.config, self.openwebui_chat)
+            if _tg.enabled:
+                _tg.start()
+                self.telegram = _tg
+                if self.openwebui_chat is not None:
+                    self.openwebui_chat.telegram = _tg
+                print("[Telegram] most aktivní")
+        except Exception as _te:
+            print(f"[Telegram] init selhal: {_te}")
+
     def show_system_status(self):
         print("\nSystem Configuration:")
         print(f"  Components: {self.component_status.get_status_summary()}")

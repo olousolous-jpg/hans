@@ -206,6 +206,9 @@ class HansRoutine:
                                             config.get('wol_minutes_before_wakeup', 5)))
         self._wol_last_date   = None
         self._wol_presence_last = 0.0   # WOL_ON_PRESENCE_V1
+        # WOL_PRESENCE_TOGGLE_V1 — samostatný vypínač presence WOL
+        self._wol_on_presence = bool(cfg.get('wol_on_presence',
+                                            config.get('wol_on_presence', True)))
         # WOL_TIMER_THREAD_V1 — nezavisle na tick-loopu
         if self._wol_pc_enabled:
             import threading as _thr
@@ -574,7 +577,7 @@ class HansRoutine:
     def wake_pc_on_presence(self):
         """Osoba přišla → pokud PC spí, vzbuď ho (teplá Ollama na chat).
         Throttle (wol_presence_cooldown_min) + neblokující. Volá person_seen."""
-        if not self._wol_pc_enabled or not self._wol_pc_mac:
+        if not self._wol_pc_enabled or not self._wol_on_presence or not self._wol_pc_mac:
             return
         import time as _t
         now = _t.time()

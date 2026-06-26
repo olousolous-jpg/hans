@@ -305,6 +305,13 @@
     "thumbs_up_hold_s": 1.5,
     "fist_hold_s": 0.5
   },
+  "telegram": {
+    "enabled": false,
+    "bot_token": "",
+    "chat_id": "",
+    "as_person": "standa",
+    "announce_online": false
+  },
   "kodi": {
     "enabled": true,
     "host": "192.168.1.20",

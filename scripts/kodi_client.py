@@ -220,6 +220,69 @@ class KodiClient:
                 return m
         return weighted[-1][0]
 
+    def speak_clip(self, local_mp3: str, voice_volume: int = 90) -> bool:
+        """HANS_FILM_VOICE_V1 — přehraj lokální MP3 (Hansův hlas) přes Kodi Z KLIDU.
+        scp na box → dočasně zvedne hlasitost → Player.Open → po klipu vrátí hlasitost.
+        NEpřeruší, když něco hraje (skip → False). Passthrough HDMI: playSFX nefunguje,
+        Player.Open z klidu ano. Vrací True když přehráno."""
+        if not self.enabled:
+            return False
+        # 1) jen z klidu — nikdy nepřerušuj běžící přehrávání
+        try:
+            ap = self._call("Player.GetActivePlayers")
+            if ap and ap.get("result"):
+                _log.info("speak_clip: něco hraje → skip (nepřerušuju)")
+                return False
+        except Exception:
+            return False
+        # 2) scp na box (osmc/osmc = JSON-RPC i SSH creds)
+        import subprocess
+        remote = "/home/%s/hans_voice.mp3" % (self.user or "osmc")
+        try:
+            subprocess.run(
+                ["sshpass", "-p", str(self.password), "scp",
+                 "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=8",
+                 str(local_mp3), "%s@%s:%s" % (self.user, self.host, remote)],
+                check=True, capture_output=True, timeout=20)
+        except Exception as e:
+            _log.warning("speak_clip: scp selhal: %s", e)
+            return False
+        # 3) délka klipu (ffprobe; fallback 6s)
+        dur = 6.0
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(local_mp3)],
+                capture_output=True, text=True, timeout=8)
+            dur = float((r.stdout or "").strip() or 6.0)
+        except Exception:
+            dur = 6.0
+        # 4) ulož hlasitost, zvedni
+        saved = None
+        try:
+            g = self._call("Application.GetProperties", {"properties": ["volume"]})
+            saved = (g or {}).get("result", {}).get("volume")
+        except Exception:
+            saved = None
+        try:
+            self._call("Application.SetVolume", {"volume": int(voice_volume)})
+        except Exception:
+            pass
+        # 5) přehraj
+        self._call("Player.Open", {"item": {"file": remote}})
+        # 6) po klipu vrať hlasitost (daemon thread, ať neblokujeme)
+        import threading
+        def _restore():
+            time.sleep(dur + 1.0)
+            if saved is not None:
+                try:
+                    self._call("Application.SetVolume", {"volume": int(saved)})
+                except Exception:
+                    pass
+        threading.Thread(target=_restore, daemon=True).start()
+        _log.info("speak_clip: přehráno (%.1fs, vol %s→%s)", dur, saved, voice_volume)
+        return True
+
     def suggest_movie(self, movie: dict, countdown: int = 30,
                       line: str | None = None) -> bool:
         """Pošle návrh do Kodi (addon service.hans.suggest) → dialog ano/ne

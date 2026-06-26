@@ -70,6 +70,7 @@ class HansBody:
         self.tts_speaker = None
         # Callback pro mood engine
         self.on_mood_change = None
+        self.on_brain_up = None      # HANS_TELEGRAM_BRAIN_NOTIFY_V1
 
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="HansBody")
@@ -274,6 +275,11 @@ class HansBody:
                                 f"Ollama zpět po {down_min} min")
             if self.on_mood_change:
                 self.on_mood_change("content", 0.6, "Ollama zpět")
+            if self.on_brain_up:  # HANS_TELEGRAM_BRAIN_NOTIFY_V1
+                try:
+                    self.on_brain_up(down_min)
+                except Exception:
+                    pass
 
         elif not ok:
             # Stále nedostupná — komentuj každých 30 min

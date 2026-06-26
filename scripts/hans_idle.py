@@ -70,6 +70,21 @@ class HansIdle:
             if hasattr(self, '_mood'):
                 self._mood._shift(mood, intensity, reason)
         self._body.on_mood_change = _body_mood_cb
+        def _body_brain_up_cb(down_min):
+            # HANS_TELEGRAM_BRAIN_NOTIFY_V1 — mozek online: dej vědět na
+            # Telegram, když uživatel nedávno psal (pending), ať ví, že
+            # může psát naplno. BEZ WOL.
+            try:
+                tg = getattr(self.chat, 'telegram', None) if self.chat else None
+                if tg is None or not getattr(tg, 'enabled', False):
+                    return
+                if not getattr(tg, '_pending_brain_notify', False):
+                    return
+                tg._pending_brain_notify = False
+                tg.send('Můj mozek je opět online — teď si můžeme normálně povídat.')
+            except Exception:
+                pass
+        self._body.on_brain_up = _body_brain_up_cb
 
         from scripts.hans_mood import HansMood
         self._mood = HansMood(config, diary_db=self._db)
@@ -708,7 +723,18 @@ class HansIdle:
         person = names[0]
         countdown = int(cfg.get("countdown_s", 30))
         spoken = u"%s, co takhle se podívat na film %s?" % (person.capitalize(), title)
-        if _tts and getattr(_tts, "enabled", False):
+        # HANS_FILM_VOICE_V1 — když voice_to_kodi, řekni návrh z TV (Player.Open
+        # z klidu, dočasně zvedne Kodi hlasitost); jinak Hansův TTS na Pi.
+        _said_kodi = False
+        if cfg.get("voice_to_kodi", False) and _tts and self.kodi is not None:
+            try:
+                _mp3 = _tts._get_mp3(spoken)
+                if _mp3:
+                    _said_kodi = self.kodi.speak_clip(
+                        str(_mp3), voice_volume=int(cfg.get("voice_volume", 90)))
+            except Exception as _ve:
+                _log.warning("voice_to_kodi selhal: %s", _ve)
+        if not _said_kodi and _tts and getattr(_tts, "enabled", False):
             try:
                 _tts.speak(spoken)
             except Exception:
