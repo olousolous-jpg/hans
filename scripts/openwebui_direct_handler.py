@@ -991,6 +991,25 @@ class OpenWebUIDirectHandler:
         except Exception:
             health_ctx = ""
 
+        # SEVERKA_PROACTIVE_NOTIFY_V1 — čeká-li Severčin návrh identity na
+        # schválení, Hans se o něm sám zmíní (backstop k Telegram pushi; přežije,
+        # dokud uživatel nerozhodne přes /severka). Read-only, graceful.
+        severka_ctx = ""
+        try:
+            from scripts.hans_identity import IdentityStore
+            _dbp_sv = (self.config.get("diary_db")
+                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                       or "data/hans_diary.db")
+            _pend = IdentityStore(self.config, _dbp_sv).pending()
+            if _pend:
+                severka_ctx = ("\n\nMám připravený návrh, jak přehodnotit svou "
+                               "vlastní povahu (kým se stávám) — čeká na "
+                               "rozhodnutí uživatele. Pokud to přijde přirozeně, "
+                               "smím se zmínit, že o tom přemýšlím a že je to na "
+                               "něm (schválit/zamítnout přes „/severka\").")
+        except Exception:
+            severka_ctx = ""
+
         # HANS_CORRECTION_LEARNING_V1 (#4) — nedávné lekce z korekcí (Hans je
         # má v kontextu, aby chybu neopakoval; read-only, NEmění paměť/postoje).
         lessons_ctx = ""
@@ -1030,7 +1049,7 @@ class OpenWebUIDirectHandler:
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
                           + room_ctx + place_ctx + diary_ctx + story_ctx + study_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1
-                          + body_ctx + mood_ctx + health_ctx + lessons_ctx + teddy_ctx + current
+                          + body_ctx + mood_ctx + health_ctx + severka_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx)  # …/ HANS_ROUTINE_CONTEXT_V1
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti

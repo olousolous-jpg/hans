@@ -54,6 +54,12 @@ class TelegramBridge:
         self._pending_brain_notify = False  # HANS_TELEGRAM_BRAIN_NOTIFY_V1
         self._stop = threading.Event()
         self._thread = None
+        # TELEGRAM_QUIET_HOURS_V1 — v noci NEpípat telefon: proaktivní (Hansem
+        # iniciované) zprávy se v tichém okně pozdrží a doručí až po quiet_end.
+        # Odpovědi na zprávy uživatele jdou VŽDY hned (i v noci).
+        self._quiet_start = int(cfg.get("quiet_start_hour", 22))  # včetně
+        self._quiet_end = int(cfg.get("quiet_end_hour", 9))       # do (po 9:00 OK)
+        self._deferred: list = []  # in-memory fronta odložených proaktivních zpráv
         if cfg.get("enabled", False) and not self.enabled:
             if requests is None:
                 _log.warning("telegram: requests není dostupné → vypnuto")
@@ -81,6 +87,39 @@ class TelegramBridge:
             _log.warning("telegram send selhal: %s", e)
             return False
 
+    # ── PROAKTIVNÍ (quiet-hours, TELEGRAM_QUIET_HOURS_V1) ───────────────────
+    def _in_quiet_hours(self) -> bool:
+        """True v tichém okně (přes půlnoc). Default 22:00–09:00."""
+        h = time.localtime().tm_hour
+        if self._quiet_start == self._quiet_end:
+            return False
+        if self._quiet_start < self._quiet_end:
+            return self._quiet_start <= h < self._quiet_end
+        return h >= self._quiet_start or h < self._quiet_end  # přes půlnoc
+
+    def send_proactive(self, text: str) -> bool:
+        """Hansem iniciovaná zpráva (Severka, brain-notify, announce). V tichém
+        okně se NEpošle hned, ale odloží a doručí po quiet_end (po 9:00).
+        Odpovědi na uživatele tudy NEchodí — ty jdou přes send() vždy hned."""
+        if not self.enabled or not (text or "").strip():
+            return False
+        if self._in_quiet_hours():
+            self._deferred.append(text)
+            _log.info("telegram: proaktivní zpráva ODLOŽENA do %d:00 "
+                      "(tiché okno, nepípat v noci)", self._quiet_end)
+            return True
+        return self.send(text)
+
+    def _flush_deferred(self):
+        """Doruč odložené proaktivní zprávy, jakmile skončí tiché okno."""
+        if not self._deferred or self._in_quiet_hours():
+            return
+        pending = self._deferred
+        self._deferred = []
+        for txt in pending:
+            self.send(txt)
+        _log.info("telegram: doručeno %d odložených proaktivních zpráv", len(pending))
+
     # ── INBOUND (long-poll) ─────────────────────────────────────────────────
     def start(self):
         if not self.enabled or self._thread is not None:
@@ -95,9 +134,10 @@ class TelegramBridge:
 
     def _poll_loop(self):
         if self._announce:
-            self.send("Hans je k dispozici. Můžete mi napsat.")
+            self.send_proactive("Hans je k dispozici. Můžete mi napsat.")
         while not self._stop.is_set():
             try:
+                self._flush_deferred()  # TELEGRAM_QUIET_HOURS_V1 — doruč po 9:00
                 params = {"timeout": 30}
                 if self._offset is not None:
                     params["offset"] = self._offset

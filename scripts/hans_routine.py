@@ -133,6 +133,7 @@ class HansRoutine:
         self._last_dream_date = ""
         self._last_summary_date = ""
         self._callbacks: list[Callable] = []
+        self._notifier = None  # SEVERKA_PROACTIVE_NOTIFY_V1 — proaktivní oznámení
 
         # Večerní reflexe — generuje se ručně přes run_evening_reflection()
         self._reflection = None
@@ -149,6 +150,7 @@ class HansRoutine:
         self._last_narrative = ""        # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3, týdenní guard)
         self._last_creation_reflection = ""  # HANS_CREATION_REFLECTION_V1 (D, týdenní guard)
         self._last_study_date = ""       # HANS_STUDY_V1 (1 studijní session/noc)
+        self._last_hygiene_date = ""     # HANS_MEMORY_HYGIENE_V1 (prořez firehose 1×/noc)
         self._identity = None            # HANS_IDENTITY_V1 (verzování CORE)
         self._severka = None             # HANS_SEVERKA_V1 (decision engine)
         # ROUTINE_STATE_PERSIST_V1 - guardy reflexi prezijou restart
@@ -248,6 +250,11 @@ class HansRoutine:
     def on_phase_change(self, callback: Callable):
         """Registruj callback(old_phase, new_phase)."""
         self._callbacks.append(callback)
+
+    def set_notifier(self, callback):
+        """SEVERKA_PROACTIVE_NOTIFY_V1 — callback(text) pro proaktivní oznámení
+        uživateli (Telegram). Volá se např. při Severčině návrhu identity."""
+        self._notifier = callback
 
     def get_context_string(self) -> str:
         """Pro LLM prompt — co je za denní dobu."""
@@ -460,6 +467,7 @@ class HansRoutine:
             self._last_narrative = s.get("last_narrative", "")
             self._last_creation_reflection = s.get("last_creation_reflection", "")
             self._last_study_date = s.get("last_study_date", "")  # HANS_STUDY_V1
+            self._last_hygiene_date = s.get("last_hygiene_date", "")  # HANS_MEMORY_HYGIENE_V1
         except FileNotFoundError:
             pass
         except Exception as _e:
@@ -477,6 +485,7 @@ class HansRoutine:
                     "last_narrative": self._last_narrative,
                     "last_creation_reflection": self._last_creation_reflection,
                     "last_study_date": self._last_study_date,  # HANS_STUDY_V1
+                    "last_hygiene_date": self._last_hygiene_date,  # HANS_MEMORY_HYGIENE_V1
                 }, f)
         except Exception as _e:
             _log.warning("routine_state: zapis selhal: %s", _e)
@@ -502,6 +511,15 @@ class HansRoutine:
         if d == "propose":
             _log.info("Severka: NÁVRH změny identity, čeká na schválení "
                       "(pending id=%s). Viz /severka.", res.get("version_id"))
+            # SEVERKA_PROACTIVE_NOTIFY_V1 — Hans dá sám vědět (Telegram), místo
+            # aby návrh jen ležel v logu / čekal na /severka stav (pull).
+            if self._notifier:
+                try:
+                    self._notifier(res.get("message") or
+                                   "Pane, mám návrh, jak přehodnotit svou povahu "
+                                   "— když budete chtít, řekněte /severka stav.")
+                except Exception as _ne:
+                    _log.warning("Severka notifier selhal: %s", _ne)
         elif res.get("gate"):
             _log.info("Severka: gate prošel, drift malý → držím roli.")
         else:
@@ -1128,6 +1146,24 @@ class HansRoutine:
                     _log.info("Studijní session: %s", _scode)
                 except Exception as _stue:
                     _log.warning("Studijní session selhala: %s", _stue)
+
+            # HANS_MEMORY_HYGIENE_V1 (#2) — retenční prořez deníkového firehose
+            # (person_seen/teddy_* starší než per-typ okno). Whitelist (smysluplné
+            # eventy netknuté). Čistě SQL → rychlé, 1×/noc, gate night+quiet
+            # (DELETE krátce zamkne diary DB — proto když je ticho).
+            if (self._last_hygiene_date != today
+                    and datetime.now().hour >= self._night_hour
+                    and self._chat_quiet_ok()):
+                self._last_hygiene_date = today
+                self._save_routine_state()
+                try:
+                    from scripts.hans_memory_hygiene import prune_diary
+                    _pruned = prune_diary(self.config, self._diary_path)
+                    if _pruned:
+                        _log.info("memory_hygiene: prořezáno %d řádků",
+                                  sum(_pruned.values()))
+                except Exception as _hye:
+                    _log.warning("memory_hygiene prořez selhal: %s", _hye)
 
             # HANS_CREATION_REFLECTION_V1 (D) — týdně: reflexe vlastní tvorby
             # (sebepoznání, NE postoje). Samostatná kadence. Deferral-safe.

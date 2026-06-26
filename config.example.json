@@ -310,7 +310,9 @@
     "bot_token": "",
     "chat_id": "",
     "as_person": "standa",
-    "announce_online": false
+    "announce_online": false,
+    "quiet_start_hour": 22,
+    "quiet_end_hour": 9
   },
   "kodi": {
     "enabled": true,
@@ -734,5 +736,15 @@
     "multi_dwell_s": 10.0,
     "camera_follow": false,
     "reacquire_gap_s": 20.0
+  },
+  "memory_hygiene": {
+    "enabled": true,
+    "vacuum": false,
+    "retention_days": {
+      "person_seen": 60,
+      "teddy_dialog": 60,
+      "teddy_arrived": 14,
+      "teddy_gone": 14
+    }
   }
 }

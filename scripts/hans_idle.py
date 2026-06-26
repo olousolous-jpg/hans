@@ -81,7 +81,9 @@ class HansIdle:
                 if not getattr(tg, '_pending_brain_notify', False):
                     return
                 tg._pending_brain_notify = False
-                tg.send('Můj mozek je opět online — teď si můžeme normálně povídat.')
+                # TELEGRAM_QUIET_HOURS_V1 — proaktivní → v noci se odloží do 9:00
+                _send = getattr(tg, 'send_proactive', tg.send)
+                _send('Můj mozek je opět online — teď si můžeme normálně povídat.')
             except Exception:
                 pass
         self._body.on_brain_up = _body_brain_up_cb
@@ -140,6 +142,19 @@ class HansIdle:
             synthesis=self._synthesis,
             knowledge=self._knowledge,
         )
+        # SEVERKA_PROACTIVE_NOTIFY_V1 — Hans sám oznámí (Telegram) Severčin návrh
+        # identity. Čte self.chat.telegram až při volání (chat se drátuje později).
+        def _proactive_notify(text):
+            try:
+                tg = getattr(self.chat, 'telegram', None) if self.chat else None
+                if tg is not None and getattr(tg, 'enabled', False):
+                    # TELEGRAM_QUIET_HOURS_V1 — Severka běží v noci → odloží do 9:00
+                    _send = getattr(tg, 'send_proactive', tg.send)
+                    _send(text)
+            except Exception as _pe:
+                _log.debug('proactive_notify selhal: %s', _pe)
+        if hasattr(self._routine, 'set_notifier'):
+            self._routine.set_notifier(_proactive_notify)
         self._cases   = KolacCases(config, _diary_db)
 
         # HANS_GOALS_STRUCTURE_V1 — Hansovy úkolové cíle (fáze 2b)
