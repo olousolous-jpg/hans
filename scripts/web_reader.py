@@ -22,6 +22,13 @@ from bs4 import BeautifulSoup
 
 _log = __import__("scripts.logger", fromlist=["get_logger"]).get_logger("web_reader")
 
+# HANS_STUDY_DEEP_V1 — generické odkazy bez studijní hodnoty (vynech z pododkazů)
+_LINK_NOISE = {
+    "zeměpisné souřadnice", "geografické souřadnice", "souřadnicový systém",
+    "rozcestník", "spojené království", "česko", "anglicky", "latina",
+    "iso 3166", "wikidata",
+}
+
 # RSS zdroje — Hans je čte podle nálady / zájmů
 RSS_FEEDS = {
     "zpravy":    "https://ct24.ceskatelevize.cz/rss/hlavni-zpravy",
@@ -129,6 +136,101 @@ class WebReader:
         except Exception as e:
             _log.debug("Wikipedia search error: %s", e)
         return None
+
+    # ── Wikipedia hloubkové čtení (HANS_STUDY_DEEP_V1) ──────────────────────────
+
+    def wikipedia_article(self, query: str, lang: str = "cs",
+                          max_chars: int = 12000) -> Optional[dict]:
+        """Najde nejlepší stránku a vrátí PLNÝ plaintext článku (ne jen lead).
+        cs→en fallback. Vrací {page_title, title, url, text, lang} nebo None.
+        Bez LLM — jen stažení (sumarizaci/poznámku dělá volající)."""
+        title = self._wikipedia_search(query, lang)
+        if not title:
+            if lang == "cs":
+                return self.wikipedia_article(query, lang="en", max_chars=max_chars)
+            return None
+        extract = self._wiki_extract(title, lang, intro_only=False)
+        if not extract or len(extract) < 120:
+            if lang == "cs":
+                return self.wikipedia_article(query, lang="en", max_chars=max_chars)
+            return None
+        url = (f"https://{lang}.wikipedia.org/wiki/"
+               + requests.utils.quote(title.replace(" ", "_")))
+        return {
+            "page_title": title,
+            "title": title,
+            "url": url,
+            "text": extract[:max_chars],
+            "lang": lang,
+        }
+
+    def wikipedia_lead_links(self, page_title: str, lang: str = "cs",
+                             limit: int = 6) -> list[str]:
+        """Odkazy z ÚVODNÍ sekce článku v POŘADÍ VÝSKYTU (= nejcentrálnější
+        pojmy první, ne abecedně). Parsuje HTML lead sekce — `prop=links` by
+        vrátil odkazy abecedně. Jen články (ne File:/Help:/kotvy/rozcestníky)."""
+        import urllib.parse as _up
+        api = f"https://{lang}.wikipedia.org/w/api.php"
+        try:
+            r = self._sess.get(api, params={
+                "action": "parse", "page": page_title, "prop": "text",
+                "section": "0", "format": "json", "redirects": 1,
+            }, timeout=self._timeout)
+            html = r.json().get("parse", {}).get("text", {}).get("*", "")
+        except Exception as e:
+            _log.debug("wikipedia_lead_links error (%s): %s", page_title, e)
+            return []
+        if not html:
+            return []
+        soup = BeautifulSoup(html, "html.parser")
+        out = []
+        seen = set()
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if not href.startswith("/wiki/"):
+                continue
+            raw = href[len("/wiki/"):]
+            if ":" in raw:           # File:, Help:, Wikipedie: …
+                continue
+            t = _up.unquote(raw.split("#", 1)[0]).replace("_", " ").strip()
+            tl = t.lower()
+            if not t or tl in seen:
+                continue
+            if any(t.startswith(p) for p in ("Seznam ", "List of ")):
+                continue
+            if tl in _LINK_NOISE:    # generické nesouvisející odkazy
+                continue
+            out.append(t)
+            seen.add(tl)
+            if len(out) >= limit:
+                break
+        return out
+
+    def wikipedia_intro(self, page_title: str, lang: str = "cs",
+                        max_chars: int = 3000) -> str:
+        """Úvodní (lead) plaintext konkrétní stránky podle PŘESNÉHO názvu."""
+        extract = self._wiki_extract(page_title, lang, intro_only=True)
+        return (extract or "")[:max_chars]
+
+    def _wiki_extract(self, page_title: str, lang: str = "cs",
+                      intro_only: bool = False) -> str:
+        """prop=extracts plaintext daného názvu. intro_only → jen lead."""
+        api = f"https://{lang}.wikipedia.org/w/api.php"
+        params = {
+            "action": "query", "prop": "extracts", "explaintext": 1,
+            "redirects": 1, "titles": page_title, "format": "json",
+            "formatversion": 2,
+        }
+        if intro_only:
+            params["exintro"] = 1
+        try:
+            r = self._sess.get(api, params=params, timeout=self._timeout)
+            pages = r.json().get("query", {}).get("pages", [])
+            if pages and isinstance(pages, list):
+                return (pages[0].get("extract") or "").strip()
+        except Exception as e:
+            _log.debug("_wiki_extract error (%s): %s", page_title, e)
+        return ""
 
     # ── RSS ───────────────────────────────────────────────────────────────────
 

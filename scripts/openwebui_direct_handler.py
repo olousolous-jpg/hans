@@ -784,6 +784,23 @@ class OpenWebUIDirectHandler:
         except Exception:
             story_ctx = ""
 
+        # HANS_STUDY_SURFACING_V1 (#2) — Hans přirozeně zmíní svůj studijní
+        # program (co studuje / co se dozvěděl). Jen full mód, ne greeting
+        # (brevita). Read-only, graceful.
+        study_ctx = ""
+        if not for_greeting:
+            try:
+                from scripts.hans_study import study_context_string
+                _dbp2 = (self.config.get("diary_db")
+                         or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                         or "data/hans_diary.db")
+                _sc = study_context_string(self.config, _dbp2)
+                if _sc:
+                    study_ctx = ("\n\nMé soukromé studium (zmiň jen když to "
+                                 "přirozeně zapadne, nevnucuj): " + _sc)
+            except Exception:
+                study_ctx = ""
+
         # Kodi kontext
         kodi_ctx = ""
         _km = getattr(self, '_kodi_monitor', None)
@@ -1012,7 +1029,7 @@ class OpenWebUIDirectHandler:
                 system_msg = ""
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
-                          + room_ctx + place_ctx + diary_ctx + story_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1
+                          + room_ctx + place_ctx + diary_ctx + story_ctx + study_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1
                           + body_ctx + mood_ctx + health_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx)  # …/ HANS_ROUTINE_CONTEXT_V1

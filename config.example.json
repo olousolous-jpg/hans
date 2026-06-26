@@ -655,6 +655,22 @@
       "de"
     ]
   },
+  "study": {
+    "enabled": true,
+    "min_evidence": 8,
+    "min_age_days": 21,
+    "min_recent_days": 14,
+    "curriculum_size": 8,
+    "llm_timeout": 300,
+    "wiki_lang": "cs",
+    "rag_collection": "hans_cetba",
+    "num_ctx": 8192,
+    "article_max_chars": 12000,
+    "sublink_count": 3,
+    "sublink_max_chars": 2500,
+    "material_max_chars": 22000,
+    "max_subtopic_failures": 3
+  },
   "person_name_forms": {
     "alice": [
       "alice",

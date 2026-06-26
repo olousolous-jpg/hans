@@ -99,6 +99,9 @@ def _build_system_prompt(config: dict) -> str:
 _ANGLES_BY_KIND = {
     "reading":     ["historický kontext", "překvapivý detail", "souvislost se současností",
                     "estetika", "morální rozměr", "debate"],
+    # HANS_STUDY_KOLAC_V1 — Hans sdílí, co do hloubky studuje
+    "study":       ["co jsem se dozvěděl", "překvapivý detail", "souvislosti",
+                    "proč mě to zaujalo", "debate"],
     "kodi":        ["atmosféra a styl", "postavy a jejich motivace",
                     "režijní volby", "paralelní filmy", "dobové reálie", "debate"],
     "weather":     ["nálada", "vzpomínka", "praktický důsledek pro dům"],
@@ -368,7 +371,7 @@ class TopicManager:
                 is_debate=random.random() < self.debate_probability,
             )
 
-        priority = ["reading", "kodi", "observation", "movie_diary", "weather"]
+        priority = ["study", "reading", "kodi", "observation", "movie_diary", "weather"]
         fresh.sort(key=lambda c: priority.index(c["kind"])
                    if c["kind"] in priority else 999)
 
@@ -401,7 +404,13 @@ class TopicManager:
             if not isinstance(part, str) or not part.strip():
                 continue
             low = part.lower()
-            if "četl jsem o:" in low or "Četl jsem o:" in part:
+            if "studuji do hloubky:" in low:  # HANS_STUDY_KOLAC_V1
+                subj = part.split(":", 1)[1].strip()
+                subj = subj.split(".", 1)[0].strip()[:60]
+                candidates.append({
+                    "subject": subj, "kind": "study", "seed": part,
+                })
+            elif "četl jsem o:" in low or "Četl jsem o:" in part:
                 title = part.split(":", 1)[1].strip()
                 title = title.split("\u2014")[0].strip() if "\u2014" in title else title[:60]
                 candidates.append({
@@ -757,6 +766,17 @@ class HansDialog:
                 _book_ctx = _lib.get_reading_context()
                 if _book_ctx:
                     _context_parts.append(_book_ctx)
+
+            # HANS_STUDY_KOLAC_V1 — co Hans právě studuje do hloubky
+            try:
+                from scripts.hans_study import study_dialog_seed
+                _dbp_s = (self.config.get("diary_db")
+                          or "data/hans_diary.db")
+                _study_seed = study_dialog_seed(self.config, _dbp_s)
+                if _study_seed:
+                    _context_parts.append(_study_seed)
+            except Exception:
+                pass
 
             # Denní fáze
             _routine = getattr(self, '_routine', None)

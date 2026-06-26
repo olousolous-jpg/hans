@@ -916,6 +916,86 @@ register(
 )
 
 
+# ─── /studium — studijní program z koníčku (HANS_STUDY_V1, #1 odbornost) ──
+_STUDY_NOW = {"teď", "ted", "now", "session", "studuj"}
+
+
+def _cmd_studium(handler, name, args) -> str:
+    """/studium — stav studijního programu; /studium programy = všechny;
+    /studium teď = spustí jednu studijní session na pozadí (noční práce ručně)."""
+    cfg = getattr(handler, "config", {}) or {}
+    db = cfg.get("diary_db", "data/hans_diary.db")
+    try:
+        from scripts.hans_study import StudyStore, run_study_session
+    except Exception as e:
+        return "Studijní modul nedostupný: %s" % e
+    store = StudyStore(cfg, db)
+    sub = (args or "").strip().lower()
+
+    if sub in _STUDY_NOW:
+        import threading as _th
+        kn = getattr(handler, "_knowledge", None) or getattr(handler, "knowledge", None)
+
+        def _run():
+            try:
+                code = run_study_session(cfg, db, knowledge=kn)
+                _log.info("/studium teď → %s", code)
+            except Exception as _e:
+                _log.warning("/studium teď selhalo: %s", _e)
+        _th.Thread(target=_run, daemon=True, name="StudyNow").start()
+        return ("Pustil jsem se do studia, pane — nastuduji další pod-téma. "
+                "Chvíli to potrvá (čtení + zápis poznámky), výsledek pak "
+                "uvidíte v /studium a v deníku.")
+
+    if sub in {"programy", "programs", "vše", "vse", "all"}:
+        progs = store.all_programs()
+        if not progs:
+            return "Zatím jsem nezačal žádný studijní program, pane."
+        out = ["Studijní programy:"]
+        for p in progs:
+            out.append("  [%d] %s — %s (%d/%d, %d sessions)" % (
+                p["id"], p["topic"], p["status"], p["current_index"],
+                len(p["curriculum"]), p["sessions_done"]))
+        return NL_RUNTIME.join(out)
+
+    ap = store.get_active_program()
+    if not ap:
+        progs = store.all_programs()
+        if progs:
+            last = progs[0]
+            return ("Právě nestuduji, pane. Naposledy: „%s\" (%s, %d/%d). "
+                    "Další program si vyberu z trvalého koníčku. "
+                    "(/studium programy, /studium teď)" % (
+                        last["topic"], last["status"], last["current_index"],
+                        len(last["curriculum"])))
+        return ("Zatím jsem nezačal studijní program, pane — vyberu si trvalý "
+                "koníček a sestavím kurikulum. (/studium teď to spustí ručně)")
+
+    cur = ap["current_index"]
+    total = len(ap["curriculum"])
+    out = ["Studuji: „%s\" — pod-téma %d z %d:" % (ap["topic"], cur + 1 if cur < total else total, total)]
+    for i, s in enumerate(ap["curriculum"]):
+        if i < cur:
+            mark = "✓"
+        elif i == cur:
+            mark = "→"
+        else:
+            mark = " "
+        out.append("   %s %s" % (mark, s))
+    out.append("")
+    out.append("Sessions: %d  |  ručně: /studium teď" % ap["sessions_done"])
+    return NL_RUNTIME.join(out)
+
+
+register(
+    "studium",
+    slash_aliases=["studium", "study", "učení", "uceni"],
+    nl_patterns=[],
+    handler=_cmd_studium,
+    help_text="Studijní program: /studium [programy|teď]",
+)
+
+
 # AVATAR_CMD_V1 — ruční inspekce/refresh vizuálního descriptoru (fáze 2 avatara).
 _AVATAR_GEN = {"gen", "generuj", "nový", "novy", "znovu", "teď", "ted", "refresh"}
 

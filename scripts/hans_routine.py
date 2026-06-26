@@ -148,6 +148,7 @@ class HansRoutine:
         self._last_severka_check = ""    # HANS_SEVERKA_V1 (3c, týdenní guard)
         self._last_narrative = ""        # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3, týdenní guard)
         self._last_creation_reflection = ""  # HANS_CREATION_REFLECTION_V1 (D, týdenní guard)
+        self._last_study_date = ""       # HANS_STUDY_V1 (1 studijní session/noc)
         self._identity = None            # HANS_IDENTITY_V1 (verzování CORE)
         self._severka = None             # HANS_SEVERKA_V1 (decision engine)
         # ROUTINE_STATE_PERSIST_V1 - guardy reflexi prezijou restart
@@ -458,6 +459,7 @@ class HansRoutine:
             self._last_severka_check = s.get("last_severka_check", "")
             self._last_narrative = s.get("last_narrative", "")
             self._last_creation_reflection = s.get("last_creation_reflection", "")
+            self._last_study_date = s.get("last_study_date", "")  # HANS_STUDY_V1
         except FileNotFoundError:
             pass
         except Exception as _e:
@@ -474,6 +476,7 @@ class HansRoutine:
                     "last_severka_check": self._last_severka_check,
                     "last_narrative": self._last_narrative,
                     "last_creation_reflection": self._last_creation_reflection,
+                    "last_study_date": self._last_study_date,  # HANS_STUDY_V1
                 }, f)
         except Exception as _e:
             _log.warning("routine_state: zapis selhal: %s", _e)
@@ -1102,6 +1105,29 @@ class HansRoutine:
                             _log.debug("narrative RAG upload: %s", _ue)
                 except Exception as _ne:
                     _log.warning("narrative konsolidace selhala: %s", _ne)
+
+            # HANS_STUDY_V1 — studijní program: 1 noční session = nastuduj další
+            # pod-téma durable koníčku (Wikipedia → poznámka → deník+RAG). Po
+            # dokončení kurikula mistrovská reflexe (grounduje vocational identitu).
+            # Base LLM keep_alive=0 (VRAM tier), jen v noci. Deferral-safe:
+            # 'deferred' (Ollama/wiki dole) → guard se NEnastaví, zkusí se znovu.
+            if (self._last_study_date != today
+                    and datetime.now().hour >= self._night_hour
+                    and self._chat_quiet_ok()):
+                try:
+                    from scripts.hans_study import run_study_session
+                    # diary_writer záměrně NEpředáváme: _diary_write píše do
+                    # sloupce `note`, ale studijní poznámky musí do `data`
+                    # (odkud je čte _gather_notes pro mistrovskou reflexi).
+                    _scode = run_study_session(
+                        self.config, self._diary_path,
+                        knowledge=self._knowledge)
+                    if _scode != "deferred":
+                        self._last_study_date = today
+                        self._save_routine_state()
+                    _log.info("Studijní session: %s", _scode)
+                except Exception as _stue:
+                    _log.warning("Studijní session selhala: %s", _stue)
 
             # HANS_CREATION_REFLECTION_V1 (D) — týdně: reflexe vlastní tvorby
             # (sebepoznání, NE postoje). Samostatná kadence. Deferral-safe.

@@ -62,6 +62,11 @@ _SYSTEM = (
     "odbornou/povolání facetu (např. dlouhodobý zájem o hrady → 'znalec hradů'), "
     "je-li silný a vytrvalý — pořád jako rys POSTAVY. Vycházej VÝHRADNĚ "
     "z uvedených tendencí i koníčků, nic si nevymýšlej.\n"
+    # HANS_STUDY_SEVERKA_V1 (#3)
+    "- HLOUBKOVÉ STUDIUM je NEJSILNĚJŠÍ opora pro povolání/odbornou facetu: "
+    "dokončený studijní program znamená REÁLNĚ nabytou znalost, ne jen zájem. "
+    "Vocational návrh ('znalec hradů', 'historik architektury') je oprávněný "
+    "hlavně tehdy, je-li podložen i tímto studiem; bez něj zůstaň opatrnější.\n"
     "- SEBE-DEFINUJÍCÍ VZPOMÍNKY jsou KONTEXT — pivotní epizody {persona_name}ova "
     "života. Navržená identita s nimi má být KOHERENTNÍ (vyrůstat z nich), ale "
     "primárním podkladem driftu zůstávají tendence a koníčky.\n"
@@ -206,9 +211,21 @@ class Severka:
         except Exception as _ce:
             _log.debug("severka latest_chapter failed: %s", _ce)
             chapter = "(zatím žádná)"
+        # HANS_STUDY_SEVERKA_V1 (#3) — dokončené/aktivní studijní programy =
+        # vocational grounding REÁLNOU znalostí (ne jen tagy/koníčky). Klíč
+        # pro návrh „znalec hradů podložený studiem" místo abstraktního.
+        try:
+            from scripts.hans_study import completed_studies_block
+            study_block = completed_studies_block(self._config, self._diary_path) \
+                or "(zatím žádné dokončené studium)"
+        except Exception as _se:
+            _log.debug("severka studium block failed: %s", _se)
+            study_block = "(zatím žádné dokončené studium)"
         prompt = (f"DOSAVADNÍ ROLE (CORE):\n{core}\n\n"
                   f"TRVALÉ TENDENCE — hodnoty/postoje (filtr stálosti):\n{tnd_block}\n\n"
                   f"TRVALÉ KONÍČKY — dlouhodobé zájmy (filtr stálosti):\n{hob_block}\n\n"
+                  f"HLOUBKOVÉ STUDIUM — co jsem do hloubky nastudoval (reálná "
+                  f"znalost, ne jen zájem):\n{study_block}\n\n"
                   f"SEBE-DEFINUJÍCÍ VZPOMÍNKY — pivotní epizody (kontext pro koherenci):\n{mem_block}\n\n"
                   f"PŘÍBĚH — poslední kapitola (souvislé ohlédnutí za vývojem):\n{chapter}")
 
