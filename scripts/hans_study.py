@@ -118,6 +118,42 @@ def _generate_curriculum(config: dict, topic: str, examples: list) -> list:
 
 
 # ── Hloubkové čtení: plný článek + intro pododkazů (HANS_STUDY_DEEP_V1) ──────
+_GENERIC_LEADIN = re.compile(
+    r"^(základy|úvod do|úvod|práce s|práce se|principy|teorie|tvorba|"
+    r"co je|historie|vývoj)\s+", re.IGNORECASE)
+
+
+def _search_queries(sub: str, topic: str) -> List[str]:
+    """STUDY_SEARCH_FALLBACK_V1 — kurikulum dává popisné fráze
+    ('Základy typografie: fonty, kerning, leading a tracking'), které Wikipedia
+    full-text search jako celek NEnajde (srsearch vrátí None) → study by skončilo
+    'noread'→skip a nenastudovalo nic. Vyrob postupně užší dotazy: plná fráze →
+    část před dvojtečkou ('Základy typografie') → jádro bez generického úvodu
+    ('typografie') → s tématem. Vrací deduplikované neprázdné kandidáty v pořadí
+    od nejkonkrétnějšího."""
+    out: List[str] = []
+    seen = set()
+
+    def _add(q: str):
+        q = (q or "").strip(" .,–-")
+        if q and q.lower() not in seen:
+            seen.add(q.lower())
+            out.append(q)
+
+    s = (sub or "").strip()
+    head = s.split(":")[0].strip()           # část před dvojtečkou
+    core = _GENERIC_LEADIN.sub("", head).strip()        # bez "Základy/Teorie…"
+    core = re.sub(r"\s+v\s+\w+$", "", core).strip()     # "Kompozice v designu"→"Kompozice"
+    # JÁDRO nejdřív = nejkanoničtější článek (full-text search dá u dlouhé popisné
+    # fráze často nesmysl-ale-neprázdný výsledek → stopne se na něm; čisté jádro
+    # trefí správný článek). Pak širší fallbacky.
+    _add(core)
+    _add(head)
+    _add(s)
+    _add(f"{core} {topic}".strip() if core else f"{s} {topic}".strip())
+    return out
+
+
 def _gather_material(config: dict, sub: str, topic: str):
     """Nastuduj pod-téma do hloubky: PLNÝ hlavní článek (ne jen lead) + úvody
     několika nejrelevantnějších pododkazů z úvodní sekce (v pořadí výskytu).
@@ -133,10 +169,14 @@ def _gather_material(config: dict, sub: str, topic: str):
         _log.warning("_gather_material: WebReader nedostupný")
         return None, None, None
     w = WebReader(config)
+    art = None
     try:
-        art = w.wikipedia_article(sub, lang=lang, max_chars=art_max)
-        if not art or not (art.get("text") or "").strip():
-            art = w.wikipedia_article(f"{sub} {topic}", lang=lang, max_chars=art_max)
+        for q in _search_queries(sub, topic):
+            art = w.wikipedia_article(q, lang=lang, max_chars=art_max)
+            if art and (art.get("text") or "").strip():
+                if q != sub:
+                    _log.info("_gather_material: '%s' → článek přes dotaz '%s'", sub, q)
+                break
     except Exception as e:
         _log.warning("_gather_material čtení selhalo (%s): %s", sub, e)
         return None, None, None

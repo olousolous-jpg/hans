@@ -16,6 +16,8 @@ from typing import Optional
 
 _log = logging.getLogger("hans_dialog")
 
+from scripts.hans_kolac import kolac_name, localize_kolac  # KOLAC_NAME_CONFIGURABLE_V1
+
 # Plyšáci které YOLO zná jako "teddy_bear"
 _TEDDY_NAMES = [
     "pane Medvídku",
@@ -84,7 +86,7 @@ def _build_system_prompt(config: dict) -> str:
         f"Začni {name}:\n"
         f'Formát přesně: "{name}: ...\\nKolač: ...\\n{name}: ...\\nKolač: ..."'
     )
-    return apply_name(prompt, config)  # PERSONA_NAME_CONFIGURABLE_V1 — {name} token z dialog_rules
+    return localize_kolac(apply_name(prompt, config), config)  # PERSONA_NAME_CONFIGURABLE_V1 + KOLAC_NAME_CONFIGURABLE_V1
 
 
 def _build_hans_solo_system(config: dict) -> str:
@@ -111,7 +113,7 @@ def _build_hans_solo_system(config: dict) -> str:
         "samotnou repliku. POUZE česky, bez emoji, žádný korporátní/akademický "
         "žargon."
     )
-    return apply_name("".join(parts), config)
+    return localize_kolac(apply_name("".join(parts), config), config)  # KOLAC_NAME_CONFIGURABLE_V1
 
 
 
@@ -606,13 +608,14 @@ class HansDialog:
             self._stop.wait(30.0)
 
     def _on_teddy_gone(self):
-        """Hans si všimne že Kolač zmizel."""
-        _log.info("Kolač zmizel!")
+        """Hans si všimne že společník zmizel."""
+        kname = kolac_name(self.config)  # KOLAC_NAME_CONFIGURABLE_V1
+        _log.info("%s zmizel!", kname)
         comments = [
-            "Pane Kolači? Kde jste? Doufám že jste neodešel na nebezpečný případ bez upozornění.",
-            "Pane Kolači se zdá že odešel. Doufám že případ Záhady mokrého deštníku počká.",
-            "Místo pana Koláče je prázdné. Jako správný majordomus budu čekat na jeho návrat.",
-            "Pan Kolač zmizel. Snad jen odešel přemýšlet — detektivé to občas potřebují.",
+            f"{kname}? Kam jste se poděl? Doufám, že jste neodešel na nebezpečný případ bez upozornění.",
+            f"Zdá se, že {kname} odešel. Doufám, že jeho případ počká.",
+            f"Místo, kde sedává {kname}, je prázdné. Jako správný majordomus počkám na jeho návrat.",
+            f"{kname} zmizel. Snad jen odešel přemýšlet — detektivové to občas potřebují.",
         ]
         import random as _r
         text = _r.choice(comments)
@@ -627,25 +630,26 @@ class HansDialog:
         if _db:
             _db.execute(
                 "INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
-                (time.time(), "teddy_gone", "Kolač zmizel", text))
+                (time.time(), "teddy_gone", "%s zmizel" % kname, text))
             _db.commit()
             _db.close()
 
     def _on_teddy_arrived(self):
-        """Hans si všimne že Kolač se vrátil — a spustí dialog."""
-        _log.info("Kolač se vrátil!")
+        """Hans si všimne že společník se vrátil — a spustí dialog."""
+        kname = kolac_name(self.config)  # KOLAC_NAME_CONFIGURABLE_V1
+        _log.info("%s se vrátil!", kname)
 
         # Kvantový komentář — pokud je quantum_kolac zapnut
         if self.config.get("hans_idle", {}).get("quantum_kolac", False):
             import random as _r
             comments = [
-                "Pozoruhodné — pan Kolač je přítomen fyzicky i metafyzicky současně. "
+                f"Pozoruhodné — {kname} je přítomen fyzicky i metafyzicky současně. "
                 "Pan Schrödinger by byl potěšen.",
-                "Zaznamenal jsem anomálii. Pan Kolač existuje ve dvou stavech najednou. "
+                f"Zaznamenal jsem anomálii. {kname} existuje ve dvou stavech najednou. "
                 "Budu tuto záhadu konzultovat s příslušnou literaturou.",
                 "Kvantová mechanika tvrdí, že pozorovatel mění pozorovaný jev. "
-                "Pan Kolač je toho živým důkazem. Nebo ne.",
-                "Pan Kolač je přítomen. A zároveň nebyl nepřítomen. "
+                f"{kname} je toho živým důkazem. Nebo ne.",
+                f"{kname} je přítomen. A zároveň nebyl nepřítomen. "
                 "Filosofie by z toho měla radost.",
             ]
             text = _r.choice(comments)
@@ -670,7 +674,8 @@ class HansDialog:
         if _db:
             _db.execute(
                 "INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
-                (time.time(), "teddy_arrived", "Kolač se vrátil", "Kolač se vrátil"))
+                (time.time(), "teddy_arrived", "%s se vrátil" % kname,
+                 "%s se vrátil" % kname))
             _db.commit()
             _db.close()
         # Spust dialog o poslednim pripadu
@@ -969,7 +974,10 @@ class HansDialog:
                 if not text:
                     continue
                 speaker = speaker.strip().lower()
-                pitch = "+40Hz" if ("kolač" in speaker or "kolac" in speaker) else "+0Hz"
+                # KOLAC_NAME_CONFIGURABLE_V1 — společník (zvolené jméno) mluví výš
+                _kn = kolac_name(self.config).lower()
+                pitch = "+40Hz" if (_kn in speaker or "kolač" in speaker
+                                    or "kolac" in speaker) else "+0Hz"
                 # SILENCE_PREFIX zachováno — tři tečky před textem dají edge-tts pauzu (~300ms)
                 self.tts.speak("... " + text, voice="cs-CZ-AntoninNeural", pitch=pitch)
             # Atomicita: čekej na dohrání (max 5 min safety)
@@ -1063,6 +1071,7 @@ class HansDialog:
         ('Jméno: ...\\nKolač: ...') → downstream (TTS/parsing/deník) beze změny."""
         from scripts.hans_persona import persona_name
         name = persona_name(self.config)
+        kname = kolac_name(self.config)  # KOLAC_NAME_CONFIGURABLE_V1
         dc = self.config.get("hans_dialog", {}) or {}
         base = self.config.get("openwebui_chat", {}).get(
             "base_url", "http://127.0.0.1:11434")
@@ -1092,7 +1101,7 @@ class HansDialog:
         convo = []
         for i in range(max(2, n_lines)):
             is_hans = (i % 2 == 0)
-            label = name if is_hans else "Kolač"
+            label = name if is_hans else kname  # KOLAC_NAME_CONFIGURABLE_V1
             prior = convo_seed + convo
             convo_txt = ("\n".join(prior) if prior else
                          "(rozhovor teprve začíná — začínáš ty, konkrétním "
@@ -1113,6 +1122,7 @@ class HansDialog:
 
     def _call_gemini(self, user_prompt: str) -> str | None:
         """Zkusi nejdrive Ollama, pak OpenRouter jako fallback."""
+        user_prompt = localize_kolac(user_prompt, self.config)  # KOLAC_NAME_CONFIGURABLE_V1
         if self._ollama_available():
             _log.info("Pouzivam lokalni Ollama")
             result = self._call_ollama(user_prompt)

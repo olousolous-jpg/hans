@@ -295,7 +295,8 @@ class KolacCases:
             ctx += ("Kolač by měl UZAVŘÍT případ — vysvětlit řešení, "
                     "možná s překvapivým odhalením.\n")
 
-        return ctx
+        from scripts.hans_kolac import localize_kolac  # KOLAC_NAME_CONFIGURABLE_V1
+        return localize_kolac(ctx, self.config)
 
     def get_dialog_directive(self) -> str:
         """Krátká replika: střídavě Hans a Koláč mluví o případu.
@@ -336,7 +337,8 @@ class KolacCases:
                 f"Zajímavé, Hansi. {last_clue} "
                 f"To by mohlo být klíč k '{case.title}'.",
             ]
-        return random.choice(options)
+        from scripts.hans_kolac import localize_kolac  # KOLAC_NAME_CONFIGURABLE_V1
+        return localize_kolac(random.choice(options), self.config)
 
     # ── Interní ──────────────────────────────────────────────────────────────
 
@@ -416,7 +418,8 @@ class KolacCases:
         # Nahraď placeholdery
         obj = self._extract_object(context_parts)
         topic = self._extract_topic(context_parts)
-        return name.format(obj=obj, topic=topic)
+        from scripts.hans_kolac import localize_kolac  # KOLAC_NAME_CONFIGURABLE_V1
+        return localize_kolac(name.format(obj=obj, topic=topic), self.config)
 
     def _generate_opening_clue(self, template: dict,
                                 context_parts: list) -> str:
@@ -424,7 +427,9 @@ class KolacCases:
         obj = self._extract_object(context_parts)
         topic = self._extract_topic(context_parts)
         from scripts.hans_persona import persona_name as _pn  # PERSONA_NAME_CONFIGURABLE_V1
-        return clue.format(obj=obj, topic=topic, name=_pn(self.config))
+        from scripts.hans_kolac import localize_kolac  # KOLAC_NAME_CONFIGURABLE_V1
+        return localize_kolac(
+            clue.format(obj=obj, topic=topic, name=_pn(self.config)), self.config)
 
     @staticmethod
     def _extract_object(context_parts: list) -> str:

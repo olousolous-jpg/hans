@@ -310,19 +310,36 @@ def _evaluate_artwork(config: dict, db_path: str, title: str,
     acfg = _acfg(config)
     model = str(acfg.get("verdict_model")
                 or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest"))
-    past = _past_verdicts(db_path)
-    past_block = ""
+    # HANS_ART_PROGRESS_V1 — uzavřít smyčku verdikt→ponaučení→verdikt:
+    # předchozí ponaučení (= záměr, který vedl TENHLE obraz) předáme do verdiktu,
+    # ať Hans posoudí, jestli se ho povedlo naplnit (narativ pokroku). Minulé
+    # verdikty NEechujeme syrově (to plodilo šablonu "světlo+barvy / kompozice") —
+    # předáme je jen jako anti-repetiční pokyn "všimni si něčeho jiného".
+    prior_lessons = _recent_lessons(db_path, 1)
+    prior_lesson = prior_lessons[0] if prior_lessons else ""
+    past = _past_verdicts(db_path, limit=2)
+    progress_block = ""
+    if prior_lesson:
+        progress_block = (
+            "Před tímto obrazem sis předsevzal zlepšit toto:\n„%s\"\n"
+            "V první větě upřímně posuď, jestli se to tentokrát povedlo (klidně "
+            "i jen částečně) — tím uvidíš svůj vlastní vývoj.\n\n" % prior_lesson)
+    antirepeat_block = ""
     if past:
-        past_block = ("Tvé dřívější obrazy a jak ses k nim vyjádřil:\n"
-                      + "\n".join('- „%s": %s' % (t, n) for t, n in past) + "\n\n")
+        antirepeat_block = (
+            "Takto ses vyjádřil k posledním obrazům — NEopakuj stejnou chválu "
+            "ani stejnou výtku, všimni si pokaždé NĚČEHO JINÉHO:\n"
+            + "\n".join('- %s' % n for _t, n in past) + "\n\n")
+    past_block = progress_block + antirepeat_block
     system = (core + "\n\n" if core else "") + (
         "Právě jsi dokončil olejomalbu inspirovanou " + source_label + ". Níže máš NEZÁVISLÝ "
         "popis toho, co je na plátně vidět. Napiš 2-3 věty v první osobě: co jsi "
-        "namaloval a jak hodnotíš výsledek. Buď UPŘÍMNÝ a VYVÁŽENÝ — pochval, co se "
-        "povedlo, a věcně přiznej skutečný nedostatek, pokud tam OPRAVDU je (např. "
-        "lehce nepovedená postava, ruka či obličej), ale nepřeháněj drobnosti ani si "
-        "nevymýšlej vady. Cíl je trefit se do reality: zdařilý obraz oceníš, slabší "
-        "místo pojmenuješ bez dramatizování. Smíš se ohlédnout za dřívějšími obrazy. "
+        "namaloval a jak hodnotíš výsledek. Buď UPŘÍMNÝ: když se obraz prostě "
+        "povedl, klidně ho oceň bez výhrad — výtku přidej JEN když je v popisu "
+        "vidět opravdový nedostatek. A pokaždé si všímej JINÉHO aspektu "
+        "(kompozice, světlo, barvy, detail, nálada, perspektiva, textura), ne "
+        "pořád téhož. Nevymýšlej si vady ani nepřeháněj drobnosti. Pokud sis "
+        "z minula něco předsevzal, navaž na to a řekni, jestli ses posunul. "
         "Žádné uvozovky, žádný nadpis.")
     user = (past_block
             + "Kniha: %s\n" % title
@@ -347,10 +364,13 @@ def _evaluate_artwork(config: dict, db_path: str, title: str,
 # _scene_prompt ho příště vloží qwen do promptu + _lesson_negatives dolní negativ.
 _LESSON_SYSTEM = (
     "You are an art director. You receive an INDEPENDENT description of a "
-    "rendered image and the painter's own verdict. Output ONE short line of "
-    "reusable guidance IN ENGLISH for the painter's NEXT image. If the piece "
-    "worked well (it usually does), REINFORCE what to keep doing — the styles, "
-    "subjects or moods that succeeded. Suggest AVOIDING something ONLY when the "
+    "rendered image, the painter's own verdict, and the painter's RECENT "
+    "guidance lines. Output ONE short line of reusable guidance IN ENGLISH for "
+    "the painter's NEXT image. Crucially: do NOT repeat earlier guidance — if a "
+    "previous aim was clearly met, acknowledge it briefly and move ON to a FRESH "
+    "aspect to grow (vary across composition, light, colour, texture, mood, "
+    "perspective, narrative). If the piece worked well (it usually does), "
+    "REINFORCE what to keep doing. Suggest AVOIDING something ONLY when the "
     "verdict named a genuine, clear problem; never assume anatomy is flawed by "
     "default. Max 22 words. Output ONLY the guidance line — no preamble, no quotes."
 )
@@ -370,7 +390,14 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
     acfg = _acfg(config)
     model = str(acfg.get("verdict_model")
                 or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest"))
-    user = ("Independent description of the rendered image:\n%s\n\n"
+    recent = _recent_lessons(db_path, 3)
+    recent_block = ""
+    if recent:
+        recent_block = ("Painter's recent guidance lines (do NOT repeat these — "
+                        "build on them or move to a new aspect):\n"
+                        + "\n".join("- %s" % r for r in recent) + "\n\n")
+    user = (recent_block
+            + "Independent description of the rendered image:\n%s\n\n"
             "Painter's verdict:\n%s\n\nWrite the ONE-line guidance."
             % (vision_desc, verdict))
     try:

@@ -491,7 +491,8 @@
     "toaster_mode": false,
     "two_minds": true,
     "lines_per_dialog": 4,
-    "line_num_predict": 120
+    "line_num_predict": 120,
+    "kolac_name": "Koláč"
   },
   "room_observer": {
     "enabled": true,
@@ -764,5 +765,14 @@
       "teddy_arrived": 14,
       "teddy_gone": 14
     }
+  },
+  "curiosity": {
+    "read_max_chars": 6000,
+    "read_num_ctx": 8192
+  },
+  "downtime": {
+    "enabled": true,
+    "min_gap_hours": 14,
+    "telegram_push": true
   }
 }

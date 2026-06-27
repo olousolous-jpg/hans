@@ -982,7 +982,9 @@ class OpenWebUIDirectHandler:
         try:
             _mh = getattr(_hi, '_morning_health', None) if _hi else None
             from datetime import datetime as _dt_h
-            if _mh and _mh.get('date') == _dt_h.now().strftime('%Y-%m-%d'):
+            # GREETING_LEAD_PRIORITY_V1 — v pozdravu se zdraví řeší přes
+            # prioritní lead (ne tady), ať se do něj nemíchá víc háčků naráz.
+            if _mh and not for_greeting and _mh.get('date') == _dt_h.now().strftime('%Y-%m-%d'):
                 health_ctx = ("\n\nRáno jsem si při probuzení prošel noční "
                               "záznamy a něco se mi nezdálo v pořádku: "
                               + _mh.get('summary', '')
@@ -990,6 +992,22 @@ class OpenWebUIDirectHandler:
                               "přijde přirozeně, smím se o tom zmínit.")
         except Exception:
             health_ctx = ""
+
+        # HANS_DOWNTIME_V1 — všiml-li jsem si při startu, že jsem byl dlouho
+        # mimo provoz, zmíním to u příchozí osoby a zeptám se, co se dělo.
+        downtime_ctx = ""
+        try:
+            _dt = getattr(_hi, '_downtime', None) if _hi else None
+            # GREETING_LEAD_PRIORITY_V1 — v pozdravu vede výpadek přes prioritní
+            # lead (ne tady); tady jen pro běžný chat, ať se pozdrav nemixuje.
+            if _dt and not for_greeting and not _dt.get('answered'):
+                downtime_ctx = ("\n\n" + _dt.get('sentence', '')
+                                + " Připadá mi, že jsem něco zmeškal. Pokud to "
+                                "přijde přirozeně, smím se zmínit, že jsem byl "
+                                "mimo, a vlídně se zeptat, co se mezitím dělo.")
+                _dt['surfaced'] = True  # příští zpráva osoby = vyprávění
+        except Exception:
+            downtime_ctx = ""
 
         # SEVERKA_PROACTIVE_NOTIFY_V1 — čeká-li Severčin návrh identity na
         # schválení, Hans se o něm sám zmíní (backstop k Telegram pushi; přežije,
@@ -1019,7 +1037,7 @@ class OpenWebUIDirectHandler:
                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                       or "data/hans_diary.db")
             _les = _rl(_dbp_l, hours=48, limit=4)
-            if _les:
+            if _les and not for_greeting:  # GREETING_LEAD_PRIORITY_V1 — lekce do pozdravu nepatří
                 lessons_ctx = ("\n\nNedávno jsi byl opraven / mýlil ses v těchto "
                                "věcech (ber to v potaz, neopakuj tytéž omyly; pokud "
                                "to přijde přirozeně, smíš to pokorně uznat; nic si "
@@ -1032,7 +1050,16 @@ class OpenWebUIDirectHandler:
         # (deník, vztahové karty, známí lidé) přijde z RAG kolekcí.
         # _build_system tak dodává jen to, co RAG nemůže vědět: co Hans
         # PRÁVĚ TEĎ vidí, slyší, cítí, právě čte, koho má před sebou.
-        if "rag" in (self.model_name or "").lower():
+        if for_greeting:
+            # GREETING_LEAN_SYSTEM_V1 — pozdrav drží JEN to nutné k pozdravení:
+            # identita, čas, kdo je tu, fyzický a náladový tón (+ vzácný Severka
+            # backstop). Obsahové bloky (čtení, deník, narativ, myšlenky, kodi,
+            # okolí, vztahové nitky, zájmy, rytmus…) se do dvouvětého pozdravu
+            # NEcpou — co Hans zmíní, řídí výhradně user prompt (jediný prioritní
+            # lead). Tím pozdrav přestane mixovat nesouvisející věci.
+            system_msg = (system_base + time_ctx + persons_ctx
+                          + body_ctx + mood_ctx + severka_ctx + current)
+        elif "rag" in (self.model_name or "").lower():
             system_msg = (time_ctx + surr_ctx + kodi_ctx + room_ctx + place_ctx + read_ctx
                           + thought_ctx + body_ctx + mood_ctx
                           + teddy_ctx + current)
@@ -1049,7 +1076,7 @@ class OpenWebUIDirectHandler:
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
                           + room_ctx + place_ctx + diary_ctx + story_ctx + study_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1
-                          + body_ctx + mood_ctx + health_ctx + severka_ctx + lessons_ctx + teddy_ctx + current
+                          + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx)  # …/ HANS_ROUTINE_CONTEXT_V1
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
@@ -1175,8 +1202,66 @@ class OpenWebUIDirectHandler:
                         "Pozdrav hosta jménem {name} jednou větou. Je {tod}.")
         user = user_template.format(name=name, tod=tod)
 
-        # Pokud máme konkrétní aktivitu, přidej ji přímo do promptu
-        if _activity_hint:
+        # GREETING_LEAD_PRIORITY_V1 — pozdrav vede JEDINOU proaktivní věcí, ať
+        # se do dvouvětého pozdravu nemíchá víc nesouvisejících háčků. Pořadí:
+        # výpadek > rozjetá nitka > ranní zdraví > co Hans dělal.
+        _lead = False
+
+        # 1) HANS_DOWNTIME_V1 — byl jsem dlouho mimo provoz: přiznám a zeptám se.
+        try:
+            _dt_g = getattr(_hi, '_downtime', None) if _hi else None
+            if _dt_g and not _dt_g.get('answered'):
+                user = (
+                    f"Pozdrav {name} krátce a důstojně. Je {tod}. Pak v jedné větě "
+                    f"přiznej, žes byl delší dobu mimo provoz, a vlídně se zeptej, "
+                    f"co se mezitím dělo. (Fakt: {_dt_g.get('sentence','')}) "
+                    f"Celkem nanejvýš dvě krátké věty, žádné dlouhé souvětí. "
+                    f"Jméno použij jen jednou na začátku."
+                )
+                _dt_g['surfaced'] = True  # příští zpráva osoby = vyprávění
+                _lead = True
+        except Exception:
+            pass
+
+        # 2) HANS_THREADS_SURFACING_V1 — navnáž na rozjetou nitku; příchod osoby
+        # = nejpřirozenější moment „jak to dopadlo".
+        if not _lead:
+            try:
+                _tstore = self._thread_store()
+                _thr = _tstore.surface_for(name) if _tstore is not None else None
+                if _thr is not None:
+                    _fu = _thr.follow_up or f"zeptej se, jak to dopadlo s: {_thr.topic}"
+                    user = (
+                        f"Pozdrav {name} krátce a důstojně. Je {tod}. Pak naváž na to, "
+                        f"co {name} dříve zmínil/a, a přirozeně se zeptej: {_fu} "
+                        f"Celkem nanejvýš dvě krátké věty, žádné dlouhé souvětí. "
+                        f"Jméno použij jen jednou na začátku."
+                    )
+                    _tstore.mark_surfaced(_thr.id)
+                    self._greeting_thread_surfaced = True  # GREETING_THREAD_POPUP_V1
+                    _lead = True
+            except Exception:
+                pass
+
+        # 3) HANS_MORNING_HEALTH_V1 — ráno po chybné noci: krátká upřímná zmínka.
+        if not _lead:
+            try:
+                _mh_g = getattr(_hi, '_morning_health', None) if _hi else None
+                from datetime import datetime as _dt_mh
+                if _mh_g and _mh_g.get('date') == _dt_mh.now().strftime('%Y-%m-%d'):
+                    user = (
+                        f"Pozdrav {name} krátce a důstojně. Je {tod}. Pak v jedné větě "
+                        f"upřímně zmiň, žes ráno nebyl ve své kůži kvůli nočním "
+                        f"potížím v záznamech ({_mh_g.get('summary','')}). "
+                        f"Celkem nanejvýš dvě krátké věty, žádné dlouhé souvětí. "
+                        f"Jméno použij jen jednou na začátku."
+                    )
+                    _lead = True
+            except Exception:
+                pass
+
+        # 4) Co Hans dělal (activity hint) — výchozí, jen když nic výš nevedlo.
+        if not _lead and _activity_hint:
             user = (  # GREETING_BREVITY_V1
                 f"Pozdrav {name} krátce a důstojně. Je {tod}. "
                 f"Pak v JEDNÉ stručné větě nenásilně zmiň, čemu ses během "
@@ -1184,24 +1269,6 @@ class OpenWebUIDirectHandler:
                 f"Celkem nanejvýš dvě krátké věty, žádné dlouhé souvětí. "
                 f"Jméno použij jen jednou na začátku."
             )
-
-        # HANS_THREADS_SURFACING_V1 — navnáž na rozjetou nitku; příchod osoby
-        # = nejpřirozenější moment „jak to dopadlo". Přednost před activity hint.
-        try:
-            _tstore = self._thread_store()
-            _thr = _tstore.surface_for(name) if _tstore is not None else None
-            if _thr is not None:
-                _fu = _thr.follow_up or f"zeptej se, jak to dopadlo s: {_thr.topic}"
-                user = (
-                    f"Pozdrav {name} krátce a důstojně. Je {tod}. Pak naváž na to, "
-                    f"co {name} dříve zmínil/a, a přirozeně se zeptej: {_fu} "
-                    f"Celkem nanejvýš dvě krátké věty, žádné dlouhé souvětí. "
-                    f"Jméno použij jen jednou na začátku."
-                )
-                _tstore.mark_surfaced(_thr.id)
-                self._greeting_thread_surfaced = True  # GREETING_THREAD_POPUP_V1
-        except Exception:
-            pass
 
         # GREETING_WEATHER_OPTIN_V1 — počasí JEN když reálně zjištěné; přesná
         # citace (neodhaduj) → konec konfabulace „82 °C". Jinak nezmiňuj.
@@ -1481,6 +1548,24 @@ class OpenWebUIDirectHandler:
                 return f"✓ Poznámka uložena: {note_text}"
             else:
                 return "⚠ Použití: /note <text poznámky>"
+
+        # ── HANS_DOWNTIME_V1 — uzavření smyčky výpadku ───────────────────
+        # Hans se u příchozí osoby zmínil o výpadku a zeptal se, co se dělo
+        # (downtime_ctx surfaced). První NE-příkazová odpověď osoby = vyprávění
+        # → ulož jako downtime_account a označ answered (zmínka přestane).
+        try:
+            _hi = getattr(self, '_hans_idle', None)
+            _dt = getattr(_hi, '_downtime', None) if _hi else None
+            if (_dt and _dt.get('surfaced') and not _dt.get('answered')
+                    and not stripped.startswith('/')):
+                _dt['answered'] = True
+                _hi._log_entry(
+                    'downtime_account',
+                    'Co se dělo, když jsem byl mimo (od %s)' % name,
+                    data=str(_dt.get('gap_hours', '')),
+                    note=user_message[:600])
+        except Exception:
+            pass
 
         # ── Chat commands (slash + natural language) ─────────────────────
         # CHAT_COMMANDS_DISPATCH_PATCH

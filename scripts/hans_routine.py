@@ -1049,7 +1049,7 @@ class HansRoutine:
             # uvnitř (unload LLM → render → warm). Deferral-safe (ComfyUI dole →
             # retry příští noc). In-memory cooldown 30 min proti hammeru. Nikdy
             # neshodí tick. Běží každou noc (gen vrátí brzo, když nic k malování).
-            if (datetime.now().hour >= self._night_hour and self._chat_quiet_ok()
+            if (self._in_night_window() and self._chat_quiet_ok()
                     and (time.time() - getattr(self, "_last_art_attempt", 0.0)) > 1800):
                 self._last_art_attempt = time.time()
                 _painted = False
@@ -1130,7 +1130,7 @@ class HansRoutine:
             # Base LLM keep_alive=0 (VRAM tier), jen v noci. Deferral-safe:
             # 'deferred' (Ollama/wiki dole) → guard se NEnastaví, zkusí se znovu.
             if (self._last_study_date != today
-                    and datetime.now().hour >= self._night_hour
+                    and self._in_night_window()
                     and self._chat_quiet_ok()):
                 try:
                     from scripts.hans_study import run_study_session
@@ -1152,7 +1152,7 @@ class HansRoutine:
             # eventy netknuté). Čistě SQL → rychlé, 1×/noc, gate night+quiet
             # (DELETE krátce zamkne diary DB — proto když je ticho).
             if (self._last_hygiene_date != today
-                    and datetime.now().hour >= self._night_hour
+                    and self._in_night_window()
                     and self._chat_quiet_ok()):
                 self._last_hygiene_date = today
                 self._save_routine_state()
@@ -1186,6 +1186,15 @@ class HansRoutine:
                 _log.warning("creation reflection selhala: %s", _cre)
 
     # ── Fáze dne ─────────────────────────────────────────────────────────────
+
+    def _in_night_window(self) -> bool:
+        """NIGHT_WINDOW_FULL_V1 — celá noční fáze (night_hour..morning_hour, tj.
+        22:00–06:00), ne jen 2h před půlnocí. Pro práci, která NEtrpí 'tenkými daty
+        nového dne' (art/hygiena/studium): restart po půlnoci ani rušné pre-midnight
+        okno pak nestojí celou noc. Reflexe/narativ/tendence záměrně zůstávají
+        premidnight (po 00:00 flipne datum → konfabulace z tenkých dat)."""
+        h = datetime.now().hour
+        return h >= self._night_hour or h < self._morning_hour
 
     def _calc_phase(self) -> str:
         h = datetime.now().hour

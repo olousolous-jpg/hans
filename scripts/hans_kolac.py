@@ -31,6 +31,37 @@ def _norm(s: str) -> str:
     return _WS.sub(" ", (s or "").strip().lower())
 
 
+# KOLAC_NAME_CONFIGURABLE_V1 — jméno společníka je konfigurovatelné
+# (hans_dialog.kolac_name, default „Koláč"). kolac_name() vrací zvolené jméno;
+# localize_kolac() přepíše skloňované tvary výchozího jména v promptech/textech
+# na zvolené (no-op u defaultu) — jeden bod místo desítek editů.
+def kolac_name(config: dict) -> str:
+    return (str((config.get("hans_dialog", {}) or {}).get(
+        "kolac_name", "Koláč")).strip() or "Koláč")
+
+
+# Tvary výchozího jména (nom/gen/dat/vok/instr + přivlastňovací), delší první.
+_KOLAC_FORMS = sorted([
+    "KOLÁČŮV", "KOLAČŮV", "Koláčova", "Kolačova", "Koláčovy", "Kolačovy",
+    "Koláčův", "Kolačův", "Koláčově", "Kolačově", "Koláčovi", "Kolačovi",
+    "Koláčem", "Kolačem", "Koláče", "Kolače", "Koláči", "Kolači",
+    "Koláč", "Kolač",
+], key=len, reverse=True)
+
+
+def localize_kolac(text: str, config: dict) -> str:
+    """Přepíše tvary výchozího jména „Koláč" na zvolené jméno. No-op u defaultu
+    nebo prázdného textu. Pastry „koláč" (malé k) se NEmění (jen velké K)."""
+    kname = kolac_name(config)
+    if not text or kname == "Koláč":
+        return text
+    out = text
+    for f in _KOLAC_FORMS:
+        if f in out:
+            out = out.replace(f, kname)
+    return out
+
+
 # Koláčova doktrína — světonázor + humor. Přepsatelné configem
 # hans_dialog.kolac_doctrine. ZÁMĚRNĚ drží i hravost (uživatel: humor zachovat).
 _DEFAULT_DOCTRINE = (
@@ -71,8 +102,9 @@ class KolacMind:
             _log.warning("KolacMind _init_db: %s", e)
 
     def doctrine(self) -> str:
-        return str((self.config.get("hans_dialog", {}) or {}).get(
+        raw = str((self.config.get("hans_dialog", {}) or {}).get(
             "kolac_doctrine", _DEFAULT_DOCTRINE))
+        return localize_kolac(raw, self.config)  # KOLAC_NAME_CONFIGURABLE_V1
 
     # ── Paměť ───────────────────────────────────────────────────────────────
     def remember(self, topic: str, position: str) -> Optional[int]:
@@ -134,6 +166,7 @@ class KolacMind:
     def build_system(self, topic: str = "", context: str = "") -> str:
         from scripts.hans_persona import persona_name
         name = persona_name(self.config)
+        kname = kolac_name(self.config)  # KOLAC_NAME_CONFIGURABLE_V1
         parts = [self.doctrine()]
         mb = self.memory_block(topic)
         if mb:
@@ -142,7 +175,7 @@ class KolacMind:
             f"\n\nMluvíš s postavou jménem {name} (tichý anglický majordomus). "
             "Teď je řada na TOBĚ. Řekni JEDNU repliku (1-2 krátké věty), kterou "
             f"REAGUJEŠ na jeho poslední větu — z pozice svého světonázoru, s "
-            "humorem. Nepiš za druhou stranu, nepiš žádný „Koláč:“ prefix, jen "
+            f"humorem. Nepiš za druhou stranu, nepiš žádný „{kname}:“ prefix, jen "
             "samotnou repliku. Odpovídej POUZE česky, bez emoji."
         )
         return "".join(parts)

@@ -45,6 +45,8 @@ SCORABLE_TYPES = (
     "interest_update", "distillation_finding",
     "artwork",  # HANS_ART_VERDICT_V1 — Hansův verdikt o vlastním obrazu může
                 # být self-defining (talent/vkus → formuje charakter přes Severku)
+    "downtime_noticed", "downtime_account",  # HANS_DOWNTIME_V1 — výpadek a co se
+                # mezitím dělo (autobiograficky relevantní — díra v kontinuitě)
 )
 
 _SYSTEM = (

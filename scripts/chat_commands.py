@@ -252,9 +252,11 @@ def _cmd_dialog(handler, name, args) -> str:
         flag = _P("data/.trigger_dialog")
         flag.parent.mkdir(exist_ok=True)
         flag.touch()
-        return "Zavolám pana Koláče. Dialog se spustí za chvíli."
+        from scripts.hans_kolac import kolac_name as _kn  # KOLAC_NAME_CONFIGURABLE_V1
+        _k = _kn(getattr(handler, "config", {}) or {})
+        return f"Zavolám {_k}. Dialog se spustí za chvíli."
     except Exception as e:
-        return f"Nepodařilo se mi zavolat pana Koláče: {e}"
+        return f"Nepodařilo se mi zavolat společníka: {e}"
 
 
 def _cmd_zapomen(handler, name, args) -> str:

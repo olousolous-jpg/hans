@@ -250,6 +250,14 @@ class TTSSpeaker:
         # G0_TTS_SANITIZE_V1 — nadbytečná oslovení (vokativ 2×+ → ponech první)
         text = self._dedupe_vocatives(text)
 
+        # CZ_NUMBERS_V1 — číslice → slova JEN pro mluvený výstup (datumy,
+        # teploty, časy, počty). V chatu/deníku zůstávají číslice.
+        try:
+            from scripts.cz_numbers import normalize as _cz_num
+            text = _cz_num(text)
+        except Exception:
+            pass
+
         # Normalizace mezer (původní) + úklid interpunkce po smazání
         text = re.sub(r'\s+([,.!?])', r'\1', text)   # mezera před interpunkcí
         text = re.sub(r',\s*,', ',', text)             # dvojitá čárka

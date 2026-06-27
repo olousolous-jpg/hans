@@ -121,6 +121,36 @@ class WebReader:
             _log.warning("Wikipedia fetch error: %s", e)
             return None
 
+    def wikipedia_read(self, query: str, lang: str = "cs",
+                       max_chars: int | None = None) -> Optional["ReadResult"]:
+        """CURIOSITY_DEEP_V1 — zvídavé čtení z CELÉHO článku (ne jen lead).
+        Lehčí sourozenec `wikipedia()`: vrací stejný ReadResult, ale poznámka
+        vzniká z většího těla článku (anti-mělkost — Hansova každodenní znalost
+        nestojí jen na úvodu). cs→en fallback řeší wikipedia_article uvnitř."""
+        if max_chars is None:
+            max_chars = int(
+                self.config.get("curiosity", {}).get("read_max_chars", 6000))
+        art = self.wikipedia_article(query, lang=lang, max_chars=max_chars)
+        if not art or not (art.get("text") or "").strip():
+            return None
+        text = art["text"]
+        summary = self._summarize(
+            text  = text,
+            query = query,
+            style = ("Napiš 1-2 věty o tom, co tě z článku NEJVÍC zaujalo — "
+                     "klidně konkrétní detail z hloubky textu, ne jen obecný "
+                     "úvod. Jako bys sis dělal poznámku."),
+            max_text = max_chars,
+        )
+        return ReadResult(
+            source   = "wikipedia",
+            title    = art["title"],
+            url      = art["url"],
+            raw_text = text,
+            summary  = summary,
+            topic    = "wikipedia",
+        )
+
     def _wikipedia_search(self, query: str, lang: str = "cs") -> Optional[str]:
         """Vrátí název nejlepší stránky pro dotaz."""
         api = f"https://{lang}.wikipedia.org/w/api.php"
@@ -329,18 +359,25 @@ class WebReader:
 
     # ── Sumarizace přes Ollama ────────────────────────────────────────────────
 
-    def _summarize(self, text: str, query: str, style: str) -> str:
+    def _summarize(self, text: str, query: str, style: str,
+                   max_text: int = 1500) -> str:
         """
         Pošle text na Ollama a vrátí sumarizaci v Hansově stylu.
         Fallback: první 2 věty raw textu.
+        max_text = kolik znaků textu se pošle modelu (CURIOSITY_DEEP_V1 —
+        u hloubkového čtení 6k+, jinak výchozí 1500 = jen úvod).
         """
         user_prompt = (
             f"Přečetl sis text o tématu '{query}'.\n"
             f"{style}\n"
             f"Odpovídej česky, max 2 věty, bez uvozovek.\n\n"
-            f"Text:\n{text[:1500]}"
+            f"Text:\n{text[:max_text]}"
         )
         # OLLAMA_CLIENT_PATCH_WEBREADER
+        options = {"num_predict": 100}
+        if max_text > 2000:  # CURIOSITY_DEEP_V1 — větší vstup potřebuje širší ctx
+            options["num_ctx"] = int(
+                self.config.get("curiosity", {}).get("read_num_ctx", 8192))
         from scripts.ollama_client import ollama_chat
         try:
             result = ollama_chat(
@@ -350,7 +387,7 @@ class WebReader:
                     {"role": "user",   "content": user_prompt},
                 ],
                 ollama_url=self._ollama,
-                options={"num_predict": 100},
+                options=options,
             )
             if result:
                 return result

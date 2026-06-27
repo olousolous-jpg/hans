@@ -194,7 +194,7 @@ def _extract_json(text):
 
 
 def _setup_personality(cfg):
-    print("── Krok 1/5: Osobnost ─────────────────────────────────────────")
+    print("── Krok 1/6: Osobnost ─────────────────────────────────────────")
     print("Můžeš nechat výchozí postavu (Enter), nebo si nechat vygenerovat vlastní")
     print("pomocí Claude/ChatGPT — stačí popsat, kdo má být.")
     desc = input("\nPopiš pár větami, kdo má být (Enter = ponechat výchozí): ").strip()
@@ -225,9 +225,67 @@ def _setup_personality(cfg):
     print(f"  ✓ Osobnost nastavena: {_get(cfg, 'persona.name')}\n")
 
 
-# ── Krok 4: paměť (RAG kolekce + seed identity) ──────────────────────────────
+def _companion_meta_prompt(desc, hero):
+    """Meta-prompt pro společníka (oponenta v dialogu). Vrátí JSON."""
+    return (
+        "Jsi pomocník, který vytváří konfiguraci SPOLEČNÍKA pro domácího AI\n"
+        f"společníka jménem {hero}. Tento společník je menší postava (např. plyšák\n"
+        "na poličce), se kterou hlavní postava vede dialogy — DŮSTOJNÝ OPONENT s\n"
+        "vlastním světonázorem, který hlavní postavě oponuje (s humorem, ne hádka).\n"
+        "Uživatel popsal, jakého společníka chce:\n"
+        "---\n"
+        f"{desc}\n"
+        "---\n"
+        "Vrať POUZE validní JSON (žádný markdown) přesně s těmito klíči. Texty piš\n"
+        "v jazyce hlavní postavy (výchozí čeština):\n"
+        '{\n'
+        '  "name": "<jméno společníka>",\n'
+        '  "personality": "<povaha a vystupování, 1-3 věty>",\n'
+        '  "interests": "<čím se zajímá, krátce>",\n'
+        '  "doctrine": "<system prompt ve 2. osobě pro JEHO vlastní mysl: světonázor,\n'
+        f"              v čem a JAK oponuje {hero}, tón, humor. Začni \\'Jsi <jméno> —\\'\n"
+        '              a piš skutečné jméno společníka. 4-6 vět>"\n'
+        '}\n'
+        "Neměň názvy klíčů. Vrať jen ten JSON."
+    )
+
+
+def _setup_companion(cfg):
+    print("── Krok 2/6: Společník (oponent v dialogu) ────────────────────")
+    hero = _get(cfg, "persona.name") or "Hans"
+    print(f"{hero} vede dialogy se společníkem — menší postavou (výchozí plyšový")
+    print("medvídek-detektiv 'Koláč'), která mu s humorem oponuje. Spouští se, když")
+    print("kamera uvidí plyšového medvídka. Můžeš mu dát vlastní jméno a povahu.")
+    desc = input("\nPopiš pár větami společníka (Enter = ponechat výchozího Koláče): ").strip()
+    if desc:
+        print("\n" + "=" * 70)
+        print(">>> ZKOPÍRUJ tento prompt do Claude / ChatGPT, odpověď vlož zpět sem: <<<")
+        print("=" * 70)
+        print(_companion_meta_prompt(desc, hero))
+        print("=" * 70)
+        print("\nVlož sem JSON odpověď od LLM a pak napiš samostatný řádek 'END':")
+        data = _extract_json(_read_block())
+        if data and data.get("name"):
+            _set(cfg, "hans_dialog.kolac_name", data["name"])
+            for key, path in (("personality", "hans_dialog.kolac_personality"),
+                              ("interests", "hans_dialog.kolac_interests"),
+                              ("doctrine", "hans_dialog.kolac_doctrine")):
+                if data.get(key):
+                    _set(cfg, path, data[key])
+            print(f"  ✓ Společník nastaven: {data['name']}")
+        else:
+            print("  ⚠ JSON se nepodařilo naparsovat (chybí 'name'). Ponechán výchozí Koláč.")
+    else:
+        print("  Ponechávám výchozího Koláče.")
+    # Spouštěč: bez plyšáka může běžet natrvalo
+    ans = input("\nNemáš plyšáka? Zapnout společníka natrvalo (i bez kamery)? [a/N]: ").strip().lower()
+    _set(cfg, "hans_idle.force_teddy_visible", ans in ("a", "ano", "y", "yes"))
+    print()
+
+
+# ── Krok 5: paměť (RAG kolekce + seed identity) ──────────────────────────────
 def _setup_memory(cfg):
-    print("── Krok 4/5: Paměť (RAG kolekce v OpenWebUI + identita) ───────")
+    print("── Krok 5/6: Paměť (RAG kolekce v OpenWebUI + identita) ───────")
     if not _get(cfg, "openwebui_direct.api_token"):
         print("  ⚠ Chybí OpenWebUI token → přeskočeno.")
         print("    Později: python3 tools/knowledge_setup.py\n")
@@ -251,9 +309,9 @@ def _setup_memory(cfg):
     print()
 
 
-# ── Krok 5: avatar (vygenerovat tvář z osobnosti) ────────────────────────────
+# ── Krok 6: avatar (vygenerovat tvář z osobnosti) ────────────────────────────
 def _setup_avatar(cfg):
-    print("── Krok 5/5: Avatar (vygenerovat tvář z osobnosti) ────────────")
+    print("── Krok 6/6: Avatar (vygenerovat tvář z osobnosti) ────────────")
     print("Hans si odvodí podobu ze své osobnosti a vyrenderuje ji (SDXL přes ComfyUI).")
     ans = input("Vygenerovat teď? (vyžaduje běžící ComfyUI + Ollama, pár minut) [a/N]: "
                 ).strip().lower()
@@ -296,8 +354,9 @@ def main():
     print("Enter = ponechat současnou hodnotu (v závorkách). Ctrl+C = konec.\n")
 
     _setup_personality(cfg)
+    _setup_companion(cfg)
 
-    print("── Krok 2/5: Připojení (IP, přihlášení, tokeny) ───────────────")
+    print("── Krok 3/6: Připojení (IP, přihlášení, tokeny) ───────────────")
     for q in QUESTIONS:
         if q["kind"] == "ip":
             cur = _current_ip(cfg, q)
@@ -333,7 +392,7 @@ def main():
         json.dump(json.load(open(CONFIG, encoding="utf-8"), object_pairs_hook=OrderedDict),
                   open(bak, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         print(f"Záloha současného configu → {bak}")
-    print("── Krok 3/5: Zápis config.json ───────────────────────────────")
+    print("── Krok 4/6: Zápis config.json ───────────────────────────────")
     json.dump(cfg, open(CONFIG, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     print(f"  ✓ zapsáno do {CONFIG}\n")
 

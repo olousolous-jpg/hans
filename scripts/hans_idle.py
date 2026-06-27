@@ -94,6 +94,9 @@ class HansIdle:
         self._morning_health = None          # nález pro greeting/chat surfacing
         self._prev_routine_sleeping = None   # edge-detekce probuzení
         self._last_health_check_date = None  # idempotence 1×/den
+        # HANS_DOWNTIME_V1 — vědomí vlastního výpadku (delší než spánek)
+        self._downtime = None                # nález pro greeting/chat surfacing
+        self._downtime_checked = False       # 1× za běh procesu
         self._last_lessons_check_date = None  # HANS_CORRECTION_LEARNING_V1
 
         from scripts.hans_introspection import HansIntrospection
@@ -287,6 +290,61 @@ class HansIdle:
         except Exception as _e:
             _log.debug('morning_health: diary write failed: %s', _e)
 
+    def _downtime_check(self):
+        """HANS_DOWNTIME_V1 — při startu zjisti, jestli jsem byl dlouho mimo
+        provoz (mezera od poslední aktivity > práh). Pokud ano: deník
+        `downtime_noticed` + jemná zvědavá nálada + nález pro surfacing (Hans
+        se u příchozí osoby zmíní a zeptá, co se dělo). 1× za běh procesu."""
+        cfg = self.config.get('downtime', {})
+        if not cfg.get('enabled', True):
+            return
+        try:
+            from scripts import hans_downtime as _dt
+        except Exception as _e:
+            _log.warning('downtime: import selhal: %s', _e)
+            return
+        min_h = float(cfg.get('min_gap_hours', 14))
+        with self._lock:
+            row = self._db.execute("SELECT MAX(ts) FROM diary").fetchone()
+        last = row[0] if row else None
+        info = _dt.analyze(last, time.time(), min_h)
+        if not info:
+            return
+        sent = _dt.downtime_sentence(info)
+        _log.info('downtime: %s (mezera %.1f h)', sent, info['gap_hours'])
+        # Jemná zvědavost — groundovaná ve faktu, že něco zmeškal
+        try:
+            self._mood._shift('curious', 0.4, 'všiml jsem si výpadku provozu')
+        except Exception as _e:
+            _log.debug('downtime: mood shift failed: %s', _e)
+        # Nález pro greeting/chat surfacing (přežije do příchodu osoby)
+        self._downtime = {
+            'sentence': sent,
+            'gap_hours': info['gap_hours'],
+            'surfaced': False,   # nastaví handler, až to Hans skutečně zmíní
+            'answered': False,   # nastaví handler, až osoba odpoví
+        }
+        # Deník = úložiště + grounding (importance ho oskóruje → narativ/identita)
+        try:
+            self._log_entry('downtime_noticed', sent,
+                            data=str(info['gap_hours']))
+        except Exception as _e:
+            _log.debug('downtime: diary write failed: %s', _e)
+        # Proaktivní Telegram push — JEN PŘES DEN. send_proactive respektuje
+        # tiché okno 22–9 (noční zprávu odloží na 9:00 = doručí přes den).
+        # Při výpadku je uživatel typicky pryč → telefon je nejlepší kanál.
+        if cfg.get('telegram_push', True):
+            try:
+                tg = (getattr(self.chat, 'telegram', None)
+                      if getattr(self, 'chat', None) else None)
+                if tg is not None and getattr(tg, 'enabled', False):
+                    _send = getattr(tg, 'send_proactive', None) or getattr(tg, 'send', None)
+                    if _send:
+                        _send(sent + " Nevíte, co se mezitím doma dělo?")
+                        self._downtime['surfaced'] = True  # odpověď půjde do downtime_account
+            except Exception as _e:
+                _log.debug('downtime: telegram push selhal: %s', _e)
+
     def _morning_lessons_check(self):
         """HANS_CORRECTION_LEARNING_V1 (#4) — ráno: pokud v noci vznikly lekce
         z korekcí, pocítí jemnou pokoru (mírná nálada). 1x/den. Vědomí lekcí pro
@@ -462,6 +520,14 @@ class HansIdle:
         # Půlnoční reset nálady
         from datetime import datetime as _dt
         _now = _dt.now()
+        # HANS_DOWNTIME_V1 — 1× za běh: všiml jsem si, že jsem byl dlouho mimo?
+        if not self._downtime_checked:
+            self._downtime_checked = True
+            try:
+                self._downtime_check()
+            except Exception as _dte:
+                _log.debug('downtime check failed: %s', _dte)
+
         # Denní rytmus — detekce fáze dne
         if hasattr(self, '_routine'):
             self._routine.tick()

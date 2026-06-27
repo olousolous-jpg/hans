@@ -171,7 +171,8 @@ class AttentionRenderer:
             d.ellipse([CX-40, 22, CX+40, 102], fill=(210, 180, 110))
         # ATTENTION_CYCLE_V1 — žlutý kroužek odstraněn
         speaking = ctx.get("kolac_speaking")
-        self._text(d, CX, 130, "Koláč" + (" mluví" if speaking else ""), 16, bold=True)
+        _kname = ctx.get("kolac_name", "Koláč")  # KOLAC_NAME_CONFIGURABLE_V1
+        self._text(d, CX, 130, _kname + (" mluví" if speaking else ""), 16, bold=True)
         return img
 
     def _render_proactive(self, ctx):

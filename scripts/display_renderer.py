@@ -326,7 +326,13 @@ class DisplayRenderer:
                 return
             display[y1:y2, x1:x2] = self._kolac_img
             cv2.rectangle(display, (x1 - 2, y1 - 2), (x2 + 2, y2 + 2), (0, 220, 220), 2)
-            cv2.putText(display, "Kolac", (x1, y2 + 18),
+            # KOLAC_NAME_CONFIGURABLE_V1 — label = zvolené jméno (ASCII-fold,
+            # cv2 neumí diakritiku → „Koláč"→„Kolac", „Brepta"→„Brepta").
+            import unicodedata as _ud
+            from scripts.hans_kolac import kolac_name as _kn
+            _lbl = (_ud.normalize('NFKD', _kn(self.ctrl.config))
+                    .encode('ascii', 'ignore').decode() or 'Kolac')
+            cv2.putText(display, _lbl, (x1, y2 + 18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 220), 1)
         except Exception:
             pass

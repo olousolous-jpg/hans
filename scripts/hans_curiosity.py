@@ -163,7 +163,7 @@ class HansCuriosity:
             return
         _log.info("Curiosity trigger: Kodi — '%s'", title)
         self._read_async(
-            fn    = lambda: self._reader.wikipedia(title),
+            fn    = lambda: self._reader.wikipedia_read(title),
             topic = "kodi",
             key   = title,
         )
@@ -179,7 +179,7 @@ class HansCuriosity:
             return
         _log.info("Curiosity trigger: object — '%s' → '%s'", obj_name, topic_query)
         self._read_async(
-            fn    = lambda q=topic_query: self._reader.wikipedia(q),
+            fn    = lambda q=topic_query: self._reader.wikipedia_read(q),
             topic = "object",
             key   = obj_name,
         )
@@ -191,7 +191,7 @@ class HansCuriosity:
             return
         _log.info("Curiosity trigger: topic — '%s' (cil)", topic)
         self._read_async(
-            fn    = lambda q=topic: self._reader.wikipedia(q),
+            fn    = lambda q=topic: self._reader.wikipedia_read(q),
             topic = "interest",
             key   = "goal:%s" % topic[:40],
         )
@@ -214,7 +214,7 @@ class HansCuriosity:
         query = random.choice(categories[cat])
         _log.info("Curiosity trigger: interest — %s / '%s'", cat, query)
         self._read_async(
-            fn    = lambda q=query: self._reader.wikipedia(q),
+            fn    = lambda q=query: self._reader.wikipedia_read(q),
             topic = "interest",
             key   = "any",
         )
@@ -256,7 +256,7 @@ class HansCuriosity:
                 return
             _log.info("Curiosity trigger: random_wiki — '%s'", title)
             self._read_async(
-                fn    = lambda t=title: self._reader.wikipedia(t),
+                fn    = lambda t=title: self._reader.wikipedia_read(t),
                 topic = 'random_wiki',
                 key   = 'any',
             )
@@ -359,7 +359,7 @@ class HansCuriosity:
         _log.info("Hans se ptá: %s", question)
 
         # Krok 2 — hledej odpověď
-        result = self._reader.wikipedia(question)
+        result = self._reader.wikipedia_read(question)
         if result:
             result.topic = "self_question"
             # Přidej kontext otázky k summary

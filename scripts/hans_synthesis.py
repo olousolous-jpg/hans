@@ -233,6 +233,11 @@ class HansSynthesis:
         from scripts.hans_persona import persona_core
         _base = persona_core(self._config, with_address=False)
         _mod = _STYLE_PROMPTS.get(style, _STYLE_PROMPTS["default"])
+        try:  # KOLAC_NAME_CONFIGURABLE_V1 — jméno společníka i v reflexích
+            from scripts.hans_kolac import localize_kolac as _lk
+            _mod = _lk(_mod, self._config)
+        except Exception:
+            pass
         system_prompt = f"{_base}\n\n{_mod}" if _base else _mod
         user_msg = f"Téma: {topic}\nFakta: {facts.strip()[:facts_max_chars]}"
 
