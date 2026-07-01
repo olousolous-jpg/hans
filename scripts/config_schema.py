@@ -406,6 +406,109 @@ GROUPS = [
         ],
     },
     {
+        "id": "films_tv",
+        "title": "Hans / Filmy & TV",
+        "icon": "🍿",
+        "intro": ("Jak Hans navrhuje a pouští filmy/seriály přes Kodi. Návrh ze studeného "
+                  "klidu, autonomní pokračování u konce titulu (autoplay), mluvící tvář na TV "
+                  "a žánrové preference osob."),
+        "fields": [
+            # ── Žánrové preference osob (mají při výběru NEJVYŠŠÍ přednost) ──
+            {"path": "film_suggest.genre_prefs", "label": "Žánrové preference osob", "type": "textarea", "rows": 4,
+             "tip": ("Per osoba na řádek, např. 'Standa: akční, sci-fi, válečný'. Žánry česky "
+                     "(akční, sci-fi, drama, komedie, dokumentární, krimi, western, horor, "
+                     "fantasy, romantický, dobrodružný, historický, thriller, animovaný, rodinný). "
+                     "Tyto preference mají při výběru filmu PŘEDNOST před zájmy i reálnou historií sledování.")},
+            {"path": "film_suggest.film_prefs", "label": "Oblíbené filmy osob", "type": "textarea", "rows": 4,
+             "tip": ("Konkrétní oblíbené filmy per osoba na řádek, např. "
+                     "'Standa: Smrtonosná past, Indiana Jones'. Hans je při rewatch pustí přednostně "
+                     "(pokud jsou v knihovně Kodi a nehrály posledních pár dní). Název stačí přibližný "
+                     "— 'Smrtonosná past' sedne i na díly 2/3.")},
+            # ── Návrh filmu ze studeného klidu ──
+            {"path": "film_suggest.enabled", "label": "Návrhy filmu (ze studeného klidu)", "type": "bool",
+             "tip": "Když je osoba v bytě a chvíli nic nehraje, Hans nabídne film."},
+            {"path": "film_suggest.idle_hours", "label": "Klid před návrhem (h)", "type": "float", "min": 0.1, "max": 6, "step": 0.05,
+             "tip": "Jak dlouho nic nehraje, než Hans navrhne film. 0.25 = 15 minut."},
+            {"path": "film_suggest.voice_to_kodi", "label": "Říct návrh hlasem z TV", "type": "bool",
+             "tip": "Hans vysloví návrh z TV (Kodi z klidu), ne z reproduktoru Pi."},
+            {"path": "film_suggest.avatar_to_kodi", "label": "Mluvící tvář na TV", "type": "bool",
+             "tip": "U návrhu z TV se ukáže Hansova mluvící tvář (video s hlasem), ne jen zvuk."},
+            {"path": "film_suggest.max_per_day", "label": "Max. návrhů/den", "type": "int", "min": 0, "max": 20},
+            {"path": "film_suggest.cooldown_h", "label": "Cooldown mezi návrhy (h)", "type": "float", "min": 0, "max": 24, "step": 0.5, "tier": "expert"},
+            {"path": "film_suggest.countdown_s", "label": "Odpočet dialogu návrhu (s)", "type": "int", "min": 5, "max": 120, "tier": "expert"},
+            {"path": "film_suggest.voice_lead_ms", "label": "Ticho na začátku hlasu (ms)", "type": "int", "min": 0, "max": 3000, "step": 100, "tier": "expert",
+             "tip": "Předřadí ticho před mluvené oznámení, aby HDMI zvuk neuťal první slovo. 0 = vypnuto."},
+            # ── Rewatch (oblíbený vidaný film) — sdíleno s autoplay ──
+            {"path": "film_suggest.rewatch_prob", "label": "Šance na rewatch (0–1)", "type": "float", "min": 0, "max": 1, "step": 0.05,
+             "tip": "Pravděpodobnost, že místo nevidaného Hans pustí oblíbený VIDANÝ film nehraný pár dní."},
+            {"path": "film_suggest.rewatch_min_days", "label": "Rewatch — min. dní od shlédnutí", "type": "int", "min": 0, "max": 60,
+             "tip": "Vidaný film se nabídne k rewatch, jen když nehrál posledních N dní."},
+            # ── Autoplay — pokračování u konce titulu ──
+            {"path": "auto_continue.enabled", "label": "Autoplay — pokračování u konce", "type": "bool",
+             "tip": "U konce filmu/dílu Hans sám pustí další (seriál=další díl, jinak film) s odpočtem na zrušení."},
+            {"path": "auto_continue.near_end_pct", "label": "Práh „blíží se konec\" (%)", "type": "float", "min": 50, "max": 99, "step": 1,
+             "tip": "Od kolika % přehrání se rozhoduje o dalším titulu."},
+            {"path": "auto_continue.countdown_s", "label": "Odpočet na zrušení (s)", "type": "int", "min": 5, "max": 60,
+             "tip": "Kolik vteřin máš na TV na zrušení, než se další pustí."},
+            {"path": "auto_continue.max_consecutive_series", "label": "Max. dílů seriálu po sobě", "type": "int", "min": 1, "max": 10,
+             "tip": "Po tolika auto-dílech téhož seriálu Hans přepne na něco jiného (film)."},
+            {"path": "auto_continue.max_per_day", "label": "Max. autoplay/den", "type": "int", "min": 0, "max": 30},
+            {"path": "auto_continue.cooldown_min", "label": "Cooldown autoplay (min)", "type": "int", "min": 0, "max": 120, "tier": "expert"},
+            {"path": "auto_continue.quiet_after_hour", "label": "Nepokračovat po hodině", "type": "int", "min": 0, "max": 23, "tier": "expert",
+             "tip": "Po této hodině (např. 2 = 2:00) už autoplay nepustí nic nového."},
+            {"path": "auto_continue.rewatch_prob", "label": "Autoplay — šance na rewatch (0–1)", "type": "float", "min": 0, "max": 1, "step": 0.05, "tier": "expert"},
+            {"path": "auto_continue.rewatch_min_days", "label": "Autoplay — rewatch min. dní", "type": "int", "min": 0, "max": 60, "tier": "expert"},
+            # ── Avatar klip pro TV ──
+            {"path": "hans_avatar.face_image", "label": "Avatar tvář pro TV dialog (PNG)", "type": "text", "tier": "expert",
+             "tip": "Cesta k obrázku Hansovy tváře, co se ukáže u dialogu návrhu/pokračování na TV (statický obrázek vlevo)."},
+            {"path": "hans_avatar.tv_clip", "label": "Avatar klip pro TV (mluvící tvář, nepoužito)", "type": "text", "tier": "expert",
+             "tip": "Talkloop video — starší video režim. Aktuálně se používá statická tvář (face_image)."},
+        ],
+    },
+    {
+        "id": "telegram",
+        "title": "Chat / Telegram",
+        "icon": "📱",
+        "intro": ("Most na Telegram (chat + příkazy + Hansovy otázky). Token a chat_id se "
+                  "spravují přímo v config.json (tajné), tady jen chování."),
+        "fields": [
+            {"path": "telegram.enabled", "label": "Telegram aktivní", "type": "bool"},
+            {"path": "telegram.quiet_start_hour", "label": "Tiché okno — začátek (h)", "type": "int", "min": 0, "max": 23,
+             "tip": "Od této hodiny se proaktivní zprávy odkládají (odpovědi na tvé zprávy jdou vždy hned)."},
+            {"path": "telegram.quiet_end_hour", "label": "Tiché okno — konec (h)", "type": "int", "min": 0, "max": 23,
+             "tip": "Do této hodiny ráno se odložené proaktivní zprávy doručí až po ní."},
+            {"path": "telegram.question_interval_h", "label": "Min. interval otázek (h)", "type": "int", "min": 1, "max": 48,
+             "tip": "Jak často smí Hans posílat svou otázku přes Telegram."},
+            {"path": "telegram.announce_online", "label": "Hlásit, že je online", "type": "bool", "tier": "expert"},
+        ],
+    },
+    {
+        "id": "night_routines",
+        "title": "Hans / Noční rutiny",
+        "icon": "🌙",
+        "intro": ("Autonomní noční funkce: hloubkové studium koníčku, hygiena paměti, "
+                  "vědomí výpadku, detekce rutin a hloubka čtení. Většinou stačí zapnout/vypnout."),
+        "fields": [
+            {"path": "study.enabled", "label": "Studijní program (hloubkové učení)", "type": "bool",
+             "tip": "Hans si vybere durable koníček a po nocích ho studuje do hloubky (kurikulum)."},
+            {"path": "study.min_age_days", "label": "Studium — min. stáří koníčku (dny)", "type": "int", "min": 1, "max": 60, "tier": "expert"},
+            {"path": "memory_hygiene.enabled", "label": "Hygiena paměti (prořez deníku)", "type": "bool",
+             "tip": "Noční retenční prořez vjemového firehose deníku (smysluplné eventy zůstávají)."},
+            {"path": "memory_hygiene.vacuum", "label": "Hygiena — VACUUM (zmenšit DB)", "type": "bool", "tier": "expert",
+             "tip": "Zmenší soubor DB po prořezu. Zamyká DB — jen když je Hans v klidu."},
+            {"path": "downtime.enabled", "label": "Vědomí výpadku", "type": "bool",
+             "tip": "Po dlouhém vypnutí si toho Hans všimne a zeptá se, co se dělo."},
+            {"path": "downtime.min_gap_hours", "label": "Výpadek — práh (h)", "type": "int", "min": 2, "max": 72,
+             "tip": "Mezera delší než tolik hodin se bere jako výpadek (noční spánek nespustí)."},
+            {"path": "downtime.telegram_push", "label": "Výpadek — oznámit přes Telegram", "type": "bool", "tier": "expert"},
+            {"path": "routine_patterns.window_days", "label": "Rutiny — okno (dny)", "type": "int", "min": 7, "max": 90, "tier": "expert"},
+            {"path": "routine_patterns.typical_min_score", "label": "Rutiny — práh typičnosti", "type": "float", "min": 0, "max": 1, "step": 0.05, "tier": "expert"},
+            {"path": "curiosity.read_max_chars", "label": "Zvídavost — hloubka čtení (znaků)", "type": "int", "min": 1500, "max": 12000, "step": 500, "tier": "expert",
+             "tip": "Kolik znaků těla článku Hans čte (víc = hlouběji)."},
+            {"path": "curiosity.read_num_ctx", "label": "Zvídavost — num_ctx", "type": "int", "min": 2048, "max": 16384, "step": 1024, "tier": "expert"},
+        ],
+    },
+    {
         "id": "weather",
         "title": "Počasí",
         "icon": "☀",
@@ -713,7 +816,8 @@ CATEGORY_OF = {
     "greeting": "Hans", "daily": "Hans",
     "hans_activity": "Chování", "room_observer": "Chování", "relationships": "Chování",
     "hans_library": "Chování", "hans_questions": "Chování", "kolac_cases": "Chování",
-    "chat_direct": "Chat", "chat_openwebui": "Chat", "chat_cloud": "Chat",
+    "films_tv": "Chování", "night_routines": "Chování",
+    "chat_direct": "Chat", "chat_openwebui": "Chat", "chat_cloud": "Chat", "telegram": "Chat",
     "tts": "Hlas", "voice": "Hlas",
     "recognition": "Rozpoznávání", "face_preprocess": "Rozpoznávání",
     "face_quality": "Rozpoznávání", "unknown_enrollment": "Rozpoznávání",

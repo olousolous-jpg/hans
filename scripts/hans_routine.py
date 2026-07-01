@@ -150,6 +150,9 @@ class HansRoutine:
         self._last_narrative = ""        # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3, týdenní guard)
         self._last_creation_reflection = ""  # HANS_CREATION_REFLECTION_V1 (D, týdenní guard)
         self._last_study_date = ""       # HANS_STUDY_V1 (1 studijní session/noc)
+        self._last_writing_date = ""     # HANS_AUTHORSHIP_V1 (1 autorská session/noc)
+        self._last_synthesis_date = ""   # HANS_SYNTHESIS_IDEAS_V1 (vlastní nápady, kadence)
+        self._last_selfcritique_date = ""  # HANS_SELFCRITIQUE_V1 (sebekritika, kadence)
         self._last_hygiene_date = ""     # HANS_MEMORY_HYGIENE_V1 (prořez firehose 1×/noc)
         self._identity = None            # HANS_IDENTITY_V1 (verzování CORE)
         self._severka = None             # HANS_SEVERKA_V1 (decision engine)
@@ -216,6 +219,16 @@ class HansRoutine:
         if self._wol_pc_enabled:
             import threading as _thr
             _thr.Thread(target=self._wol_timer_loop, daemon=True).start()
+        # SLEEP_WATCHER_THREAD_V1 — kontrola spánku NEZÁVISLE na tick-loopu.
+        # Noční LLM analytika v tick() (evening reflection/stance/importance/study)
+        # může pomalou Ollamou blokovat tick na MINUTY → sleep by se jinak nespustil
+        # včas (viděno 29.6.: Ollama visela 10 min, Hans v 23:00 neusnul). Watcher
+        # volá jen rychlý _check_sleep_window (žádné blokující LLM — _maybe_distill
+        # spouští vlastní vlákno).
+        self._sleep_lock = threading.Lock()
+        self._sleep_check_interval = float(cfg.get('sleep_check_interval_s',
+                                                   config.get('sleep_check_interval_s', 30)))
+        threading.Thread(target=self._sleep_watcher_loop, daemon=True).start()
         # HANS_DISTILLATION_V1 — fáze 2a noční destilace záseku
         self._distillation = None
         self._distillation_running = False   # idempotence — jednou denně
@@ -467,6 +480,9 @@ class HansRoutine:
             self._last_narrative = s.get("last_narrative", "")
             self._last_creation_reflection = s.get("last_creation_reflection", "")
             self._last_study_date = s.get("last_study_date", "")  # HANS_STUDY_V1
+            self._last_writing_date = s.get("last_writing_date", "")  # HANS_AUTHORSHIP_V1
+            self._last_synthesis_date = s.get("last_synthesis_date", "")  # HANS_SYNTHESIS_IDEAS_V1
+            self._last_selfcritique_date = s.get("last_selfcritique_date", "")  # HANS_SELFCRITIQUE_V1
             self._last_hygiene_date = s.get("last_hygiene_date", "")  # HANS_MEMORY_HYGIENE_V1
         except FileNotFoundError:
             pass
@@ -485,6 +501,9 @@ class HansRoutine:
                     "last_narrative": self._last_narrative,
                     "last_creation_reflection": self._last_creation_reflection,
                     "last_study_date": self._last_study_date,  # HANS_STUDY_V1
+                    "last_writing_date": self._last_writing_date,  # HANS_AUTHORSHIP_V1
+                    "last_synthesis_date": self._last_synthesis_date,  # HANS_SYNTHESIS_IDEAS_V1
+                    "last_selfcritique_date": self._last_selfcritique_date,  # HANS_SELFCRITIQUE_V1
                     "last_hygiene_date": self._last_hygiene_date,  # HANS_MEMORY_HYGIENE_V1
                 }, f)
         except Exception as _e:
@@ -877,8 +896,27 @@ class HansRoutine:
             self._saved_tracking = None
             self._sleeping = False
 
+    def _sleep_watcher_loop(self):
+        """SLEEP_WATCHER_THREAD_V1 — periodicky kontroluje spánkové okno NEZÁVISLE
+        na tick() (který může viset na noční LLM analytice). _check_sleep_window je
+        rychlý (LLM v něm neběží), takže usínání proběhne včas i při zaseklé Ollamě."""
+        while not self._stop.is_set():
+            # wait-first: dej startu čas navázat serva/TTS/kameru, ať první
+            # _apply_sleep_mode nepropadne na None periferiích
+            if self._stop.wait(self._sleep_check_interval):
+                break
+            try:
+                if self._enabled:
+                    self._check_sleep_window()
+            except Exception as _e:
+                _log.debug('sleep watcher: %s', _e)
+
     def _check_sleep_window(self):
-        """Zavolat z tick(). Idempotentně přepíná _sleeping podle hodiny."""
+        """Idempotentně přepíná _sleeping podle hodiny. Volá SLEEP_WATCHER_THREAD_V1
+        (vlastní vlákno). Zámek (non-blocking) chrání před souběhem s manuálním /sleep."""
+        lock = getattr(self, '_sleep_lock', None)
+        if lock is not None and not lock.acquire(blocking=False):
+            return  # už běží v druhém vlákně → přeskoč (idempotentní)
         try:
             from datetime import datetime as _dt
             h = _dt.now().hour
@@ -936,6 +974,13 @@ class HansRoutine:
                     self._maybe_distill(ignore_window=True)
         except Exception as _e:
             _log.warning('SLEEP: window check failed: %s', _e)
+        finally:
+            if lock is not None:
+                try:
+                    lock.release()
+                except Exception:
+                    pass
+
     def _chat_quiet_ok(self) -> bool:
         """REFLECTION_QUIET_GATE_V1 — True když posledních reflection_quiet_min
         minut nikdo nechatoval ANI nebyl přítomen (jinak by noční analytika
@@ -966,8 +1011,8 @@ class HansRoutine:
         if not self._enabled:
             return
 
-        # SLEEP_MODE_V1 — spánek 02:00–09:00 (idempotentní přepnutí podle hodiny)
-        self._check_sleep_window()
+        # SLEEP_MODE_V1 — spánek řeší SLEEP_WATCHER_THREAD_V1 (vlastní vlákno,
+        # nezávislé na tomto ticku, který může viset na noční LLM analytice).
 
         new_phase = self._calc_phase()
         if new_phase != self._current_phase:
@@ -1124,6 +1169,12 @@ class HansRoutine:
                 except Exception as _ne:
                     _log.warning("narrative konsolidace selhala: %s", _ne)
 
+            # HANS_SYNTHESIS_IDEAS_V1 — within-tick guard: studium/autorství/synteze
+            # jsou těžké LLM tasky; ať v JEDNOM ticku neběží víc než jeden (tick by
+            # zbytečně dlouho visel). Kdo z nich fírne, zvedne flag a další počká
+            # na příští tick.
+            _creative_busy = False
+
             # HANS_STUDY_V1 — studijní program: 1 noční session = nastuduj další
             # pod-téma durable koníčku (Wikipedia → poznámka → deník+RAG). Po
             # dokončení kurikula mistrovská reflexe (grounduje vocational identitu).
@@ -1132,6 +1183,7 @@ class HansRoutine:
             if (self._last_study_date != today
                     and self._in_night_window()
                     and self._chat_quiet_ok()):
+                _creative_busy = True
                 try:
                     from scripts.hans_study import run_study_session
                     # diary_writer záměrně NEpředáváme: _diary_write píše do
@@ -1146,6 +1198,71 @@ class HansRoutine:
                     _log.info("Studijní session: %s", _scode)
                 except Exception as _stue:
                     _log.warning("Studijní session selhala: %s", _stue)
+
+            # HANS_AUTHORSHIP_V1 — autorský projekt: 1 noční session = napiš další
+            # sekci díla na pokračování (grounded v RAG čtení/studia). Po dokončení
+            # osnovy dovětek + složení do data/works/. Deferral-safe (deferred=retry).
+            # Gate: jiná noc než studium PROBĚHLO (ať se nestřetnou 2 těžké LLM tasky
+            # v jednu noc) — autorství běží, jen když studium dnes nebylo potřeba.
+            if (not _creative_busy
+                    and self._last_writing_date != today
+                    and self._last_study_date == today
+                    and self._in_night_window()
+                    and self._chat_quiet_ok()):
+                _creative_busy = True
+                try:
+                    from scripts.hans_authorship import run_writing_session
+                    _wcode = run_writing_session(
+                        self.config, self._diary_path, knowledge=self._knowledge)
+                    if _wcode != "deferred":
+                        self._last_writing_date = today
+                        self._save_routine_state()
+                    _log.info("Autorská session: %s", _wcode)
+                except Exception as _aue:
+                    _log.warning("Autorská session selhala: %s", _aue)
+
+            # HANS_SYNTHESIS_IDEAS_V1 (#2) — vlastní nápady / synteze: propojí věci
+            # z RŮZNÝCH oblastí (reading_takeaway/study_note za 30 dní) do JEDNOHO
+            # nového postřehu (Hansův hlas, grounded). Kadence `cadence_days` (default
+            # 3) — ne každou noc. Lehčí než studium (1 LLM volání), ale stejně těžké
+            # na VRAM → within-tick guard, jen v noci, deferral-safe (deferred=retry).
+            if (not _creative_busy
+                    and self._synthesis_due(today)
+                    and self._in_night_window()
+                    and self._chat_quiet_ok()):
+                _creative_busy = True
+                try:
+                    from scripts.hans_ideas import run_synthesis_session
+                    _ycode = run_synthesis_session(
+                        self.config, self._diary_path, knowledge=self._knowledge)
+                    if _ycode != "deferred":
+                        self._last_synthesis_date = today
+                        self._save_routine_state()
+                    _log.info("Synteze nápadů: %s", _ycode)
+                except Exception as _yue:
+                    _log.warning("Synteze nápadů selhala: %s", _yue)
+
+            # HANS_SELFCRITIQUE_V1 (#6) — sebekritika z vlastního popudu: z Hansových
+            # nedávných replik (human_chat/teddy_dialog) najde slabé místo KVALITY
+            # projevu (rozvláčnost/opakování/fráze) a uloží ponaučení `self_critique`.
+            # NEMĚNÍ paměť/postoje; příště to má v chat kontextu vedle korekčních lekcí.
+            # Base LLM keep_alive=0, kadence `selfcritique.cadence_days` (default 2),
+            # within-tick guard. Deferral-safe: 'deferred' (LLM dole) → guard se
+            # NEnastaví, retry; 'idle'/'critiqued' (LLM běžel) → kadence drží odstup.
+            if (not _creative_busy
+                    and self._selfcritique_due(today)
+                    and self._in_night_window()
+                    and self._chat_quiet_ok()):
+                _creative_busy = True
+                try:
+                    from scripts.hans_selfcritique import run_self_critique
+                    _ccode = run_self_critique(self.config, self._diary_path)
+                    if _ccode != "deferred":
+                        self._last_selfcritique_date = today
+                        self._save_routine_state()
+                    _log.info("Sebekritika: %s", _ccode)
+                except Exception as _cue:
+                    _log.warning("Sebekritika selhala: %s", _cue)
 
             # HANS_MEMORY_HYGIENE_V1 (#2) — retenční prořez deníkového firehose
             # (person_seen/teddy_* starší než per-typ okno). Whitelist (smysluplné
@@ -1184,6 +1301,34 @@ class HansRoutine:
                     self._reflection.reflect_on_creations()
             except Exception as _cre:
                 _log.warning("creation reflection selhala: %s", _cre)
+
+    def _synthesis_due(self, today: str) -> bool:
+        """HANS_SYNTHESIS_IDEAS_V1 — kadenční guard: synteze ne každou noc,
+        ale po `synthesis.cadence_days` (default 3). Prázdný guard = due."""
+        last = self._last_synthesis_date
+        if not last:
+            return True
+        try:
+            cad = int(self.config.get("synthesis", {}).get("cadence_days", 3))
+            d0 = datetime.strptime(last, "%Y-%m-%d").date()
+            d1 = datetime.strptime(today, "%Y-%m-%d").date()
+            return (d1 - d0).days >= cad
+        except Exception:
+            return True
+
+    def _selfcritique_due(self, today: str) -> bool:
+        """HANS_SELFCRITIQUE_V1 — kadenční guard: sebekritika po
+        `selfcritique.cadence_days` (default 2). Prázdný guard = due."""
+        last = self._last_selfcritique_date
+        if not last:
+            return True
+        try:
+            cad = int(self.config.get("selfcritique", {}).get("cadence_days", 2))
+            d0 = datetime.strptime(last, "%Y-%m-%d").date()
+            d1 = datetime.strptime(today, "%Y-%m-%d").date()
+            return (d1 - d0).days >= cad
+        except Exception:
+            return True
 
     # ── Fáze dne ─────────────────────────────────────────────────────────────
 
@@ -1257,60 +1402,89 @@ class HansRoutine:
     # ── Noční shrnutí ────────────────────────────────────────────────────────
 
     def _write_night_summary(self):
-        """Shrne den do deníku — co se stalo, kdo přišel, co Hans četl."""
+        """NIGHT_SUMMARY_REFLECTIVE_V1 — REFLEKTIVNÍ shrnutí dne (Hansovým hlasem,
+        groundované ve faktech dne). Fallback na statistiku, když je Ollama dole
+        (deferral-safe — shrnutí se neztratí)."""
         try:
             db = sqlite3.connect(self._diary_path)
-            # NIGHT_SUMMARY_DATE_FIX_V1 — po půlnoci (noční okno) shrň KONČÍCÍ den
-            # (včera), ne nový prázdný kalendářní den. Jinak souhrn v 00:0x hlásil
-            # „1 událostí, Četl: nic".
+            # NIGHT_SUMMARY_DATE_FIX_V1 — po půlnoci shrň KONČÍCÍ den (včera).
             _now = datetime.now()
             if _now.hour < self._morning_hour:
                 today = datetime.fromtimestamp(_now.timestamp() - 86400).strftime("%Y-%m-%d")
             else:
                 today = _now.strftime("%Y-%m-%d")
 
-            # Počet událostí ve shrnovaném dni
-            n_events = db.execute(
-                "SELECT COUNT(*) FROM diary WHERE date(ts, 'unixepoch', 'localtime') = ?",
-                (today,)).fetchone()[0]
+            def _q(sql):
+                try:
+                    return db.execute(sql, (today,)).fetchall()
+                except Exception:
+                    return []
+            D = "date(ts,'unixepoch','localtime')=?"
 
-            # Jaké typy událostí
-            types = db.execute(
-                "SELECT event_type, COUNT(*) FROM diary "
-                "WHERE date(ts, 'unixepoch', 'localtime') = ? "
-                "GROUP BY event_type ORDER BY COUNT(*) DESC LIMIT 5",
-                (today,)).fetchall()
-
-            # Dialogy dnes
-            n_dialogs = db.execute(
-                "SELECT COUNT(*) FROM diary "
-                "WHERE event_type='teddy_dialog' "
-                "AND date(ts, 'unixepoch', 'localtime') = ?",
-                (today,)).fetchone()[0]
-
-            # Co Hans četl
-            reads = db.execute(
-                "SELECT title FROM diary "
-                "WHERE event_type='web_read' "
-                "AND date(ts, 'unixepoch', 'localtime') = ? "
-                "ORDER BY ts DESC LIMIT 3",
-                (today,)).fetchall()
-
+            n_events = (_q(f"SELECT COUNT(*) FROM diary WHERE {D}") or [[0]])[0][0]
+            n_dialogs = (_q(f"SELECT COUNT(*) FROM diary WHERE event_type='teddy_dialog' AND {D}") or [[0]])[0][0]
+            types = _q(f"SELECT event_type, COUNT(*) FROM diary WHERE {D} "
+                       "GROUP BY event_type ORDER BY COUNT(*) DESC LIMIT 5")
+            reads = [r[0] for r in _q(f"SELECT DISTINCT title FROM diary WHERE event_type='web_read' AND {D} AND title<>'' ORDER BY ts DESC LIMIT 4")]
+            people = [r[0] for r in _q(f"SELECT DISTINCT title FROM diary WHERE event_type='person_seen' AND {D} AND title NOT IN ('','Unknown','?')")]
+            takeaways = [r[0] for r in _q(f"SELECT coalesce(data,note) FROM diary WHERE event_type='reading_takeaway' AND {D} AND coalesce(data,note)<>'' ORDER BY ts DESC LIMIT 2")]
+            films = [r[0] for r in _q(f"SELECT DISTINCT title FROM diary WHERE event_type IN ('kodi_playing','movie_opinion') AND {D} AND title<>'' ORDER BY ts DESC LIMIT 3")]
+            moments = [r[0] for r in _q(f"SELECT coalesce(NULLIF(note,''),data) FROM diary WHERE COALESCE(importance,0)>=6 AND {D} AND coalesce(NULLIF(note,''),data)<>'' AND event_type NOT IN ('human_chat','night_summary') ORDER BY importance DESC, ts DESC LIMIT 3")]
             db.close()
 
-            type_str = ", ".join(f"{t}({n})" for t, n in types) if types else "nic"
-            read_str = ", ".join(r[0] for r in reads) if reads else "nic"
+            stats = f"({n_events} událostí, {n_dialogs} dialogů s Kolačem)"
+            facts = []
+            if people:    facts.append("Dnes tu byli: " + ", ".join(dict.fromkeys(people)) + ".")
+            if reads:     facts.append("Četl jsem: " + ", ".join(reads) + ".")
+            if takeaways: facts.append("Z četby mě zaujalo: " + " / ".join(t.strip()[:180] for t in takeaways))
+            if films:     facts.append("Na obrazovce běželo: " + ", ".join(films) + ".")
+            if moments:   facts.append("Výrazné chvíle dne: " + " / ".join(m.strip()[:180] for m in moments))
 
-            summary = (f"Denní shrnutí: {n_events} událostí, "
-                       f"{n_dialogs} dialogů s Kolačem. "
-                       f"Typy: {type_str}. "
-                       f"Četl: {read_str}.")
+            reflective = self._night_reflection(facts) if facts else None
+            if reflective:
+                summary = reflective + " " + stats
+            else:
+                type_str = ", ".join(f"{t}({n})" for t, n in types) if types else "nic"
+                read_str = ", ".join(reads) if reads else "nic"
+                summary = (f"Denní shrnutí: {n_events} událostí, {n_dialogs} dialogů "
+                           f"s Kolačem. Typy: {type_str}. Četl: {read_str}.")
 
             self._diary_write("night_summary", "Shrnutí dne", summary)
-            _log.info("Noční shrnutí: %s", summary[:100])
-
+            _log.info("Noční shrnutí (%s): %.100s",
+                      "reflexe" if reflective else "statistika", summary)
         except Exception as e:
             _log.error("Night summary error: %s", e)
+
+    def _night_reflection(self, facts) -> Optional[str]:
+        """LLM ohlédnutí za dnem z faktů (Hansův hlas). None = Ollama dole / krátké
+        → volající spadne na statistiku."""
+        if not facts:
+            return None
+        try:
+            from scripts.ollama_client import ollama_generate
+            from scripts.hans_persona import persona_core
+        except Exception:
+            return None
+        try:
+            core = persona_core(self.config, with_address=False)
+        except Exception:
+            core = ""
+        model = (self.config.get("models", {}) or {}).get("dialog", "hans-czech:latest")
+        system = (core + "\n\n" if core else "") + (
+            "Než usneš, ohlédni se do svého deníku za DNEŠNÍM dnem — krátká osobní "
+            "reflexe (4-6 vět, první osoba, tvým hlasem). Souvislé ohlédnutí, ne výčet: "
+            "co se dělo, kdo tu byl, co tě zaujalo, jak na tebe den působil. Vyjdi "
+            "POUZE z faktů níže — nic si nepřimýšlej. Žádný nadpis, žádné uvozovky.")
+        try:
+            out = ollama_generate(
+                model,
+                "FAKTA DNEŠNÍHO DNE:\n" + "\n".join(facts) + "\n\nNapiš reflexi.",
+                system=system, config=self.config, timeout=120)
+        except Exception as e:
+            _log.warning("night reflection LLM failed: %s", e)
+            return None
+        text = (out or "").strip().strip('"')
+        return text[:1200] if len(text) >= 60 else None
 
     # ── Sny ──────────────────────────────────────────────────────────────────
 

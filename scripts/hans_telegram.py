@@ -326,16 +326,84 @@ class TelegramBridge:
             self._cmd_status(cid); return True
         if cmd in ("wol", "probudit", "wakeup", "probud", "probuď"):
             self._cmd_wol(cid); return True
+        if cmd in ("herni", "herní", "hra", "game", "hrani", "hraní"):
+            self._cmd_game(cid, text); return True
+        # HANS_TELEGRAM_INSPECT_V1 — read-only inspekční příkazy z registru
+        # chat_commands (ukaž, co Hans napsal/vytvořil). Whitelist = jen bezpečné
+        # „ukaž" příkazy; NIKDY ne destruktivní (/zapomen reset, /sleep, /enroll…).
+        if self._route_inspect_command(text, cmd, cid):
+            return True
         if cmd in ("help", "pomoc", "napoveda", "nápověda", "start"):
             self.send("Můžete mi normálně psát (povídáme si), nebo použít příkazy:\n"
                       "/obraz — pošlu poslední obraz (napiš „náhodný obraz\" pro náhodný)\n"
                       "/denik — výpis z mého deníku\n"
                       "/uvaha — má poslední úvaha\n"
                       "/stav — stav systému (teplota, RAM, disk, mozek)\n"
+                      "/studium — můj studijní program (co studuji)\n"
+                      "/dilo — mé autorské dílo na pokračování\n"
+                      "/napad — mé vlastní postřehy (synteze)\n"
+                      "/kritika — co u sebe chci zlepšit (sebekritika)\n"
                       "/wol — probudím počítač (PC) přes síť\n"
+                      "/herni — herní mód: uvolním grafiku pro hru (/herni vyp = zpět)\n"
                       "/help — tato nápověda", chat_id=cid)
             return True
         return False
+
+    # HANS_TELEGRAM_INSPECT_V1 — whitelist cmd_id z chat_commands registru,
+    # které smí projít přes Telegram (vše read-only „ukaž co Hans vytvořil";
+    # sub-příkazy jako „teď" spustí práci na pozadí, stejně jako lokálně).
+    _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika",
+                               "nitky", "zajmy"})
+
+    def _route_inspect_command(self, text: str, cmd: str, cid: str) -> bool:
+        """Zkusí obsloužit inspekční slash příkaz přes chat_commands. True když ano."""
+        try:
+            from scripts.chat_commands import parse_command, dispatch
+        except Exception:
+            return False
+        resolved = parse_command(text)  # (cmd_id, args) | None
+        if not resolved or resolved[0] not in self._INSPECT_CMDS:
+            return False
+        if self._handler is None:
+            self.send("Tenhle příkaz teď neumím obsloužit (chybí spojení s mozkem).",
+                      chat_id=cid)
+            return True
+        try:
+            out = dispatch(resolved, self._handler, self._person_for(cid))
+        except Exception as e:
+            _log.warning("telegram inspect dispatch selhal: %s", e)
+            out = None
+        self.send(out or "Zatím k tomu nic nemám, pane.", chat_id=cid)
+        return True
+
+    def _cmd_game(self, cid: str, text: str = ""):
+        """OLLAMA_GAME_MODE_V1 — herní mód přes Telegram. /herni [zap|vyp|stav]."""
+        try:
+            from scripts.ollama_client import set_game_mode, game_mode_on
+        except Exception as e:
+            self.send("Herní mód není dostupný: %s" % e, chat_id=cid); return
+        parts = (text or "").lower().split()
+        arg = parts[1] if len(parts) > 1 else ""
+        if arg in ("stav", "status"):
+            self.send("Herní mód je ZAPNUTÝ (grafika volná pro hru)."
+                      if game_mode_on() else "Herní mód je vypnutý.", chat_id=cid)
+            return
+        if arg in ("zap", "on", "1", "ano", "start"):
+            target = True
+        elif arg in ("vyp", "off", "0", "ne", "stop", "konec"):
+            target = False
+        else:
+            target = not game_mode_on()   # toggle
+        res = set_game_mode(target, config=self.config)
+        if isinstance(res, dict) and "error" in res:
+            self.send("Herní mód selhal: %s" % res["error"], chat_id=cid); return
+        if target:
+            self.send("Herní mód ZAPNUT — uvolnil jsem %d model(ů) z grafické "
+                      "paměti, grafika je volná pro hru. Až dohraješ, pošli "
+                      "/herni vyp." % (res.get("unloaded", 0) if isinstance(res, dict) else 0),
+                      chat_id=cid)
+        else:
+            self.send("Herní mód VYPNUT — mozek je zase k dispozici.", chat_id=cid)
 
     def _pick_mode(self, text: str) -> str:
         """náhodný vs poslední obraz dle formulace."""

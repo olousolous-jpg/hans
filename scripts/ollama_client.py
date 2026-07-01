@@ -8,11 +8,75 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Optional
 
 import requests
 
 _log = logging.getLogger("ollama_client")
+
+# ── OLLAMA_GAME_MODE_V1 — herní mód ────────────────────────
+# Flag soubor = sdílený signál napříč procesy (Hans, web_admin, subprocess skripty).
+# Když existuje, Hans NEvolá Ollamu → VRAM zůstane volná pro hru na PC.
+_PAUSE_FLAG = Path(__file__).resolve().parent.parent / "data" / ".ollama_paused"
+
+
+def game_mode_on() -> bool:
+    """True = herní mód aktivní → veškerá volání Ollamy se přeskočí (return None)."""
+    try:
+        return _PAUSE_FLAG.exists()
+    except Exception:
+        return False
+
+
+def ollama_unload_all(ollama_url: str | None = None,
+                      config: dict | None = None) -> int:
+    """Uvolni VŠECHNY právě nahrané modely z VRAM (keep_alive=0). Vrátí počet."""
+    url = _resolve_url(ollama_url, config)
+    models = []
+    try:
+        r = requests.get(f"{url}/api/ps", timeout=10)
+        r.raise_for_status()
+        models = [m.get("model") or m.get("name")
+                  for m in (r.json() or {}).get("models", [])]
+    except Exception as exc:
+        _log.warning("unload_all: /api/ps selhal: %s", exc)
+    n = 0
+    for m in models:
+        if not m:
+            continue
+        try:
+            requests.post(f"{url}/api/generate",
+                          json={"model": m, "prompt": "", "keep_alive": 0},
+                          timeout=30)
+            _log.info("Ollama unload: %s", m)
+            n += 1
+        except Exception as exc:
+            _log.warning("unload %s selhal: %s", m, exc)
+    return n
+
+
+def set_game_mode(on: bool, ollama_url: str | None = None,
+                  config: dict | None = None) -> dict:
+    """Zapni/vypni herní mód. on=True: vytvoř flag (Hans přestane volat Ollamu) +
+    uvolni VRAM. on=False: smaž flag (mozek zase k dispozici)."""
+    try:
+        if on:
+            _PAUSE_FLAG.parent.mkdir(parents=True, exist_ok=True)
+            _PAUSE_FLAG.write_text(str(time.time()))   # flag PRVNÍ → nové volání se gate
+            time.sleep(0.4)
+            freed = ollama_unload_all(ollama_url, config)
+            _log.info("HERNÍ MÓD ZAP — uvolněno %d modelů, Ollama se nepoužívá", freed)
+            return {"game_mode": True, "unloaded": freed}
+        try:
+            _PAUSE_FLAG.unlink()
+        except FileNotFoundError:
+            pass
+        _log.info("HERNÍ MÓD VYP — Ollama opět k dispozici")
+        return {"game_mode": False}
+    except Exception as exc:
+        _log.error("set_game_mode(%s) selhal: %s", on, exc)
+        return {"error": str(exc)}
 
 # ── Defaults ───────────────────────────────────────────────
 DEFAULT_URL     = "http://127.0.0.1:11434"
@@ -45,6 +109,8 @@ def ollama_chat(
     options: dict | None = None,
 ) -> Optional[str]:
     """Pošle /api/chat request. Vrátí text odpovědi nebo None při chybě."""
+    if game_mode_on():   # OLLAMA_GAME_MODE_V1 — herní mód: nech VRAM volnou
+        return None
     url = _resolve_url(ollama_url, config)
     payload: dict = {
         "model": model,
@@ -73,6 +139,8 @@ def ollama_generate(
     options: dict | None = None,
 ) -> Optional[str]:
     """Pošle /api/generate request. Vrátí text odpovědi nebo None."""
+    if game_mode_on():   # OLLAMA_GAME_MODE_V1
+        return None
     url = _resolve_url(ollama_url, config)
     payload: dict = {
         "model": model,
@@ -99,6 +167,8 @@ def ollama_warmup(
     keep_alive: int = DEFAULT_KEEP_ALIVE,
 ) -> bool:
     """Pošle prázdný request aby se model nahrál do VRAM. Vrátí True při úspěchu."""
+    if game_mode_on():   # OLLAMA_GAME_MODE_V1 — nepřihřívej, ať VRAM zůstane volná
+        return False
     url = _resolve_url(ollama_url, config)
     try:
         _log.info("Warmup: loading %s ...", model)

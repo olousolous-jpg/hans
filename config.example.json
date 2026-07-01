@@ -507,6 +507,10 @@
     "llm_timeout": 120,
     "_note": "Vizualni podoba. descriptor_model = text popis; image_model = SDXL checkpoint pro render (prepinatelny pro porovnani stylu).",
     "comfyui_url": "http://192.168.1.10:8188",
+    "tv_clip": "data/avatar/clips/hans_talkloop_00001.mp4",
+    "_tv_clip_note": "AVATAR_KODI_V1 — talkloop video pro mluvici tvar na TV (Kodi z klidu u navrhu filmu).",
+    "face_image": "data/avatar/v1/idle.png",
+    "_face_image_note": "AVATAR_KODI_IMAGE_V1 — Hansova tvar (PNG) u dialogu navrhu/pokracovani na TV (staticky obrazek vlevo, dialog na nem).",
     "image_model": "sd_xl_base_1.0.safetensors",
     "width": 768,
     "height": 768,
@@ -652,11 +656,36 @@
   "film_suggest": {
     "enabled": true,
     "idle_hours": 1.0,
+    "voice_to_kodi": false,
+    "avatar_to_kodi": true,
+    "voice_volume": 90,
+    "voice_lead_ms": 900,
     "present_recency_s": 600,
     "cooldown_h": 3,
     "max_per_day": 3,
     "countdown_s": 30,
-    "accept_window_min": 5
+    "accept_window_min": 5,
+    "rewatch_prob": 0.3,
+    "rewatch_min_days": 4,
+    "genre_prefs": "",
+    "_genre_prefs_note": "FILM_PERSON_GENRE_PREFS_V1 — radky 'jmeno: zanr, zanr' (cesky). Nejvyssi priorita pri vyberu filmu. Edituj pres web config.",
+    "film_prefs": "",
+    "_film_prefs_note": "FILM_PERSON_FAVS_V1 — radky 'jmeno: Nazev, Nazev'. Konkretni oblibene filmy, prednostne pri rewatch (fuzzy match na knihovnu). Edituj pres web config."
+  },
+  "auto_continue": {
+    "enabled": true,
+    "_note": "KODI_AUTOPLAY_V1 — u konce titulu Hans sam pusti dalsi (serial=dalsi dil, jinak film); na TV odpocet, timeout=pusti, tlacitko=zrusi.",
+    "near_end_pct": 93.0,
+    "countdown_s": 15,
+    "max_consecutive_series": 2,
+    "max_per_day": 10,
+    "cooldown_min": 3,
+    "present_recency_s": 600,
+    "arm_window_min": 12,
+    "quiet_after_hour": 2,
+    "quiet_until_hour": 9,
+    "rewatch_prob": 0.3,
+    "rewatch_min_days": 4
   },
   "hans_creations": {
     "enabled": true,
@@ -690,7 +719,56 @@
     "sublink_count": 3,
     "sublink_max_chars": 2500,
     "material_max_chars": 22000,
-    "max_subtopic_failures": 3
+    "max_subtopic_failures": 3,
+    "select_by_engagement": true,
+    "_select_note": "HANS_STUDY_ENGAGEMENT_SELECT_V1 — příští studijní program vybrat dle reálného objemu zájmu (ne arbitrárně mezi remízami evidence).",
+    "research_tier": {
+      "enabled": true,
+      "_note": "HANS_STUDY_RESEARCH_TIER_V1 — u VELMI silného koníčku studium přidá k Wikipedii i abstrakty skutečného výzkumu z OpenAlexu (zdarma, bez klíče). Odemkne se evidence_count>=min_evidence NEBO chytře dle objemu zájmu (engagement examples>=min_engagement).",
+      "min_evidence": 20,
+      "min_engagement": 500,
+      "results": 3,
+      "max_chars": 4000,
+      "timeout": 20,
+      "mailto": "hans@local"
+    }
+  },
+  "authorship": {
+    "enabled": true,
+    "_note": "HANS_AUTHORSHIP_V1 — Hans píše vlastní dílo na pokračování (1 sekce/noc) z durable koníčku, grounded v RAG. Hotové dílo do data/works/.",
+    "min_evidence": 8,
+    "min_age_days": 21,
+    "min_recent_days": 14,
+    "sections_min": 5,
+    "sections_max": 8,
+    "num_ctx": 8192,
+    "section_num_predict": 500,
+    "section_max_chars": 4000,
+    "rag_collection": "hans_dila"
+  },
+  "synthesis": {
+    "enabled": true,
+    "_note": "HANS_SYNTHESIS_IDEAS_V1 — Hans z vlastního popudu propojí věci z různých oblastí (reading_takeaway/study_note) do jednoho nového postřehu. Kadence cadence_days, ne každou noc.",
+    "cadence_days": 3,
+    "lookback_days": 30,
+    "min_topics": 2,
+    "max_topics": 3,
+    "max_seed_chars": 600,
+    "temperature": 0.85,
+    "num_ctx": 8192,
+    "num_predict": 280,
+    "max_chars": 1200,
+    "rag_collection": "hans_identita"
+  },
+  "selfcritique": {
+    "enabled": true,
+    "_note": "HANS_SELFCRITIQUE_V1 — Hans z vlastního popudu kritizuje KVALITU svého projevu (rozvláčnost/opakování/fráze) z vlastních replik (human_chat/teddy_dialog). Ponaučení do chat kontextu vedle korekcí. Nemění paměť/postoje.",
+    "cadence_days": 2,
+    "window_hours": 72,
+    "avoid_hours": 168,
+    "max_chars": 4000,
+    "model": "jobautomation/OpenEuroLLM-Czech:latest",
+    "llm_timeout": 300
   },
   "person_name_forms": {
     "alice": [

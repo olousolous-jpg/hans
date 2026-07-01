@@ -801,6 +801,22 @@ class OpenWebUIDirectHandler:
             except Exception:
                 study_ctx = ""
 
+        # HANS_SYNTHESIS_IDEAS_V1 (#2) — poslední vlastní postřeh (propojení věcí
+        # z různých oblastí). Jen full mód, ne pozdrav (brevita). Read-only, graceful.
+        idea_ctx = ""
+        if not for_greeting:
+            try:
+                from scripts.hans_ideas import latest_idea_context
+                _dbp3 = (self.config.get("diary_db")
+                         or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                         or "data/hans_diary.db")
+                _ic = latest_idea_context(self.config, _dbp3)
+                if _ic:
+                    idea_ctx = ("\n\nMůj nedávný vlastní postřeh (zmiň jen když to "
+                                "přirozeně zapadne, nevnucuj): " + _ic)
+            except Exception:
+                idea_ctx = ""
+
         # Kodi kontext
         kodi_ctx = ""
         _km = getattr(self, '_kodi_monitor', None)
@@ -1045,6 +1061,20 @@ class OpenWebUIDirectHandler:
         except Exception:
             lessons_ctx = ""
 
+        # HANS_SELFCRITIQUE_V1 (#6) — vlastní sebekritika (kvalita projevu, z vlastního
+        # popudu). Tichý steer „takhle se chci vyjadřovat" — vedle korekčních lekcí,
+        # full mód, ne pozdrav. Read-only, graceful.
+        if not for_greeting:
+            try:
+                from scripts.hans_selfcritique import recent_selfcritiques as _rsc
+                _scr = _rsc(_dbp_l, hours=120, limit=3)
+                if _scr:
+                    lessons_ctx += ("\n\nSám sis předsevzal zlepšit svůj projev "
+                                    "(drž se toho, nevnucuj, nekomentuj to nahlas):"
+                                    "\n- " + "\n- ".join(_scr))
+            except Exception:
+                pass
+
         # _RAG_MODE_BUILD — pro hans-rag model jen LIVE STATE.
         # Identita má vlastní system prompt v OpenWebUI, statická paměť
         # (deník, vztahové karty, známí lidé) přijde z RAG kolekcí.
@@ -1075,7 +1105,7 @@ class OpenWebUIDirectHandler:
                 system_msg = ""
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
-                          + room_ctx + place_ctx + diary_ctx + story_ctx + study_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1
+                          + room_ctx + place_ctx + diary_ctx + story_ctx + study_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_SYNTHESIS_IDEAS_V1
                           + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx)  # …/ HANS_ROUTINE_CONTEXT_V1
@@ -1673,6 +1703,12 @@ class OpenWebUIDirectHandler:
 
     def ping_model(self):
         """Keepalive — udrzi model v VRAM pres Ollama /api/generate."""
+        try:
+            from scripts.ollama_client import game_mode_on
+            if game_mode_on():   # OLLAMA_GAME_MODE_V1 — nepřipínej, VRAM volná pro hru
+                return
+        except Exception:
+            pass
         try:
             # Ollama /api/generate s keep_alive=10m — model zustane v VRAM
             base = self.config.get('openwebui_chat', {}).get(

@@ -184,6 +184,10 @@ button.btn:hover { opacity: 0.85; }
       </div>
       <span class="av-label" id="avatar-label">Hans</span>
     </div>
+    <!-- OLLAMA_GAME_MODE_V1 — herní mód v levém panelu pod Hansem -->
+    <button id="game-mode-btn" onclick="toggleGameMode()"
+            title="Uvolní grafickou paměť pro hru na PC (Hans přestane používat Ollamu)."
+            style="margin:4px 12px 8px;font-size:0.82rem;padding:7px 10px;border-radius:8px;border:1px solid var(--bg3);background:var(--bg3);color:var(--fg2);cursor:pointer;white-space:nowrap">🎮 Herní mód</button>
     <div class="app-side-foot">
       <div id="status-dot" style="background:var(--yellow)"></div>
       <span id="status-text">načítám...</span>
@@ -816,6 +820,42 @@ async function loadStatus() {
     _im.onerror = () => { _avb.style.display = 'none'; };
     _im.src = '/api/avatar.png?t=' + Date.now();
   }
+  loadGameMode();
+}
+
+// OLLAMA_GAME_MODE_V1 — herní mód toggle u indikátoru mozku
+let _gameMode = false;
+function _renderGameMode() {
+  const btn = document.getElementById('game-mode-btn');
+  if (!btn) return;
+  if (_gameMode) {
+    btn.textContent = '🎮 Herní mód: ZAP — vypnout';
+    btn.style.background = 'var(--accent2, #c87)'; btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--accent2, #c87)';
+  } else {
+    btn.textContent = '🎮 Herní mód';
+    btn.style.background = 'var(--bg3)'; btn.style.color = 'var(--fg2)';
+    btn.style.borderColor = 'var(--bg3)';
+  }
+}
+async function loadGameMode() {
+  try {
+    const r = await fetch('/api/brain/status');
+    const s = await r.json();
+    _gameMode = !!s.game_mode;
+    _renderGameMode();
+  } catch (e) { /* ignore */ }
+}
+async function toggleGameMode() {
+  const btn = document.getElementById('game-mode-btn');
+  const turnOn = !_gameMode;
+  if (turnOn && !confirm('Zapnout herní mód? Hans uvolní grafickou paměť a přestane používat Ollamu (chat/dialogy ztichnou), dokud herní mód nevypneš.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ ...'; }
+  try {
+    await fetch('/api/brain/' + (turnOn ? 'pause' : 'resume'), { method: 'POST' });
+  } catch (e) { /* ignore */ }
+  if (btn) btn.disabled = false;
+  await loadGameMode();
 }
 
 async function triggerRead() {

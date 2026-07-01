@@ -521,7 +521,9 @@ register(
 
 register(
     "work",
-    slash_aliases=["work", "dilo", "esej"],
+    # HANS_AUTHORSHIP_V1 — „dilo"/„dílo" patří autorskému projektu (_cmd_dilo),
+    # ne tomuhle staršímu ad-hoc /work; jinak by ho /work stínil (registrován dřív).
+    slash_aliases=["work", "esej"],
     nl_patterns=[
         r"\bnapi\w+.{0,15}esej",
         r"\bnapi\w+.{0,15}pr\u00e1ci",
@@ -656,6 +658,51 @@ register(
     ],
     handler=_cmd_sleep,
     help_text="Toggle spánkového režimu (manuální override).",
+)
+
+
+# ─── /herni — herní mód: uvolni VRAM pro hru na PC (OLLAMA_GAME_MODE_V1) ──────
+_HERNI_ON  = {"zap", "zapni", "on", "1", "ano", "start"}
+_HERNI_OFF = {"vyp", "vypni", "off", "0", "ne", "stop", "konec"}
+
+
+def _cmd_herni(handler, name, args) -> str:
+    """/herni [zap|vyp] — herní mód. ZAP: Hans uvolní modely z VRAM a přestane
+    používat Ollamu (volná grafika pro hru). VYP: mozek zase k dispozici. Bez
+    argumentu přepíná."""
+    from scripts.ollama_client import set_game_mode, game_mode_on
+    _hi = getattr(handler, "_hans_idle", None)
+    cfg = getattr(_hi, "config", None) if _hi else None
+    a = (args or "").strip().lower()
+    if a in ("stav", "status"):
+        return ("Herní mód je ZAPNUTÝ (grafika volná, mozek nepoužívám)."
+                if game_mode_on() else "Herní mód je vypnutý.")
+    if a in _HERNI_ON:
+        target = True
+    elif a in _HERNI_OFF:
+        target = False
+    else:
+        target = not game_mode_on()   # toggle
+    res = set_game_mode(target, config=cfg)
+    if "error" in res:
+        return "/herni selhal: %s" % res["error"]
+    if target:
+        return ("Herní mód ZAP — uvolnil jsem %d model(ů) z grafické paměti a "
+                "mozek teď nepoužívám. Až dohraješ: /herni vyp."
+                % res.get("unloaded", 0))
+    return "Herní mód VYP — mozek je zase k dispozici."
+
+
+register(
+    "herni",
+    slash_aliases=["herni", "herní", "hra", "game", "hrani", "hraní"],
+    nl_patterns=[
+        r"\bjdu\s+hrát",
+        r"\bspou[št]t[íě]m\s+hru",
+        r"\bhern[íi]\s+m[óo]d",
+    ],
+    handler=_cmd_herni,
+    help_text="Herní mód — uvolní grafiku pro hru na PC (/herni vyp = zpět).",
 )
 
 
@@ -995,6 +1042,180 @@ register(
     nl_patterns=[],
     handler=_cmd_studium,
     help_text="Studijní program: /studium [programy|teď]",
+)
+
+
+# ─── /dilo — autorský projekt (HANS_AUTHORSHIP_V1) ───────────────────────────
+def _cmd_dilo(handler, name, args) -> str:
+    """/dilo — stav autorského projektu; /dilo vše = všechny; /dilo teď = napiš
+    další sekci na pozadí (jinak noční práce)."""
+    cfg = getattr(handler, "config", {}) or {}
+    db = cfg.get("diary_db", "data/hans_diary.db")
+    try:
+        from scripts.hans_authorship import AuthorshipStore, run_writing_session
+    except Exception as e:
+        return "Autorský modul nedostupný: %s" % e
+    store = AuthorshipStore(cfg, db)
+    sub = (args or "").strip().lower()
+
+    if sub in {"teď", "ted", "now", "piš", "pis", "session"}:
+        import threading as _th
+        kn = getattr(handler, "_knowledge", None) or getattr(handler, "knowledge", None)
+
+        def _run():
+            try:
+                _log.info("/dilo teď → %s", run_writing_session(cfg, db, knowledge=kn))
+            except Exception as _e:
+                _log.warning("/dilo teď selhalo: %s", _e)
+        _th.Thread(target=_run, daemon=True, name="WriteNow").start()
+        return ("Pustil jsem se do psaní, pane — napíšu další sekci svého díla. "
+                "Chvíli to potrvá, výsledek pak uvidíte v /dilo a v deníku.")
+
+    if sub in {"vše", "vse", "all", "projekty"}:
+        projs = store.all_projects()
+        if not projs:
+            return "Zatím jsem nezačal žádné dílo, pane."
+        out = ["Má díla:"]
+        for p in projs:
+            out.append("  [%d] „%s\" (%s) — %s (%d/%d sekcí)" % (
+                p["id"], p["title"], p["kind"], p["status"],
+                p["current_index"], len(p["outline"])))
+        return NL_RUNTIME.join(out)
+
+    ap = store.get_active()
+    if not ap:
+        projs = store.all_projects()
+        if projs:
+            last = projs[0]
+            return ("Právě nepíšu, pane. Naposledy: „%s\" (%s). Najdete ho "
+                    "v data/works/. Další dílo si vyberu z trvalého koníčku. "
+                    "(/dilo vše, /dilo teď)" % (last["title"], last["status"]))
+        return ("Zatím jsem nezačal psát, pane — vyberu si trvalý koníček a "
+                "navrhnu dílo. (/dilo teď to spustí ručně)")
+
+    cur, total = ap["current_index"], len(ap["outline"])
+    out = ["Píšu: „%s\" (%s) — sekce %d z %d:" % (
+        ap["title"], ap["kind"], cur + 1 if cur < total else total, total)]
+    if ap.get("premise"):
+        out.append("   námět: %s" % ap["premise"])
+    for i, s in enumerate(ap["outline"]):
+        mark = "✓" if i < cur else ("→" if i == cur else " ")
+        out.append("   %s %s" % (mark, s))
+    out.append("")
+    out.append("Sessions: %d  |  ručně: /dilo teď" % ap["sessions_done"])
+    return NL_RUNTIME.join(out)
+
+
+register(
+    "dilo",
+    slash_aliases=["dilo", "dílo", "psani", "psaní", "kniha_moje"],
+    nl_patterns=[],
+    handler=_cmd_dilo,
+    help_text="Autorský projekt: /dilo [vše|teď]",
+)
+
+
+# ─── /napad — vlastní nápady / synteze (HANS_SYNTHESIS_IDEAS_V1, #2) ──────────
+def _cmd_napad(handler, name, args) -> str:
+    """/napad — poslední Hansův postřeh; /napad vše = všechny; /napad teď =
+    propoj věci z různých oblastí do nového postřehu (na pozadí, jinak v noci)."""
+    cfg = getattr(handler, "config", {}) or {}
+    db = cfg.get("diary_db", "data/hans_diary.db")
+    try:
+        from scripts.hans_ideas import IdeaStore, run_synthesis_session
+    except Exception as e:
+        return "Modul nápadů nedostupný: %s" % e
+    store = IdeaStore(cfg, db)
+    sub = (args or "").strip().lower()
+
+    if sub in {"teď", "ted", "now", "synteze", "syntéza"}:
+        import threading as _th
+        kn = getattr(handler, "_knowledge", None) or getattr(handler, "knowledge", None)
+
+        def _run():
+            try:
+                _log.info("/napad teď → %s",
+                          run_synthesis_session(cfg, db, knowledge=kn))
+            except Exception as _e:
+                _log.warning("/napad teď selhalo: %s", _e)
+        _th.Thread(target=_run, daemon=True, name="SynthNow").start()
+        return ("Zkusím propojit pár věcí, co jsem se dozvěděl, pane — chvíli to "
+                "potrvá. Postřeh pak najdete v /napad a v deníku.")
+
+    if sub in {"vše", "vse", "all"}:
+        ideas = store.all_ideas()
+        if not ideas:
+            return "Zatím mě nic nového nenapadlo, pane."
+        import time as _t
+        out = ["Mé postřehy:"]
+        for it in ideas:
+            day = _t.strftime("%-d.%-m.", _t.localtime(it["ts"]))
+            out.append("  [%s] %s" % (day, (it["topics"] or "—")))
+            out.append("     %s" % (it["insight"] or ""))
+        return NL_RUNTIME.join(out)
+
+    last = store.latest()
+    if not last:
+        return ("Zatím mě nic nového nenapadlo, pane — propojím věci z různých "
+                "oblastí, které jsem si přečetl. (/napad teď to spustí ručně)")
+    import time as _t
+    day = _t.strftime("%-d.%-m.", _t.localtime(last["ts"]))
+    return NL_RUNTIME.join([
+        "Poslední postřeh (%s) — propojil jsem: %s" % (day, last["topics"] or "—"),
+        "", last["insight"] or "",
+        "", "ručně: /napad teď"])
+
+
+register(
+    "napad",
+    slash_aliases=["napad", "nápad", "napady", "nápady", "synteze", "syntéza"],
+    nl_patterns=[],
+    handler=_cmd_napad,
+    help_text="Vlastní nápady / synteze: /napad [vše|teď]",
+)
+
+
+# ─── /kritika — sebekritika z vlastního popudu (HANS_SELFCRITIQUE_V1, #6) ─────
+def _cmd_kritika(handler, name, args) -> str:
+    """/kritika — nedávná Hansova ponaučení o kvalitě vlastního projevu;
+    /kritika teď = projdi své poslední repliky a vezmi si ponaučení (na pozadí)."""
+    cfg = getattr(handler, "config", {}) or {}
+    db = cfg.get("diary_db", "data/hans_diary.db")
+    try:
+        from scripts.hans_selfcritique import (
+            recent_selfcritiques, run_self_critique)
+    except Exception as e:
+        return "Modul sebekritiky nedostupný: %s" % e
+    sub = (args or "").strip().lower()
+
+    if sub in {"teď", "ted", "now"}:
+        import threading as _th
+
+        def _run():
+            try:
+                _log.info("/kritika teď → %s", run_self_critique(cfg, db))
+            except Exception as _e:
+                _log.warning("/kritika teď selhalo: %s", _e)
+        _th.Thread(target=_run, daemon=True, name="SelfCritique").start()
+        return ("Projdu si své poslední odpovědi, pane, a vezmu si z nich "
+                "ponaučení. Chvíli to potrvá — pak je uvidíte v /kritika.")
+
+    crits = recent_selfcritiques(db, hours=24 * 30, limit=10)
+    if not crits:
+        return ("Zatím jsem si žádné ponaučení o vlastním projevu nevzal, pane. "
+                "(/kritika teď to spustí ručně)")
+    out = ["Co u sebe chci zlepšit:"]
+    for c in crits:
+        out.append("  • %s" % c)
+    return NL_RUNTIME.join(out)
+
+
+register(
+    "kritika",
+    slash_aliases=["kritika", "sebekritika", "sebereflexe"],
+    nl_patterns=[],
+    handler=_cmd_kritika,
+    help_text="Sebekritika vlastního projevu: /kritika [teď]",
 )
 
 

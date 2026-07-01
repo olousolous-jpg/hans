@@ -154,9 +154,169 @@ def _search_queries(sub: str, topic: str) -> List[str]:
     return out
 
 
-def _gather_material(config: dict, sub: str, topic: str):
+# ── HANS_STUDY_RESEARCH_TIER_V1 — deep tier (skutečný výzkum nad Wikipedií) ──
+def _reconstruct_abstract(inv) -> str:
+    """OpenAlex vrací abstrakt jako inverted index (slovo→pozice). Slož zpět text."""
+    if not isinstance(inv, dict) or not inv:
+        return ""
+    pos = {}
+    for word, idxs in inv.items():
+        for i in idxs:
+            pos[i] = word
+    if not pos:
+        return ""
+    return " ".join(pos[i] for i in range(max(pos) + 1) if i in pos)
+
+
+def _seen_work_ids(db_path: str) -> set:
+    """ID prací, které už Hans v nějaké poznámce použil (dedup napříč sessiony)."""
+    if not db_path:
+        return set()
+    try:
+        import sqlite3 as _s
+        conn = _s.connect(db_path, timeout=5.0)
+        conn.execute("CREATE TABLE IF NOT EXISTS study_seen_works "
+                     "(work_id TEXT PRIMARY KEY, title TEXT, ts REAL)")
+        rows = conn.execute("SELECT work_id FROM study_seen_works").fetchall()
+        conn.close()
+        return {r[0] for r in rows if r and r[0]}
+    except Exception:
+        return set()
+
+
+def _record_works(db_path: str, items) -> None:
+    """Zapamatuj použité práce (work_id, title), ať se příště neopakují."""
+    if not db_path or not items:
+        return
+    try:
+        import sqlite3 as _s
+        conn = _s.connect(db_path, timeout=5.0)
+        conn.execute("CREATE TABLE IF NOT EXISTS study_seen_works "
+                     "(work_id TEXT PRIMARY KEY, title TEXT, ts REAL)")
+        conn.executemany(
+            "INSERT OR IGNORE INTO study_seen_works (work_id,title,ts) "
+            "VALUES (?,?,?)", [(w, t, time.time()) for w, t in items])
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        _log.debug("_record_works: %s", e)
+
+
+def _openalex_research(config: dict, query: str, n: int = 3,
+                       max_chars: int = 4000, db_path: str = None) -> str:
+    """Vytáhne z OpenAlexu pár nejrelevantnějších NOVÝCH prací (název+rok+autoři+
+    abstrakt) k tématu. DEDUP: práce použité dřív (study_seen_works) přeskočí, ať
+    Hans necituje stejnou práci/autora opakovaně. '' při chybě/nic. Best-effort."""
+    import requests
+    rc = _cfg(config).get("research_tier", {}) or {}
+    mailto = rc.get("mailto", "hans@local")
+    seen = _seen_work_ids(db_path)
+    try:
+        r = requests.get(
+            "https://api.openalex.org/works",
+            # ber víc kandidátů (n + rezerva), ať po vyřazení viděných zbude n nových
+            params={"search": query, "per-page": int(n) + 6, "mailto": mailto,
+                    "sort": "relevance_score:desc"},
+            timeout=int(rc.get("timeout", 20)))
+        r.raise_for_status()
+        works = (r.json() or {}).get("results", []) or []
+    except Exception as e:
+        _log.warning("research tier OpenAlex selhal (%s): %s", query, e)
+        return ""
+    blocks = []
+    new_items = []
+    skipped = 0
+    for w in works:
+        wid = w.get("id") or ""
+        title = (w.get("title") or "").strip()
+        abstract = _reconstruct_abstract(w.get("abstract_inverted_index"))
+        if not title or len(abstract) < 80:
+            continue
+        if wid and wid in seen:
+            skipped += 1
+            continue
+        year = w.get("publication_year") or ""
+        authors = ", ".join(
+            (a.get("author") or {}).get("display_name", "")
+            for a in (w.get("authorships") or [])[:3] if a)
+        blocks.append(f"[Výzkum: {title} ({year}; {authors})]\n{abstract[:1500]}")
+        if wid:
+            new_items.append((wid, title))
+        if len(blocks) >= int(n):
+            break
+    _record_works(db_path, new_items)
+    out = "\n\n".join(blocks)
+    if out:
+        _log.info("study: research tier — %d nových prací pro '%s' (%d již viděných)",
+                  len(blocks), query, skipped)
+    return out[:max_chars]
+
+
+def _topic_engagement(diary_db_path: str, examples) -> int:
+    """OBJEM zájmu o koníček = počet zmínek jeho konkrétních instancí (examples)
+    napříč čtenými/dialogovými/studijními eventy. Na rozdíl od evidence_count
+    (= jen délka trvání) zachytí, jak moc Hanse téma reálně zaměstnává."""
+    exs = [str(e).strip() for e in (examples or []) if len(str(e).strip()) >= 4][:8]
+    if not exs:
+        return 0
+    total = 0
+    try:
+        import sqlite3 as _s
+        conn = _s.connect("file:%s?mode=ro" % diary_db_path, uri=True, timeout=5.0)
+        try:
+            for ex in exs:
+                n = conn.execute(
+                    "SELECT COUNT(*) FROM diary WHERE event_type IN "
+                    "('web_read','reading_takeaway','study_note','teddy_dialog') "
+                    "AND (coalesce(title,'')||coalesce(note,'')||coalesce(data,'')) "
+                    "LIKE ?", ('%' + ex + '%',)).fetchone()
+                total += int(n[0]) if n else 0
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    return total
+
+
+def _is_strong_topic(config: dict, diary_db_path: str, topic: str) -> bool:
+    """Deep tier (skutečný výzkum) se odemkne u VELMI silného koníčku. Dvě cesty:
+    (1) evidence_count >= min_evidence (délka trvání), NEBO (2) chytrý gate dle
+    OBJEMU zájmu — engagement examples >= min_engagement (tak projde jen koníček,
+    co Hanse opravdu hodně zaměstnává, jako Cardiff/hrady). False = jen Wikipedia."""
+    rc = _cfg(config).get("research_tier", {}) or {}
+    if not rc.get("enabled", True):
+        return False
+    try:
+        import sqlite3 as _s
+        conn = _s.connect("file:%s?mode=ro" % diary_db_path, uri=True, timeout=4.0)
+        try:
+            row = conn.execute("SELECT evidence_count, examples FROM hobbies "
+                               "WHERE name_norm=?", (_norm(topic),)).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return False
+    if not row:
+        return False
+    if int(row[0] or 0) >= int(rc.get("min_evidence", 20)):
+        return True
+    try:
+        examples = json.loads(row[1] or "[]")
+    except Exception:
+        examples = []
+    eng = _topic_engagement(diary_db_path, examples)
+    strong = eng >= int(rc.get("min_engagement", 500))
+    if strong:
+        _log.info("study: deep tier ODEMČEN pro '%s' (objem zájmu %d)", topic, eng)
+    return strong
+
+
+def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
+                     db_path: str = None):
     """Nastuduj pod-téma do hloubky: PLNÝ hlavní článek (ne jen lead) + úvody
     několika nejrelevantnějších pododkazů z úvodní sekce (v pořadí výskytu).
+    deep=True (HANS_STUDY_RESEARCH_TIER_V1) → navíc abstrakty skutečného výzkumu
+    z OpenAlexu (odemčeno u velmi silného koníčku).
     Vrací (material_text, source_url, main_title) nebo (None, None, None)."""
     c = _cfg(config)
     lang = str(c.get("wiki_lang", "cs"))
@@ -208,6 +368,21 @@ def _gather_material(config: dict, sub: str, topic: str):
                 added += 1
         _log.info("study: materiál '%s' = článek %d zn + %d pododkazů",
                   sub, len(art["text"]), added)
+    if deep:
+        # HANS_STUDY_RESEARCH_TIER_V1 — přidej abstrakty skutečného výzkumu.
+        # Dotaz = STRUČNÝ vyřešený název článku (ne ukecané pod-téma z kurikula —
+        # OpenAlex na dlouhou frázi nic nevrátí). Zkus název článku, fallback jádro.
+        try:
+            rc = _cfg(config).get("research_tier", {}) or {}
+            for rq in (art["page_title"], _search_queries(sub, topic)[0]):
+                research = _openalex_research(
+                    config, rq, n=int(rc.get("results", 3)),
+                    max_chars=int(rc.get("max_chars", 4000)), db_path=db_path)
+                if research:
+                    parts.append(research)
+                    break
+        except Exception as e:
+            _log.debug("research tier selhal: %s", e)
     return "\n\n".join(parts), art.get("url", ""), art["page_title"]
 
 
@@ -218,9 +393,10 @@ _NOTE_SYSTEM = (
     "pojmů. Napiš si souvislou STUDIJNÍ POZNÁMKU v první osobě (6-9 vět): co "
     "podstatného ses dozvěděl, jak věci souvisejí a co tě zaujalo či překvapilo. "
     "Zůstaň SOUSTŘEDĚN na zadané pod-téma — související pojmy ber jen jako "
-    "kontext, ne jako hlavní námět. Drž se FAKTŮ z materiálu — nic si "
-    "nepřimýšlej, nehádej, nedoplňuj z vlastní paměti. Piš česky, souvisle, "
-    "bez nadpisů a odrážek."
+    "kontext, ne jako hlavní námět. Je-li v materiálu i skutečný výzkum (bloky "
+    "„[Výzkum: …]“), oceň ho a zmiň, co konkrétního z něj plyne nad rámec "
+    "encyklopedie. Drž se FAKTŮ z materiálu — nic si nepřimýšlej, nehádej, "
+    "nedoplňuj z vlastní paměti. Piš česky, souvisle, bez nadpisů a odrážek."
 )
 
 
@@ -426,15 +602,19 @@ class StudyStore:
             return None
 
         done = self._studied_topic_norms()
-        chosen = None
-        for h in hobbies:  # durable_hobbies řazeno dle evidence_count DESC
-            if _norm(h.name) not in done:
-                chosen = h
-                break
-        if chosen is None:
+        candidates = [h for h in hobbies if _norm(h.name) not in done]
+        if not candidates:
             _log.info("study.ensure_program: všechny durable koníčky už "
                       "mají program (%d)", len(hobbies))
             return None
+        # HANS_STUDY_ENGAGEMENT_SELECT_V1 — vyber nejdřív koníček s NEJVĚTŠÍM
+        # objemem zájmu (ne arbitrárně mezi remízami na evidence_count). Hans
+        # tak studuje napřed to, co ho reálně nejvíc zaměstnává (Cardiff/Design).
+        if c.get("select_by_engagement", True):
+            candidates.sort(
+                key=lambda h: _topic_engagement(self._diary_path, h.examples),
+                reverse=True)
+        chosen = candidates[0]
 
         curriculum = _generate_curriculum(config, chosen.name, chosen.examples)
         if len(curriculum) < 3:
@@ -484,8 +664,11 @@ class StudyStore:
         topic = prog["topic"]
         max_fail = int(_cfg(config).get("max_subtopic_failures", 3))
 
-        # 1) hloubkové čtení (plný hlavní článek + intro pododkazů)
-        material, source_url, _main = _gather_material(config, sub, topic)
+        # 1) hloubkové čtení (plný hlavní článek + intro pododkazů; u velmi
+        #    silného koníčku navíc abstrakty výzkumu z OpenAlexu — deep tier)
+        deep = _is_strong_topic(config, self._diary_path, topic)
+        material, source_url, _main = _gather_material(
+            config, sub, topic, deep=deep, db_path=self._diary_path)
         if not material:
             # HANS_STUDY_SKIP_V1 — pro toto pod-téma se nenašlo čtení (nejspíš
             # špatná formulace v kurikulu). Počítej selhání; po max_fail NOCÍCH

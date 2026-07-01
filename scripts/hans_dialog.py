@@ -102,6 +102,35 @@ def _build_hans_solo_system(config: dict) -> str:
                   persona_goal(config)):
         if extra:
             parts.append("\n" + extra)
+    # HANS_SELFCRITIQUE_APPLY_V1 — uzavři smyčku sebekritiky: ponaučení o KVALITĚ
+    # vlastního projevu (často vzniklá PRÁVĚ z Koláčových debat) vlož do generace
+    # Hansovy repliky a žádej AKČNÍ uplatnění TEĎ — jinak by se kritika jen
+    # opakovala, ale chování ne (přesně tahle cesta repliky kritizovala).
+    _dbp = (config.get("diary_db")
+            or (config.get("hans_idle", {}) or {}).get("diary_db")
+            or "data/hans_diary.db")
+    try:
+        from scripts.hans_selfcritique import recent_selfcritiques
+        _crits = recent_selfcritiques(_dbp, hours=240, limit=3)
+        if _crits:
+            parts.append(
+                "\n\nNAD SVÝM PROJEVEM sis nedávno předsevzal toto — UPLATNI to "
+                "rovnou v této replice (neopakuj chyby, o kterých už víš; nekomentuj "
+                "to nahlas):\n- " + "\n- ".join(_crits))
+    except Exception:
+        pass
+    # HANS_SELFCRITIQUE_APPLY_V1 — uzavři smyčku i pro KOREKCE od lidí: fakt, na
+    # který tě někdo opravil, nesmíš v debatě s Koláčem znovu tvrdit. (Dosud
+    # korekce dotékaly jen do chatu, ne do generace dialogu → Hans je opakoval.)
+    try:
+        from scripts.hans_lessons import recent_lessons
+        _les = recent_lessons(_dbp, hours=72, limit=2)
+        if _les:
+            parts.append(
+                "\n\nNedávno tě někdo opravil / ses mýlil v těchto věcech — "
+                "neopakuj tytéž omyly, nic si nevymýšlej:\n- " + "\n- ".join(_les))
+    except Exception:
+        pass
     parts.append(
         "\n\nMluvíš s Koláčem — plyšovým medvídkem na poličce, který si hraje na "
         "detektiva a rád ti OPONUJE (je to suchý skeptik s humorem). Bereš ho "
@@ -1051,6 +1080,9 @@ class HansDialog:
                 ollama_url=base,
                 options={"num_predict": int(dc.get("line_num_predict", 120)),
                          "temperature": 0.85,
+                         # proti opakování stejných frází napříč replikami dialogu
+                         "repeat_penalty": float(dc.get("repeat_penalty", 1.3)),
+                         "repeat_last_n": int(dc.get("repeat_last_n", 256)),
                          "num_ctx": int(dc.get("num_ctx", 8192))})
         except Exception as e:
             _log.warning("_one_line selhal: %s", e)

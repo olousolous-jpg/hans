@@ -201,6 +201,25 @@ async def post_config(request: Request):
         raise HTTPException(400, str(e))
 
 
+# ── OLLAMA_GAME_MODE_V1 — herní mód (volá launcher na PC i ruční toggle) ──
+@app.post("/api/brain/pause")
+def brain_pause():
+    from scripts.ollama_client import set_game_mode
+    return set_game_mode(True, config=load_config())
+
+
+@app.post("/api/brain/resume")
+def brain_resume():
+    from scripts.ollama_client import set_game_mode
+    return set_game_mode(False, config=load_config())
+
+
+@app.get("/api/brain/status")
+def brain_status():
+    from scripts.ollama_client import game_mode_on
+    return {"game_mode": game_mode_on()}
+
+
 @app.get("/api/diary")
 async def get_diary(limit: int = 100, event_type: str = ""):
     if not DIARY_PATH.exists():
