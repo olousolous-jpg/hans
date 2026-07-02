@@ -23,6 +23,16 @@ from typing import Optional
 
 _log = logging.getLogger(__name__)
 
+import re as _re
+
+
+def _strip_think(text: str) -> str:
+    """STANCE_REASONING_TIER_V1 — odstraň reasoning chain (<think>…</think>)
+    z výstupu reasoning modelu; neuzavřený (truncated) → zahodit."""
+    t = _re.sub(r"<think>.*?</think>", "", text or "", flags=_re.IGNORECASE | _re.DOTALL)
+    t = _re.sub(r"<think>.*", "", t, flags=_re.IGNORECASE | _re.DOTALL)
+    return t.strip()
+
 
 # Které event_types brát do reflexe a jak se v promptu označí
 _RELEVANT_EVENTS = {
@@ -99,6 +109,14 @@ class HansEveningReflection:
         self._stance_model = str(cfg.get("model", "hans-czech:latest"))
         self._stance_timeout = int(cfg.get("llm_timeout", 300))
         self._stance_max_per_run = int(cfg.get("stance_max_per_run", 6))
+        # STANCE_REASONING_TIER_V1 — úsudková extrakce postojů (revize polarity /
+        # skutečný posun vs echo) přes reasoning model. Odděleno od `model` (ten
+        # dělá CZ prózu reflexe = nativní čeština). '' = legacy base model.
+        self._stance_reasoning_model = str(cfg.get("reasoning_model", "") or "").strip()
+        self._stance_reasoning_num_gpu = int(cfg.get("reasoning_num_gpu", 0))
+        self._stance_reasoning_num_ctx = int(cfg.get("reasoning_num_ctx", 8192))
+        self._stance_reasoning_num_predict = int(cfg.get("reasoning_num_predict", 3072))
+        self._stance_reasoning_timeout = int(cfg.get("reasoning_timeout", 900))
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -425,6 +443,10 @@ class HansEveningReflection:
             return
         if not self._stances:
             return
+        # STANCE_REASONING_TIER_V1 (EN→CZ) — úsudek reasoning modelem anglicky
+        # (čistší, bez CZ šumu), pak překlad claimů do nativní češtiny.
+        if self._stance_reasoning_model:
+            return self._extract_stances_reasoning(text, date_str)
         try:
             from scripts.ollama_client import ollama_generate
         except ImportError:
@@ -510,6 +532,145 @@ class HansEveningReflection:
                 written += 1
         _log.info("stance extract %s: zpracovano %d, oslabeno %d / %d nazoru",
                   date_str, written, weakened, len(items))
+
+    def _extract_stances_reasoning(self, text: str, date_str: str):
+        """STANCE_REASONING_TIER_V1 (EN→CZ) — reasoning model dělá úsudek ANGLICKY
+        (známé postoje číslované → přesná shoda přes index), pak nové claimy
+        přeloží do NATIVNÍ češtiny (hans-czech). Řeší CZ degradaci i šum úsudku
+        (deepseek poslouchá EN instrukce líp). Chyba → tichý skip (retry příště)."""
+        try:
+            from scripts.ollama_client import ollama_chat
+        except ImportError:
+            _log.warning("stance extract(reasoning): ollama_client nedostupny, skip")
+            return
+        try:
+            known = self._stances.top_stances(limit=40)
+        except Exception:
+            known = []
+        known_claims = [s.claim for s in known]
+        kb = "\n".join(f"[{i}] {c}" for i, c in enumerate(known_claims)) or "(none)"
+        system = (
+            "You extract Hans's DURABLE stances/values from his Czech evening "
+            "reflection. Think in English. The KNOWN STANCES are numbered below "
+            "(they are in Czech — read them).\n"
+            "STEP 1 REVISION: for a known stance that the reflection GENUINELY "
+            "reverses or changes (explicit, e.g. 'used to like X, not anymore'), "
+            "output {\"contradicts\": <number>, \"claim_en\": \"<the new opposing "
+            "view, English, 1st person>\"}. Do NOT comment on stances merely ABSENT "
+            "from the reflection — only explicit reversals.\n"
+            "STEP 2 NEW: extract durable stances (values/preferences) the reflection "
+            "genuinely expresses — English, 1st person, GENERAL (no 'today', no "
+            "single event). If it matches a known stance, output "
+            "{\"reinforces\": <number>}. Otherwise {\"claim_en\": \"...\", "
+            "\"confidence\": 0.0-1.0, optional \"counterarg_en\": \"<a caveat Hans "
+            "himself voiced>\"}. Do NOT invent stances or caveats. If nothing "
+            "durable, return []. Output ONLY a JSON array, nothing after it."
+        )
+        user = (f"KNOWN STANCES:\n{kb}\n\nREFLECTION ({date_str}):\n"
+                f"{text.strip()[:3000]}")
+        try:
+            raw = ollama_chat(
+                self._stance_reasoning_model,
+                [{"role": "system", "content": system},
+                 {"role": "user", "content": user}],
+                config=self._config, keep_alive=0,
+                timeout=self._stance_reasoning_timeout,
+                options={"temperature": 0.3,
+                         "num_ctx": self._stance_reasoning_num_ctx,
+                         "num_predict": self._stance_reasoning_num_predict,
+                         "num_gpu": self._stance_reasoning_num_gpu})
+        except Exception as _e:
+            _log.warning("stance extract(reasoning): LLM call failed: %s", _e)
+            return
+        raw = _strip_think(raw or "")
+        if not raw:
+            _log.info("stance extract(reasoning): zadna odpoved / jen think, skip")
+            return
+        items = self._parse_stances(raw)
+        if not items:
+            _log.info("stance extract(reasoning): 0 nazoru z reflexe %s", date_str)
+            return
+        # posbírej EN řetězce k překladu (nové claimy + contradict claim_en + counterargy)
+        to_tr = []
+        for it in items:
+            if not isinstance(it, dict) or "reinforces" in it:
+                continue
+            for k in ("claim_en", "counterarg_en"):
+                v = (it.get(k) or "").strip()
+                if v:
+                    to_tr.append(v)
+        cz = self._translate_to_cz(to_tr) if to_tr else {}
+        written = weakened = 0
+        for it in items[: self._stance_max_per_run]:
+            if not isinstance(it, dict):
+                continue
+            # REINFORCE — přesné znění známého postoje (žádný překlad)
+            if "reinforces" in it:
+                n = it.get("reinforces")
+                if isinstance(n, int) and 0 <= n < len(known_claims):
+                    if self._stances.add_or_reinforce(
+                            known_claims[n],
+                            float(it.get("confidence", 0.6) or 0.6),
+                            "evening_reflection"):
+                        written += 1
+                continue
+            claim_en = (it.get("claim_en") or "").strip()
+            ca_en = (it.get("counterarg_en") or "").strip()
+            cz_claim = cz.get(claim_en, "").strip()
+            cz_ca = (cz.get(ca_en, "").strip() or None)
+            # CONTRADICT — oslab známý postoj přesným zněním (index → přesná shoda)
+            if "contradicts" in it:
+                n = it.get("contradicts")
+                if isinstance(n, int) and 0 <= n < len(known_claims):
+                    if self._stances.contradict(
+                            known_claims[n],
+                            counter_claim=(cz_claim or cz_ca or None),
+                            source="evening_reflection"):
+                        weakened += 1
+                        continue
+            if not cz_claim:
+                continue
+            if self._stances.add_or_reinforce(
+                    cz_claim, float(it.get("confidence", 0.5) or 0.5),
+                    "evening_reflection", counterarg=cz_ca):
+                written += 1
+        _log.info("stance extract(reasoning) %s: zpracovano %d, oslabeno %d / %d",
+                  date_str, written, weakened, len(items))
+
+    def _translate_to_cz(self, en_list: list) -> dict:
+        """Přelož EN výroky do nativní češtiny (hans-czech, rezidentní ve VRAM →
+        nula VRAM navíc). Vrátí {en: cz}. Chyba → {} (claimy se přeskočí)."""
+        uniq = list(dict.fromkeys(s for s in en_list if s))
+        if not uniq:
+            return {}
+        try:
+            from scripts.ollama_client import ollama_chat
+        except ImportError:
+            return {}
+        vm = str((self._config.get("evening_reflection", {}) or {}).get(
+            "voice_model") or "hans-czech:latest")
+        numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(uniq))
+        system = ("Jsi překladatel do přirozené, kultivované češtiny. Přelož každý "
+                  "výrok do češtiny v 1. osobě, věrně a stručně, zachovej význam. "
+                  "Vrať POUZE číslovaný seznam ve STEJNÉM pořadí a počtu, nic navíc.")
+        try:
+            raw = ollama_chat(vm, [{"role": "system", "content": system},
+                                   {"role": "user", "content": numbered}],
+                              config=self._config,
+                              options={"temperature": 0.2, "num_ctx": 2048,
+                                       "num_predict": 400})
+        except Exception as _e:
+            _log.warning("stance translate: %s", _e)
+            return {}
+        raw = _strip_think(raw or "")
+        out = {}
+        for line in raw.splitlines():
+            m = _re.match(r"\s*(\d+)[.)]\s*(.+)", line)
+            if m:
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < len(uniq):
+                    out[uniq[idx]] = m.group(2).strip()
+        return out
 
     @staticmethod
     def _parse_stances(raw: str):

@@ -5,7 +5,10 @@
 Hans is not a chatbot. He is a **persistent character with an inner life**, running
 locally on a Raspberry Pi: he perceives his surroundings, remembers experiences,
 forms his own opinions, **evolves his identity over time**, acts on his own
-initiative, and in idle moments creates (paints his dreams, writes reflections).
+initiative, and in idle moments creates and studies on his own (studies topics
+in depth, writes his own serialized work, paints his dreams, spins his own
+insights). He also **knows what he can do** — and when he gains a new ability he
+notices it and is curious to try it out.
 
 Persona: a dignified English butler who speaks Czech. The core design goal is not
 "answer questions" but **continuity and agency over time** — a character with a
@@ -116,6 +119,17 @@ has an exam") and follows up on their next visit ("how did it go?"). Threads als
 - A 6-state model (`content, curious, lonely, melancholic, engaged, worried`),
   shaped by events; reflected in tone and behavior.
 
+### Integration with PC, games and media
+- **Live playback check** — asked "what's playing?" he checks the **current** Kodi
+  state (not memory) and answers; if nothing is on, he suggests a film for the viewer.
+- **Game mode** — on command (or automatically via the game launcher) he frees GPU
+  memory for the game and stops using the GPU; afterwards his "brain" returns. The
+  web button **verifies real free VRAM** (`rocm-smi`/ComfyUI) before you launch.
+- **PC health** — over SSH he sees real GPU/CPU temperature, memory and status;
+  during game mode the telemetry **cycles on the eye displays**. (`pc_remote`)
+- **Designs his own dashboard** — after studying design he writes a design critique
+  and proposal for his web dashboard, and renders a mockup. (`hans_dashboard`)
+
 ### Reading program (the engine of personality growth)
 In a bounded environment, **books are the main (and only suitable) channel for
 character change**. Hans reads books chapter by chapter (Project Gutenberg +
@@ -124,6 +138,23 @@ allowed to **shape his stances**. Book selection is **semantic** (bge-m3
 similarity between a book and Hans's interests), with ~25% exploration.
 (`hans_library`, `ebook_import`)
 
+### In-depth study (expertise from a hobby)
+Beyond scattered reading, Hans runs **long-term study programs**: from a durable
+hobby he builds a curriculum (6–10 sub-topics) and each night studies one in depth
+→ notes into RAG → on completion a mastery reflection that grounds his "expertise".
+For the strongest topics he escalates from Wikipedia to **real research**: OpenAlex
+(academic abstracts), **Wikisource** (primary texts) and the **Internet Archive**
+(full text of public-domain books) — deduplicated so he doesn't cite the same
+source twice. (`hans_study`)
+
+### Self-knowledge — he knows what he can do
+Hans has a **factual awareness of his own capabilities** (a curated manifest) — so
+he offers and uses them in conversation instead of denying them. When a **new
+capability** is added (the manifest grows), he **notices** it himself (logs it,
+lifts his mood) and is **curious to try it** — for safe creative abilities he
+actually tries it and writes down what he found. The source is factual, not a
+guess. (`hans_capabilities`)
+
 ### Self-directed creativity
 Nothing commands the creation. It kicks in during idle moments (at night, when
 it's quiet), but **what to create is Hans's own choice** — a weighted roulette
@@ -131,7 +162,14 @@ across forms, shaped by what's currently on his mind:
 - **Paints his dreams** — a night dream → an SDXL image via ComfyUI, which he then
   critiques himself.
 - **Paints his day / mood** — a symbolic scene capturing the day.
-- **Paints finished books** — an image as a retrospective.
+- **Paints finished books** and **any subject on request** ("paint what we just
+  talked about" → he actually paints it).
+- **Writes his own serialized work** — an essay/story/guide, over nights for weeks
+  into a finished artifact. (`hans_authorship`)
+- **Spins his own insights (synthesis)** — connects things learned across domains
+  into one unexpected thought. (`hans_ideas`)
+- **Critiques himself** — reviews his own replies and takes a lesson on how to
+  express himself better next time. (`hans_selfcritique`)
 - **Writes reflections** — short personal musings on a stance / book / experience.
 - He evaluates the images via a vision model (qwen-VL) and reacts to the **real
   quality**; from the verdict he **learns** (the lesson shapes the next image).
@@ -149,8 +187,9 @@ Hans runs on **multiple models with split roles** (on a shared ~16 GB GPU):
 
 | Role | Model | Note |
 |------|-------|------|
-| Persona / chat | `hans-czech` (OpenEuroLLM finetune) | resident in VRAM |
-| Analysis / prompts | `qwen2.5` (base) | cleaner than the finetune, on-demand |
+| Persona / chat / voice | `hans-czech` (OpenEuroLLM finetune) | resident in VRAM |
+| Analysis / extraction | `OpenEuroLLM` (base) | native Czech, anti-confabulation, on-demand |
+| Judgment (synthesis, self-critique, stances) | `deepseek-r1:14b` (reasoning) | 2-call: reason in English → voice in Czech via hans-czech; runs in RAM/CPU (num_gpu:0) so it never touches VRAM |
 | Vision | `qwen2.5-VL` | faces/room/image evaluation, on-demand |
 | Embeddings (RAG) | `bge-m3` | tiny, resident |
 | Images | SDXL via ComfyUI | render orchestrates VRAM (unload → render → warm) |

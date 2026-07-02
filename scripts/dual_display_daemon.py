@@ -19,6 +19,7 @@ import json
 import os
 import re
 import signal
+import threading
 import time
 
 import cv2
@@ -147,6 +148,37 @@ def _cpu_temp():
         return None
 
 
+# ── PC_TELEMETRY_DISPLAY_V1 — telemetrie PC na oba displeje za herního módu ──
+def _game_mode():
+    """Herní mód aktivní? (flag `data/.ollama_paused` od Ollama klienta)."""
+    return os.path.exists("data/.ollama_paused")
+
+
+_PC_TEL = {"data": None}          # sdílená cache (plní poller, čte render loop)
+_PC_STOP = False
+
+
+def _pc_poller(poll_s: float):
+    """Na pozadí: když je herní mód, polluj telemetrii PC přes SSH (pc_remote).
+    Blokující SSH tak NEZDRŽUJE render loop displejů."""
+    try:
+        from scripts import pc_remote as pcr
+    except Exception as e:
+        print("pc_remote nedostupný:", e)
+        return
+    while not _PC_STOP:
+        if _game_mode():
+            cfg = _read_json("config.json") or {}
+            try:
+                _PC_TEL["data"] = pcr.telemetry(cfg)
+            except Exception:
+                _PC_TEL["data"] = None
+            time.sleep(poll_s)
+        else:
+            _PC_TEL["data"] = None
+            time.sleep(1.0)
+
+
 def gather_ctx():
     """Bohatý ctx z attention_context.json (publikuje Hans), jinak fallback nálada.
     ATTENTION_CYCLE_WIRING_V1: vždy doplní clock + cpu_temp (Pi-lokální)."""
@@ -183,11 +215,20 @@ def main():
     last_sleep_chk = 0.0
     attn_cache = None
     # ATTENTION_CYCLE_WIRING_V1 — rotace karet á cycle_s
-    cycle_s = float((_read_json("config.json") or {}).get(
-        "attention_display", {}).get("cycle_s", 10))
+    _adcfg = (_read_json("config.json") or {}).get("attention_display", {})
+    cycle_s = float(_adcfg.get("cycle_s", 10))
     cycle_idx = 0
     last_switch = 0.0
     sleeping = None        # None = ještě nezjištěno
+    # PC_TELEMETRY_DISPLAY_V1 — herní mód → oba displeje telemetrie PC
+    tel_poll_s = float(_adcfg.get("telemetry_poll_s", 3))
+    tel_cycle_s = float(_adcfg.get("telemetry_cycle_s", 4))
+    threading.Thread(target=_pc_poller, args=(tel_poll_s,), daemon=True).start()
+    gaming = None
+    last_game_chk = 0.0
+    tel_idx = 0
+    tel_switch = 0.0
+    tel_sig = None        # podpis zobrazené telemetrie → překresli jen při změně
     try:
         while True:
             t0 = time.time()
@@ -205,6 +246,44 @@ def main():
                     print("Hans spí → displeje OFF" if slp else "Hans vzhůru → displeje ON")
             if sleeping:
                 time.sleep(2.0)   # spí → nekreslíme
+                continue
+            # PC_TELEMETRY_DISPLAY_V1 — herní mód: oba displeje = telemetrie PC
+            if t0 - last_game_chk >= 2.0 or gaming is None:
+                last_game_chk = t0
+                ng = _game_mode()
+                if ng != gaming:
+                    gaming = ng
+                    tel_sig = None   # při přepnutí vždy překresli
+                    print("Herní mód → displeje = telemetrie PC" if ng
+                          else "Herní mód konec → normál (avatar + Pi)")
+            if gaming:
+                tel = _PC_TEL.get("data")
+                if t0 - tel_switch >= tel_cycle_s:
+                    tel_idx += 1
+                    tel_switch = t0
+                metrics = ["cpu", "gpu_t", "vram", "ram", "fan"]
+                li = metrics[tel_idx % len(metrics)]
+                ri = metrics[(tel_idx + 2) % len(metrics)]
+                # podpis ze ZOBRAZENÝCH (zaokrouhlených) hodnot → překresli jen
+                # když se reálně změní číslo na displeji (ne 10×/s, žádné blikání)
+                def _rnd(k, nd=0):
+                    v = (tel or {}).get(k)
+                    return None if v is None else round(v, nd)
+                sig = (li, ri, _rnd("cpu_temp_c"), _rnd("gpu_hotspot_c"),
+                       _rnd("gpu_power_w"), _rnd("vram_used_gb"),
+                       _rnd("ram_used_gb"), _rnd("gpu_fan_rpm"), tel is None)
+                if sig != tel_sig:
+                    tel_sig = sig
+                    try:
+                        if tel:
+                            face.send_frame(to_rgb565(ar.render_telemetry_card(tel, li), rot90=3))
+                            attn.send_frame(to_rgb565(ar.render_telemetry_card(tel, ri), rot90=1))
+                        else:
+                            face.send_frame(to_rgb565(ar.render_telemetry_placeholder("PC…"), rot90=3))
+                            attn.send_frame(to_rgb565(ar.render_telemetry_placeholder("PC…"), rot90=1))
+                    except Exception as e:
+                        print("telemetry render err:", e)
+                time.sleep(0.2)   # statické mezi změnami → nízká zátěž
                 continue
             # tvář (LEVÝ) — každý frame (animace klipů), rot90 k=3
             try:

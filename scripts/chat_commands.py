@@ -585,8 +585,9 @@ register(
     "help",
     slash_aliases=["help", "pomoc", "napoveda", "nápověda"],
     nl_patterns=[
-        r"\bco.{0,5}um[íi]š",
+        # „co umíš" → schopnosti (capabilities); help drží jen dotaz na příkazy
         r"\bjak[éý].{0,10}p[řr][íi]kaz",
+        r"\bseznam\s+p[řr][íi]kaz",
     ],
     handler=_cmd_help,
     help_text="Seznam příkazů",
@@ -854,6 +855,160 @@ register(
     nl_patterns=[],
     handler=_cmd_art,
     help_text="Hans namaluje obraz k aktuální knize: /art [název knihy]",
+)
+
+
+# ─── namaluj/nakresli <téma> — obraz na LIBOVOLNÉ téma (HANS_CAPABILITY_AWARENESS_V1) ──
+def _cmd_namaluj(handler, name, args) -> str:
+    """namaluj/nakresli <téma> — Hans namaluje obraz na libovolné téma, nebo
+    dojem z nedávného rozhovoru (když téma neurčíš). Render na pozadí."""
+    import threading as _t
+    import re as _re
+    cfg = getattr(handler, "config", {}) or {}
+    db = (cfg.get("diary_db")
+          or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+          or "data/hans_diary.db")
+    try:
+        from scripts import hans_art
+    except Exception as e:
+        return "Malování není dostupné: %s" % e
+
+    # vytáhni téma z požadavku (odřízni sloveso a spojky)
+    subj = (args or "").strip()
+    subj = _re.sub(r"(?i)^\s*(prosím\s+|můžeš\s+|mohl\s+bys\s+)?"
+                   r"(mi\s+)?(namaluj|namalovat|nakresli|nakreslit|vytvoř|vytvořit)"
+                   r"\s*(mi\s+)?(prosím\s+)?(obraz|obrázek)?\s*"
+                   r"(o\s+|na\s+t[eé]ma\s+|toho\s+jak\s+)?", "", subj).strip(" ?.!,")
+
+    # odkaz na rozhovor → sestav téma z posledních uživatelských zpráv
+    if not subj or _re.search(r"(?i)bavili|mluvili|povídali|rozhovor|o\s+čem", subj):
+        try:
+            hist = handler.conv_store.get_history(name) or []
+            ux = [m["content"] for m in hist if m.get("role") == "user"][-4:]
+            ux = [u for u in ux if not u.strip().lower().startswith(
+                ("namaluj", "nakresli", "vytvoř"))]
+            if ux:
+                subj = "náš rozhovor: " + " • ".join(u[:80] for u in ux[-3:])
+        except Exception:
+            pass
+    if not subj:
+        subj = "dojem z našeho nedávného rozhovoru"
+
+    if not hans_art.comfy_available(cfg):
+        return ("Rád bych, pane — ale má výtvarná dílna (ComfyUI na PC) teď neběží. "
+                "Až bude PC vzhůru, obraz namaluji.")
+
+    def _worker():
+        try:
+            hans_art.paint_subject(cfg, db, subj)
+        except Exception as _e:
+            _log.warning("namaluj render selhal: %s", _e)
+    _t.Thread(target=_worker, daemon=True).start()
+    return ("S radostí, pane — maluji obraz na téma „%s\". Za chvíli se objeví na "
+            "nástěnce (Co Hans namaloval); chat může být asi minutu zaneprázdněný."
+            % (subj[:70]))
+
+
+register(
+    "namaluj",
+    slash_aliases=["namaluj", "nakresli"],
+    nl_patterns=[r"\bnamaluj", r"\bnamalovat\b", r"\bnakresli", r"vytvoř\s+obr"],
+    handler=_cmd_namaluj,
+    help_text="Hans namaluje obraz na libovolné téma: namaluj <téma>",
+)
+
+
+# ─── /schopnosti — co Hans reálně umí (HANS_CAPABILITY_AWARENESS_V1) ─────────
+def _cmd_schopnosti(handler, name, args) -> str:
+    try:
+        from scripts.hans_capabilities import capabilities_report
+        return capabilities_report()
+    except Exception as e:
+        return "Přehled schopností nedostupný: %s" % e
+
+
+register(
+    "schopnosti",
+    slash_aliases=["schopnosti", "umis", "umíš", "capabilities"],
+    nl_patterns=[r"co\s+(v[šs]echno\s+)?um[ií][šs]", r"co\s+dok[aá][žz]e[šs]"],
+    handler=_cmd_schopnosti,
+    help_text="Přehled toho, co Hans umí: /schopnosti",
+)
+
+
+# ─── co hraje? — ŽIVÁ kontrola Kodi (HANS_LIVE_PLAYBACK_QUERY_V1) ────────────
+def _cmd_hraje(handler, name, args) -> str:
+    """co hraje / co se přehrává — Hans zkontroluje ŽIVÝ stav Kodi (ne deník);
+    nic nehraje → navrhne film. Funguje i přes Telegram (jde přes send_chat_message).
+    Pozn.: Kodi (252) je samostatné zařízení, funguje i když PC spí."""
+    cfg = getattr(handler, "config", {}) or {}
+    _hi = getattr(handler, "_hans_idle", None)
+    kodi = getattr(_hi, "kodi", None) if _hi is not None else None
+    if kodi is None:
+        try:
+            from scripts.kodi_client import KodiClient
+            kodi = KodiClient(cfg)
+        except Exception:
+            return "Bohužel se teď nemohu spojit s přehrávačem, pane."
+    # 1) živý stav
+    try:
+        now = kodi.get_now_playing()
+    except Exception as e:
+        _log.warning("hraje: get_now_playing selhal: %s", e)
+        now = None
+    if now:
+        title = (now.get("title") or now.get("label") or "").strip()
+        show = (now.get("showtitle") or "").strip()
+        ep, se = now.get("episode"), now.get("season")
+        if show and ep:
+            base = f"seriál „{show}\""
+            if se:
+                base += f" (řada {se}, díl {ep})"
+            elif ep:
+                base += f" (díl {ep})"
+            if title and title != show:
+                base += f" – {title}"
+            desc = base
+        else:
+            yr = now.get("year")
+            desc = f"„{title}\"" + (f" ({yr})" if yr else "")
+        return f"Právě se přehrává {desc}, pane."
+    # 2) nic nehraje → návrh filmu
+    names = list(getattr(_hi, "_present_names", []) or []) if _hi is not None else []
+    if not names and name:
+        names = [name]
+    m = None
+    if _hi is not None:
+        try:
+            m = _hi._pick_next_film(names, cfg.get("film_suggest", {}) or {})
+        except Exception as e:
+            _log.warning("hraje: _pick_next_film selhal: %s", e)
+    if m is None:
+        try:
+            m = kodi.pick_suggestion(prefer_genres=kodi.favorite_genres())
+        except Exception:
+            m = None
+    if m:
+        mt = (m.get("title") or m.get("label") or "").strip()
+        yr = m.get("year")
+        return (f"Teď nic nehraje, pane. Mohl bych navrhnout „{mt}\""
+                + (f" ({yr})" if yr else "")
+                + " — stačí říct a pustím to.")
+    return "Teď se nic nepřehrává, pane, a vhodný návrh se mi teď nepodařilo najít."
+
+
+register(
+    "hraje",
+    slash_aliases=["hraje", "prehrava", "přehrává"],
+    nl_patterns=[
+        r"co\s+(te[ďd]\s+)?hraj[eí]",
+        r"hraje\s+(te[ďd]\s+)?n[ěe]jak",
+        r"co\s+se\s+(te[ďd]\s+)?p[řr]ehr[aá]v[aá]",
+        r"co\s+b[ěe][žz][ií]\s+(te[ďd]\s+)?(v\s+)?(televiz|tv|kodi)",
+        r"co\s+d[aá]vaj[ií]\s+(te[ďd]\s+)?(v\s+)?(televiz|tv)",
+    ],
+    handler=_cmd_hraje,
+    help_text="Co se právě přehrává (živě z Kodi): co hraje?",
 )
 
 
@@ -1216,6 +1371,52 @@ register(
     nl_patterns=[],
     handler=_cmd_kritika,
     help_text="Sebekritika vlastního projevu: /kritika [teď]",
+)
+
+
+# ─── /dashboard — Hansův návrh vlastní nástěnky (HANS_DASHBOARD_PROPOSAL_V1) ──
+def _cmd_dashboard(handler, name, args) -> str:
+    """/dashboard — Hansova designová kritika + návrh vlastní nástěnky;
+    /dashboard teď = vygeneruj hned (i bez dokončeného studia, na pozadí)."""
+    cfg = getattr(handler, "config", {}) or {}
+    db = cfg.get("diary_db", "data/hans_diary.db")
+    try:
+        from scripts.hans_dashboard import latest_proposal, run_dashboard_proposal
+    except Exception as e:
+        return "Modul návrhu nástěnky nedostupný: %s" % e
+    sub = (args or "").strip().lower()
+
+    if sub in {"teď", "ted", "now"}:
+        import threading as _th
+
+        def _run():
+            try:
+                _log.info("/dashboard teď → %s",
+                          run_dashboard_proposal(cfg, db, force=True))
+            except Exception as _e:
+                _log.warning("/dashboard teď selhalo: %s", _e)
+        _th.Thread(target=_run, daemon=True, name="DashboardProposal").start()
+        return ("Zamyslím se nad podobou své nástěnky, pane — kritika i návrh "
+                "chvíli potrvají (a zkusím i obrazový mockup). Pak /dashboard.")
+
+    p = latest_proposal(db)
+    if not p:
+        return ("Návrh své nástěnky jsem zatím nesepsal — přijde sám po "
+                "dostudování designu, nebo ho vyžádejte přes /dashboard teď.")
+    import datetime as _dt
+    when = _dt.datetime.fromtimestamp(p["ts"]).strftime("%d.%m. %H:%M")
+    out = f"Můj návrh nástěnky ({when}):\n\n{p['text']}"
+    if p.get("path"):
+        out += f"\n\n(Mockup: {p['path']} — najdete v galerii.)"
+    return out
+
+
+register(
+    "dashboard",
+    slash_aliases=["dashboard", "nastenka", "nástěnka"],
+    nl_patterns=[],
+    handler=_cmd_dashboard,
+    help_text="Hansův návrh vlastní nástěnky: /dashboard [teď]",
 )
 
 

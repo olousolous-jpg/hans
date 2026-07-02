@@ -637,6 +637,50 @@ def render_now(config: dict, diary_db_path: str, title: str = "") -> Optional[tu
     return rel_path, caption
 
 
+# ── HANS_CAPABILITY_AWARENESS_V1 — malování na LIBOVOLNÉ téma (na požádání) ──
+_SUBJECT_SCENE_SYSTEM = (
+    "You turn a short Czech description of a SUBJECT or theme into ONE concise "
+    "English SDXL image prompt — an evocative, artistic INTERPRETATION (an "
+    "impression), not a literal diagram or text. Output ONLY the prompt (no "
+    "preamble, no quotes). Choose fitting composition, colors and mood for the "
+    "subject. Reply in ENGLISH ONLY (no Chinese/Japanese). NO text, letters or "
+    "words in the image, NO watermark. End with: digital painting, atmospheric, "
+    "detailed, artistic, high quality."
+)
+
+
+def paint_subject(config: dict, diary_db_path: str, subject: str):
+    """Hans namaluje obraz na LIBOVOLNÉ téma / dojem (např. z rozhovoru).
+    Loguje do galerie jako source='subject'. Vrací (rel_path, caption) nebo None.
+    Nikdy nehází. VRAM orchestrace uvnitř _render_image."""
+    subject = (subject or "").strip()
+    if not subject:
+        return None
+    title = subject[:80]
+    res = _render_image(config, title, subject, diary_db_path,
+                        scene_system=_SUBJECT_SCENE_SYSTEM, scene_intro="")
+    if not res:
+        _log.warning('art: obraz na téma „%s" se nevyrenderoval', title)
+        return None
+    rel_path, prompt, vision_desc = res
+    caption = _evaluate_artwork(config, diary_db_path, title, subject, vision_desc,
+                                source_label="tím, oč jsem byl požádán")
+    _derive_art_lesson(config, diary_db_path, title, vision_desc, caption)
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        db.execute(
+            "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
+            (time.time(), "artwork", title, caption,
+             json.dumps({"path": rel_path, "prompt": prompt, "source": "subject",
+                         "painted_ts": time.time()}, ensure_ascii=False)))
+        db.commit()
+        db.close()
+    except Exception as e:
+        _log.warning("art: log subject artwork failed: %s", e)
+    _log.info('art: Hans namaloval na téma „%s" → %s', title, rel_path)
+    return rel_path, caption
+
+
 # ── HANS_PLACE_PAINT_V1 — Hans namaluje, jak si představuje svůj domov ───────
 # Věrný režim: JEDNA realistická scéna OBÝVÁKU (kde Hans je) z konkrétních popisů
 # fotek — ne celý byt (jeden obraz = jedna scéna), ne abstraktní shrnutí, fotostyl.

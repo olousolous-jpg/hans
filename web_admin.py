@@ -202,10 +202,81 @@ async def post_config(request: Request):
 
 
 # ── OLLAMA_GAME_MODE_V1 — herní mód (volá launcher na PC i ruční toggle) ──
+def _gpu_vram(cfg: dict):
+    """OLLAMA_GAME_MODE_VERIFY_V1 — REÁLNÁ GPU VRAM. Primárně rocm-smi přes SSH
+    (PC_REMOTE_SSH_V1, definitivní z ovladače), fallback ComfyUI /system_stats.
+    None když ani jedno."""
+    try:
+        from scripts import pc_remote
+        r = pc_remote.gpu_vram(cfg)
+        if r:
+            r["source"] = "rocm-smi"
+            return r
+    except Exception:
+        pass
+    return _gpu_vram_comfy(cfg)
+
+
+def _gpu_vram_comfy(cfg: dict):
+    """Fallback — GPU VRAM z ComfyUI /system_stats. None když ComfyUI neběží."""
+    url = (cfg.get("hans_art", {}) or {}).get("comfyui_url") \
+        or (cfg.get("avatar_render", {}) or {}).get("comfyui_url") \
+        or cfg.get("comfyui_url")
+    if not url:
+        return None   # bez nakonfigurovaného ComfyUI URL nehádej IP
+    try:
+        import requests
+        r = requests.get(url.rstrip("/") + "/system_stats", timeout=6)
+        r.raise_for_status()
+        dev = (r.json() or {}).get("devices", [])
+        if not dev:
+            return None
+        d = dev[0]
+        tot = int(d.get("vram_total", 0) or 0)
+        free = int(d.get("vram_free", 0) or 0)
+        if tot <= 0:
+            return None
+        return {"total_gb": round(tot / 1e9, 1), "free_gb": round(free / 1e9, 1),
+                "used_gb": round((tot - free) / 1e9, 1), "source": "comfyui"}
+    except Exception:
+        return None
+
+
 @app.post("/api/brain/pause")
 def brain_pause():
-    from scripts.ollama_client import set_game_mode
-    return set_game_mode(True, config=load_config())
+    # OLLAMA_GAME_MODE_VERIFY_V1 — po uvolnění ověř, že VRAM je reálně volná
+    # (jistota před spuštěním hry). (1) Ollama /api/ps = uvolnila své modely;
+    # (2) ComfyUI /system_stats = REÁLNÁ volná VRAM celé GPU (když ComfyUI běží).
+    import time as _t
+    from scripts.ollama_client import set_game_mode, loaded_vram, ollama_unload_all
+    cfg = load_config()
+    res = set_game_mode(True, config=cfg)
+    remaining = []
+    for _i in range(8):
+        _t.sleep(1)
+        remaining = loaded_vram(config=cfg)
+        if not remaining:
+            break
+        if _i >= 1:
+            # in-flight warmup mohl model znovu připnout (typicky těsně po
+            # restartu Hanse) → re-unload; flag už je nastaven, nový warmup gate
+            ollama_unload_all(config=cfg)
+    res["ollama_free"] = (len(remaining) == 0)   # Ollama uvolnila své modely
+    res["vram_remaining"] = remaining
+    # Runner propouští VRAM ovladači se zpožděním (pár s) → počkej, až rocm-smi
+    # reálně klesne (ne jeden snímek uprostřed uvolňování).
+    gpu = None
+    for _ in range(10):
+        gpu = _gpu_vram(cfg)
+        if gpu is None:
+            break                                # neumíme změřit (SSH/ComfyUI dole)
+        if gpu["free_gb"] >= 0.85 * gpu["total_gb"]:
+            break
+        _t.sleep(1)
+    res["gpu"] = gpu                             # reálná celá GPU (nebo None)
+    res["vram_free"] = res["ollama_free"] and (
+        gpu is None or gpu["free_gb"] >= 0.85 * gpu["total_gb"])
+    return res
 
 
 @app.post("/api/brain/resume")
@@ -218,6 +289,56 @@ def brain_resume():
 def brain_status():
     from scripts.ollama_client import game_mode_on
     return {"game_mode": game_mode_on()}
+
+
+@app.get("/api/game/launched")
+def game_launched(title: str = ""):
+    """HANS_GAME_LAUNCH_ATTRIB_V1 — Heroic pre-launch skript hlásí spuštěnou hru.
+    Přiřadíme ji POSLEDNÍMU spatřenému člověku (u PC) jako oblíbenou = deníkový
+    event `game_launched` (title=osoba, note=hra). Nejnovější person_seen za
+    posl. hodinu; když nikdo → jen zaznamenáme bez osoby."""
+    import time as _t
+    title = (title or "").strip()[:120]
+    if not title:
+        return {"ok": False, "reason": "no title"}
+    person = None
+    try:
+        conn = sqlite3.connect(str(DIARY_PATH))
+        row = conn.execute(
+            "SELECT title FROM diary WHERE event_type='person_seen' "
+            "AND ts > ? AND title NOT IN ('','Unknown','?','...') "
+            "ORDER BY ts DESC LIMIT 1", (_t.time() - 3600,)).fetchone()
+        person = row[0] if row else None
+        conn.execute(
+            "INSERT INTO diary (ts,event_type,title,note,data) VALUES (?,?,?,?,?)",
+            (_t.time(), "game_launched", person or "",
+             f"Spustil hru: {title}", title))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
+    return {"ok": True, "person": person, "game": title}
+
+
+@app.get("/api/game/favorites")
+def game_favorites(person: str = "", days: int = 60):
+    """Oblíbené hry osoby (nejčastěji spuštěné) z game_launched událostí."""
+    import time as _t
+    try:
+        conn = sqlite3.connect(str(DIARY_PATH))
+        q = ("SELECT COALESCE(NULLIF(data,''),note) g, COUNT(*) c "
+             "FROM diary WHERE event_type='game_launched' AND ts > ? ")
+        args = [_t.time() - days * 86400]
+        if person.strip():
+            q += "AND title=? "
+            args.append(person.strip())
+        q += "GROUP BY g ORDER BY c DESC LIMIT 10"
+        rows = conn.execute(q, args).fetchall()
+        conn.close()
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
+    return {"ok": True, "person": person,
+            "favorites": [{"game": r[0], "count": r[1]} for r in rows]}
 
 
 @app.get("/api/diary")

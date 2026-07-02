@@ -1,7 +1,14 @@
 {
   "evening_reflection": {
     "model": "jobautomation/OpenEuroLLM-Czech:latest",
-    "_model_note": "Analytická extrakce postojů jede na base OpenEuroLLM (čistší než persona-finetune hans-czech). Chat zůstává hans-czech."
+    "_model_note": "Analytická extrakce postojů jede na base OpenEuroLLM (čistší než persona-finetune hans-czech). Chat zůstává hans-czech.",
+    "_reasoning_note": "Volitelné: extrakce POSTOJŮ přes reasoning model ANGLICKY + překlad do CZ přes voice_model (EN→CZ pipeline řeší CZ degradaci i šum). num_gpu:0=RAM/CPU. Prázdný reasoning_model='' = legacy 1-call na `model`. Doporučeno deepseek-r1:14b + voice_model hans-czech.",
+    "reasoning_model": "",
+    "voice_model": "",
+    "reasoning_num_gpu": 0,
+    "reasoning_num_ctx": 8192,
+    "reasoning_num_predict": 3072,
+    "reasoning_timeout": 900
   },
   "debug": false,
   "debug_verbose": false,
@@ -636,6 +643,14 @@
   "wol_pc_mac": "",
   "wol_pc_ip": "192.168.1.10",
   "wol_minutes_before_wakeup": 30,
+  "pc_remote": {
+    "_note": "Volitelné: SSH z Pi na PC pro reálnou telemetrii (sensors+rocm-smi) a self-heal. Vyžaduje SSH server na PC + veřejný klíč z Pi v authorized_keys. Deferral-safe (PC nedostupné → None). enabled:false = vypnuto.",
+    "enabled": false,
+    "host": "192.168.1.10",
+    "user": "user",
+    "key_path": "~/.ssh/hans_pc",
+    "ssh_timeout": 8
+  },
   "morning_hour": 6,
   "afternoon_hour": 12,
   "evening_hour": 17,
@@ -651,7 +666,9 @@
     "address_rules": "Při oslovení muže používej vokativ: Stando (ne Standa). Při oslovení ženy používej vokativ: Jano (ne Jana). Nikdy nepoužívej nominativ jako oslovení. Nikdy neopakuj jméno na konci věty."
   },
   "attention_display": {
-    "cycle_s": 10
+    "cycle_s": 10,
+    "telemetry_poll_s": 3,
+    "telemetry_cycle_s": 4
   },
   "film_suggest": {
     "enabled": true,
@@ -730,7 +747,12 @@
       "results": 3,
       "max_chars": 4000,
       "timeout": 20,
-      "mailto": "hans@local"
+      "mailto": "hans@local",
+      "_sources_v2_note": "HANS_STUDY_SOURCES_V2 — deep tier navíc: Wikisource (primární texty, cs→en, action=parse) + Internet Archive (fulltext PD knih 1500-1929, djvu.txt; lending 401 → skip). Dedup přes study_seen_works (ws_/ia_ prefixy).",
+      "wikisource_enabled": true,
+      "wikisource_max_chars": 3000,
+      "archive_enabled": true,
+      "archive_max_chars": 2500
     }
   },
   "authorship": {
@@ -754,11 +776,35 @@
     "min_topics": 2,
     "max_topics": 3,
     "max_seed_chars": 600,
+    "related_seeds": true,
+    "embed_model": "bge-m3:latest",
+    "embed_max_chars": 400,
     "temperature": 0.85,
     "num_ctx": 8192,
     "num_predict": 280,
     "max_chars": 1200,
-    "rag_collection": "hans_identita"
+    "rag_collection": "hans_identita",
+    "_reasoning_note": "Volitelný 2-call tier: reasoning_model (EN úsudek, num_gpu:0=celý do RAM/CPU) → voice_model (CZ hlas). Reasoning drží vysokou laťku (NONE místo prázdné univerzálie). Prázdný reasoning_model='' = legacy 1-call. DOPORUČENO deepseek-r1:14b (~9GB, na CPU ~4min/běh, nezmrazí PC). POZOR: qwq:32b (~20GB) na 32GB RAM při num_gpu:0 může zamrznout systém a na CPU je moc pomalý (nedojde k závěru).",
+    "reasoning_model": "",
+    "reasoning_num_gpu": 0,
+    "reasoning_num_ctx": 8192,
+    "reasoning_num_predict": 2048,
+    "reasoning_temperature": 0.6,
+    "reasoning_timeout": 900,
+    "reasoning_max_chars": 600,
+    "voice_model": "",
+    "voice_temperature": 0.7,
+    "voice_num_predict": 280
+  },
+  "dashboard_proposal": {
+    "_note": "Tier 1 — po dostudování design studia Hans navrhne vlastní nástěnku (kritika+návrh+SDXL mockup). Chat /dashboard [teď].",
+    "enabled": true,
+    "study_topic": "design",
+    "study_max_chars": 7000,
+    "temperature": 0.7,
+    "num_ctx": 8192,
+    "num_predict": 700,
+    "llm_timeout": 300
   },
   "selfcritique": {
     "enabled": true,
@@ -768,7 +814,16 @@
     "avoid_hours": 168,
     "max_chars": 4000,
     "model": "jobautomation/OpenEuroLLM-Czech:latest",
-    "llm_timeout": 300
+    "llm_timeout": 300,
+    "_reasoning_note": "Volitelný 2-call reasoning tier: reasoning_model (EN úsudek, num_gpu:0=celý do RAM/CPU) → voice_model (CZ hlas). Vysoká laťka (VERDICT NONE). Prázdný reasoning_model='' = legacy 1-call base model.",
+    "reasoning_model": "",
+    "reasoning_num_gpu": 0,
+    "reasoning_num_ctx": 8192,
+    "reasoning_num_predict": 2048,
+    "reasoning_temperature": 0.5,
+    "reasoning_timeout": 900,
+    "voice_model": "",
+    "voice_num_predict": 200
   },
   "person_name_forms": {
     "alice": [

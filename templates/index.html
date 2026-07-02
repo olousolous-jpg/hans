@@ -852,7 +852,24 @@ async function toggleGameMode() {
   if (turnOn && !confirm('Zapnout herní mód? Hans uvolní grafickou paměť a přestane používat Ollamu (chat/dialogy ztichnou), dokud herní mód nevypneš.')) return;
   if (btn) { btn.disabled = true; btn.textContent = '⏳ ...'; }
   try {
-    await fetch('/api/brain/' + (turnOn ? 'pause' : 'resume'), { method: 'POST' });
+    const r = await fetch('/api/brain/' + (turnOn ? 'pause' : 'resume'), { method: 'POST' });
+    const s = await r.json();
+    if (turnOn) {
+      let gpuLine = '';
+      if (s.gpu) {
+        gpuLine = '\nGPU: volných ' + s.gpu.free_gb + ' / ' + s.gpu.total_gb + ' GB (obsazeno ' + s.gpu.used_gb + ' GB).';
+      } else {
+        gpuLine = '\n(Reálnou GPU VRAM neumím změřit — ComfyUI neběží; hlásím jen stav Ollamy.)';
+      }
+      if (s.vram_free) {
+        alert('✓ VRAM uvolněna — grafika je volná, hru můžeš spustit.' + gpuLine);
+      } else if (s.ollama_free && s.gpu) {
+        alert('⚠ Ollama uvolnila své modely, ale GPU je stále obsazená jiným procesem (ComfyUI/desktop/hra?).' + gpuLine);
+      } else {
+        const rem = (s.vram_remaining || []).map(m => m.name + ' (' + m.gb + ' GB)').join(', ') || 'neznámé';
+        alert('⚠ Ollama stále drží: ' + rem + '.' + gpuLine + '\nZkus to za chvíli znovu (možná dobíhá poslední odpověď).');
+      }
+    }
   } catch (e) { /* ignore */ }
   if (btn) btn.disabled = false;
   await loadGameMode();

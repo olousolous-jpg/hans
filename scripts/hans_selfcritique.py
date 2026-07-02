@@ -101,6 +101,128 @@ def _gather_own_dialogs(diary_db_path: str, since: float,
     return "\n\n".join(out)
 
 
+# ── reasoning tier (2-call: QwQ EN úsudek → hans-czech CZ hlas) ─────────────
+import re as _re
+
+_THINK_RE = _re.compile(r"<think>.*?</think>", _re.IGNORECASE | _re.DOTALL)
+_THINK_OPEN_RE = _re.compile(r"<think>.*", _re.IGNORECASE | _re.DOTALL)
+
+
+def _strip_think(text: str) -> str:
+    t = _THINK_RE.sub("", text or "")
+    t = _THINK_OPEN_RE.sub("", t)   # neuzavřený <think> = uříznuto → zahodit
+    return t.strip()
+
+
+_REASON_SYSTEM = (
+    "You are {name}, critically reviewing YOUR OWN recent replies (the lines "
+    "starting with \"{name}:\"). Find the SINGLE most genuine weakness in the "
+    "QUALITY of your expression — needless verbosity, repetition (the same "
+    "phrases/ideas again), evasiveness, empty filler, or not actually answering "
+    "what was said. This is about expression quality, NOT factual errors.\n"
+    "Think step by step in English. The replies are in Czech — read them carefully.\n"
+    "HOLD A HIGH BAR: flag only a real, specific weakness. If your replies are fine, "
+    "or the only issues just repeat lessons you already took, say NONE — do NOT force "
+    "or repeat a critique.\n"
+    "After your reasoning, output EXACTLY these two lines and nothing after:\n"
+    "  WEAK: <a short excerpt of your weak passage, copied VERBATIM from the Czech "
+    "replies>\n"
+    "  ISSUE: <one English sentence: what makes it weak>\n"
+    "or, if there is no genuine weakness:\n"
+    "  VERDICT: NONE"
+)
+
+
+def _reason_critique(config: dict, cfg: dict, transcript: str, name: str,
+                     recent: list):
+    """Krok 1 — reasoning model najde slabé místo. Návrat:
+       None — LLM dole / neparsovatelné → deferred
+       {}   — VERDICT NONE → idle (nenutí kritiku)
+       {'weak':str,'issue_en':str} — nalezené slabé místo."""
+    from scripts.ollama_client import ollama_chat
+    user = transcript
+    if recent:
+        user += ("\n\n(You already took these lessons — find something DIFFERENT, "
+                 "do not repeat them:\n" + "\n".join("- %s" % r[:120]
+                                                     for r in recent) + ")")
+    system = _REASON_SYSTEM.format(name=name)
+    opts = {"temperature": float(cfg.get("reasoning_temperature", 0.5)),
+            "num_ctx": int(cfg.get("reasoning_num_ctx", 8192)),
+            "num_predict": int(cfg.get("reasoning_num_predict", 2048)),
+            "num_gpu": int(cfg.get("reasoning_num_gpu", 0))}  # 0 = celý do RAM/CPU
+    try:
+        raw = ollama_chat(str(cfg.get("reasoning_model", "")),
+                          [{"role": "system", "content": system},
+                           {"role": "user", "content": user}],
+                          config=config, keep_alive=0,
+                          timeout=int(cfg.get("reasoning_timeout", 900)),
+                          options=opts)
+    except Exception as e:
+        _log.warning("_reason_critique selhal: %s", e)
+        return None
+    if not raw:
+        return None
+    clean = _strip_think(raw)
+    if not clean:
+        return None
+    if _re.search(r"VERDICT:\s*NONE", clean, _re.IGNORECASE):
+        return {}
+    mw = None
+    for mm in _re.finditer(r"WEAK:\s*(.+)", clean, _re.IGNORECASE):
+        mw = mm
+    mi = None
+    for mm in _re.finditer(r"ISSUE:\s*(.+)", clean, _re.IGNORECASE):
+        mi = mm
+    if not mw:
+        _log.info("_reason_critique: chybí WEAK/VERDICT — retry")
+        return None
+    weak = mw.group(1).strip().strip('"').split("\n")[0].strip()
+    issue_en = (mi.group(1).strip().split("\n")[0].strip() if mi else "")
+    if not weak:
+        return {}
+    return {"weak": weak[:300], "issue_en": issue_en[:300]}
+
+
+def _render_critique_voice(config: dict, cfg: dict, weak: str,
+                           issue_en: str, name: str):
+    """Krok 2 — hans-czech napíše ponaučení Hansovým hlasem česky.
+       Návrat (issue_cz, lesson) nebo (None, None) při selhání."""
+    from scripts.ollama_client import ollama_chat
+    system = (f"Jsi {name}. Ohlédl ses za svou vlastní replikou a našel v ní slabé "
+              "místo v KVALITĚ projevu. Napiš SVÝM hlasem, česky, VÝHRADNĚ tyto dva "
+              "řádky (nic víc):\n"
+              "ISSUE: <čím je ta pasáž slabá, 1 věcná věta>\n"
+              "LESSON: <ponaučení v 1. osobě, jak se příště vyjádřit lépe, "
+              "např. „Příště odpovím stručně a rovnou k věci.\">")
+    user = (f"Můj slabý úryvek: „{weak}\"\n"
+            f"Co je na něm slabé (poznámka pro tebe): {issue_en}\n\n"
+            "Napiš ISSUE a LESSON svým hlasem, česky.")
+    try:
+        raw = ollama_chat(str(cfg.get("voice_model", "hans-czech:latest")),
+                          [{"role": "system", "content": system},
+                           {"role": "user", "content": user}],
+                          config=config,
+                          options={"temperature": float(
+                              cfg.get("voice_temperature", 0.5)),
+                              "num_ctx": 4096,
+                              "num_predict": int(cfg.get("voice_num_predict", 200))})
+    except Exception as e:
+        _log.warning("_render_critique_voice selhal: %s", e)
+        return None, None
+    clean = _strip_think(raw or "")
+    if not clean:
+        return None, None
+    mi = _re.search(r"ISSUE:\s*(.+)", clean, _re.IGNORECASE)
+    ml = _re.search(r"LESSON:\s*(.+)", clean, _re.IGNORECASE)
+    lesson = (ml.group(1).strip() if ml else "")
+    issue_cz = (mi.group(1).strip() if mi else issue_en)
+    if not lesson:
+        # fallback: bez markeru vezmi poslední neprázdný řádek jako ponaučení
+        lines = [l.strip() for l in clean.splitlines() if l.strip()]
+        lesson = lines[-1] if lines else ""
+    return issue_cz[:200], lesson[:400]
+
+
 def run_self_critique(config: dict, diary_db_path: str,
                       window_hours: float = 72.0) -> str:
     """Noční krok z vlastního popudu: z Hansových replik najde slabé místo a uloží
@@ -127,40 +249,59 @@ def run_self_critique(config: dict, diary_db_path: str,
     recent = recent_selfcritiques(diary_db_path,
                                   hours=float(cfg.get("avoid_hours", 168.0)),
                                   limit=6)
-    er = config.get("evening_reflection", {}) or {}
-    model = str(cfg.get("model", er.get("model",
-                "jobautomation/OpenEuroLLM-Czech:latest")))
-    timeout = int(cfg.get("llm_timeout", 300))
-    system = _SYSTEM.format(persona_name=pname)
-    user = transcript
-    if recent:
-        user += ("\n\n(Tato ponaučení už sis vzal — najdi něco JINÉHO, neopakuj je:\n"
-                 + "\n".join("- %s" % r[:120] for r in recent) + ")")
-    try:
-        from scripts.ollama_client import ollama_generate
-    except Exception as e:
-        _log.warning("self_critique: ollama_client nedostupný: %s", e)
-        return "deferred"
-    try:
-        raw = ollama_generate(model=model, prompt=user, system=system,
-                              config=config, timeout=timeout, keep_alive=0,
-                              options={"temperature": 0.3})
-    except Exception as e:
-        _log.warning("self_critique LLM: %s", e)
-        return "deferred"
-    if raw is None:
-        # ollama_generate vrací None při výpadku / herním módu → retry
-        return "deferred"
-    obj = _extract_json_obj(raw)
-    if not obj:
-        _log.info("self_critique: model nevrátil objekt (nebo {} = bez výtky)")
-        return "idle"
-    lesson = str(obj.get("lesson", "") or "").strip()
-    if len(lesson) < 8:
-        _log.info("self_critique: bez ponaučení (vše v pořádku)")
-        return "idle"
-    weak = str(obj.get("weak_quote", "") or "").strip()
-    issue = str(obj.get("issue", "") or "").strip()
+    reasoning_model = str(cfg.get("reasoning_model", "") or "").strip()
+    if reasoning_model:
+        # 2-call: reasoning model (EN úsudek) → hans-czech (CZ hlas)
+        r = _reason_critique(config, cfg, transcript, pname, recent)
+        if r is None:
+            return "deferred"
+        if not r:                       # {} = VERDICT NONE → vysoká laťka
+            _log.info("self_critique: reasoning model bez výtky (NONE) → idle")
+            return "idle"
+        issue_cz, lesson = _render_critique_voice(
+            config, cfg, r["weak"], r["issue_en"], pname)
+        if not lesson or len(lesson) < 8:
+            _log.info("self_critique: hlasový render selhal — retry")
+            return "deferred"
+        weak = r["weak"]
+        issue = issue_cz or r["issue_en"]
+    else:
+        # legacy 1-call (base OpenEuroLLM, JSON)
+        er = config.get("evening_reflection", {}) or {}
+        model = str(cfg.get("model", er.get("model",
+                    "jobautomation/OpenEuroLLM-Czech:latest")))
+        timeout = int(cfg.get("llm_timeout", 300))
+        system = _SYSTEM.format(persona_name=pname)
+        user = transcript
+        if recent:
+            user += ("\n\n(Tato ponaučení už sis vzal — najdi něco JINÉHO, "
+                     "neopakuj je:\n"
+                     + "\n".join("- %s" % r[:120] for r in recent) + ")")
+        try:
+            from scripts.ollama_client import ollama_generate
+        except Exception as e:
+            _log.warning("self_critique: ollama_client nedostupný: %s", e)
+            return "deferred"
+        try:
+            raw = ollama_generate(model=model, prompt=user, system=system,
+                                  config=config, timeout=timeout, keep_alive=0,
+                                  options={"temperature": 0.3})
+        except Exception as e:
+            _log.warning("self_critique LLM: %s", e)
+            return "deferred"
+        if raw is None:
+            # ollama_generate vrací None při výpadku / herním módu → retry
+            return "deferred"
+        obj = _extract_json_obj(raw)
+        if not obj:
+            _log.info("self_critique: model nevrátil objekt (nebo {} = bez výtky)")
+            return "idle"
+        lesson = str(obj.get("lesson", "") or "").strip()
+        if len(lesson) < 8:
+            _log.info("self_critique: bez ponaučení (vše v pořádku)")
+            return "idle"
+        weak = str(obj.get("weak_quote", "") or "").strip()
+        issue = str(obj.get("issue", "") or "").strip()
     try:
         db = sqlite3.connect(diary_db_path, timeout=5.0)
         db.execute(

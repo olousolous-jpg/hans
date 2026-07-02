@@ -104,6 +104,71 @@ class AttentionRenderer:
                 self._kolac = False
         return self._kolac or None
 
+    # ── PC_TELEMETRY_DISPLAY_V1 — telemetrie PC na kulatý displej (za herního módu) ──
+    def render_telemetry_card(self, tel: dict, metric: str):
+        """Jedna metrika PC telemetrie (tel = pc_remote.telemetry()) na displej.
+        metric ∈ {cpu, gpu_t, vram, ram, fan}. Barva = zelená/oranžová/červená
+        dle teploty/zaplnění. Standalone — nezasahuje do cyklu pozornosti."""
+        def tcol(v, warm=70, hot=85):
+            if v is None:
+                return (150, 156, 178)
+            if v >= hot:
+                return (232, 92, 92)
+            if v >= warm:
+                return (232, 180, 90)
+            return (110, 200, 130)
+
+        def mcol(frac):
+            if frac is None:
+                return (150, 156, 178)
+            if frac >= 0.9:
+                return (232, 92, 92)
+            if frac >= 0.7:
+                return (232, 180, 90)
+            return (110, 200, 130)
+
+        tel = tel or {}
+        label, big, sub, color = "PC", "?", "", (150, 156, 178)
+        if metric == "cpu":
+            v = tel.get("cpu_temp_c")
+            label, color = "CPU", tcol(v)
+            big = f"{v:.0f}°" if v is not None else "?"
+        elif metric == "gpu_t":
+            v, p = tel.get("gpu_hotspot_c"), tel.get("gpu_power_w")
+            label, color = "GPU", tcol(v)
+            big = f"{v:.0f}°" if v is not None else "?"
+            sub = f"{p:.0f} W" if p is not None else ""
+        elif metric == "vram":
+            u, t = tel.get("vram_used_gb"), tel.get("vram_total_gb")
+            label, sub = "VRAM", "GB"
+            big = f"{u:.0f}/{t:.0f}" if (u is not None and t) else "?"
+            color = mcol((u / t) if (u is not None and t) else None)
+        elif metric == "ram":
+            u, t = tel.get("ram_used_gb"), tel.get("ram_total_gb")
+            label, sub = "RAM", "GB"
+            big = f"{u:.0f}/{t:.0f}" if (u is not None and t) else "?"
+            color = mcol((u / t) if (u is not None and t) else None)
+        elif metric == "fan":
+            v = tel.get("gpu_fan_rpm")
+            label, sub, color = "FAN", "rpm", (90, 180, 220)
+            big = f"{v:.0f}" if v is not None else "?"
+        img = self._radial_bg(color, 0.55)
+        d = ImageDraw.Draw(img)
+        d.ellipse([CX - 58, CY - 58, CX + 58, CY + 58], outline=color, width=2)
+        self._text(d, CX, CY - 40, label, 15, fill=(200, 206, 224), bold=True)
+        big_size = 46 if len(big) <= 3 else (36 if len(big) <= 5 else 28)
+        self._text(d, CX, CY - 2, big, big_size, bold=True)
+        if sub:
+            self._text(d, CX, CY + 40, sub, 14, fill=(190, 196, 214))
+        return self._round_mask(img)
+
+    def render_telemetry_placeholder(self, msg: str = "PC ?"):
+        """Když PC telemetrie nedostupná (za hry by nemělo nastat)."""
+        img = self._radial_bg((120, 126, 150), 0.4)
+        d = ImageDraw.Draw(img)
+        self._text(d, CX, CY, self._fit(msg, 10), 20, bold=True)
+        return self._round_mask(img)
+
     # ── stavy ────────────────────────────────────────────────────────────────
     def _render_mood(self, ctx):
         color = _mood_color(ctx.get("mood"))

@@ -159,7 +159,7 @@ else
 	WEB_PID=$!
     # ── Dual-eye display daemon (LEVÝ=tvář, PRAVÝ=pozornost) ──────────────────
     pkill -f "scripts.dual_display_daemon" 2>/dev/null || true; sleep 0.3
-    python3.13 -m scripts.dual_display_daemon > /tmp/dual_daemon.log 2>&1 &
+    python3.13 -u -m scripts.dual_display_daemon > /tmp/dual_daemon.log 2>&1 &
     DISPLAY_PID=$!
     echo "[run.sh] Dual-display daemon PID: $DISPLAY_PID"
     python3.13 main.py "$@"

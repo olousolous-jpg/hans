@@ -536,6 +536,26 @@ class HansIdle:
             except Exception as _dte:
                 _log.debug('downtime check failed: %s', _dte)
 
+        # HANS_CAPABILITY_AWARENESS_V1 (V2) — 1× za běh: přibyla mi nová schopnost?
+        # (manifest se rozšířil oproti tomu, co jsem „znal") → deníkový event +
+        # Hans o tom pak sám ví. Faktické (manifest diff), ne konfabulace.
+        if not getattr(self, '_capabilities_checked', False):
+            self._capabilities_checked = True
+            try:
+                from scripts.hans_capabilities import detect_new_capabilities
+                _capdb = self.config.get("diary_db", "data/hans_diary.db")
+                _newcaps = detect_new_capabilities(_capdb)
+                if _newcaps:
+                    _log.info('capabilities: Hans zaznamenal %d nových schopností',
+                              len(_newcaps))
+                    if hasattr(self, '_mood'):
+                        try:
+                            self._mood._shift('engaged', 0.4, 'nová schopnost')
+                        except Exception:
+                            pass
+            except Exception as _cce:
+                _log.debug('capability check failed: %s', _cce)
+
         # Denní rytmus — detekce fáze dne
         if hasattr(self, '_routine'):
             self._routine.tick()

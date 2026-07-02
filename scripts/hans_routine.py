@@ -1264,6 +1264,44 @@ class HansRoutine:
                 except Exception as _cue:
                     _log.warning("Sebekritika selhala: %s", _cue)
 
+            # HANS_DASHBOARD_PROPOSAL_V1 (Tier 1) — JEDNORÁZOVĚ po dostudování
+            # Designu: Hans napíše designovou kritiku + návrh vlastní nástěnky
+            # (grounding = fakta z šablony + jeho studijní poznámky) + SDXL
+            # mockup. Gate uvnitř run_ (completed studium && žádný proposal).
+            # Deferral-safe ('deferred' → retry příští tick), within-tick guard.
+            if (not _creative_busy
+                    and self._in_night_window()
+                    and self._chat_quiet_ok()):
+                try:
+                    from scripts.hans_dashboard import run_dashboard_proposal
+                    _dcode = run_dashboard_proposal(self.config, self._diary_path)
+                    if _dcode == "proposed":
+                        _creative_busy = True
+                        _log.info("Návrh nástěnky: proposed")
+                    elif _dcode == "deferred":
+                        _log.info("Návrh nástěnky: deferred (retry)")
+                except Exception as _dbe:
+                    _log.warning("Návrh nástěnky selhal: %s", _dbe)
+
+            # HANS_CAPABILITY_CURIOSITY_V1 — Hans si nově objevenou schopnost
+            # ZVĚDAVĚ vyzkouší (u paint reálně namaluje) + reflexe „co svedu, co
+            # jsem zjistil". Gate: čeká pending exploration. Deferral-safe.
+            if (not _creative_busy
+                    and self._in_night_window()
+                    and self._chat_quiet_ok()):
+                try:
+                    from scripts.hans_capabilities import (
+                        pending_explorations, explore_capability)
+                    if pending_explorations(self._diary_path):
+                        _ecode = explore_capability(self.config, self._diary_path)
+                        if _ecode == "explored":
+                            _creative_busy = True
+                            _log.info("Zvědavost na schopnost: explored")
+                        elif _ecode == "deferred":
+                            _log.info("Zvědavost na schopnost: deferred (retry)")
+                except Exception as _ece:
+                    _log.warning("Zvědavost na schopnost selhala: %s", _ece)
+
             # HANS_MEMORY_HYGIENE_V1 (#2) — retenční prořez deníkového firehose
             # (person_seen/teddy_* starší než per-typ okno). Whitelist (smysluplné
             # eventy netknuté). Čistě SQL → rychlé, 1×/noc, gate night+quiet

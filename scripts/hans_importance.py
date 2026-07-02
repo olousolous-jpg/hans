@@ -47,6 +47,12 @@ SCORABLE_TYPES = (
                 # být self-defining (talent/vkus → formuje charakter přes Severku)
     "downtime_noticed", "downtime_account",  # HANS_DOWNTIME_V1 — výpadek a co se
                 # mezitím dělo (autobiograficky relevantní — díra v kontinuitě)
+    "capability_gained",  # HANS_CAPABILITY_AWARENESS_V1 — nová schopnost = Hansův
+                # růst (autobiograficky relevantní → narativ / self-memories)
+    "capability_explored",  # HANS_CAPABILITY_CURIOSITY_V1 — co Hans zjistil, když
+                # si novou schopnost vyzkoušel
+    "game_mode",  # HANS_GAME_MODE_DIARY_V1 — přepnutí herního módu; v deníku ať
+                # si Hans časem může sám všimnout souvislosti (ZAP → bez mozku)
 )
 
 _SYSTEM = (

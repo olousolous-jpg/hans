@@ -425,6 +425,27 @@ class OpenWebUIDirectHandler:
     # PORTABILITY: data jdou z config.json `person_name_forms` (gitignored), ne
     # natvrdo v kódu (žádná reálná jména v repu). Prázdné = bez detekce (graceful).
 
+    def _favorite_game(self, name: str):
+        """HANS_GAME_LAUNCH_ATTRIB_V1 — nejčastěji spouštěná hra osoby (z deníku
+        game_launched, posl. 90 dní). None když žádná."""
+        if not name:
+            return None
+        try:
+            import sqlite3 as _sq
+            import time as _t
+            db = (self.config.get("hans_idle", {}) or {}).get(
+                "diary_db", "data/hans_diary.db")
+            conn = _sq.connect("file:%s?mode=ro" % db, uri=True, timeout=3)
+            row = conn.execute(
+                "SELECT COALESCE(NULLIF(data,''),note), COUNT(*) c FROM diary "
+                "WHERE event_type='game_launched' AND title=? AND ts>? "
+                "GROUP BY 1 ORDER BY c DESC LIMIT 1",
+                (name, _t.time() - 90 * 86400)).fetchone()
+            conn.close()
+            return row[0] if row and row[0] else None
+        except Exception:
+            return None
+
     def _build_card_fact(self, text: str) -> str:
         """Najdi v dotazu známou osobu → vrať tvrdý fakt z relationships DB.
         Adresuje kartu podle jména (NE embedding). Bez characterization
@@ -710,6 +731,27 @@ class OpenWebUIDirectHandler:
             persons_ctx = "\n\nZnáš tyto osoby z domu:\n" + "\n".join(lines)
         else:
             persons_ctx = ""
+        # HANS_GAME_LAUNCH_ATTRIB_V1 — oblíbená hra osoby, se kterou Hans mluví
+        if not for_greeting and name:
+            _fav = self._favorite_game(name)
+            if _fav:
+                persons_ctx += (f"\n\n{name} rád(a) hraje na PC: „{_fav}" + "\""
+                                " (často to spouští). Můžeš to přirozeně zmínit, "
+                                "nevnucuj.")
+        # HANS_CAPABILITY_AWARENESS_V1 — Hans ví, co reálně umí (nabízet/dělat,
+        # ne odmítat). Faktický seznam. Jen full mód (pozdrav drží brevitu).
+        cap_ctx = ""
+        if not for_greeting:
+            try:
+                from scripts.hans_capabilities import (
+                    capabilities_context, recent_gained_context)
+                cap_ctx = capabilities_context()
+                # HANS_CAPABILITY_AWARENESS_V1 (V2) — nedávno získané schopnosti
+                _capdb = (self.config.get("hans_idle", {}) or {}).get(
+                    "diary_db", "data/hans_diary.db")
+                cap_ctx += recent_gained_context(_capdb)
+            except Exception:
+                cap_ctx = cap_ctx or ""
 
         # Hans dialog s plysákem
         teddy_ctx = ""
@@ -1108,7 +1150,7 @@ class OpenWebUIDirectHandler:
                           + room_ctx + place_ctx + diary_ctx + story_ctx + study_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_SYNTHESIS_IDEAS_V1
                           + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
-                          + qsuggest_ctx + routine_ctx)  # …/ HANS_ROUTINE_CONTEXT_V1
+                          + qsuggest_ctx + routine_ctx + cap_ctx)  # …/ HANS_CAPABILITY_AWARENESS_V1
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
             # rozvláčnosti (jen chat; greeting má vlastní brevitu).
             if not for_greeting:

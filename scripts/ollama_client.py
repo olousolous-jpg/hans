@@ -56,6 +56,26 @@ def ollama_unload_all(ollama_url: str | None = None,
     return n
 
 
+def loaded_vram(ollama_url: str | None = None,
+                config: dict | None = None) -> list:
+    """Co právě drží VRAM: [{'name':..., 'gb':...}] pro modely se size_vram>0.
+    Chyba → []. Slouží k ověření, že herní mód reálně uvolnil grafiku."""
+    url = _resolve_url(ollama_url, config)
+    try:
+        r = requests.get(f"{url}/api/ps", timeout=10)
+        r.raise_for_status()
+        out = []
+        for m in (r.json() or {}).get("models", []):
+            vram = int(m.get("size_vram", 0) or 0)
+            if vram > 0:
+                out.append({"name": m.get("model") or m.get("name") or "?",
+                            "gb": round(vram / 1e9, 1)})
+        return out
+    except Exception as exc:
+        _log.warning("loaded_vram: /api/ps selhal: %s", exc)
+        return []
+
+
 def set_game_mode(on: bool, ollama_url: str | None = None,
                   config: dict | None = None) -> dict:
     """Zapni/vypni herní mód. on=True: vytvoř flag (Hans přestane volat Ollamu) +
@@ -67,16 +87,41 @@ def set_game_mode(on: bool, ollama_url: str | None = None,
             time.sleep(0.4)
             freed = ollama_unload_all(ollama_url, config)
             _log.info("HERNÍ MÓD ZAP — uvolněno %d modelů, Ollama se nepoužívá", freed)
+            _log_game_mode_diary(config, True)
             return {"game_mode": True, "unloaded": freed}
         try:
             _PAUSE_FLAG.unlink()
         except FileNotFoundError:
             pass
         _log.info("HERNÍ MÓD VYP — Ollama opět k dispozici")
+        _log_game_mode_diary(config, False)
         return {"game_mode": False}
     except Exception as exc:
         _log.error("set_game_mode(%s) selhal: %s", on, exc)
         return {"error": str(exc)}
+
+
+def _log_game_mode_diary(config: dict | None, on: bool) -> None:
+    """HANS_GAME_MODE_DIARY_V1 — zaznamenej přepnutí herního módu do deníku.
+    NEUTRÁLNĚ (jen fakt přepnutí, ŽÁDNÉ pre-vysvětlení následku) — aby případné
+    budoucí odvození souvislosti (herní mód ↔ výpadek mozku) bylo GENUINNÍ, ne
+    parafráze zadaného faktu. Best-effort, čistý SQL (funguje i bez mozku)."""
+    try:
+        cfg = config or {}
+        db = (cfg.get("diary_db")
+              or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+              or "data/hans_diary.db")
+        note = "Zapnul jsem herní mód." if on else "Vypnul jsem herní mód."
+        import sqlite3
+        conn = sqlite3.connect(db, timeout=5.0)
+        conn.execute(
+            "INSERT INTO diary (ts, event_type, title, note, data) "
+            "VALUES (?,?,?,?,?)",
+            (time.time(), "game_mode", "herní mód", note, "on" if on else "off"))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        _log.debug("_log_game_mode_diary: %s", exc)
 
 # ── Defaults ───────────────────────────────────────────────
 DEFAULT_URL     = "http://127.0.0.1:11434"

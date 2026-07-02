@@ -202,6 +202,145 @@ def _record_works(db_path: str, items) -> None:
         _log.debug("_record_works: %s", e)
 
 
+# ── HANS_STUDY_SOURCES_V2 — Wikisource (primární texty) + Internet Archive ──
+_UA = {"User-Agent": "HansStudyBot/1.0 (home assistant; contact via GitHub)"}
+
+
+def _en_title(cs_title: str, lang: str = "cs") -> str:
+    """ANGLICKÝ název tématu přes mezijazyčný odkaz Wikipedie (deterministicky,
+    'Cardiffský hrad'→'Cardiff Castle'). EN zdroje (IA, en.wikisource, OpenAlex)
+    na český/skloňovaný název nic nenajdou. '' když link není/chyba."""
+    if lang == "en" or not cs_title:
+        return cs_title or ""
+    import requests as _rq
+    try:
+        r = _rq.get(f"https://{lang}.wikipedia.org/w/api.php", params={
+            "action": "query", "prop": "langlinks", "titles": cs_title,
+            "lllang": "en", "format": "json", "formatversion": 2},
+            headers=_UA, timeout=12)
+        r.raise_for_status()
+        pages = (r.json().get("query", {}) or {}).get("pages", []) or []
+        for p in pages:
+            ll = p.get("langlinks") or []
+            if ll:
+                return ll[0].get("title") or ""
+    except Exception as e:
+        _log.debug("_en_title(%s): %s", cs_title, e)
+    return ""
+
+
+def _wikisource_read(config: dict, query: str, langs=("cs", "en"),
+                     max_chars: int = 3000, db_path: str = None) -> str:
+    """Primární text z Wikisource (MediaWiki API): search → action=parse →
+    plain text výňatek. Preferuje češtinu. DEDUP přes study_seen_works
+    (work_id 'ws_<lang>_<title>'). '' při chybě/nic. Best-effort.
+    Pozn.: prop=extracts na Wikisource NEfunguje (vrací prázdno) → parse HTML."""
+    import re as _re
+    import html as _html
+    import requests as _rq
+    seen = _seen_work_ids(db_path)
+    for lang in langs:
+        api = f"https://{lang}.wikisource.org/w/api.php"
+        try:
+            r = _rq.get(api, params={
+                "action": "query", "list": "search", "srsearch": query,
+                "srlimit": 4, "format": "json"}, headers=_UA, timeout=15)
+            r.raise_for_status()
+            hits = (r.json().get("query", {}) or {}).get("search", []) or []
+        except Exception as e:
+            _log.debug("_wikisource_read search (%s): %s", lang, e)
+            continue
+        qwords = {w for w in _norm(query).split() if len(w) > 3}
+        for h in hits:
+            title = h.get("title") or ""
+            wid = f"ws_{lang}_{_norm(title)}"
+            if not title or wid in seen:
+                continue
+            # relevance: aspoň jedno slovo dotazu v názvu (jinak search vrací
+            # svazky slovníků/rozcestníky, kde je dotaz jen zmíněn v obsahu)
+            tnorm = _norm(title)
+            if qwords and not any(w in tnorm for w in qwords):
+                continue
+            try:
+                r = _rq.get(api, params={
+                    "action": "parse", "page": title, "prop": "text",
+                    "format": "json", "formatversion": 2},
+                    headers=_UA, timeout=20)
+                r.raise_for_status()
+                raw_html = (r.json().get("parse", {}) or {}).get("text", "")
+            except Exception:
+                continue
+            # style/script bloky PŘED strip tagů (jinak CSS unikne do textu)
+            txt = _re.sub(r"<(style|script)[^>]*>.*?</\1>", " ",
+                          raw_html or "", flags=_re.DOTALL | _re.IGNORECASE)
+            txt = _re.sub(r"<[^>]+>", " ", txt)
+            txt = _html.unescape(_re.sub(r"\s+", " ", txt)).strip()
+            if len(txt) < 400:      # pahýl/rozcestník
+                continue
+            _record_works(db_path, [(wid, title)])
+            _log.info("study: Wikisource(%s) '%s' → %d zn", lang, title,
+                      min(len(txt), max_chars))
+            return (f"[Primární text (Wikisource): {title}]\n"
+                    + txt[:max_chars])
+    return ""
+
+
+def _ia_research(config: dict, query: str, max_chars: int = 2500,
+                 db_path: str = None) -> str:
+    """Plný text KNIHY z Internet Archive: advancedsearch (texts, preferuje
+    starší/public-domain) → OCR djvu.txt → výňatek. Lending knihy vrací 401 →
+    přeskočí. Google-scan boilerplate na začátku se odřízne. DEDUP work_id
+    'ia_<identifier>'. '' při chybě/nic. Best-effort (texty EN — base model
+    čte EN dobře, poznámka vzniká česky)."""
+    import requests as _rq
+    seen = _seen_work_ids(db_path)
+    try:
+        r = _rq.get("https://archive.org/advancedsearch.php", params={
+            "q": f"({query}) AND mediatype:texts AND year:[1500 TO 1929]",
+            "fl[]": ["identifier", "title", "year"],
+            "rows": 6, "output": "json", "sort[]": "downloads desc"},
+            headers=_UA, timeout=20)
+        r.raise_for_status()
+        docs = (r.json().get("response", {}) or {}).get("docs", []) or []
+    except Exception as e:
+        _log.debug("_ia_research search: %s", e)
+        return ""
+    for d in docs:
+        ident = d.get("identifier") or ""
+        wid = f"ia_{ident}"
+        if not ident or wid in seen:
+            continue
+        try:
+            r = _rq.get(f"https://archive.org/download/{ident}/{ident}_djvu.txt",
+                        headers=_UA, timeout=30, allow_redirects=True)
+            if r.status_code != 200:
+                continue          # 401 = lending-restricted
+            txt = r.text
+        except Exception:
+            continue
+        if len(txt) < 3000:       # foto/pahýl, ne kniha
+            continue
+        # odřízni Google-scan boilerplate na začátku: hlavička je „google"-hustá,
+        # tělo knihy už google nezmiňuje → řízni za POSLEDNÍM výskytem slova
+        # google v prvních ~13k znacích (+ dojeď na konec věty)
+        head = txt[:13000].lower()
+        if "google" in head:
+            m = head.rfind("google")
+            cut = m + 6
+            dot = txt.find(".", cut)
+            txt = txt[(dot + 1) if (dot != -1 and dot < cut + 400) else cut:]
+        txt = re.sub(r"\s+", " ", txt).strip()
+        if len(txt) < 1500:
+            continue
+        _record_works(db_path, [(wid, str(d.get("title") or ident))])
+        year = d.get("year") or "?"
+        _log.info("study: InternetArchive '%s' (%s) → %d zn",
+                  str(d.get("title"))[:60], year, min(len(txt), max_chars))
+        return (f"[Kniha (Internet Archive): {d.get('title')} ({year})]\n"
+                + txt[:max_chars])
+    return ""
+
+
 def _openalex_research(config: dict, query: str, n: int = 3,
                        max_chars: int = 4000, db_path: str = None) -> str:
     """Vytáhne z OpenAlexu pár nejrelevantnějších NOVÝCH prací (název+rok+autoři+
@@ -372,9 +511,14 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
         # HANS_STUDY_RESEARCH_TIER_V1 — přidej abstrakty skutečného výzkumu.
         # Dotaz = STRUČNÝ vyřešený název článku (ne ukecané pod-téma z kurikula —
         # OpenAlex na dlouhou frázi nic nevrátí). Zkus název článku, fallback jádro.
+        # HANS_STUDY_SOURCES_V2 — EN název přes mezijazyčný link (EN zdroje na
+        # český/skloňovaný název nic nenajdou; zlepší i trefnost OpenAlexu).
+        en = _en_title(art["page_title"], lang=used_lang)
         try:
             rc = _cfg(config).get("research_tier", {}) or {}
-            for rq in (art["page_title"], _search_queries(sub, topic)[0]):
+            _oa_queries = ([en] if en and en != art["page_title"] else []) + \
+                [art["page_title"], _search_queries(sub, topic)[0]]
+            for rq in _oa_queries:
                 research = _openalex_research(
                     config, rq, n=int(rc.get("results", 3)),
                     max_chars=int(rc.get("max_chars", 4000)), db_path=db_path)
@@ -383,6 +527,30 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
                     break
         except Exception as e:
             _log.debug("research tier selhal: %s", e)
+        # primární texty (Wikisource cs→en) + knihy (Internet Archive, EN)
+        try:
+            rc = _cfg(config).get("research_tier", {}) or {}
+            if rc.get("wikisource_enabled", True):
+                ws = _wikisource_read(
+                    config, art["page_title"],
+                    max_chars=int(rc.get("wikisource_max_chars", 3000)),
+                    db_path=db_path)
+                if not ws and en and en != art["page_title"]:
+                    ws = _wikisource_read(
+                        config, en, langs=("en",),
+                        max_chars=int(rc.get("wikisource_max_chars", 3000)),
+                        db_path=db_path)
+                if ws:
+                    parts.append(ws)
+            if rc.get("archive_enabled", True):
+                ia = _ia_research(
+                    config, (en or art["page_title"]),
+                    max_chars=int(rc.get("archive_max_chars", 2500)),
+                    db_path=db_path)
+                if ia:
+                    parts.append(ia)
+        except Exception as e:
+            _log.debug("sources V2 selhaly: %s", e)
     return "\n\n".join(parts), art.get("url", ""), art["page_title"]
 
 

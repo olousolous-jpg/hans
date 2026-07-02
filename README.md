@@ -5,7 +5,9 @@
 Hans není chatbot. Je to **perzistentní postava s vnitřním životem**, která běží
 lokálně na Raspberry Pi: vnímá své okolí, pamatuje si zážitky, tvoří si vlastní
 názory, **vyvíjí svou identitu v čase**, jedná z vlastní iniciativy a ve volných
-chvílích tvoří (maluje své sny, píše úvahy).
+chvílích tvoří i studuje z vlastního popudu (studuje témata do hloubky, píše
+vlastní dílo na pokračování, maluje své sny, spřádá vlastní postřehy). Ví také,
+**co sám dokáže** — a když mu přibude nová schopnost, všimne si toho a chce si ji vyzkoušet.
 
 Persona: důstojný anglický majordomus, který mluví česky. Hlavní designový cíl
 není „odpovídat na dotazy", ale **kontinuita a jednání v čase** — postava
@@ -110,6 +112,17 @@ svém datu. (`hans_threads`, `hans_person_interests`)
 - 6-stavový model (`content, curious, lonely, melancholic, engaged, worried`),
   ovlivněný událostmi; promítá se do tónu a chování.
 
+### Integrace s PC, hrami a médii
+- **Živá kontrola přehrávání** — na dotaz „co hraje?" zjistí **aktuální** stav Kodi
+  (ne z paměti) a odpoví; když nic nejede, navrhne film podle diváka.
+- **Herní mód** — na povel (nebo automaticky přes launcher hry) uvolní grafickou
+  paměť pro hru a přestane používat GPU; po hře se „mozek" vrátí. Web tlačítko
+  **ověří reálnou volnou VRAM** (`rocm-smi`/ComfyUI), než pustíš hru.
+- **Zdraví PC** — přes SSH vidí reálnou teplotu GPU/CPU, paměť a stav; za herního
+  módu se telemetrie **cyklují na očních displejích**. (`pc_remote`)
+- **Návrh vlastní nástěnky** — po dostudování designu Hans napíše designovou
+  kritiku + návrh své webové nástěnky a vyrenderuje mockup. (`hans_dashboard`)
+
 ### Čtenářský program (růstový motor osobnosti)
 V ohraničeném prostředí jsou **knihy hlavní (a jediný vhodný) kanál změny
 charakteru**. Hans čte knihy po kapitolách (Project Gutenberg + vlastní nahrané
@@ -117,13 +130,37 @@ ebooky), po dočtení sepíše ohlédnutí, které smí **formovat jeho postoje*
 Výběr knihy je **sémantický** (bge-m3 podobnost knihy ↔ Hansovy zájmy), s ~25 %
 explorace. (`hans_library`, `ebook_import`)
 
+### Studium do hloubky (odbornost z koníčku)
+Kromě roztříštěného čtení má Hans **dlouhodobé studijní programy**: z trvalého
+koníčku si vytvoří kurikulum (6–10 pod-témat) a každou noc jedno nastuduje do
+hloubky → poznámky do RAG → po dokončení mistrovská reflexe, která grounduje jeho
+„odbornost". U nejsilnějších témat eskaluje z Wikipedie na **skutečný výzkum**:
+OpenAlex (akademické abstrakty), **Wikisource** (primární texty) a **Internet
+Archive** (plný text public-domain knih) — s deduplikací, ať necituje totéž
+dvakrát. (`hans_study`)
+
+### Sebepoznání — ví, co dokáže
+Hans má **faktické povědomí o vlastních schopnostech** (kurátorovaný manifest) —
+takže je v komunikaci nabízí a používá, místo aby je odmítal. Když mu přibude
+**nová schopnost** (rozšíří se manifest), sám si toho **všimne** (zapíše si to,
+zvedne náladu) a je **zvědavý ji vyzkoušet** — u bezpečných kreativních schopností
+si ji reálně vyzkouší a napíše, co zjistil. Zdroj je faktický, ne domněnka.
+(`hans_capabilities`)
+
 ### Sebeřízená tvorba
 Tvorbu nikdo nezadává příkazem. Spouští se sama ve volných chvílích (v noci, když
 je klid), ale **co vytvoří, si Hans volí sám** — váženou ruletou mezi formami,
 podle toho, co se mu zrovna honí hlavou:
 - **Maluje své sny** — noční sen → SDXL obraz přes ComfyUI, který sám ohodnotí.
 - **Maluje svůj den / náladu** — symbolická scéna vystihující den.
-- **Maluje k dočteným knihám** — obraz jako ohlédnutí.
+- **Maluje k dočteným knihám** i **na libovolné téma na požádání** („namaluj, o čem
+  jsme se bavili" → skutečně namaluje).
+- **Píše vlastní dílo na pokračování** — esej/povídku/průvodce, po nocích týdny
+  do hotového artefaktu. (`hans_authorship`)
+- **Spřádá vlastní postřehy (synteze)** — propojí naučené z různých oborů do jedné
+  nečekané myšlenky. (`hans_ideas`)
+- **Kritizuje sám sebe** — ohlédne se za vlastními replikami a vezme si ponaučení,
+  jak se příště vyjádřit líp. (`hans_selfcritique`)
 - **Píše úvahy** — krátké osobní zamyšlení nad postojem / knihou / zážitkem.
 - Obrazy hodnotí přes vision model (qwen-VL) + reaguje na **skutečnou kvalitu**;
   z verdiktu se **učí** (ponaučení ovlivní příští obraz). (`hans_art`,
@@ -141,8 +178,9 @@ Hans běží na **více modelech s rozdělenými rolemi** (na sdíleném GPU s ~
 
 | Role | Model | Pozn. |
 |------|-------|-------|
-| Persona / chat | `hans-czech` (finetune OpenEuroLLM) | rezidentní v VRAM |
-| Analýza / prompty | `qwen2.5` (base) | čistší než finetune, on-demand |
+| Persona / chat / hlas | `hans-czech` (finetune OpenEuroLLM) | rezidentní v VRAM |
+| Analýza / extrakce | `OpenEuroLLM` (base) | nativní čeština, anti-konfabulace, on-demand |
+| Úsudek (synteze, sebekritika, postoje) | `deepseek-r1:14b` (reasoning) | 2-call: úsudek anglicky → hans-czech česky; běží v RAM/CPU (num_gpu:0), aby nešahal na VRAM |
 | Vidění | `qwen2.5-VL` | tváře/místnost/hodnocení obrazů, on-demand |
 | Embeddingy (RAG) | `bge-m3` | drobný, rezidentní |
 | Obrazy | SDXL přes ComfyUI | render orchestruje VRAM (unload → render → warm) |
