@@ -1917,3 +1917,87 @@ register(
     handler=_cmd_zdravi,
     help_text="Zdraví závislostí (Ollama/ComfyUI/Kodi/STT/PC/disk); /zdravi vylec = self-heal",
 )
+
+
+# ─── /nastroj — Hans si najde LLM nástroj pro dílo (HANS_TOOLSCOUT_V1) ────────
+def _cmd_nastroj(handler, name, args) -> str:  # HANS_TOOLSCOUT_V1
+    """/nastroj — stav návrhů; /nastroj <téma> = najdi nástroj pro doménu;
+    /nastroj schválit N = schval + stáhni; /nastroj zamítnout N."""
+    import threading as _th
+    from scripts import hans_toolscout as ts
+    cfg = getattr(handler, "config", {}) or {}
+    db = _recall_db(handler)
+    a = (args or "").strip()
+    low = a.lower()
+
+    def _fmt(props) -> str:
+        if not props:
+            return ""
+        _F = {"coexist": "vejde se vedle chatu", "on_demand": "jen samostatně",
+              "too_big": "nevejde se", "unknown": "?"}
+        out = []
+        for p in props:
+            out.append("#%d [%s] %s %s (~%s GB, %s, %s stažení)\n   %s\n   %s" % (
+                p["id"], p["status"], p["tool_name"], p["size_tag"], p["est_gb"],
+                _F.get(p["fit"], p["fit"]), p["pulls"],
+                (p.get("rationale") or "")[:180], p["url"]))
+        return "\n".join(out)
+
+    # schválit / zamítnout
+    m = re.match(r"(schv[áa]l\w*|zam[íi]t\w*|odm[íi]t\w*)\s+(\d+)", low)
+    if m:
+        pid = int(m.group(2))
+        store = ts.ToolStore(db)
+        p = store.get(pid)
+        if not p:
+            return "Návrh č. %d neznám, pane." % pid
+        if m.group(1).startswith(("zam", "odm")):
+            store.set_status(pid, "rejected")
+            return "Zamítnuto, pane. %s nebudu stahovat." % p["tool_name"]
+        # schválit → pull na PC
+        store.set_status(pid, "approved")
+        res = ts.pull_model(cfg, p["tool_name"])
+        if res.get("ok"):
+            store.set_status(pid, "installed")
+            return ("Schváleno, pane. Stahuji %s na počítač — %s. Až doběhne, "
+                    "budu ho moci použít pro dílo." % (p["tool_name"], res["detail"]))
+        return ("Schválil jsem %s, ale stažení jsem nespustil: %s"
+                % (p["tool_name"], res.get("detail", "")))
+
+    # stav / výpis
+    if not a or low in ("stav", "status", "seznam"):
+        store = ts.ToolStore(db)
+        pend = store.list("pending")
+        if pend:
+            return "Mé návrhy nástrojů, pane:\n" + _fmt(pend) + \
+                "\n\n(/nastroj schválit N nebo zamítnout N)"
+        allp = store.list()
+        if allp:
+            return "Aktuálně nemám čekající návrh. Poslední:\n" + _fmt(allp[:3])
+        return ("Zatím jsem žádný nástroj nenavrhl, pane. Napiš /nastroj <téma> "
+                "a prozkoumám vhodné modely (např. /nastroj Design).")
+
+    # /nastroj <téma> → scout na pozadí (síť + LLM)
+    topic = a
+
+    def _scout():
+        try:
+            r = ts.propose_tool(cfg, db, topic)
+            _log.info("/nastroj %s → %s", topic, r.get("status"))
+        except Exception as _e:
+            _log.warning("/nastroj scout selhal: %s", _e)
+    _th.Thread(target=_scout, daemon=True).start()
+    return ("Prozkoumám vhodné nástroje pro „%s“, pane, chvíli to potrvá. "
+            "Pak zadej /nastroj a ukážu, co jsem našel." % topic)
+
+
+register(
+    "nastroj",
+    slash_aliases=["nastroj", "nástroj", "tool"],
+    nl_patterns=[
+        r"najdi\s+(mi\s+)?(vhodn|n[ěe]jak).{0,15}(model|n[áa]stroj|llm)",
+        r"jak[ýy]\s+(model|n[áa]stroj|llm).{0,20}(pro|na)\s+",
+    ],
+    handler=_cmd_nastroj,
+    help_text="Najdi LLM nástroj pro dílo: /nastroj <téma>; schválit/zamítnout N",
+)

@@ -1489,6 +1489,34 @@ class HansRoutine:
                 except Exception as _stue:
                     _log.warning("Studijní session selhala: %s", _stue)
 
+            # HANS_TOOLSCOUT_V1 — po dostudování domény (study_program completed)
+            # navrhni nástroj (LLM) pro finální dílo. Idempotentní per téma
+            # (has_for_topic). Lehké (1 search + krátký resident LLM), deferral-safe.
+            if self._in_night_window() and self._chat_quiet_ok():
+                try:
+                    from scripts import hans_toolscout as _ts
+                    if _ts.enabled(self.config):
+                        _c = sqlite3.connect(self._diary_path, timeout=10)
+                        _done = [r[0] for r in _c.execute(
+                            "SELECT topic FROM study_program WHERE "
+                            "status='completed'").fetchall()]
+                        _c.close()
+                        _store = _ts.ToolStore(self._diary_path)
+                        for _tp in _done:
+                            if _store.has_for_topic(_tp):
+                                continue
+                            _r = _ts.propose_tool(self.config, self._diary_path, _tp)
+                            if _r.get("status") == "proposed" and self._notifier:
+                                _top = (_r.get("proposals") or [{}])[0]
+                                self._notifier(
+                                    "Dostudoval jsem %s. Pro finální dílo navrhuji "
+                                    "nástroj %s — mrkni na /nastroj." % (
+                                        _tp, _top.get("tool_name", "?")))
+                            _log.info("Toolscout '%s': %s", _tp, _r.get("status"))
+                            break  # jeden návrh za noc
+                except Exception as _tse:
+                    _log.warning("Toolscout selhal: %s", _tse)
+
             # HANS_AUTHORSHIP_V1 — autorský projekt: 1 noční session = napiš další
             # sekci díla na pokračování (grounded v RAG čtení/studia). Po dokončení
             # osnovy dovětek + složení do data/works/. Deferral-safe (deferred=retry).
