@@ -193,6 +193,20 @@ class HansEveningReflection:
         except Exception as _ie:
             _log.warning("importance scoring selhal (reflexe OK): %s", _ie)
 
+        # HANS_PROVENANCE_V1 — doplň provenience u nových deníkových řádků
+        # (deterministicky z event_type, žádný LLM). WHERE provenance IS NULL
+        # = self-healing, pokryje zápisy od posledního běhu.
+        try:
+            from scripts import hans_provenance as _prov
+            import sqlite3 as _sql
+            _pc = _sql.connect(self._diary_path)
+            _pn = _prov.catchup(_pc)
+            _pc.close()
+            if _pn:
+                _log.info("provenance: doplněno %d řádků (noční catchup)", _pn)
+        except Exception as _pe:
+            _log.warning("provenance catchup selhal (reflexe OK): %s", _pe)
+
         # HANS_THREADS_WIRING_V1 — Frontier #4: z dnešních dialogů vytáhni
         # rozjeté nitky per osoba + uzavři vyřešené (base model keep_alive=0,
         # deferral-safe). Běží nočně vždy.

@@ -242,6 +242,9 @@ class HansKnowledge:
                 'text': doc,
                 'distance': dist,
                 'name': (meta or {}).get('name', ''),
+                # HANS_PROVENANCE_V1 — přesná provenience z metadata, když
+                # ji upload uložil (jinak volající použije fallback dle kolekce).
+                'provenance': (meta or {}).get('provenance'),
             })
 
         # Řazení: nejlepší (nejnižší distance) první. None distance dozadu.

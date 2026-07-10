@@ -354,6 +354,37 @@ class KodiClient:
         s = "".join(c for c in s if not unicodedata.combining(c))
         return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
+    def find_movie(self, title: str, limit: int = 800) -> dict | None:
+        """HANS_AGENT_V1 — najdi film v knihovně dle názvu (fuzzy, bez diakritiky,
+        oboustranný substring). Vrací dict {movieid,title,year,...} nebo None.
+        Read-only — grounding pro agentní akci kodi_play_film."""
+        w = self._norm_title(title)
+        if not w:
+            return None
+        r = self._call("VideoLibrary.GetMovies", {
+            "properties": ["title", "year", "genre", "playcount"],
+            "limits": {"start": 0, "end": int(limit)},
+        })
+        movies = (r or {}).get("result", {}).get("movies", []) if r else []
+        best = None
+        for m in movies:
+            nm = self._norm_title(m.get("title"))
+            if not nm:
+                continue
+            if nm == w:            # přesná shoda = přednost
+                return m
+            if w in nm or nm in w:  # substring (série „…2/3")
+                best = best or m
+        return best
+
+    def play_movie(self, movieid: int) -> bool:
+        """HANS_AGENT_V1 — pusť film podle movieid (Player.Open). Vrací úspěch."""
+        try:
+            r = self._call("Player.Open", {"item": {"movieid": int(movieid)}})
+            return bool(r) and "error" not in (r or {})
+        except Exception:
+            return False
+
     def pick_favorite(self, titles, min_days: int = 0,
                       limit: int = 800) -> dict | None:
         """FILM_PERSON_FAVS_V1 — vyber konkrétní OBLÍBENÝ film osoby (dle názvu)

@@ -229,12 +229,18 @@ class Severka:
                   f"SEBE-DEFINUJÍCÍ VZPOMÍNKY — pivotní epizody (kontext pro koherenci):\n{mem_block}\n\n"
                   f"PŘÍBĚH — poslední kapitola (souvislé ohlédnutí za vývojem):\n{chapter}")
 
+        # NIGHT_DEFERRAL_SAFE_V1 — 'deferred':True signalizuje, že LLM NEBĚŽEL
+        # (Ollama dole / timeout → raw None). Volající (routine) pak NEnastaví
+        # týdenní guard → zkusí znovu příští noc (jinak by výpadek zahodil
+        # Severčino rozhodnutí na CELÝ TÝDEN). Gate=False (nic k rozhodnutí)
+        # NENÍ deferred = legitimní dokončení, guard se má nastavit.
         try:
             from scripts.ollama_client import ollama_generate
         except ImportError:
             _log.warning("severka: ollama_client nedostupný, skip")
             return {"decision": "keep", "gate": True, "durable": durable,
-                    "message": "", "error": "ollama_client nedostupný"}
+                    "message": "", "error": "ollama_client nedostupný",
+                    "deferred": True}
         try:
             from scripts.hans_persona import persona_name as _pn  # PERSONA_NAME_CONFIGURABLE_V1
             _system = _SYSTEM.format(persona_name=_pn(self._config))
@@ -246,7 +252,11 @@ class Severka:
         except Exception as e:
             _log.warning("severka: LLM call failed: %s", e)
             return {"decision": "keep", "gate": True, "durable": durable,
-                    "message": "", "error": str(e)}
+                    "message": "", "error": str(e), "deferred": True}
+        if raw is None:
+            _log.info("severka: LLM vrátil None (Ollama dole/timeout) → odloženo")
+            return {"decision": "keep", "gate": True, "durable": durable,
+                    "message": "", "error": "llm None", "deferred": True}
 
         parsed = self._parse(raw)
         if not parsed or parsed.get("decision") != "propose":

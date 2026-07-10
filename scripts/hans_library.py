@@ -400,6 +400,13 @@ class HansLibrary:
         """bge-m3 embedding přes Ollama /api/embed. None při selhání."""
         if not text:
             return None
+        # GAME_MODE_SYNTHESIS_GATE_V1 — v herním módu nenahrávej embed model do VRAM
+        try:
+            from scripts.ollama_client import game_mode_on
+            if game_mode_on():
+                return None
+        except Exception:
+            pass
         import urllib.request
         url = self.config.get("openwebui_chat", {}).get(
             "base_url", "http://127.0.0.1:11434")

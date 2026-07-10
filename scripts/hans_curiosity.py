@@ -656,6 +656,17 @@ class HansCuriosity:
             except Exception as e:
                 _log.warning("Diary store error: %s", e)
 
+        # HANS_ENTITY_STORE_C1_V1 — zachyť entitu z přečteného článku (name=
+        # vyřešený titul, gloss=první definiční věta ze zdroje → 0 konfabulace).
+        # Jen wikipedia (definiční úvod); RSS/news mají první větu neurčitou.
+        if getattr(result, "source", "") == "wikipedia":
+            try:
+                self._entity_store().capture_from_reading(
+                    result.title, result.raw_text, url=result.url,
+                    lang=self.config.get("curiosity", {}).get("wiki_lang", "cs"))
+            except Exception as _ee:
+                _log.debug("entity capture: %s", _ee)
+
         # Vygeneruj otázku se zpožděním — Ollama může být ještě zaneprázdněna
         import threading as _th
         _th.Thread(
@@ -664,6 +675,15 @@ class HansCuriosity:
             name='HansQ:delayed'
         ).start()
         self._maybe_expire_old_questions()
+
+    def _entity_store(self):
+        # HANS_ENTITY_STORE_C1_V1 — lazy singleton EntityStore
+        _es = getattr(self, "_es_inst", None)
+        if _es is not None:
+            return _es
+        from scripts.hans_entities import EntityStore
+        self._es_inst = EntityStore(self.config, self._diary_path)
+        return self._es_inst
 
     def _load_recent_from_diary(self):
         """Načti co Hans četl naposledy (při startu)."""

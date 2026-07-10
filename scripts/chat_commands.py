@@ -878,7 +878,17 @@ def _cmd_namaluj(handler, name, args) -> str:
     subj = _re.sub(r"(?i)^\s*(prosím\s+|můžeš\s+|mohl\s+bys\s+)?"
                    r"(mi\s+)?(namaluj|namalovat|nakresli|nakreslit|vytvoř|vytvořit)"
                    r"\s*(mi\s+)?(prosím\s+)?(obraz|obrázek)?\s*"
-                   r"(o\s+|na\s+t[eé]ma\s+|toho\s+jak\s+)?", "", subj).strip(" ?.!,")
+                   r"(o\s+|s\s+|se\s+|na\s+t[eé]ma\s+|ohledně\s+|podle\s+|"
+                   r"toho\s+jak\s+)?", "", subj).strip(" ?.!,")
+
+    # HANS_ART_STYLE_V4 — odděl STYL od námětu („X ve stylu Y" / „stylem Y")
+    style = ""
+    _sm = _re.search(
+        r"(?i)[\s,]+(?:ve?\s+stylu|stylem|jako\s+od|po\s+vzoru|[àa]\s+la)\s+(.+)$",
+        subj)
+    if _sm:
+        style = _sm.group(1).strip(" ?.!,")
+        subj = subj[:_sm.start()].strip(" ?.!,")
 
     # odkaz na rozhovor → sestav téma z posledních uživatelských zpráv
     if not subj or _re.search(r"(?i)bavili|mluvili|povídali|rozhovor|o\s+čem", subj):
@@ -900,13 +910,14 @@ def _cmd_namaluj(handler, name, args) -> str:
 
     def _worker():
         try:
-            hans_art.paint_subject(cfg, db, subj)
+            hans_art.paint_subject(cfg, db, subj, style=style)
         except Exception as _e:
             _log.warning("namaluj render selhal: %s", _e)
     _t.Thread(target=_worker, daemon=True).start()
-    return ("S radostí, pane — maluji obraz na téma „%s\". Za chvíli se objeví na "
+    _st = (" ve stylu „%s\"" % style) if style else ""
+    return ("S radostí, pane — maluji obraz na téma „%s\"%s. Za chvíli se objeví na "
             "nástěnce (Co Hans namaloval); chat může být asi minutu zaneprázdněný."
-            % (subj[:70]))
+            % (subj[:70], _st))
 
 
 register(
@@ -1588,4 +1599,81 @@ register(
     nl_patterns=[],
     handler=_cmd_misto,
     help_text="Model domova (kde jsem): /misto [mistnost|okno|dvere|vedle|rozlozeni|pozn <text> | smaz <id>]",
+)
+
+
+# ─── HANS_RECALL_SHORTCIRCUIT_V1 — vnitřní paměťové dotazy PŘÍMO Z DAT ────────
+# (#1 anti-konfabulačního pořadí) — „první vzpomínka" / „co jsi četl" /
+# „kdy jsi mě viděl" se NEposílají do LLM: odpověď je deterministická šablona
+# z deníku (vzor HANS_LIVE_PLAYBACK_QUERY_V1). Nulová konfabulace.
+
+def _recall_db(handler) -> str:
+    cfg = getattr(handler, "config", {}) or {}
+    return (cfg.get("diary_db")
+            or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+            or "data/hans_diary.db")
+
+
+def _cmd_vzpominka(handler, name, args) -> str:
+    from scripts.hans_recall import first_memory_answer
+    out = first_memory_answer(_recall_db(handler))
+    return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+
+
+register(
+    "vzpominka",
+    slash_aliases=["vzpominka", "vzpomínka"],
+    nl_patterns=[
+        r"(prvn[íi]|nejstarš[íi])\s+(tvoje?\s+|tv[áa]\s+)?vzpom[íi]nk",
+        r"vzpom[íi]nk\w*\s+(m[áa]š\s+)?(jako\s+)?(úplně\s+)?prvn[íi]",
+        r"co\s+si\s+pamatuje[šs]\s+(jako\s+|ze\s+všeho\s+)?(úplně\s+)?"
+        r"(prvn[íi]|nejd[řr][íi]v)",
+        r"nejstarš[íi]\s+z[áa]znam",
+    ],
+    handler=_cmd_vzpominka,
+    help_text="Má první/nejstarší vzpomínka (přímo z deníku, žádný odhad)",
+)
+
+
+def _cmd_cetl(handler, name, args) -> str:
+    from scripts.hans_recall import reading_answer
+    out = reading_answer(_recall_db(handler), args or "")
+    return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+
+
+register(
+    "cetl",
+    slash_aliases=["cetl", "četl", "cteni", "čtení"],
+    nl_patterns=[
+        r"\bco\s+(jsi|sis)\s+(dnes\w*\s+|včera\s+|naposledy\s+)?"
+        r"(pře)?[čc]etl",
+        r"\bcos?\s+(dnes\w*\s+|včera\s+|naposledy\s+)?[čc]etl",
+        r"\bkdy\s+(jsi|sis)\s+[čc]etla?\b",
+        r"\b(pře)?[čc]etla?\s+(jsi|sis)\s+(něco|neco|někdy|nekdy|už|uz)?\s*o?\b.{2,}\?",
+        r"\bco\s+(pr[áa]vě\s+|te[ďd]\s+)?[čc]te[šs]\b",
+    ],
+    handler=_cmd_cetl,
+    help_text="Co/kdy jsem četl (přímo z deníku): co jsi četl? četl jsi o X?",
+)
+
+
+def _cmd_videl(handler, name, args) -> str:
+    cfg = getattr(handler, "config", {}) or {}
+    from scripts.hans_recall import last_seen_answer
+    out = last_seen_answer(_recall_db(handler), cfg, args or "", name)
+    return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+
+
+register(
+    "videl",
+    slash_aliases=["videl", "viděl"],
+    nl_patterns=[
+        # jen mě/nás — obecné „kdy jsi X viděl" (film, věc) patří LLM,
+        # špatný deterministický únos by byl horší než žádný. Jiné osoby
+        # jdou přes /videl <jméno> (resolve person_name_forms v handleru).
+        r"\bkdy\s+(jsi|si)\s+(m[ěe]|n[áa]s)\s+(naposledy\s+)?vid[ěe]l",
+        r"\bvid[ěe]l\s+(jsi|si)\s+m[ěe]\s+(dnes|včera|naposledy)",
+    ],
+    handler=_cmd_videl,
+    help_text="Kdy jsem koho naposledy viděl (přímo z deníku person_seen)",
 )

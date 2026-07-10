@@ -56,15 +56,32 @@ class TelegramBridge:
         if self.chat_id:
             self._users[self.chat_id] = {"person": self.as_person,
                                          "role": "full", "push_questions": False}
+        # HANS_QUESTIONS_ROUTING_V1 — persons_placeholder: uživatelé bez chat_id
+        # (Hans o nich ví, ale nemají kam pushnout otázku → escalate přeskočí
+        # Telegram fázi a jde rovnou na web).
+        self._persons_placeholder: set = set()
         for u in (cfg.get("users", []) or []):
             _cid = str((u or {}).get("chat_id", "") or "")
+            _person = str((u or {}).get("as_person", "") or self.as_person).lower()
             if not _cid:
+                # osoba je registrovaná, ale Telegram jí nedoručí
+                if _person:
+                    self._persons_placeholder.add(_person)
                 continue
+            # dict indexovaný chat_id — pokud legacy má stejný cid, přepíšeme
+            # s user-level nastavením (typicky push_questions=true pro hlavního uživatele)
             self._users[_cid] = {
-                "person": str((u or {}).get("as_person", "") or self.as_person),
+                "person": _person or self.as_person,
                 "role": str((u or {}).get("role", "full") or "full"),
                 "push_questions": bool((u or {}).get("push_questions", False)),
             }
+        # persons_with_telegram = mohou dostat push (mají chat_id AND
+        # push_questions=True). anyone otázky se rovnou berou z prvního push
+        # uživatele.
+        self._persons_with_telegram: set = set()
+        for _cid, _u in self._users.items():
+            if _cid and _u.get("push_questions"):
+                self._persons_with_telegram.add((_u.get("person") or "").lower())
         self._q_store = None  # TELEGRAM_QUESTIONS_V1 (lazy)
         self._last_q_push: dict = {}  # cid -> ts (throttle)
         self._announce = bool(cfg.get("announce_online", False))
@@ -164,16 +181,54 @@ class TelegramBridge:
                 _log.warning("HansQuestionsStore init: %s", e)
         return self._q_store
 
+    # HANS_QUESTIONS_ROUTING_V1 — dostupnost kanálu pro osobu
+    def _person_has_channel(self, person: str, channel: str) -> bool:
+        """Callback pro escalate_channels — má osoba dostupný tento kanál?
+        Telegram: existuje entry v _users s push_questions=True A neprázdný
+        chat_id pro tuto osobu (nebo 'anyone' pokud aspoň jeden takový je).
+        Web/popup: vždy True (dashboard a kamera jsou pro každou osobu)."""
+        person = (person or "").lower()
+        if channel == "telegram":
+            if not self._persons_with_telegram:
+                return False
+            if person == "anyone":
+                return True
+            return person in self._persons_with_telegram
+        if channel in ("web", "popup"):
+            return True
+        return False
+
+    def _escalate_questions(self):
+        """HANS_QUESTIONS_ROUTING_V1 — projde otázky a přesune vyprchané fáze
+        na další kanál. Volá se v poll loopu (dostatečně často, escalate je
+        levné). Nepushuje — jen mění channel/channel_since."""
+        qs = self._questions()
+        if qs is None:
+            return
+        try:
+            _q_cfg = (self.config.get("hans_questions", {}) or {})
+            order = _q_cfg.get("channel_order") or ["telegram", "web", "popup"]
+            stage_h = float(_q_cfg.get("channel_stage_hours", 12.0))
+            stats = qs.escalate_channels(order, stage_h, self._person_has_channel)
+            _moved = {k: v for k, v in stats.items() if v > 0}
+            if _moved:
+                _log.info("questions escalate: %s", _moved)
+        except Exception as e:
+            _log.debug("escalate_questions: %s", e)
+
     def _maybe_push_questions(self):
-        """Hans pošle své čekající otázky uživatelům s push_questions=true
-        (např. vedlejší uživatel). Throttle per uživatel; tiché okno řeší send_proactive.
-        mark_asked_voice = SDÍLENÉ značení → nezeptá se 2× (ani přes popup)."""
+        """HANS_QUESTIONS_ROUTING_V1 — Hans pošle otázky ve fázi Telegram
+        uživatelům s push_questions=True. Throttle per uživatel; tiché okno
+        řeší send_proactive. Bere jen otázky s channel='telegram' A
+        asked_voice_at IS NULL (neposláno ještě v této fázi)."""
         interval = float((self.config.get("telegram", {}) or {}).get(
             "question_interval_h", 6)) * 3600
         now = time.time()
         qs = None
         for cid, u in self._users.items():
             if not u.get("push_questions"):
+                continue
+            if not cid:
                 continue
             if now - self._last_q_push.get(cid, 0) < interval:
                 continue
@@ -183,17 +238,18 @@ class TelegramBridge:
                     return
             self._last_q_push[cid] = now  # i prázdný pokus = počkej interval
             try:
-                q = qs.next_for_person(u["person"])
+                q = qs.next_for_channel(u["person"], "telegram",
+                                        only_undelivered=True)
             except Exception as e:
-                _log.debug("next_for_person(%s): %s", u["person"], e)
+                _log.debug("next_for_channel(%s): %s", u["person"], e)
                 continue
             if not q or not (q.question or "").strip():
                 continue
             if self.send_proactive(q.question, chat_id=cid):
                 try:
-                    qs.mark_asked_voice(q.id)
+                    qs.mark_channel_delivered(q.id)
                 except Exception as e:
-                    _log.debug("mark_asked_voice: %s", e)
+                    _log.debug("mark_channel_delivered: %s", e)
                 _log.info("telegram: otázka → %s: %.60s", u["person"], q.question)
 
     # ── INBOUND (long-poll) ─────────────────────────────────────────────────
@@ -214,6 +270,7 @@ class TelegramBridge:
         while not self._stop.is_set():
             try:
                 self._flush_deferred()  # TELEGRAM_QUIET_HOURS_V1 — doruč po 9:00
+                self._escalate_questions()  # HANS_QUESTIONS_ROUTING_V1
                 self._maybe_push_questions()  # TELEGRAM_QUESTIONS_V1
                 params = {"timeout": 30}
                 if self._offset is not None:

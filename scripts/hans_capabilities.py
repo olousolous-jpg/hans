@@ -53,6 +53,10 @@ _CAPABILITIES = [
      "/misto"),
     ("dashboard", "Umím navrhnout vlastní PODOBU své nástěnky (z toho, co jsem "
      "nastudoval o designu)", "/dashboard"),
+    ("recall", "Umím PŘESNĚ odpovědět na dotazy o vlastní paměti přímo z deníku "
+     "— má první vzpomínka, co a kdy jsem četl, kdy jsem koho viděl (žádný "
+     "odhad, jen skutečné záznamy)",
+     "jaká je tvá první vzpomínka?; co jsi četl?; kdy jsi mě viděl?"),
 ]
 
 

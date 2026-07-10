@@ -332,6 +332,12 @@
         "as_person": "bob",
         "role": "chat",
         "push_questions": true
+      },
+      {
+        "chat_id": "",
+        "as_person": "carol",
+        "role": "chat",
+        "push_questions": true
       }
     ],
     "question_interval_h": 6
@@ -504,7 +510,7 @@
   "room_observer": {
     "enabled": true,
     "interval_hours": 2,
-    "model": "qwen2.5vl:7b",
+    "model": "llava:7b",
     "prompt": "Describe this room briefly in English. Focus on: furniture, lighting, objects, atmosphere. Describe only what is actually visible — do not invent anything. Max 2 sentences.",
     "translate": true
   },
@@ -556,7 +562,7 @@
     "llm_timeout": 90,
     "render_timeout": 600,
     "_render_timeout_note": "ComfyUI studeny start (RX6800/ROCm load SDXL checkpointu) + 28 kroku muze trvat >5min; 600s pokryje studeny render. Kazdy art render je studeny (comfy_free po renderu uvolni checkpoint kvuli hans-czech).",
-    "vision_model": "qwen2.5vl:7b",
+    "vision_model": "llava:7b",
     "vision_timeout": 120,
     "verdict_model": "hans-czech:latest",
     "verdict_timeout": 120,
@@ -572,6 +578,10 @@
       "enabled": true,
       "min_interval_days": 4,
       "_note": "HANS_DAY_PAINTING_V1: 3. forma sebrizene tvorby - Hans namaluje symbolickou scenu vystihujici svuj DEN a PREVAZUJICI naladu dne (vazena dobou, ne okamzita). Throttle 4 dny (rarer nez sny)."
+    },
+    "person_likeness": {
+      "enabled": true,
+      "denoise": 0.5
     }
   },
   "unknown_tracker": {
@@ -595,7 +605,13 @@
     "max_new_per_day_per_source": 1,
     "min_age_before_voice_h": 1,
     "voice_ask_probability": 0.3,
-    "greeting_cooldown_h": 4
+    "greeting_cooldown_h": 4,
+    "channel_order": [
+      "telegram",
+      "web",
+      "popup"
+    ],
+    "channel_stage_hours": 12
   },
   "models": {
     "dialog": "hans-czech:latest",
@@ -605,7 +621,8 @@
   "hans_routine": {
     "enabled": true,
     "reflection_quiet_min": 15,
-    "wol_presence_cooldown_min": 15
+    "wol_presence_cooldown_min": 15,
+    "night_check_interval_s": 60
   },
   "kolac_cases": {
     "enabled": true,
@@ -871,7 +888,7 @@
   },
   "place": {
     "enabled": true,
-    "vision_model": "qwen2.5vl:7b",
+    "vision_model": "llava:7b",
     "vision_timeout": 120,
     "photo_dir": "data/room_photos"
   },
@@ -907,5 +924,68 @@
     "enabled": true,
     "min_gap_hours": 14,
     "telegram_push": true
+  },
+  "selfconsistency": {
+    "enabled": false,
+    "n_samples": 5,
+    "temperature": 0.7,
+    "threshold": 0.85,
+    "num_predict": 120,
+    "timeout": 60,
+    "max_question_chars": 300,
+    "model": "hans-czech:latest"
+  },
+  "entity_store": {
+    "enabled": true,
+    "min_key_len": 4
+  },
+  "opinion_grounding": {
+    "enabled": true,
+    "max_stances": 6
+  },
+  "immune": {
+    "enabled": true,
+    "cadence_days": 1,
+    "window_hours": 48,
+    "max_checks_per_night": 6,
+    "model": "jobautomation/OpenEuroLLM-Czech:latest",
+    "llm_timeout": 300
+  },
+  "rewriter": {
+    "enabled": false,
+    "model": "hans-czech:latest",
+    "num_predict": 60,
+    "num_ctx": 2048,
+    "timeout": 30,
+    "temperature": 0.1,
+    "max_input_chars": 300,
+    "max_expand_ratio": 2.5,
+    "history_msgs": 4,
+    "history_max_chars": 200
+  },
+  "grounding": {
+    "strict_max_distance": 0.7
+  },
+  "contradiction": {
+    "enabled": false,
+    "model": "jobautomation/OpenEuroLLM-Czech:latest",
+    "llm_timeout": 30,
+    "max_claims_per_check": 6
+  },
+  "provenance": {
+    "enabled": false,
+    "_note": "HANS_PROVENANCE_V1: epistemicke znacky (zazil/cetl/rekli/odvodil/predstavil/vytvoril) — source-monitoring proti imaginaci vydavane za pamet. Sloupec diary.provenance + znacka RAG chunku + steer promptu."
+  },
+  "agent": {
+    "enabled": false,
+    "confidence_threshold": 0.7,
+    "context_msgs": 5,
+    "model": "hans-czech:latest",
+    "num_predict": 160,
+    "temperature": 0.1,
+    "timeout": 30,
+    "cooldown_default_s": 60,
+    "reject_cooldown_s": 3600,
+    "_note": "HANS_AGENT_V1: agentni vrstva — z konverzace odvodi akci, navrhne (confirm ano/ne), po potvrzeni provede. Whitelist: kodi_play_film, hans_sleep, add_book_wishlist. Router=hans-czech rezidentni, pre-gate hinty, cooldown+anti-echo, denik agent_action."
   }
 }

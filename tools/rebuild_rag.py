@@ -31,7 +31,7 @@ from pathlib import Path
 
 import requests
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent  # config.json je v rootu, ne v tools/
 sys.path.insert(0, str(ROOT / "scripts"))
 
 CFG_PATH = ROOT / "config.json"
@@ -154,9 +154,8 @@ def phase_2_collections() -> bool:
 def phase_3_relationships() -> bool:
     section("FÁZE 3: Vztahové karty z SQL")
     try:
-        from hans_relationships import Relationships
+        from hans_relationships import Relationships, RelationshipReflection
         from hans_knowledge import HansKnowledge
-        from hans_relationship_reflection import RelationshipReflection
     except Exception as e:
         log(f"import FAIL: {e}", "FAIL")
         return False
@@ -170,7 +169,8 @@ def phase_3_relationships() -> bool:
     cards = rels.all_cards()
     log(f"karet v SQL: {len(cards)}")
 
-    # _build_rag_document je čistá fce, self nepoužívá — voláme přes class.
+    # _build_rag_document je čistá fce (self nepoužívá) — voláme přes třídu.
+    # RelationshipReflection se přesunul do hans_relationships.py.
     build_doc = RelationshipReflection._build_rag_document
 
     ok_count = 0

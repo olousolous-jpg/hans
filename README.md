@@ -93,6 +93,31 @@ svém datu. (`hans_threads`, `hans_person_interests`)
 - Epizodický **deník**, sémantické **RAG** kolekce (`bge-m3`), **importance
   scoring**, **autobiografická** narativní konsolidace. (viz Kognitivní základy)
 
+### Pravdivost — dva registry mysli (proti konfabulaci)
+Generativní model si fakta rád „domyslí". Řešení není opravovat generátor, ale
+**rozdělit mysl na dva registry**: **faktický** (kdo je kdo, co se stalo, co četl)
+je groundovaný a defaultně **abstinuje** — odpoví z dat, nebo přizná „nemám
+záznam"; **imaginativní** (sny, obrazy, úvahy) smí volně tvořit. Problém nastává,
+jen když imaginace tvrdí fakta — a tomu brání vrstvy, které fungují **routingem,
+ne prompty**:
+- **Deterministické zkraty** — dohledatelné vnitřní dotazy („tvá nejstarší
+  vzpomínka") se neposílají do modelu, odpoví se přímo z databáze. (`hans_recall`)
+- **RAG-first + abstinence** — na fakta nejdřív retrieval; slabá/žádná shoda →
+  „o tom nemám spolehlivý záznam" (model se na fakt nevolá).
+- **Sémantická self-consistency** — rizikový faktický dotaz vygeneruje víckrát;
+  když se odpovědi rozcházejí → konfabulace → abstinuje. (`hans_selfconsistency`)
+- **Entity store** — typované entity z Hansova čtení (verbatim definice) → jména
+  se resolvují deterministicky (řeší kolize jmenovců i fantomy). (`hans_entities`)
+- **Query-rewriter** — persona slyší člověka syrově, ale retrieval čte vyčištěný,
+  explicitní dotaz (rozřeší i „kdo je _on_?"). (`hans_rewriter`)
+- **Imunitní systém + detekce rozporů** — noční fact-check vlastních tvrzení proti
+  entity store + kontrola rozporu při zápisu. (`hans_immune`, `hans_contradiction`)
+- **Provenience** — každá znalost nese **zdroj** (zažil / řekli mi / četl /
+  odvodil / představil si / vytvořil); Hans rozlišuje vzpomínku od představy a
+  mluví kalibrovaně (source-monitoring). (`hans_provenance`)
+- **Grounding názorů** — u filosofie/názorů má naopak zaujmout **vlastní vyhraněný
+  postoj** (imaginativní registr), ne generickou vyváženost. (`hans_opinion`)
+
 ### Názory a identita
 - **Stances** (dialektické), **tendence** (deterministicky z postojů),
   **Severka** (vývoj identity s verzováním), **koníčky** (topic→koníček→povolání).
@@ -103,6 +128,16 @@ svém datu. (`hans_threads`, `hans_person_interests`)
 - **Detekce rutin** — z deníku odvodí, kdo bývá doma kdy → timing pro proaktivitu.
 - **Akce na existujících pákách** — proaktivní návrh filmu na Kodi (dialog s
   odpočtem), chytřejší Wake-on-LAN (probudí PC, když přijdeš domů).
+
+### Agentní vrstva (kontextové akce z konverzace)
+Hans nezůstává u textu — z konverzace **odvodí akci** a **nabídne ji s potvrzením**
+(„Mám pustit _Smrtonosnou past_? [ano/ne]"), po odsouhlasení ji provede. Jedna
+zastřešující vrstva: **whitelist akcí** (nic mimo něj), **vždy potvrzení**
+(human-in-the-loop), **grounding argumentů** (film jen z knihovny), práh jistoty,
+cooldown a anti-echo proti otravování. Router běží na rezidentním chat modelu
+(žádná latence navíc u běžného chatu díky předfiltru). V1 akce: pustit film,
+uspat se, přidat knihu na seznam — rozšíření (např. chytrá světla) = jeden
+adaptér navíc. (`hans_agent`)
 
 ### Vztahy
 - **Vztahové karty** per osoba (charakterizace, kdy naposledy viděn), per-osoba

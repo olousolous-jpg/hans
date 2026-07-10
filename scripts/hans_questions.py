@@ -76,6 +76,17 @@ ANSWER_VIA_VOICE     = "voice"
 ANSWER_VIA_DASHBOARD = "dashboard"
 ANSWER_VIA_CHAT      = "chat"
 
+# HANS_QUESTIONS_ROUTING_V1 — kanály eskalace (Telegram → web → popup → expire)
+CHANNEL_PENDING  = "pending"     # čeká na první přiřazení
+CHANNEL_TELEGRAM = "telegram"
+CHANNEL_WEB      = "web"
+CHANNEL_POPUP    = "popup"
+CHANNEL_DONE     = "done"        # odpovězeno
+CHANNEL_EXPIRED  = "expired"     # vyčerpány všechny kanály
+
+DEFAULT_CHANNEL_ORDER       = ["telegram", "web", "popup"]
+DEFAULT_CHANNEL_STAGE_HOURS = 12.0
+
 
 # ─── Datový objekt ────────────────────────────────────────────────────────────
 @dataclass
@@ -94,6 +105,10 @@ class Question:
     answer_via: Optional[str] = None
     hans_reaction: Optional[str] = None
     expires_at: float = 0.0
+    # HANS_QUESTIONS_ROUTING_V1 — kanálová eskalace
+    channel: str = CHANNEL_PENDING
+    channel_since: float = 0.0
+    channel_history: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -163,6 +178,57 @@ class HansQuestionsStore:
                              "ON hans_questions(ts_asked DESC)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_hq_source "
                              "ON hans_questions(source_type, source_ref)")
+            # HANS_QUESTIONS_ROUTING_V1 — idempotentní ALTER pro kanály
+            try:
+                _cols = {r[1] for r in self._db.execute(
+                    "PRAGMA table_info(hans_questions)").fetchall()}
+                if "channel" not in _cols:
+                    self._db.execute(
+                        "ALTER TABLE hans_questions ADD COLUMN "
+                        "channel TEXT NOT NULL DEFAULT 'pending'")
+                if "channel_since" not in _cols:
+                    self._db.execute(
+                        "ALTER TABLE hans_questions ADD COLUMN "
+                        "channel_since REAL NOT NULL DEFAULT 0")
+                if "channel_history" not in _cols:
+                    self._db.execute(
+                        "ALTER TABLE hans_questions ADD COLUMN "
+                        "channel_history TEXT NOT NULL DEFAULT ''")
+                # backfill existujících řádků, které vznikly před routingem:
+                #   answered → done
+                #   dismissed/expired → expired (kanál se dál nezpracovává)
+                #   ostatní (pending / asked_voice) → pending + channel_since=now,
+                #     escalator je přesune na první dostupný kanál (Telegram nebo
+                #     rovnou web, pokud osoba Telegram nemá)
+                _now = time.time()
+                self._db.execute(
+                    "UPDATE hans_questions SET channel=? WHERE channel='pending' "
+                    "AND status IN (?,?)",
+                    (CHANNEL_DONE, STATUS_ANSWERED, STATUS_DISMISSED))
+                self._db.execute(
+                    "UPDATE hans_questions SET channel=? WHERE channel='pending' "
+                    "AND status=?",
+                    (CHANNEL_EXPIRED, STATUS_EXPIRED))
+                # asked_voice před routingem = fakticky prošlo popupem, ale
+                # ještě není odpovězeno; resetneme na pending s čerstvým timerem,
+                # aby escalator dostal šanci poslat na Telegram (kde uživatel je).
+                self._db.execute(
+                    "UPDATE hans_questions "
+                    "  SET channel=?, channel_since=?, status=?, asked_voice_at=NULL "
+                    "WHERE channel='pending' AND status=? "
+                    "  AND answered_at IS NULL AND expires_at > ?",
+                    (CHANNEL_PENDING, _now, STATUS_PENDING,
+                     STATUS_ASKED_VOICE, _now))
+                # čerstvé pending bez channel_since dostane teď jako referenci
+                self._db.execute(
+                    "UPDATE hans_questions SET channel_since=? "
+                    "WHERE channel='pending' AND channel_since=0",
+                    (_now,))
+                self._db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_hq_channel "
+                    "ON hans_questions(channel, channel_since)")
+            except Exception as _e:
+                _log.warning("routing ALTER/backfill: %s", _e)
             self._db.commit()
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
@@ -217,6 +283,7 @@ class HansQuestionsStore:
                        status: Optional[str] = None,
                        target: Optional[str] = None,
                        source_type: Optional[str] = None,
+                       channel: Optional[str] = None,
                        limit: int = 200) -> List[Question]:
         sql, args = "SELECT * FROM hans_questions WHERE 1=1", []
         if status and status != "all":
@@ -225,6 +292,8 @@ class HansQuestionsStore:
             sql += " AND target_person=?"; args.append(target.lower())
         if source_type and source_type != "all":
             sql += " AND source_type=?";   args.append(source_type)
+        if channel and channel != "all":
+            sql += " AND channel=?";       args.append(channel)
         sql += " ORDER BY ts_asked DESC LIMIT ?"
         args.append(int(limit))
         with self._lock:
@@ -249,12 +318,16 @@ class HansQuestionsStore:
         if not answer:
             return False
         with self._lock:
+            # HANS_QUESTIONS_ROUTING_V1 — po odpovědi nastav channel='done',
+            # ať eskalátor otázku ignoruje.
             self._db.execute("""
                 UPDATE hans_questions
                    SET status=?, answer=?, answered_at=?, answer_via=?,
-                       hans_reaction=COALESCE(?, hans_reaction)
+                       hans_reaction=COALESCE(?, hans_reaction),
+                       channel=?
                  WHERE id=?
-            """, (STATUS_ANSWERED, answer, time.time(), via, hans_reaction, qid))
+            """, (STATUS_ANSWERED, answer, time.time(), via, hans_reaction,
+                  CHANNEL_DONE, qid))
             self._db.commit()
         _log.info("Q[%d] answered via %s: %s", qid, via, answer[:80])
         return True
@@ -267,6 +340,8 @@ class HansQuestionsStore:
             self._db.commit()
 
     def mark_asked_voice(self, qid: int) -> None:
+        """Označí, že otázka byla doručena v aktuálním kanálu (popup/voice/Telegram).
+        Nemění channel, jen zaznamená doručení do asked_voice_at pro dedup."""
         with self._lock:
             self._db.execute("""
                 UPDATE hans_questions
@@ -275,11 +350,22 @@ class HansQuestionsStore:
             """, (STATUS_ASKED_VOICE, time.time(), qid, STATUS_PENDING))
             self._db.commit()
 
-    def dismiss(self, qid: int) -> None:
+    def mark_channel_delivered(self, qid: int) -> None:
+        """HANS_QUESTIONS_ROUTING_V1 — jemnější než mark_asked_voice: jen
+        aktualizuje asked_voice_at (kdy naposled bylo v tomto kanálu doručeno)
+        BEZ přepnutí status. Pro Telegram push, který nechce fixovat status."""
         with self._lock:
             self._db.execute(
-                "UPDATE hans_questions SET status=? WHERE id=?",
-                (STATUS_DISMISSED, qid))
+                "UPDATE hans_questions SET asked_voice_at=? WHERE id=?",
+                (time.time(), qid))
+            self._db.commit()
+
+    def dismiss(self, qid: int) -> None:
+        with self._lock:
+            # HANS_QUESTIONS_ROUTING_V1 — dismiss = uzavření, nastav channel
+            self._db.execute(
+                "UPDATE hans_questions SET status=?, channel=? WHERE id=?",
+                (STATUS_DISMISSED, CHANNEL_DONE, qid))
             self._db.commit()
         _log.info("Q[%d] dismissed", qid)
 
@@ -294,11 +380,13 @@ class HansQuestionsStore:
         """Označí staré pending/asked_voice otázky jako expired. Vrátí počet."""
         now = time.time()
         with self._lock:
+            # HANS_QUESTIONS_ROUTING_V1 — spolu s expired statusem nastav i channel
             cur = self._db.execute("""
                 UPDATE hans_questions
-                   SET status=?
+                   SET status=?, channel=?
                  WHERE status IN (?,?) AND expires_at < ?
-            """, (STATUS_EXPIRED, STATUS_PENDING, STATUS_ASKED_VOICE, now))
+            """, (STATUS_EXPIRED, CHANNEL_EXPIRED,
+                  STATUS_PENDING, STATUS_ASKED_VOICE, now))
             n = cur.rowcount
             self._db.commit()
         if n:
@@ -331,31 +419,177 @@ class HansQuestionsStore:
 
     def next_for_person(self, person: str,
                         min_age_h: float = 1.0,
-                        source_type: Optional[str] = None) -> Optional["Question"]:
+                        source_type: Optional[str] = None,
+                        channel: Optional[str] = None) -> Optional["Question"]:
         """HANS_QUESTIONS_SURFACING_V1 — nejstarší pending otázka pro osobu
         (target_person=osoba NEBO 'anyone'), bez voice random gate. Pro
         greeting i textový chat. min_age_h brání položit otázku těsně po
-        vygenerování."""
+        vygenerování.
+        HANS_QUESTIONS_ROUTING_V1 — volitelný `channel` filtr (jen otázky
+        právě v této fázi). Bez filtru = pending status v jakémkoli kanálu
+        (zpětně kompat)."""
         cutoff = time.time() - min_age_h * 3600.0
         with self._lock:
             # HANS_PERSONAL_QUESTIONS_V1 — volitelný source_type filtr
-            _sql = ("SELECT * FROM hans_questions WHERE status=? "
-                    "AND (target_person=? OR target_person='anyone') "
-                    "AND ts_asked <= ? AND expires_at > ?")
-            _args = [STATUS_PENDING, person.lower(), cutoff, time.time()]
+            _sql = ("SELECT * FROM hans_questions "
+                    "WHERE status IN (?,?) AND answered_at IS NULL "
+                    "  AND (target_person=? OR target_person='anyone') "
+                    "  AND ts_asked <= ? AND expires_at > ?")
+            _args = [STATUS_PENDING, STATUS_ASKED_VOICE,
+                     person.lower(), cutoff, time.time()]
+            if channel:
+                _sql += " AND channel=?"; _args.append(channel)
             if source_type:
                 _sql += " AND source_type=?"; _args.append(source_type)
             _sql += " ORDER BY ts_asked ASC LIMIT 1"
             row = self._db.execute(_sql, tuple(_args)).fetchone()
         return self._row_to_question(row)
 
+    # ── HANS_QUESTIONS_ROUTING_V1 — eskalace kanálů ─────────────────────────
+    def next_for_channel(self, person: str, channel: str,
+                         only_undelivered: bool = False) -> Optional["Question"]:
+        """Nejstarší otázka pro osobu v současném kanálu. Když
+        only_undelivered=True, filtruje jen otázky s asked_voice_at IS NULL
+        (Telegram push je posílá jen jednou)."""
+        with self._lock:
+            _sql = ("SELECT * FROM hans_questions "
+                    "WHERE status IN (?,?) AND answered_at IS NULL "
+                    "  AND (target_person=? OR target_person='anyone') "
+                    "  AND channel=? AND expires_at > ?")
+            _args = [STATUS_PENDING, STATUS_ASKED_VOICE,
+                     person.lower(), channel, time.time()]
+            if only_undelivered:
+                _sql += " AND asked_voice_at IS NULL"
+            _sql += " ORDER BY ts_asked ASC LIMIT 1"
+            row = self._db.execute(_sql, tuple(_args)).fetchone()
+        return self._row_to_question(row)
+
+    def escalate_channels(self, channel_order: List[str],
+                          stage_hours: float,
+                          person_has_channel) -> Dict[str, int]:
+        """HANS_QUESTIONS_ROUTING_V1 — projde všechny živé otázky a přesune je
+        na další kanál, když v aktuální fázi vypršel budget (stage_hours).
+
+        Args:
+            channel_order: seznam kanálů v pořadí priority (např.
+                ["telegram", "web", "popup"]).
+            stage_hours: budget na kanál v hodinách.
+            person_has_channel: callback(person, channel) → bool. Vrací True,
+                pokud osoba má tento kanál dostupný (např. má Telegram chat_id).
+
+        Returns:
+            dict {"moved_to_<channel>": N, "expired": N}
+        """
+        if not channel_order:
+            return {}
+        stage_s = float(stage_hours) * 3600.0
+        now = time.time()
+        stats = {"expired": 0}
+        for ch in channel_order:
+            stats["moved_to_" + ch] = 0
+
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, target_person, channel, channel_since, "
+                "       channel_history "
+                "  FROM hans_questions "
+                " WHERE status IN (?,?) AND answered_at IS NULL "
+                "   AND channel NOT IN (?,?)",
+                (STATUS_PENDING, STATUS_ASKED_VOICE,
+                 CHANNEL_DONE, CHANNEL_EXPIRED)
+            ).fetchall()
+
+        for row in rows:
+            qid = row["id"]
+            person = (row["target_person"] or "anyone").lower()
+            cur = row["channel"] or CHANNEL_PENDING
+            since = float(row["channel_since"] or 0)
+            hist = (row["channel_history"] or "").strip()
+
+            # PENDING → najdi první dostupný kanál (nebo expire)
+            if cur == CHANNEL_PENDING:
+                target = None
+                for ch in channel_order:
+                    if person_has_channel(person, ch):
+                        target = ch; break
+                if target is None:
+                    self._set_channel(qid, CHANNEL_EXPIRED, hist, STATUS_EXPIRED)
+                    stats["expired"] += 1
+                    _log.info("Q[%d] → expired (žádný dostupný kanál pro %s)",
+                              qid, person)
+                else:
+                    self._set_channel(qid, target, hist)
+                    stats["moved_to_" + target] += 1
+                    _log.info("Q[%d] pending → %s (%s)", qid, target, person)
+                continue
+
+            # současný kanál je aktivní — zkontroluj budget
+            if cur not in channel_order:
+                # neznámý (např. legacy) kanál → přesuň do pending, escalate podruhé
+                self._set_channel(qid, CHANNEL_PENDING, hist)
+                continue
+
+            elapsed = now - since if since > 0 else stage_s + 1
+            if elapsed < stage_s:
+                continue  # ještě má čas
+
+            # budget vypršel — najdi další dostupný kanál v pořadí
+            idx = channel_order.index(cur)
+            next_ch = None
+            for ch in channel_order[idx + 1:]:
+                if person_has_channel(person, ch):
+                    next_ch = ch; break
+            if next_ch is None:
+                self._set_channel(qid, CHANNEL_EXPIRED, hist, STATUS_EXPIRED)
+                stats["expired"] += 1
+                _log.info("Q[%d] → expired (vyčerpány kanály po %s)",
+                          qid, cur)
+            else:
+                self._set_channel(qid, next_ch, hist)
+                stats["moved_to_" + next_ch] += 1
+                _log.info("Q[%d] %s → %s (%s, budget vypršel)",
+                          qid, cur, next_ch, person)
+        return stats
+
+    def _set_channel(self, qid: int, new_channel: str,
+                     prev_history: str,
+                     new_status: Optional[str] = None) -> None:
+        """Přesune otázku do jiného kanálu — aktualizuje channel,
+        channel_since=now, channel_history (append), asked_voice_at=NULL
+        (jinak by Telegram push nezavolal v novém kanálu)."""
+        hist = prev_history
+        stamp = "%s@%d" % (new_channel, int(time.time()))
+        hist = (hist + "," + stamp) if hist else stamp
+        with self._lock:
+            if new_status is not None:
+                self._db.execute(
+                    "UPDATE hans_questions "
+                    "  SET channel=?, channel_since=?, channel_history=?, "
+                    "      asked_voice_at=NULL, status=? "
+                    "WHERE id=?",
+                    (new_channel, time.time(), hist, new_status, qid))
+            else:
+                self._db.execute(
+                    "UPDATE hans_questions "
+                    "  SET channel=?, channel_since=?, channel_history=?, "
+                    "      asked_voice_at=NULL "
+                    "WHERE id=?",
+                    (new_channel, time.time(), hist, qid))
+            self._db.commit()
+
     # ── Limity ────────────────────────────────────────────────────────────────
     def _can_add_for_person(self, person: str) -> bool:
+        # HANS_QUESTIONS_ROUTING_V1 — počítej jen aktivní otázky (ne done/
+        # expired). Answered_at IS NULL zajišťuje, že odpovězené se nepočítají,
+        # i kdyby jejich channel ještě nebyl přepnut.
         with self._lock:
             n = self._db.execute("""
                 SELECT COUNT(*) FROM hans_questions
                  WHERE status IN (?,?) AND target_person=?
-            """, (STATUS_PENDING, STATUS_ASKED_VOICE, person)).fetchone()[0]
+                   AND answered_at IS NULL
+                   AND channel NOT IN (?,?)
+            """, (STATUS_PENDING, STATUS_ASKED_VOICE, person,
+                  CHANNEL_DONE, CHANNEL_EXPIRED)).fetchone()[0]
         return n < self.max_pending_per_person
 
     def _can_add_for_source(self, source_type: str) -> bool:

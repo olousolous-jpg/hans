@@ -95,6 +95,19 @@ def _topic_key(event_type: str, title: str) -> str:
     return _norm(t)
 
 
+def _is_meaningful_topic(topic: str) -> bool:
+    """HANS_SYNTHESIS_GROUNDING_V1 — pustí do syntézy jen témata, která dávají
+    smysl jako pojem. Zahazuje zkomolené/ořezané tituly (např. „Aj II.“, „Ju“,
+    „MS 2026“), aby z nich syntéza nevyrobila FANTOMOVOU entitu (viz konfabulace
+    „AJ II × protein“). Kritérium: aspoň 5 písmen celkem A aspoň jedno slovo
+    o ≥4 písmenech (reálná témata jako Design/Whisky/Cardiffský hrad projdou;
+    „Jindřich II.“ projde, jeho zkomolenina „Aj II.“ ne)."""
+    words = re.findall(r"[^\W\d_]+", topic or "", flags=re.UNICODE)
+    letters = sum(len(w) for w in words)
+    longest = max((len(w) for w in words), default=0)
+    return letters >= 5 and longest >= 4
+
+
 def _embed_texts(config: dict, texts: List[str]) -> Optional[list]:
     """bge-m3 embeddingy přes Ollama /api/embed. None při selhání (→ fallback).
     Deferral-safe: herní mód / výpadek → None."""
@@ -201,7 +214,12 @@ class IdeaStore:
             key = _topic_key(etype, title or "")
             if not key or key in by_topic:
                 continue
-            by_topic[key] = {"topic": (title or key).strip(),
+            topic_label = (title or key).strip()
+            # HANS_SYNTHESIS_GROUNDING_V1 — přeskoč zkomolené/nicneříkající téma
+            if not _is_meaningful_topic(topic_label):
+                _log.debug("_gather_seeds: přeskočeno zkomolené téma %r", topic_label)
+                continue
+            by_topic[key] = {"topic": topic_label,
                              "text": content[:max_seed_chars]}
         cands = list(by_topic.values())
         if len(cands) < min_topics:
@@ -251,6 +269,24 @@ class IdeaStore:
                      "insight": r[3]} for r in rows]
         except Exception:
             return []
+
+    def _log_event(self, event_type: str, title: str,
+                   *, note: str = None, data: str = None):
+        """Interní zápis deníkového eventu (kompatibilní se signaturou
+        `hans_idle._log_entry` — event_type, title, note?, data?). Používá
+        se pro A3 contradiction_flag; nezávislý na volajícím diary writeru."""
+        try:
+            with self._connect() as db:
+                db.execute("""CREATE TABLE IF NOT EXISTS diary (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
+                    event_type TEXT NOT NULL, title TEXT, data TEXT, note TEXT)""")
+                db.execute(
+                    "INSERT INTO diary (ts,event_type,title,data,note) "
+                    "VALUES (?,?,?,?,?)",
+                    (time.time(), event_type, title or "", data, note))
+                db.commit()
+        except Exception as e:
+            _log.warning("_log_event: %s", e)
 
     def _store(self, topics: str, insight: str):
         """Ulož postřeh do synthesis_idea (vlastní tabulka pro latest/anti-repetici)
@@ -305,7 +341,31 @@ class IdeaStore:
                 _log.info("synthesis: postřeh se nevygeneroval (LLM dole?) — retry")
                 return None
         topics = " × ".join(s["topic"] for s in seeds)
+
+        # HANS_CONTRADICTION_A3_V1 — před uložením zkontroluj, jestli
+        # syntéza netvrdí něco, co rozporuje známé entitě z Hansova čtení
+        # (klasický zdroj fantomů = AJ II / záměna jmen). Insight se stejně
+        # UKLÁDÁ (A3 NEblokuje) — flag jen zaznamená rozpor pro pozdější
+        # revizi. Deferral-safe: LLM dole → None → žádný flag.
+        _flag = None
+        try:
+            from scripts.hans_contradiction import (
+                check_claim as _a3_check, flag_to_diary as _a3_flag)
+            _flag = _a3_check(config, self._diary_path, insight,
+                              source="synthesis_idea")
+        except Exception as _a3e:
+            _log.debug("A3 check selhal: %s", _a3e)
+
         self._store(topics, insight)
+
+        if _flag:
+            try:
+                # zápis flag přes stejný self._connect (kompatibilní se
+                # `_store`) — nezávislý na volajícím diary writeru.
+                _a3_flag(self._log_event, _flag)
+            except Exception as _a3we:
+                _log.debug("A3 flag zápis selhal: %s", _a3we)
+
         if knowledge is not None:
             try:
                 knowledge.upload(

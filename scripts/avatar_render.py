@@ -294,6 +294,13 @@ def _first_image(hist: dict) -> Optional[dict]:
 def render_descriptor(config: dict, descriptor: dict, diary_db_path: str) -> bool:
     """Vyrenderuje VŠECHNY výrazy descriptoru přes ComfyUI, uloží do cache
     data/avatar/v{N}/{expr}.png. Vrací True při úspěchu (aspoň idle). Deferral-safe."""
+    try:  # OLLAMA_GAME_MODE_V1 — ComfyUI render mimo Ollama gate → nezabírat VRAM za hry
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            _log.info("avatar: herní mód — render odložen")
+            return False
+    except Exception:
+        pass
     acfg = _acfg(config)
     ckpt = acfg.get("image_model", "")
     if not ckpt:

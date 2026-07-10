@@ -23,10 +23,27 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Optional
 
 _log = logging.getLogger(__name__)
+
+
+# G2_DEACCENT_V1 — český vstup na mobilu/Telegramu často BEZ diakritiky
+# („rekni mi o nem vic"). Regexy jsou psané s diakritikou → nechytnou.
+# Řešení: normalizuj obě strany — vstup i vzory — a spusť matching na obou
+# variantách (přebijí sebe, ne konfliktní). Bezpečné: NFD strip Mn zachová
+# regex meta chars (\b, |, [], ()); jen zbaví akcentů.
+def _deaccent(s: str) -> str:
+    if not s:
+        return s
+    return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii")
+
+
+def _ascii_pat(p: re.Pattern) -> re.Pattern:
+    """Auto-deakcentovaná verze regex vzoru (import-time)."""
+    return re.compile(_deaccent(p.pattern), p.flags)
 
 # Faktické třídy (vše krom volna). Pořadí = priorita při keyword shodě.
 FACTUAL_CLASSES = ("film", "misto", "osobnost", "udalost")
@@ -119,6 +136,45 @@ _FACTUAL_SIGNAL = re.compile(
     re.IGNORECASE,
 )
 
+# G2_COREF_V1 — pronomenální reference („o něm", „o něj", „o ní", „o nich",
+# „ho", „mu", „ji") = navazovací dotaz na předchozí obrat. Sám o sobě SLABÝ
+# signál (i „mám ho rád" = emoce), proto se použije JEN v kombinaci:
+# faktický signál nebo continuation slovo („víc/více/dál/dál/další") → přesto
+# faktické. Rewriter (F1) pak z historie doplní jméno.
+_COREF_PAT = re.compile(
+    r"\b(o\s+n[ěe]m|o\s+n[ěe]j|o\s+n[ií]|o\s+nich|ho|mu|j[ií])\b",
+    re.IGNORECASE,
+)
+
+# Continuation slova („řekni víc", „pověz dál") — v kombinaci s _COREF_PAT
+# nebo předchozí historií naznačují follow-up dotaz.
+_CONTINUATION_PAT = re.compile(
+    r"\b(v[ií]c|v[ií]ce|d[áa]l|dal[šs][íi]|jeste|je[šs]t[ěe]|"
+    r"pokra[čc]uj|pov[ěe]z|[řr]ekni)\b",
+    re.IGNORECASE,
+)
+
+# Deakcentované varianty (auto-generované) — chytnou vstup bez diakritiky.
+_VOLNA_PAT_A = _ascii_pat(_VOLNA_PAT)
+_FILM_PAT_A = _ascii_pat(_FILM_PAT)
+_MISTO_PAT_A = _ascii_pat(_MISTO_PAT)
+_OSOBNOST_PAT_A = _ascii_pat(_OSOBNOST_PAT)
+_UDALOST_PAT_A = _ascii_pat(_UDALOST_PAT)
+_FACTUAL_SIGNAL_A = _ascii_pat(_FACTUAL_SIGNAL)
+_COREF_PAT_A = _ascii_pat(_COREF_PAT)
+_CONTINUATION_PAT_A = _ascii_pat(_CONTINUATION_PAT)
+
+
+def _any_match(pat, pat_a, msg, msg_a) -> bool:
+    """True když regex (nebo jeho deacc varianta) matchne."""
+    return bool(pat.search(msg) or pat_a.search(msg_a))
+
+
+def _sum_matches(pat, pat_a, msg, msg_a) -> int:
+    """Max findall shod (orig vs deacc). Ne součet — chráníme před 2×
+    započítáním téhož výskytu."""
+    return max(len(pat.findall(msg)), len(pat_a.findall(msg_a)))
+
 
 class HansIntent:
     """Hybrid intent klasifikátor pro grounding."""
@@ -179,17 +235,32 @@ class HansIntent:
 
     def _classify_keyword(self, msg: str) -> IntentResult:
         """Heuristická klasifikace. Vrátí intent + confidence."""
+        # G2_DEACCENT_V1 — matchuj i vstup BEZ diakritiky (Telegram/mobil).
+        msg_a = _deaccent(msg)
+
         # VOLNÁ má prioritu — pozdrav/emoce jsou silný signál i v otázce
         # ("ahoj, jak se máš?"). Ale jen když NENÍ zároveň faktický dotaz.
-        volna_hit = bool(_VOLNA_PAT.search(msg))
-        factual_signal = bool(_FACTUAL_SIGNAL.search(msg))
+        volna_hit = _any_match(_VOLNA_PAT, _VOLNA_PAT_A, msg, msg_a)
+        factual_signal = _any_match(_FACTUAL_SIGNAL, _FACTUAL_SIGNAL_A,
+                                    msg, msg_a)
 
-        # spočti shody faktických tříd
+        # G2_COREF_V1 — coreference booster: pronomenální reference +
+        # continuation slovo („o něm víc") = follow-up dotaz na PŘEDCHOZÍ
+        # obrat → faktický (rewriter F1 pak jméno doplní z historie).
+        coref = _any_match(_COREF_PAT, _COREF_PAT_A, msg, msg_a)
+        continuation = _any_match(_CONTINUATION_PAT, _CONTINUATION_PAT_A,
+                                  msg, msg_a)
+        if coref and continuation and not volna_hit:
+            factual_signal = True
+
+        # spočti shody faktických tříd (max orig vs deacc — ne součet)
         scores = {
-            "film": len(_FILM_PAT.findall(msg)),
-            "misto": len(_MISTO_PAT.findall(msg)),
-            "osobnost": len(_OSOBNOST_PAT.findall(msg)),
-            "udalost": len(_UDALOST_PAT.findall(msg)),
+            "film":     _sum_matches(_FILM_PAT, _FILM_PAT_A, msg, msg_a),
+            "misto":    _sum_matches(_MISTO_PAT, _MISTO_PAT_A, msg, msg_a),
+            "osobnost": _sum_matches(_OSOBNOST_PAT, _OSOBNOST_PAT_A,
+                                     msg, msg_a),
+            "udalost":  _sum_matches(_UDALOST_PAT, _UDALOST_PAT_A,
+                                     msg, msg_a),
         }
         best_class = max(scores, key=scores.get)
         best_score = scores[best_class]

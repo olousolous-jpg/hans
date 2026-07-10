@@ -181,14 +181,46 @@ def _strip_cjk(text: str) -> str:
     return t
 
 
+# HANS_ART_MEDIUM_VARIETY_V2 — rotující výtvarné médium/paleta proti jednotnému
+# „oil painting" nádechu (obrazy vypadaly jeden jak druhý). Nudge pro LLM +
+# fallback ocas. NEplatí pro home/mockup/portrét/explicitní styl (mají svůj look).
+_MEDIA = [
+    "oil painting, rich impasto texture, painterly brushwork",
+    "watercolor, soft luminous washes, delicate, airy",
+    "gouache, matte opaque color, bold flat shapes",
+    "ink illustration, fine cross-hatching, expressive linework",
+    "impressionist, loose visible brushstrokes, broken vibrant color",
+    "expressionist, bold emotional strokes, intense palette",
+    "charcoal drawing, soft tonal shading, textured paper, monochrome",
+    "soft pastel, chalky texture, muted harmonious palette",
+    "digital painting, crisp clean rendering, vivid color",
+    "acrylic, flat vivid color, confident strokes",
+    "tempera, fine layered detail, luminous color",
+    "art nouveau linework, decorative organic curves, elegant palette",
+]
+_last_medium = {"v": ""}
+
+
+def _pick_medium() -> str:
+    import random
+    pool = [m for m in _MEDIA if m != _last_medium["v"]] or _MEDIA
+    m = random.choice(pool)
+    _last_medium["v"] = m
+    return m
+
+
 def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
                   system: str = None, source_intro: str = None) -> str:
     """LLM (levný, keep_alive=0) → anglický SDXL scene prompt. Fallback šablona.
     HANS_ART_LESSON_V1: když db_path, vloží do promptu ponaučení z minulých obrazů.
     HANS_DREAMS_V1: system+source_intro lze přepsat (snová varianta místo knižní)."""
+    # HANS_ART_MEDIUM_VARIETY_V2 — vyber médium pro tuhle malbu (ne u fixních looků)
+    _novary = {globals().get(n) for n in (
+        "_HOME_SCENE_SYSTEM", "_STYLE_SCENE_SYSTEM", "_MOCKUP_SCENE_SYSTEM")}
+    medium = _pick_medium() if (system not in _novary) else ""
+    _tail = medium if medium else "oil painting, atmospheric lighting, rich detail, masterful"
     fallback = (f"a quiet evocative scene inspired by '{title}', "
-                "symbolic objects, soft window light, oil painting, "
-                "atmospheric lighting, rich detail, masterful")
+                "symbolic objects, soft window light, " + _tail)
     try:
         from scripts.ollama_client import ollama_generate
     except Exception:
@@ -202,6 +234,12 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
         user += ("LEARNED GUIDANCE from your past paintings (respect these — they "
                  "make the next piece better):\n- " + "\n- ".join(lessons) + "\n\n")
         _log.info("art: scene prompt zohledňuje %d ponaučení", len(lessons))
+    if medium:
+        user += ("MEDIUM: render this as %s (or another fine-art medium if it "
+                 "truly suits the subject better). END the SDXL prompt with the "
+                 "chosen medium's keywords — this OVERRIDES any default medium.\n"
+                 % medium)
+        _log.info("art: médium malby: %s", medium.split(",")[0])
     user += "Write the SDXL prompt. Reply in ENGLISH ONLY — no Chinese, Japanese or other non-English words."
     try:
         raw = ollama_generate(
@@ -236,12 +274,16 @@ def _caption(reflection: str, title: str) -> str:
 
 # ── HANS_ART_VERDICT_V1 — hodnocení obrazu (vize + persona + vyvíjející se vkus) ──
 _VISION_PROMPT = (
-    "You are looking at a finished oil painting. In 2-3 sentences describe what is "
-    "depicted (subject, setting, dominant colors, mood) and give a BALANCED, honest "
-    "assessment of the craft: say what works, AND point out a genuine weakness if "
-    "one is actually visible (e.g. a slightly awkward figure, hand or face, a muddy "
-    "area). Do not invent or exaggerate flaws, but do not gloss over a real one "
-    "either. Be accurate — neither flattering nor fault-hunting."
+    "You are looking at a finished painting. In 2-3 sentences describe ONLY what is "
+    "ACTUALLY visible (subject, setting, dominant colors, mood) and give a BALANCED, "
+    "honest assessment of the craft: say what works, AND point out a genuine weakness "
+    "if one is actually visible (e.g. a muddy area, weak composition, flat lighting). "
+    "CRITICAL: describe only what is truly there — if the image has NO people or "
+    "figures, do NOT mention any figures, faces, hands or posture at all, and do NOT "
+    "treat the absence of people as a weakness or suggest adding them (architecture, "
+    "landscapes and still lifes are meant to be unpopulated). Do not invent or "
+    "exaggerate flaws, but do not gloss over a real one either. Be accurate — neither "
+    "flattering nor fault-hunting."
 )
 
 
@@ -332,15 +374,18 @@ def _evaluate_artwork(config: dict, db_path: str, title: str,
             + "\n".join('- %s' % n for _t, n in past) + "\n\n")
     past_block = progress_block + antirepeat_block
     system = (core + "\n\n" if core else "") + (
-        "Právě jsi dokončil olejomalbu inspirovanou " + source_label + ". Níže máš NEZÁVISLÝ "
+        "Právě jsi dokončil obraz inspirovaný " + source_label + ". Níže máš NEZÁVISLÝ "
         "popis toho, co je na plátně vidět. Napiš 2-3 věty v první osobě: co jsi "
         "namaloval a jak hodnotíš výsledek. Buď UPŘÍMNÝ: když se obraz prostě "
         "povedl, klidně ho oceň bez výhrad — výtku přidej JEN když je v popisu "
         "vidět opravdový nedostatek. A pokaždé si všímej JINÉHO aspektu "
         "(kompozice, světlo, barvy, detail, nálada, perspektiva, textura), ne "
-        "pořád téhož. Nevymýšlej si vady ani nepřeháněj drobnosti. Pokud sis "
-        "z minula něco předsevzal, navaž na to a řekni, jestli ses posunul. "
-        "Žádné uvozovky, žádný nadpis.")
+        "pořád téhož. DŮLEŽITÉ: hodnoť POUZE to, co je v nezávislém popisu — pokud "
+        "na obraze nejsou lidé/postavy, VŮBEC nepiš o postavách, jejich držení těla "
+        "ani póze (nevymýšlej si je) a NEpovažuj nepřítomnost lidí za nedostatek "
+        "(architektura, krajina a zátiší mají být bez lidí). Nevymýšlej si vady ani nepřeháněj drobnosti. "
+        "Pokud sis z minula něco předsevzal a týká se to tohoto obrazu, navaž na to "
+        "a řekni, jestli ses posunul. Žádné uvozovky, žádný nadpis.")
     user = (past_block
             + "Kniha: %s\n" % title
             + "Tvá reflexe knihy: %s\n\n" % (reflection or "")[:400]
@@ -473,6 +518,16 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
     llava vize → warm hans-czech). vision_desc = llava popis renderu pro hodnocení
     (HANS_ART_VERDICT_V1), '' když vize selže. db_path → ponaučení z minulých
     obrazů (HANS_ART_LESSON_V1) ovlivní scénu i negativní prompt. Nikdy nehází."""
+    # OLLAMA_GAME_MODE_V1 — herní mód: ComfyUI render (SDXL ~7 GB do VRAM) je
+    # přímé HTTP mimo Ollama gate → gatuj ho tady, ať se za hry VRAM nezabere.
+    # None = deferral-safe (volající to bere jako „render odložen", retry později).
+    try:
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            _log.info("art: herní mód — render odložen (VRAM volná pro hru)")
+            return None
+    except Exception:
+        pass
     ckpt = _ckpt(config)
     if not ckpt:
         _log.warning("art: image_model nenastaven (hans_art/hans_avatar) — skip")
@@ -649,16 +704,354 @@ _SUBJECT_SCENE_SYSTEM = (
 )
 
 
-def paint_subject(config: dict, diary_db_path: str, subject: str):
+_HONORIFIC = re.compile(
+    r"^\s*(pan[íaou]?|pán[aeu]?|slečn[aou]|sir|mr|mrs|ms|dr)\s+", re.IGNORECASE)
+
+
+def _ground_via_wikipedia(config: dict, db_path: str, subject: str) -> str:
+    """HANS_ART_SUBJECT_GROUNDING_V2 — když námět není v Hansově čtení (C1 miss),
+    dohledej ho na Wikipedii a ROVNOU ulož do entity store (příště už zná; pomůže
+    i chatu). Vrací „Titul: definiční věta" nebo '' (nenalezeno/nevhodné)."""
+    low = (subject or "").strip().lower()
+    # jen konkrétní pojmenované věci — ne konverzační seed / dlouhé fráze /
+    # POPISNÉ SCÉNY (4+ slov = „klidná krajina s řekou za soumraku" NENÍ entita,
+    # jinak se resolvne na náhodného malíře krajin a pollutuje store).
+    if (not subject or len(subject) > 60 or len(subject.split()) > 3
+            or low.startswith(("náš rozhovor", "dojem", "nas rozhovor"))):
+        return ""
+    try:
+        from scripts.web_reader import WebReader
+        from scripts.hans_entities import EntityStore, _first_sentence
+        lang = (config.get("curiosity", {}) or {}).get("wiki_lang", "cs")
+        art = WebReader(config).wikipedia_article(subject, lang=lang,
+                                                  max_chars=1500)
+        if not art or not (art.get("text") or "").strip():
+            return ""
+        # ulož do entity store (čistý glos ze zdroje = anti-konfab)
+        try:
+            EntityStore(config, db_path).capture_from_reading(
+                art["title"], art["text"], url=art.get("url", ""),
+                lang=art.get("lang", lang))
+        except Exception:
+            pass
+        gloss = _first_sentence(art["text"])
+        # rozcestník („Bauhaus má více významů") = k ničemu → ber jako miss
+        if re.search(r"(m[aá] více význam|může (být|označovat|odkazovat)|"
+                     r"rozcestník|may refer to|several meanings)", gloss, re.I):
+            _log.debug("art: '%s' → rozcestník, přeskakuji", subject)
+            return ""
+        if gloss.strip():
+            _log.info("art: namet '%s' dohledan na Wikipedii → '%s' "
+                      "(ulozeno do entity store)", subject, art["title"])
+            return "%s: %s" % (art["title"], gloss.strip())
+    except Exception as e:
+        _log.debug("art: wiki grounding selhal: %s", e)
+    return ""
+
+
+def _ground_subject(config: dict, db_path: str, subject: str) -> str:
+    """HANS_ART_SUBJECT_GROUNDING_V1/V2 — zjisti, KOHO/CO malovat.
+    Kaskáda: (1) C1 entity store (Hansovo čtení) → (2) Wikipedia fallback
+    (a ulož do store). SDXL tak dostane informovaný popis místo holého jména
+    („pan Sorge" → „Erich Robert Sorge: německý církevní hudebník a skladatel").
+    Bez shody vrací syrový námět."""
+    s = (subject or "").strip()
+    if not s:
+        return s
+    s_clean = _HONORIFIC.sub("", s).strip() or s
+    try:
+        from scripts.hans_entities import EntityStore
+        es = EntityStore(config, db_path)
+        ent = es.resolve(s, loose=True) or es.resolve(s_clean, loose=True)
+        gloss = (ent.get("gloss") if ent else "") or ""
+        if gloss.strip():
+            name = ent.get("name", s_clean)
+            _log.info("art: namet '%s' ukotven na entitu '%s'", s, name)
+            return "%s: %s" % (name, gloss.strip())
+        # C1 miss → Wikipedia fallback (dohledej + ulož do store)
+        enriched = _ground_via_wikipedia(config, db_path, s_clean)
+        if enriched:
+            return enriched
+    except Exception as e:
+        _log.debug("art: grounding námětu selhal: %s", e)
+    return s
+
+
+def _style_from_study(config: dict, style: str) -> str:
+    """HANS_ART_STYLE_V4 — popis stylu z HANSOVÝCH studijních poznámek (RAG
+    hans_cetba/hans_identita — Hans studoval Design). Osobnější než Wikipedie.
+    Vrátí chunk (≤300 zn) jen když se styl v textu opravdu vyskytuje, jinak ''."""
+    try:
+        from scripts.hans_knowledge import HansKnowledge
+        from scripts.hans_entities import _norm
+        kn = HansKnowledge(config)
+        key = _norm(style)
+        first = (key.split() or [""])[0]
+        for col in ("hans_cetba", "hans_identita"):
+            try:
+                res = kn.query(col, style, 3, 0.8)
+            except Exception:
+                continue
+            for ch in (getattr(res, "chunks", None) or []):
+                t = (ch.get("text") or "").strip()
+                if t and first and first[:6] in _norm(t):
+                    _log.info("art: styl '%s' ukotven z Hansova studia (%s)",
+                              style, col)
+                    return t[:300]
+    except Exception as e:
+        _log.debug("art: style-from-study selhal: %s", e)
+    return ""
+
+
+def _ground_style(config: dict, db_path: str, style: str) -> str:
+    """HANS_ART_STYLE_V4 — ukotvi umělecký styl (umělec/směr). Kaskáda:
+    (1) C1 entity store → (2) Hansovy studijní poznámky (RAG) → (3) Wikipedia
+    (uloží do store). Vrací krátký český popis stylu, fallback syrový styl."""
+    s = (style or "").strip()
+    if not s:
+        return s
+    try:
+        from scripts.hans_entities import EntityStore
+        ent = EntityStore(config, db_path).resolve(s, loose=True)
+        if ent and (ent.get("gloss") or "").strip():
+            return "%s: %s" % (ent["name"], ent["gloss"].strip())
+    except Exception:
+        pass
+    note = _style_from_study(config, s)
+    if note:
+        return note
+    wiki = _ground_via_wikipedia(config, db_path, s)
+    if wiki:
+        return wiki
+    # rozcestník / nenalezeno → zkus stylové upřesnění (Bauhaus → škola/směr)
+    for hint in (" (výtvarná škola)", " umělecký směr", " umělecký sloh",
+                 " (umění)"):
+        wiki = _ground_via_wikipedia(config, db_path, s + hint)
+        if wiki:
+            return wiki
+    return s
+
+
+_STYLE_SCENE_SYSTEM = (
+    "You turn a short Czech description of a SUBJECT and an ART STYLE into ONE "
+    "concise English SDXL image prompt — an evocative artistic INTERPRETATION of "
+    "the subject RENDERED IN THAT STYLE. Output ONLY the prompt (no preamble, no "
+    "quotes). Reply in ENGLISH ONLY (no Chinese/Japanese). NO text, letters or "
+    "words in the image, NO watermark. END with strong English keywords of the "
+    "requested ART STYLE (movement/artist name + its visual traits), NOT a generic "
+    "tail."
+)
+
+
+# ── HANS_ART_PERSON_LIKENESS_V3 — podoba osoby (img2img z reálné fotky) ──────
+def _download_ref_image(url: str) -> Optional[str]:
+    """Stáhni obrázek na /tmp. Vrací cestu nebo None."""
+    try:
+        ext = os.path.splitext(url.split("?")[0])[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png"):
+            ext = ".jpg"
+        path = os.path.join("/tmp", "hans_ref_%d%s" % (int(time.time()), ext))
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "HansBot/1.0 (home assistant)"})
+        with urllib.request.urlopen(req, timeout=25) as r, open(path, "wb") as f:
+            f.write(r.read())
+        return path
+    except Exception as e:
+        _log.debug("art: download ref selhal: %s", e)
+        return None
+
+
+def _resolve_entity(config: dict, db_path: str, subject: str):
+    """Entity dict pro námět (name/etype/gloss/source/source_title) z C1 store;
+    když chybí, dohledá na Wikipedii (uloží) a resolvuje znovu. None = nic."""
+    s = (subject or "").strip()
+    if not s:
+        return None
+    s_clean = _HONORIFIC.sub("", s).strip() or s
+    try:
+        from scripts.hans_entities import EntityStore
+        es = EntityStore(config, db_path)
+        ent = es.resolve(s, loose=True) or es.resolve(s_clean, loose=True)
+        if ent:
+            return ent
+        if _ground_via_wikipedia(config, db_path, s_clean):
+            return es.resolve(s, loose=True) or es.resolve(s_clean, loose=True)
+    except Exception as e:
+        _log.debug("art: resolve entity selhal: %s", e)
+    return None
+
+
+def _fetch_person_ref(config: dict, ent: dict) -> Optional[str]:
+    """Stáhni portrét osoby z Wikipedie (dle source URL entity), zmenši pro SDXL.
+    Vrací lokální cestu nebo None (osoba bez obrázku → fallback na text)."""
+    title = ent.get("source_title") or ent.get("name") or ""
+    if not title:
+        return None
+    src = ent.get("source") or ""
+    m = re.search(r"https?://([a-z]{2})\.wikipedia", src)
+    lang = m.group(1) if m else (config.get("curiosity", {}) or {}).get(
+        "wiki_lang", "cs")
+    try:
+        from scripts.web_reader import WebReader
+        url = WebReader(config).wikipedia_image(title, lang=lang)
+        if not url:
+            return None
+        raw = _download_ref_image(url)
+        if not raw:
+            return None
+        tmp = _resize_to_temp(raw)
+        try:
+            os.remove(raw)
+        except Exception:
+            pass
+        return tmp
+    except Exception as e:
+        _log.debug("art: fetch person ref selhal: %s", e)
+        return None
+
+
+def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
+                            ref_path: str, style: str = "",
+                            person_name: str = "") -> Optional[tuple]:
+    """HANS_ART_PERSON_LIKENESS_V3 — přemaluj REÁLNÝ portrét osoby do Hansova
+    stylu (img2img, denoise ~0.5 → drží podobu). Vrací (rel_path, caption) nebo
+    None (→ volající spadne na text-grounded malbu). Nikdy nehází."""
+    try:
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            return None
+    except Exception:
+        pass
+    ckpt = _ckpt(config)
+    if not ckpt or not ref_path or not os.path.exists(ref_path):
+        return None
+    base = _comfy_url(config)
+    try:
+        urllib.request.urlopen(f"{base}/system_stats", timeout=10).read()
+    except Exception:
+        return None
+    img_name = _comfy_upload_image(base, ref_path)
+    try:
+        os.remove(ref_path)
+    except Exception:
+        pass
+    if not img_name:
+        return None
+
+    nm = person_name or subject
+    style_kw = (", in the style of %s" % style) if style else ""
+    prompt = ("expressive painterly portrait of %s%s, oil painting, artistic "
+              "brushwork, rich detail, atmospheric lighting, masterful" %
+              (nm, style_kw))
+    acfg = _acfg(config)
+    pcfg = (acfg.get("person_likeness", {}) or {})
+    dn = float(pcfg.get("denoise", 0.5))
+    steps = int(acfg.get("steps", 28)); cfg_s = float(acfg.get("cfg", 6.5))
+    seed = uuid.uuid4().int % (2**31)
+    client_id = uuid.uuid4().hex
+    os.makedirs(ART_DIR, exist_ok=True)
+    fname = "%d_%s_podoba.png" % (int(time.time()), _slug(subject))
+    dest = os.path.join(ART_DIR, fname)
+
+    loaded = _ollama_loaded(config)
+    _ollama_unload(config, loaded)
+    rtimeout = int(acfg.get("render_timeout", 600))
+    ok = False
+    vision_desc = ""
+    try:
+        wf = _comfy_workflow_img2img(ckpt, prompt, seed, img_name, dn, steps,
+                                     cfg_s)
+        _log.info("art: podoba osoby img2img start (%s, denoise %.2f)", nm, dn)
+        pid = _comfy_submit(base, wf, client_id)
+        if pid:
+            hist = _comfy_wait(base, pid, timeout=rtimeout)
+            img = _first_image(hist) if hist else None
+            if img and _comfy_fetch_image(base, img, dest):
+                ok = True
+    except Exception as e:
+        _log.warning("art: podoba img2img selhal: %s", e)
+    finally:
+        _comfy_free(config)
+        if ok:
+            vision_desc = _describe_render(config, dest)
+        _ollama_warm(config,
+                     config.get("models", {}).get("dialog", "hans-czech:latest"))
+    if not ok:
+        return None
+    rel_path = os.path.join("data", "hans_art", fname)
+    title = subject[:80] if not style else ("%s (styl: %s)" % (subject, style))[:80]
+    caption = _evaluate_artwork(config, diary_db_path, title, subject,
+                                vision_desc,
+                                source_label="podle skutečné podoby osoby")
+    _derive_art_lesson(config, diary_db_path, title, vision_desc, caption)
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        db.execute(
+            "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
+            (time.time(), "artwork", title, caption,
+             json.dumps({"path": rel_path, "prompt": prompt, "source": "person",
+                         "denoise": dn, "painted_ts": time.time()},
+                        ensure_ascii=False)))
+        db.commit()
+        db.close()
+    except Exception as e:
+        _log.warning("art: log person artwork failed: %s", e)
+    _log.info("art: Hans namaloval podobu osoby '%s' → %s", nm, rel_path)
+    return rel_path, caption
+
+
+def paint_subject(config: dict, diary_db_path: str, subject: str,
+                  style: str = ""):
     """Hans namaluje obraz na LIBOVOLNÉ téma / dojem (např. z rozhovoru).
+    style: volitelný umělecký styl („Salvador Dalí", „Bauhaus", „gotika") —
+    grounduje se a vloží do promptu místo pevného ocasu (HANS_ART_STYLE_V4).
     Loguje do galerie jako source='subject'. Vrací (rel_path, caption) nebo None.
     Nikdy nehází. VRAM orchestrace uvnitř _render_image."""
     subject = (subject or "").strip()
     if not subject:
         return None
+    style = (style or "").strip()
     title = subject[:80]
-    res = _render_image(config, title, subject, diary_db_path,
-                        scene_system=_SUBJECT_SCENE_SYSTEM, scene_intro="")
+    if style:
+        title = ("%s (styl: %s)" % (subject, style))[:80]
+    # HANS_ART_PERSON_LIKENESS_V3 — je-li námět OSOBA, nejdřív zkus img2img
+    # z reálného portrétu (drží podobu). Miss / bez fotky → text-grounded malba.
+    if (_acfg(config).get("person_likeness", {}) or {}).get("enabled", True):
+        try:
+            _ent = _resolve_entity(config, diary_db_path, subject)
+            if _ent and _ent.get("etype") == "osoba":
+                _ref = _fetch_person_ref(config, _ent)
+                if _ref:
+                    _r = paint_person_from_photo(
+                        config, diary_db_path, subject, _ref, style,
+                        person_name=_ent.get("name", subject))
+                    if _r:
+                        return _r
+                    _log.info("art: podoba osoby nevyšla → text-grounded malba")
+        except Exception as _pe:
+            _log.debug("art: person-likeness cesta selhala: %s", _pe)
+    # HANS_ART_SUBJECT_GROUNDING_V1 — ukotvi námět (kdo/co to je) PŘED renderem
+    grounded = _ground_subject(config, diary_db_path, subject)
+    # scene_intro musí NÉST námět — dřív bylo "" → LLM dostal prázdný prompt
+    # a maloval naslepo (např. „pan Sorge" → generický stařec).
+    if style:
+        # HANS_ART_STYLE_V4 — ukotvi i STYL (stejná kaskáda: entity/RAG/Wiki)
+        style_desc = _ground_style(config, diary_db_path, style)
+        scene_intro = (
+            "Subject/theme to depict (described in Czech):\n%s\n\n"
+            "Render it IN THIS ART STYLE (described in Czech):\n%s\n\n"
+            "Create ONE English SDXL prompt of the subject rendered in that "
+            "style; weave the style into composition, forms and palette, and "
+            "end with strong English style keywords.\n\n" % (grounded, style_desc))
+        _scene_sys = _STYLE_SCENE_SYSTEM
+    else:
+        scene_intro = (
+            "Subject/theme to depict (described in Czech):\n%s\n\n"
+            "Create ONE evocative artistic English SDXL prompt of THIS subject "
+            "(fitting the person/thing described).\n\n" % grounded)
+        _scene_sys = _SUBJECT_SCENE_SYSTEM
+    res = _render_image(config, title, grounded, diary_db_path,
+                        scene_system=_scene_sys, scene_intro=scene_intro)
     if not res:
         _log.warning('art: obraz na téma „%s" se nevyrenderoval', title)
         return None
@@ -841,6 +1234,13 @@ def paint_home_from_photo(config: dict, diary_db_path: str,
     """Přemaluj REÁLNOU fotku Hansova pohledu na pokoj do uměleckého stylu (img2img,
     nízký denoise → kompozice zůstane z fotky). Nejvěrnější varianta. Loguje do
     galerie jako 'home_photo'. Vrací (rel_path, caption) nebo None. Nikdy nehází."""
+    try:  # OLLAMA_GAME_MODE_V1 — nezabírat VRAM za hry
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            _log.info("art: herní mód — img2img render odložen")
+            return None
+    except Exception:
+        pass
     ckpt = _ckpt(config)
     if not ckpt:
         _log.warning("art: image_model nenastaven — skip")

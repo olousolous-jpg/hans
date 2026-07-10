@@ -73,9 +73,13 @@ class ReassignBody(BaseModel):
 @router.get("/api")
 def list_questions(status: str = "pending",
                    target: str = "all",
+                   channel: str = "all",
                    limit: int = 200):
+    # HANS_QUESTIONS_ROUTING_V1 — channel filtr, aby web mohl ukázat
+    # jen otázky ve stage 'web' (přišlé přes eskalátor z Telegramu).
     store = _require_store()
-    qs = store.list_questions(status=status, target=target, limit=limit)
+    qs = store.list_questions(status=status, target=target,
+                              channel=channel, limit=limit)
     return {
         "questions": [q.to_dict() for q in qs],
         "stats": store.stats(),

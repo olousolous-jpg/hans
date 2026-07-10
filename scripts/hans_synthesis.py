@@ -277,6 +277,17 @@ class HansSynthesis:
     def _call_llm(
         self, system_prompt: str, user_msg: str, max_tokens: int
     ) -> Optional[str]:
+        # GAME_MODE_SYNTHESIS_GATE_V1 — v herním módu NEVOLAT model. Synthesis
+        # jde přímo na OpenWebUI (mimo ollama_client gate) → nahrálo by hans-czech
+        # (~10.8 GB) do VRAM a shodilo hru. Raise LLMOffline → PENDING_THOUGHTS
+        # to odloží a doplní po hře (stejná cesta jako reálný výpadek).
+        try:
+            from scripts.ollama_client import game_mode_on
+            _gm = game_mode_on()
+        except Exception:
+            _gm = False
+        if _gm:
+            raise LLMOffline("game mode — VRAM vyhrazena hře")
         url = f"{self._base_url}/api/chat/completions"
         headers = {
             "Authorization": f"Bearer {self._token}",

@@ -153,6 +153,7 @@ class HansRoutine:
         self._last_writing_date = ""     # HANS_AUTHORSHIP_V1 (1 autorská session/noc)
         self._last_synthesis_date = ""   # HANS_SYNTHESIS_IDEAS_V1 (vlastní nápady, kadence)
         self._last_selfcritique_date = ""  # HANS_SELFCRITIQUE_V1 (sebekritika, kadence)
+        self._last_immune_date = ""      # HANS_IMMUNE_A2_V1 (noční fact-check tvrzení)
         self._last_hygiene_date = ""     # HANS_MEMORY_HYGIENE_V1 (prořez firehose 1×/noc)
         self._identity = None            # HANS_IDENTITY_V1 (verzování CORE)
         self._severka = None             # HANS_SEVERKA_V1 (decision engine)
@@ -229,6 +230,16 @@ class HansRoutine:
         self._sleep_check_interval = float(cfg.get('sleep_check_interval_s',
                                                    config.get('sleep_check_interval_s', 30)))
         threading.Thread(target=self._sleep_watcher_loop, daemon=True).start()
+        # NIGHT_WORKER_THREAD_V1 — noční LLM analytika (evening reflection,
+        # study, synteze, sebekritika, imunita, narativ…) běží ve VLASTNÍM
+        # vlákně, NE inline v tick(). Zaseklá Ollama tak už neblokuje tick()
+        # ani volajícího (hans_idle: proaktivita/film/autoplay/pozornost).
+        # Non-blocking guard: visí-li předchozí běh, další cyklus se přeskočí.
+        self._night_lock = threading.Lock()
+        self._state_lock = threading.Lock()   # ochrana zápisu routine_state
+        self._night_check_interval = float(cfg.get('night_check_interval_s',
+                                                   config.get('night_check_interval_s', 60)))
+        threading.Thread(target=self._night_worker_loop, daemon=True).start()
         # HANS_DISTILLATION_V1 — fáze 2a noční destilace záseku
         self._distillation = None
         self._distillation_running = False   # idempotence — jednou denně
@@ -483,6 +494,7 @@ class HansRoutine:
             self._last_writing_date = s.get("last_writing_date", "")  # HANS_AUTHORSHIP_V1
             self._last_synthesis_date = s.get("last_synthesis_date", "")  # HANS_SYNTHESIS_IDEAS_V1
             self._last_selfcritique_date = s.get("last_selfcritique_date", "")  # HANS_SELFCRITIQUE_V1
+            self._last_immune_date = s.get("last_immune_date", "")  # HANS_IMMUNE_A2_V1
             self._last_hygiene_date = s.get("last_hygiene_date", "")  # HANS_MEMORY_HYGIENE_V1
         except FileNotFoundError:
             pass
@@ -491,6 +503,11 @@ class HansRoutine:
 
     def _save_routine_state(self):
         # ROUTINE_STATE_PERSIST_V1 - zapis guardy reflexi (prezije restart).
+        # NIGHT_WORKER_THREAD_V1 — zámek proti souběhu (night worker × sleep
+        # watcher × tick zapisují tentýž JSON → jinak riziko poškození).
+        _sl = getattr(self, '_state_lock', None)
+        if _sl is not None:
+            _sl.acquire()
         try:
             with open(self._state_path, "w", encoding="utf-8") as f:
                 json.dump({
@@ -504,10 +521,17 @@ class HansRoutine:
                     "last_writing_date": self._last_writing_date,  # HANS_AUTHORSHIP_V1
                     "last_synthesis_date": self._last_synthesis_date,  # HANS_SYNTHESIS_IDEAS_V1
                     "last_selfcritique_date": self._last_selfcritique_date,  # HANS_SELFCRITIQUE_V1
+                    "last_immune_date": self._last_immune_date,  # HANS_IMMUNE_A2_V1
                     "last_hygiene_date": self._last_hygiene_date,  # HANS_MEMORY_HYGIENE_V1
                 }, f)
         except Exception as _e:
             _log.warning("routine_state: zapis selhal: %s", _e)
+        finally:
+            if _sl is not None:
+                try:
+                    _sl.release()
+                except Exception:
+                    pass
 
     # ── HANS_SEVERKA_V1 (3c) — týdenní sebereflexe identity ──────────────────
     def _severka_due(self, today: str) -> bool:
@@ -522,10 +546,15 @@ class HansRoutine:
         except Exception:
             return True
 
-    def _run_severka_check(self, today: str):
+    def _run_severka_check(self, today: str) -> bool:
         """Severčino rozhodnutí. Při návrhu vznikne pending verze (nic se
-        neaplikuje) — uživatel ji uvidí přes /severka stav a schválí/zamítne."""
+        neaplikuje) — uživatel ji uvidí přes /severka stav a schválí/zamítne.
+        NIGHT_DEFERRAL_SAFE_V1 — vrací True když ODLOŽENO (LLM dole) → volající
+        NEnastaví týdenní guard a zkusí znovu příští noc."""
         res = self._severka.evaluate()
+        if res.get("deferred"):
+            _log.info("Severka: odloženo (Ollama dole) → zkusím znovu příští noc.")
+            return True
         d = res.get("decision")
         if d == "propose":
             _log.info("Severka: NÁVRH změny identity, čeká na schválení "
@@ -543,6 +572,7 @@ class HansRoutine:
             _log.info("Severka: gate prošel, drift malý → držím roli.")
         else:
             _log.info("Severka: žádná trvalá tendence (gate) → držím roli.")
+        return False   # NIGHT_DEFERRAL_SAFE_V1 — proběhlo, guard se má nastavit
 
     # ── AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3) — týdenní narativní kapitola ───
     def _narrative_due(self, today: str) -> bool:
@@ -1019,7 +1049,35 @@ class HansRoutine:
             old = self._current_phase
             self._current_phase = new_phase
             self._on_phase_change(old, new_phase)
+        # NIGHT_WORKER_THREAD_V1 — noční LLM analytika se sem UŽ NEVOLÁ; běží
+        # ve vlastním vlákně (_night_worker_loop). Zaseklá Ollama tak
+        # neblokuje tento tick ani volajícího (proaktivita/film/autoplay).
 
+    def _night_worker_loop(self):
+        """NIGHT_WORKER_THREAD_V1 — periodicky spouští noční analytiku NEZÁVISLE
+        na tick(). Non-blocking guard: visí-li předchozí běh (zaseklá Ollama),
+        tento cyklus se přeskočí (žádné hromadění vláken)."""
+        while not self._stop.is_set():
+            if self._stop.wait(self._night_check_interval):
+                break
+            if not self._enabled:
+                continue
+            if not self._night_lock.acquire(blocking=False):
+                continue  # předchozí běh ještě neskončil → přeskoč
+            try:
+                self._run_night_tasks()
+            except Exception as _e:
+                _log.warning('night worker: %s', _e)
+            finally:
+                try:
+                    self._night_lock.release()
+                except Exception:
+                    pass
+
+    def _run_night_tasks(self):
+        """NIGHT_WORKER_THREAD_V1 — všechny noční LLM/analytické úlohy (dříve
+        inline v tick()). Každá je idempotentní (date guard) + deferral-safe,
+        takže opakované volání z workeru je bezpečné."""
         # Noční aktivity (jednou za noc)
         today = datetime.now().strftime("%Y-%m-%d")
         if self.is_night:
@@ -1122,11 +1180,14 @@ class HansRoutine:
 
             # HANS_SEVERKA_V1 (3c) — týdenní check identity. Gate uvnitř
             # evaluate() drží, že navrhne jen při trvalé tendenci.
+            # NIGHT_DEFERRAL_SAFE_V1 — guard NASTAV AŽ po ne-odloženém běhu
+            # (dřív set-before → výpadek Ollamy zahodil check na CELÝ TÝDEN).
             if self._severka is not None and self._severka_due(today):
-                self._last_severka_check = today
-                self._save_routine_state()
                 try:
-                    self._run_severka_check(today)
+                    _sv_deferred = self._run_severka_check(today)
+                    if not _sv_deferred:
+                        self._last_severka_check = today
+                        self._save_routine_state()
                 except Exception as _se:
                     _log.error("Severka check selhal: %s", _se)
                 # AVATAR_DESCRIPTOR_V1 — vzhled se posune s identitou (za Severkou,
@@ -1148,24 +1209,30 @@ class HansRoutine:
 
             # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3) — týdenní narativní kapitola
             # (samostatná kadence, nezávislá na Severce). Base LLM, deferral-safe.
+            # NIGHT_DEFERRAL_SAFE_V1 — guard NASTAV AŽ po úspěšném consolidate
+            # (dřív set-before → výpadek Ollamy zahodil kapitolu na CELÝ TÝDEN).
             if self._narrative_due(today):
-                self._last_narrative = today
-                self._save_routine_state()
                 try:
                     from scripts.hans_narrative import consolidate
                     _chap = consolidate(self.config, self._diary_path)
-                    # NARRATIVE_RAG_UPLOAD_V1 — kapitola do RAG (identita)
-                    if _chap and self._knowledge is not None:
-                        try:
-                            self._knowledge.upload(
-                                "hans_identita",
-                                "narrative_%d" % int(time.time()),
-                                "Kapitola životního příběhu (%s)" % today,
-                                _chap,
-                                metadata={"kdy": today,
-                                          "typ": "narrative_chapter"})
-                        except Exception as _ue:
-                            _log.debug("narrative RAG upload: %s", _ue)
+                    if _chap:
+                        self._last_narrative = today
+                        self._save_routine_state()
+                        # NARRATIVE_RAG_UPLOAD_V1 — kapitola do RAG (identita)
+                        if self._knowledge is not None:
+                            try:
+                                self._knowledge.upload(
+                                    "hans_identita",
+                                    "narrative_%d" % int(time.time()),
+                                    "Kapitola životního příběhu (%s)" % today,
+                                    _chap,
+                                    metadata={"kdy": today,
+                                              "typ": "narrative_chapter"})
+                            except Exception as _ue:
+                                _log.debug("narrative RAG upload: %s", _ue)
+                    else:
+                        _log.info("narrativní kapitola: odložena "
+                                  "(Ollama nedostupná, zkusím znovu)")
                 except Exception as _ne:
                     _log.warning("narrative konsolidace selhala: %s", _ne)
 
@@ -1264,6 +1331,28 @@ class HansRoutine:
                 except Exception as _cue:
                     _log.warning("Sebekritika selhala: %s", _cue)
 
+            # HANS_IMMUNE_A2_V1 — imunitní systém: noční fact-check Hansových
+            # VLASTNÍCH tvrzení („X je/byl Y") proti entity store (verbatim
+            # glosy z jeho čtení). Rozpor → lesson_learned (surfacuje se
+            # v chatu i Koláčově dialogu existujícím wiringem). NEMAŽE záznamy.
+            # Lehké LLM (base, num_predict 8, max 6 volání), kadence
+            # `immune.cadence_days` (default 1). Deferral-safe: 'deferred'
+            # (LLM dole) → guard se NEnastaví → retry příští tick.
+            if (not _creative_busy
+                    and self._immune_due(today)
+                    and self._in_night_window()
+                    and self._chat_quiet_ok()):
+                _creative_busy = True
+                try:
+                    from scripts.hans_immune import run_immune_check
+                    _icode = run_immune_check(self.config, self._diary_path)
+                    if _icode != "deferred":
+                        self._last_immune_date = today
+                        self._save_routine_state()
+                    _log.info("Imunitní kontrola: %s", _icode)
+                except Exception as _iue:
+                    _log.warning("Imunitní kontrola selhala: %s", _iue)
+
             # HANS_DASHBOARD_PROPOSAL_V1 (Tier 1) — JEDNORÁZOVĚ po dostudování
             # Designu: Hans napíše designovou kritiku + návrh vlastní nástěnky
             # (grounding = fakta z šablony + jeho studijní poznámky) + SDXL
@@ -1348,6 +1437,20 @@ class HansRoutine:
             return True
         try:
             cad = int(self.config.get("synthesis", {}).get("cadence_days", 3))
+            d0 = datetime.strptime(last, "%Y-%m-%d").date()
+            d1 = datetime.strptime(today, "%Y-%m-%d").date()
+            return (d1 - d0).days >= cad
+        except Exception:
+            return True
+
+    def _immune_due(self, today: str) -> bool:
+        """HANS_IMMUNE_A2_V1 — kadenční guard: imunitní kontrola po
+        `immune.cadence_days` (default 1). Prázdný guard = due."""
+        last = self._last_immune_date
+        if not last:
+            return True
+        try:
+            cad = int(self.config.get("immune", {}).get("cadence_days", 1))
             d0 = datetime.strptime(last, "%Y-%m-%d").date()
             d1 = datetime.strptime(today, "%Y-%m-%d").date()
             return (d1 - d0).days >= cad

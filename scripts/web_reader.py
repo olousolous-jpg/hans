@@ -134,12 +134,17 @@ class WebReader:
         if not art or not (art.get("text") or "").strip():
             return None
         text = art["text"]
+        # HANS_READING_GROUNDING_V1 — poznámka nejdřív UKOTVÍ, kdo/co téma je
+        # (z úvodu článku), pak teprve detail. Bez identity-kotvy zůstal v RAG
+        # jen náhodný detail → na pozdější „co je X?“ Hans konfabuloval (fantom
+        # „AJ II × protein“). Předáváme VYŘEŠENÝ titul článku, ne surový dotaz.
         summary = self._summarize(
             text  = text,
-            query = query,
-            style = ("Napiš 1-2 věty o tom, co tě z článku NEJVÍC zaujalo — "
-                     "klidně konkrétní detail z hloubky textu, ne jen obecný "
-                     "úvod. Jako bys sis dělal poznámku."),
+            query = art["title"],
+            style = ("Nejdřív JEDNOU větou stručně uveď, KDO nebo CO to je "
+                     "(podle úvodu článku, např. „… je/byl …“). Pak JEDNOU "
+                     "větou napiš, co tě z článku nejvíc zaujalo. Drž se faktů "
+                     "z textu, nic si nepřidávej."),
             max_text = max_chars,
         )
         return ReadResult(
@@ -193,6 +198,31 @@ class WebReader:
             "text": extract[:max_chars],
             "lang": lang,
         }
+
+    def wikipedia_image(self, page_title: str, lang: str = "cs") -> Optional[str]:
+        """HANS_ART_PERSON_LIKENESS_V3 — URL hlavního obrázku článku (lead image
+        = obvykle portrét osoby). Original, fallback thumbnail 1024. None když
+        článek obrázek nemá."""
+        api = f"https://{lang}.wikipedia.org/w/api.php"
+        for piprop, extra in (("original", {}),
+                              ("thumbnail", {"pithumbsize": 1024})):
+            try:
+                params = {"action": "query", "titles": page_title,
+                          "prop": "pageimages", "piprop": piprop,
+                          "redirects": 1, "format": "json",
+                          "formatversion": 2}
+                params.update(extra)
+                r = self._sess.get(api, params=params, timeout=self._timeout)
+                pages = r.json().get("query", {}).get("pages", [])
+                if pages and isinstance(pages, list):
+                    node = pages[0].get(piprop) or {}
+                    src = node.get("source")
+                    if src:
+                        return src
+            except Exception as e:
+                _log.debug("wikipedia_image error (%s/%s): %s",
+                           page_title, piprop, e)
+        return None
 
     def wikipedia_lead_links(self, page_title: str, lang: str = "cs",
                              limit: int = 6) -> list[str]:

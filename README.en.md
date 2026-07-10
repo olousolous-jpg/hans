@@ -98,6 +98,33 @@ has an exam") and follows up on their next visit ("how did it go?"). Threads als
 - Episodic **diary**, semantic **RAG** collections (`bge-m3`), **importance
   scoring**, **autobiographical** narrative consolidation. (see Cognitive foundations)
 
+### Truthfulness — two registers of the mind (against confabulation)
+A generative model likes to "fill in" facts. The fix isn't to patch the
+generator, but to **split the mind into two registers**: the **factual** one (who
+is who, what happened, what he read) is grounded and **abstains by default** — it
+answers from data or admits "no record"; the **imaginative** one (dreams,
+paintings, musings) is free to invent. Trouble only arises when imagination
+_claims_ facts — and that's prevented by layers that work through **routing, not
+prompts**:
+- **Deterministic short-circuits** — lookup-able internal queries ("your earliest
+  memory") never reach the model; answered straight from the database. (`hans_recall`)
+- **RAG-first + abstinence** — facts go to retrieval first; weak/no match → "I have
+  no reliable record" (the persona is never asked to invent a fact).
+- **Semantic self-consistency** — a risky factual query is generated several times;
+  if answers diverge → confabulation → abstain. (`hans_selfconsistency`)
+- **Entity store** — typed entities from Hans's reading (verbatim definitions) →
+  names resolve deterministically (handles namesakes and phantoms). (`hans_entities`)
+- **Query rewriter** — the persona hears you raw, but retrieval reads a cleaned,
+  explicit query (resolves even "who is _he_?"). (`hans_rewriter`)
+- **Immune system + contradiction detection** — a nightly fact-check of his own
+  claims against the entity store + a contradiction check at write time.
+  (`hans_immune`, `hans_contradiction`)
+- **Provenance** — every piece of knowledge carries its **source** (experienced /
+  was told / read / inferred / imagined / created); Hans tells memory from
+  imagination and speaks with calibration (source monitoring). (`hans_provenance`)
+- **Opinion grounding** — for philosophy/opinions he should instead take his **own
+  pointed stance** (the imaginative register), not generic both-sidesism. (`hans_opinion`)
+
 ### Opinions and identity
 - **Stances** (dialectical), **tendencies** (derived deterministically from
   stances), **Severka** (identity evolution with versioning), **hobbies**
@@ -110,6 +137,16 @@ has an exam") and follows up on their next visit ("how did it go?"). Threads als
   timing for proactivity.
 - **Action on existing levers** — proactively suggests a film on Kodi (dialog with
   a countdown), smarter Wake-on-LAN (wakes the PC when you come home).
+
+### Agent layer (contextual actions from conversation)
+Hans doesn't stop at text — from the conversation he **infers an action** and
+**offers it with confirmation** ("Shall I play _Die Hard_? [yes/no]"), then carries
+it out once approved. One unifying layer: an **action whitelist** (nothing outside
+it), **always confirm** (human-in-the-loop), **argument grounding** (a film only
+from the library), a confidence threshold, cooldown and anti-echo against nagging.
+The router runs on the resident chat model (no added latency in normal chat thanks
+to a pre-filter). V1 actions: play a film, put himself to sleep, add a book to the
+reading list — extending it (e.g. smart lights) is one more adapter. (`hans_agent`)
 
 ### Relationships
 - **Relationship cards** per person (characterization, last seen), per-person

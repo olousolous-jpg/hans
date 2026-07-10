@@ -58,6 +58,16 @@ ANTIKONFAB_NOFACTS = (
     "SPRÁVNĚ: \"Monitoroval jsem počasí, pane.\""
 )
 
+# HANS_SELFCONSISTENCY_A1_V1 — sentinel: grounding nebyl předpočítán volajícím
+_GROUNDING_UNSET = object()
+
+# HANS_SELFCONSISTENCY_A1_V1 — deterministická abstinence u nestabilního
+# faktického dotazu (short-circuit místo volné generace persony).
+A1_ABSTAIN_TEXT = (
+    "K tomuhle nemám spolehlivý záznam a nerad bych si domýšlel, pane. "
+    "Raději přiznám, že si tím nejsem jistý, než abych řekl něco vymyšleného."
+)
+
 
 # TIME_AWARENESS_WORDS_V1 — český slovní čas (0–59) pro slabý model
 _CZ_ONES = ('nula','jedna','dvě','tři','čtyři','pět','šest','sedm','osm',
@@ -418,6 +428,13 @@ class OpenWebUIDirectHandler:
     _GROUNDING_MAX_DISTANCE = 0.75   # G3B_THRESHOLD_V1 — kalibrováno z dat (bylo 0.70, moc přísné)
     _GROUNDING_TIMEOUT_S = 2         # grounding nikdy nebrzdí odpověď
     _GROUNDING_K = 3
+    # HANS_RAGFIRST_STRICT_V1 (#2 finalizace) — STRICT práh na TOP shodu.
+    # bge-m3 relevantní ~0.64-0.69, šum se překrývá; MAX_DISTANCE 0.75 je
+    # jen chromadb filter (chunky nad tím jsou zahozeny). Chunky mezi
+    # 0.70-0.75 jsou borderline: prošly, ale nejsou opravdu ukotvené →
+    # bez autoritativního zdroje (entity store / vztahová karta) je
+    # neber jako grounding, radši abstinuj (RAG-first princip #2).
+    _GROUNDING_STRICT_MAX = 0.70
 
     # G5A_IDENTITY_GROUNDING_V3 — vztahová karta z DB jako tvrdý fakt
     # G5A_NAME_FORMS_V1 — tvary jmen pro detekci osoby v dotazu (české pády vč.
@@ -505,20 +522,75 @@ class OpenWebUIDirectHandler:
         if not _text or not str(_text).strip():
             return ''
 
+        # HANS_SELFCONSISTENCY_A1_V1 — zaznamenej výsledek groundingu pro
+        # volajícího (A1 short-circuit běží jen u 'factual_nofacts').
+        self._grounding_outcome = 'skip'
         _intent = getattr(self, 'intent', None)
         _knowledge = getattr(self, 'knowledge', None)
         if _intent is None or _knowledge is None:
             return ''   # nezapojeno → tiše nic
 
+        # HANS_OPINION_GROUNDING_G1_V1 — názorový/filosofický dotaz NENÍ
+        # faktický: patří do imaginativního registru (postoje, ne RAG/A1).
+        # Musí PŘED intent klasifikací — „co si myslíš o X?" intent chybně
+        # řadí jako faktické (otázkový signál) → bez tohohle by filosofii
+        # hrozil ANTIKONFAB_NOFACTS + A1 abstinence.
+        try:
+            from scripts.hans_opinion import is_opinion_query as _ioq
+            if _ioq(str(_text)):
+                self._grounding_outcome = 'opinion'
+                return ''
+        except Exception:
+            pass
+
         try:
             # 1) intent — je dotaz faktický?
             res = _intent.classify(str(_text))
             if not res.is_factual:
+                self._grounding_outcome = 'nonfactual'
                 return ''   # volná konverzace → osobnost, žádný retrieval
+
+            # ── HANS_QUERY_REWRITER_F1_V1 ────────────────────────────────
+            # Rewriter „člověk→počítač" na FAKTICKÉ CESTĚ: rozřeš odkazy,
+            # oprav překlepy, strhni výplňky → vyčištěný explicitní dotaz
+            # pro retrieval. Persona (chat generace) DÁL slyší raw text
+            # výše ve volajícím — bytost, ne asistent. Deferral-safe: None
+            # → drž se originálu (žádná změna chování).
+            _q_for_retrieval = str(_text)
+            try:
+                from scripts.hans_rewriter import (
+                    rewrite_for_retrieval as _f1_rewrite,
+                    is_enabled as _f1_on)
+                if _f1_on(self.config):
+                    _hist = []
+                    if name:
+                        try:
+                            _hist = self.conv_store.get_history(name) or []
+                        except Exception:
+                            _hist = []
+                    _rw = _f1_rewrite(self.config, str(_text),
+                                      history=_hist, name=name)
+                    if _rw and _rw.strip() and _rw.strip() != str(_text).strip():
+                        logging.getLogger(__name__).info(
+                            'F1: rewrite %r -> %r',
+                            str(_text)[:60], _rw[:60])
+                        _q_for_retrieval = _rw.strip()
+            except Exception as _f1e:
+                logging.getLogger(__name__).debug(
+                    'F1: rewriter selhal (%s) — použit originál', _f1e)
+
+            # C1: entity store — deterministické resolvování ZNÁMÉ entity
+            # (z Hansova čtení) PŘED RAG. Autoritativní fakt (definiční věta
+            # ze zdroje) → zabíjí kolizi jmen i konfabulaci významu.
+            _ent_fact = self._entity_fact(_q_for_retrieval)
 
             # 2) vyber kolekce dle třídy (G3B_MULTICOLLECTION_V1 — list)
             collections = self._GROUNDING_COLLECTION.get(res.intent)
             if not collections:
+                # C1: i bez RAG kolekce máme-li entitu, vrať ji jako fakt
+                if _ent_fact:
+                    self._grounding_outcome = 'grounded'
+                    return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
                 return ''
 
             # 3) query VŠECHNY kolekce PARALELNĚ (fakta roztroušená).
@@ -530,7 +602,8 @@ class OpenWebUIDirectHandler:
                 with _cf.ThreadPoolExecutor(
                         max_workers=len(collections)) as _ex:
                     _futs = {
-                        _ex.submit(_knowledge.query, _c, str(_text),
+                        _ex.submit(_knowledge.query, _c,
+                                   _q_for_retrieval,
                                    self._GROUNDING_K,
                                    self._GROUNDING_MAX_DISTANCE): _c
                         for _c in collections
@@ -561,9 +634,18 @@ class OpenWebUIDirectHandler:
             #    (bez faktů). Faktický dotaz bez záznamů → Hans NESMÍ
             #    konfabulovat. Web ověření přijde post-hoc (G.5).
             if not all_chunks:
+                # C1: RAG prázdné, ale entita ve store → autoritativní fakt
+                # (Sorge není v RAG, ale Hans o něm četl → deterministický fakt).
+                if _ent_fact:
+                    logging.getLogger(__name__).info(
+                        'C1: RAG prázdné, entita ze store → grounded pro %r',
+                        str(_text)[:40])
+                    self._grounding_outcome = 'grounded'
+                    return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
                 logging.getLogger(__name__).info(
                     'G3B: žádná shoda pod prahem pro [%s] %r → anti-konfab bez fakt (G3C)',
                     res.intent, str(_text)[:40])
+                self._grounding_outcome = 'factual_nofacts'
                 return '\n\n' + ANTIKONFAB_NOFACTS
 
             # 5) seřaď VŠECHNY chunky napříč kolekcemi dle distance,
@@ -574,29 +656,120 @@ class OpenWebUIDirectHandler:
                                c.get('distance') if c.get('distance')
                                is not None else 9e9))
             top = all_chunks[:self._GROUNDING_K]
-            facts = '\n\n'.join(c['text'] for c in top if c.get('text'))
+            _best_dist = top[0].get('distance') if top else None
+
+            # HANS_RAGFIRST_STRICT_V1 (#2) — přísný TOP práh.
+            # Když nejlepší chunk je NAD strict_max (borderline zóna
+            # 0.70-0.75), RAG je slabý = neber ho jako grounding.
+            # Autoritativní zdroje (entity/karta) zůstávají — mají vlastní
+            # ověření (jméno v textu / definiční věta z Hansova čtení).
+            _strict_max = float(
+                (self.config.get('grounding', {}) or {})
+                .get('strict_max_distance', self._GROUNDING_STRICT_MAX))
+            _rag_weak = (_best_dist is None) or (_best_dist > _strict_max)
+            if _rag_weak:
+                top = []  # zahoď slabé chunky
+                _facts_from_rag = ''
+                logging.getLogger(__name__).info(
+                    '#2: RAG slabý (best=%.3f > strict=%.3f) → chunky zahozeny',
+                    _best_dist if _best_dist is not None else -1, _strict_max)
+            else:
+                # HANS_PROVENANCE_V1 — každý chunk dostane značku původu:
+                # per-chunk provenance z metadata (přesné), fallback kolekce.
+                # hans_denik → 'nejisté' (míchá prožitky se sny/úvahami) →
+                # Hans to netvrdí jako jistou vzpomínku.
+                try:
+                    from scripts import hans_provenance as _prov
+                    _prov_on = (self.config.get('provenance', {}) or {}).get(
+                        'enabled', True)
+                except Exception:
+                    _prov_on = False
+                    _prov = None
+                _rag_lines = []
+                for c in top:
+                    _t = c.get('text')
+                    if not _t:
+                        continue
+                    if _prov_on and _prov is not None:
+                        _cls = c.get('provenance') or \
+                            _prov.provenance_of_collection(c.get('collection'))
+                        _rag_lines.append(f"{_prov.marker(_cls)} {_t}")
+                    else:
+                        _rag_lines.append(_t)
+                _facts_from_rag = '\n\n'.join(_rag_lines)
+
             # G5A_IDENTITY_GROUNDING_V3 — vztahová karta z DB jako
             # PRIORITNÍ pravda. Adresujeme podle jména (NE embedding),
             # tvrdá data (role+rodina, BEZ characterization=starý tón).
-            _card_fact = self._build_card_fact(str(_text))
+            # F1 pomáhá: rewriter rozřeší 'kdo je on' → jméno v textu.
+            _card_fact = self._build_card_fact(_q_for_retrieval)
             if _card_fact:
-                facts = _card_fact + '\n\n' + facts
                 logging.getLogger(__name__).info(
                     'G5A: karta vstříknuta z DB → priorita')
+
+            # Skládání priorit: entita (autoritativní) > karta > RAG chunky.
+            _parts = []
+            if _ent_fact:
+                _parts.append(_ent_fact)
+            if _card_fact:
+                _parts.append(_card_fact)
+            if _facts_from_rag:
+                _parts.append(_facts_from_rag)
+            facts = '\n\n'.join(_parts)
+
             if not facts.strip():
-                return ''
+                # RAG slabé A žádný autoritativní zdroj = jako by prázdné.
+                logging.getLogger(__name__).info(
+                    '#2: bez faktů (RAG slabý, žádná entita/karta) → factual_nofacts')
+                self._grounding_outcome = 'factual_nofacts'
+                return '\n\n' + ANTIKONFAB_NOFACTS
 
             _cols_used = sorted(set(c.get('collection', '?') for c in top))
-            _best = top[0].get('distance')
             logging.getLogger(__name__).info(
-                'G3B: grounding [%s] best=%.3f, %d chunků z %s → kontext',
-                res.intent, _best if _best is not None else -1,
-                len(top), '+'.join(_cols_used))
+                'G3B: grounding [%s] best=%.3f, %d chunků z %s, ent=%d card=%d → kontext',
+                res.intent, _best_dist if _best_dist is not None else -1,
+                len(top), '+'.join(_cols_used) if _cols_used else '-',
+                1 if _ent_fact else 0, 1 if _card_fact else 0)
+            self._grounding_outcome = 'grounded'
             return '\n\n' + ANTIKONFAB + '\n\n' + facts
 
         except Exception as _ge:
             logging.getLogger(__name__).warning(
                 'G3B: grounding selhalo (%s) — odpovídám bez fakt', _ge)
+            return ''
+
+    def _entity_store(self):
+        # HANS_ENTITY_STORE_C1_V1 — lazy singleton EntityStore
+        _es = getattr(self, "_es_inst", None)
+        if _es is not None:
+            return _es
+        try:
+            from scripts.hans_entities import EntityStore
+            _dbp = (self.config.get("diary_db")
+                    or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                    or "data/hans_diary.db")
+            self._es_inst = EntityStore(self.config, _dbp)
+        except Exception:
+            self._es_inst = None
+        return self._es_inst
+
+    def _entity_fact(self, text: str) -> str:
+        """HANS_ENTITY_STORE_C1_V1 — deterministicky resolvuj entitu z dotazu
+        proti store známých entit (z Hansova čtení). Vrátí autoritativní fakt
+        (definiční věta ze zdroje) nebo '' když nic. Zabíjí kolizi jmen
+        (Sorge=skladatel, ne špión) i konfabulaci významu známých entit."""
+        try:
+            _es = self._entity_store()
+            if _es is None:
+                return ''
+            _ent = _es.resolve(str(text))
+            if not _ent:
+                return ''
+            logging.getLogger(__name__).info(
+                'C1: entita resolvována z dotazu → %r (ev=%s)',
+                _ent.get('name'), _ent.get('evidence_count'))
+            return _es.fact_block(_ent)
+        except Exception:
             return ''
 
     def _thread_store(self):
@@ -629,6 +802,21 @@ class OpenWebUIDirectHandler:
             self._place = None
         return self._place
 
+    def _agent_router(self):
+        # HANS_AGENT_V1 — lazy singleton AgentRouter (kontextové akce).
+        # None když vypnuto → volající přeskočí na běžný chat.
+        _ar = getattr(self, "_agent_inst", None)
+        if _ar is not None:
+            return _ar if _ar is not False else None
+        try:
+            from scripts.hans_agent import AgentRouter
+            _inst = AgentRouter(self.config)
+            self._agent_inst = _inst if _inst.enabled else False
+        except Exception:
+            self._agent_inst = False
+        _ar = self._agent_inst
+        return _ar if _ar is not False else None
+
     def _questions_store(self):
         # HANS_QUESTIONS_SURFACING_V1 — lazy singleton HansQuestionsStore
         _qs = getattr(self, "_qstore_inst", None)
@@ -658,7 +846,12 @@ class OpenWebUIDirectHandler:
             if _qs is None:
                 return None
             # HANS_PERSONAL_QUESTIONS_V1 — osobní otázky mají lehkou přednost
-            _q = _qs.next_for_person(name, source_type="personal") or _qs.next_for_person(name)
+            # HANS_QUESTIONS_ROUTING_V1 — volitelný channel filtr: popup u
+            # kamery předává channel='popup' (bere jen otázky ve fázi popup);
+            # chat-weaving (default None) bere jakoukoli pending fázi.
+            _ch = getattr(self, "_surface_channel_filter", None)
+            _q = (_qs.next_for_person(name, source_type="personal", channel=_ch)
+                  or _qs.next_for_person(name, channel=_ch))
             if _q is None:
                 return None
             _qs.mark_asked_voice(_q.id)
@@ -684,8 +877,13 @@ class OpenWebUIDirectHandler:
     def ask_question_via_popup(self, person: str) -> bool:
         # HANS_QUESTION_POPUP_V1 — Hans aktivně položí čekající otázku osobě:
         # vysloví ji (TTS) a otevře chat okno s otázkou + čeká na odpověď.
+        # HANS_QUESTIONS_ROUTING_V1 — popup cesta bere jen otázky ve fázi 'popup'.
         try:
-            _q = self._maybe_surface_question(person)
+            self._surface_channel_filter = "popup"
+            try:
+                _q = self._maybe_surface_question(person)
+            finally:
+                self._surface_channel_filter = None
             if _q is None:
                 return False
             _qtext = _q.question
@@ -1159,6 +1357,40 @@ class OpenWebUIDirectHandler:
                     " ho v odpovědi vyjmenovávat ani komentovat. Reaguj"
                     " přirozeně a k věci na to, co bylo právě řečeno;"
                     " z kontextu vytáhni jen to, co se do hovoru hodí.")
+                # HANS_CHAT_ANTICONFAB_V1 — pojistka proti vymýšlení vzpomínek.
+                system_msg += (
+                    "\n\nPAMĚŤ — DŮLEŽITÉ: Když se tě někdo ptá, zda si na něco"
+                    " vzpomínáš (dřívější rozhovor, kdy a o čem jste mluvili),"
+                    " odpověz POUZE z toho, co MÁŠ výše v kontextu nebo v historii."
+                    " Pokud to tam není, UPŘÍMNĚ přiznej, že si to přesně"
+                    " nevybavuješ (nebo požádej o připomenutí) — NIKDY si"
+                    " NEVYMÝŠLEJ, kdy se to stalo (žádná falešná „před pěti dny“),"
+                    " ani detaily, které nemáš doložené. Raději méně a pravdivě"
+                    " než sebejistá smyšlenka.")
+                # HANS_CHAT_ANTICONFAB_V2 — neznámý pojem + žádné vymyšlené zdroje.
+                system_msg += (
+                    "\n\nNEZNÁMÉ POJMY A ZDROJE — DŮLEŽITÉ: Když se tě někdo"
+                    " zeptá „co je X“ a X nemáš výše v kontextu ani tomu"
+                    " spolehlivě nerozumíš, NEVYMÝŠLEJ si význam ani fakta —"
+                    " uctivě přiznej, že o tom nemáš spolehlivou znalost, a"
+                    " případně požádej o upřesnění (pojem může být i zkomolený"
+                    " z dřívějšího záznamu). Drž se jednoho výkladu; neměň"
+                    " příběh při dalším dotazu. A NIKDY nenabízej „odkazy“,"
+                    " „články“, „PDF“, „dokumenty k nahlédnutí“ ani konkrétní"
+                    " citace (název, časopis, rok) — nemáš přístup k externím"
+                    " klikacím zdrojům a nemáš uložené žádné PDF. Pokud tě někdo"
+                    " požádá o zdroje, upřímně vysvětli, že si své poznatky"
+                    " neukládáš jako odkazovatelné dokumenty; smyšlená citace"
+                    " nebo odkaz je horší než přiznání, že zdroj nemáš.")
+                # HANS_PROVENANCE_V1 — source-monitoring: rozlišuj vzpomínku
+                # od představy/úvahy (řádky kontextu nesou značku původu).
+                try:
+                    from scripts import hans_provenance as _prov
+                    if (self.config.get('provenance', {}) or {}).get(
+                            'enabled', True):
+                        system_msg += "\n\n" + _prov.STEER
+                except Exception:
+                    pass
         # region agent log
         try:
             _dbg(
@@ -1404,14 +1636,28 @@ class OpenWebUIDirectHandler:
         return msgs
 
     def _send_message(self, prompt, name: str | None = None,
-                      internal: bool = False) -> str | None:
+                      internal: bool = False,
+                      grounding=_GROUNDING_UNSET) -> str | None:
         """Nstreaming request — vrátí celou odpověď.
 
         internal=True (G3D): interní generační prompt (uvítačka, idle) —
         grounding se NEspustí (není to uživatelský faktický dotaz).
+        grounding: předpočítaný grounding blok (A1) — když předán, znovu
+        se nepočítá (šetří RAG). Sentinel = spočítej jako dřív.
         """
         if not self.enabled:
             return None
+        # GAME_MODE_CHAT_GATE_V1 — herní mód: neobcházej ollama_client gate.
+        # Přímý HTTP na OpenWebUI proxy → Ollama by nahrál hans-czech
+        # (8 GB) do VRAM a zabil hru. VRAM patří hře.
+        try:
+            from scripts.ollama_client import game_mode_on
+            if game_mode_on():
+                logging.getLogger(__name__).info(
+                    'CHAT: herní mód — _send_message skipnut (VRAM patří hře)')
+                return None
+        except Exception:
+            pass
         try:
             if isinstance(prompt, tuple):
                 system, user = prompt
@@ -1421,13 +1667,16 @@ class OpenWebUIDirectHandler:
             # G4B_GROUNDING_POSITION_V1 — grounding ZA historii (param),
             # ne připojený k system (jinak ho historie přebije).
             # G3D_SKIP_GROUNDING_INTERNAL_V1 — interní prompt → bez groundingu
-            _grounding = ""
-            if not internal:
-                try:
-                    _grounding = self._build_grounding(user, name)
-                except Exception as _g3e:
-                    logging.getLogger(__name__).warning(
-                        'G3B send grounding failed: %s', _g3e)
+            if grounding is not _GROUNDING_UNSET:
+                _grounding = grounding
+            else:
+                _grounding = ""
+                if not internal:
+                    try:
+                        _grounding = self._build_grounding(user, name)
+                    except Exception as _g3e:
+                        logging.getLogger(__name__).warning(
+                            'G3B send grounding failed: %s', _g3e)
             msgs = self._build_messages(system, user, name, _grounding)
             r = requests.post(
                 self.chat_endpoint,
@@ -1446,14 +1695,26 @@ class OpenWebUIDirectHandler:
 
     def _stream_message(self, prompt, name: str | None = None,
                         on_sentence=None,
-                        internal: bool = False) -> str | None:
+                        internal: bool = False,
+                        grounding=_GROUNDING_UNSET) -> str | None:
         """
         Streaming request přes OpenWebUI SSE.
         Volá on_sentence(str) pro každou dokončenou větu → TTS začne mluvit
         před koncem celé odpovědi.
+        grounding: předpočítaný grounding blok (A1) — když předán, znovu
+        se nepočítá (šetří RAG). Sentinel = spočítej jako dřív.
         """
         if not self.enabled:
             return None
+        # GAME_MODE_CHAT_GATE_V1 — stejný gate jako _send_message výše.
+        try:
+            from scripts.ollama_client import game_mode_on
+            if game_mode_on():
+                logging.getLogger(__name__).info(
+                    'CHAT: herní mód — _stream_message skipnut (VRAM patří hře)')
+                return None
+        except Exception:
+            pass
         try:
             _t0 = time.time()
             if isinstance(prompt, tuple):
@@ -1463,13 +1724,16 @@ class OpenWebUIDirectHandler:
                 user = prompt
             # G4B_GROUNDING_POSITION_V1 — grounding ZA historii (param).
             # G3D_SKIP_GROUNDING_INTERNAL_V1 — interní prompt → bez groundingu
-            _grounding = ""
-            if not internal:
-                try:
-                    _grounding = self._build_grounding(user, name)
-                except Exception as _g3e:
-                    logging.getLogger(__name__).warning(
-                        'G3B stream grounding failed: %s', _g3e)
+            if grounding is not _GROUNDING_UNSET:
+                _grounding = grounding
+            else:
+                _grounding = ""
+                if not internal:
+                    try:
+                        _grounding = self._build_grounding(user, name)
+                    except Exception as _g3e:
+                        logging.getLogger(__name__).warning(
+                            'G3B stream grounding failed: %s', _g3e)
             msgs = self._build_messages(system, user, name, _grounding)
 
             payload = {"model": self.model_name, "messages": msgs, "stream": True}
@@ -1657,6 +1921,36 @@ class OpenWebUIDirectHandler:
         except Exception as _ce:
             print(f"[Chat] command dispatch error: {_ce}")
 
+        # ── HANS_AGENT_V1 — agentní vrstva (kontextové akce z konverzace) ──
+        # PO parse_command (příkazy mají přednost), PŘED běžným chatem.
+        # (1) čeká na osobu potvrzení návrhu? ano/ne → proveď/zruš.
+        # (2) jinak router: přeje si uživatel akci? → návrh + [ano/ne].
+        # Deferral-safe: výpadek LLM / vypnuto → None → běžný chat pokračuje.
+        try:
+            _agent = self._agent_router()
+            if _agent is not None:
+                _conf = _agent.check_confirmation(self, name, user_message)
+                if _conf is not None:
+                    try:
+                        self.conv_store.add_exchange(name, user_message, _conf)
+                    except Exception:
+                        pass
+                    return _conf
+                _prop = _agent.propose(self, name, user_message)
+                if _prop:
+                    try:
+                        self.conv_store.add_exchange(name, user_message, _prop)
+                    except Exception:
+                        pass
+                    if on_sentence:
+                        try:
+                            on_sentence(_prop)
+                        except Exception:
+                            pass
+                    return _prop
+        except Exception as _ae:
+            print(f"[Chat] agent layer error: {_ae}")
+
         system   = self._build_system(name)
         # Prefix user message jménem osoby pro lepší RAG retrieval.
         # "kdo jsem?" → "<jméno> se ptá: kdo jsem?" → embedding najde kartu osoby
@@ -1665,8 +1959,55 @@ class OpenWebUIDirectHandler:
         _raw_message = user_message
         if name and name.lower() not in user_message.lower():
             user_message = f"{name} se ptá: {user_message}"
-        response = self._stream_message((system, user_message), name=name,
-                                       on_sentence=on_sentence)  # CHAT_ON_SENTENCE_V1
+        # ── HANS_SELFCONSISTENCY_A1_V1 ────────────────────────────────────
+        # Předpočítej grounding JEDNOU (šetří RAG oproti výpočtu ve
+        # _stream_message) a zjisti výsledek. Jen u 'factual_nofacts'
+        # (faktický dotaz BEZ opory v RAG = rizikový volný výmysl) spusť A1
+        # self-consistency: N× generuj, změř rozptyl → nestabilní → deter-
+        # ministická abstinence (routing, ne prompt). Deferral-safe.
+        _grounding = _GROUNDING_UNSET
+        _a1_abstain = False
+        try:
+            _grounding = self._build_grounding(user_message, name)
+            if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
+                from scripts.hans_selfconsistency import is_unstable
+                if is_unstable(self.config, _raw_message) is True:
+                    _a1_abstain = True
+        except Exception as _a1e:
+            logging.getLogger(__name__).warning('A1 gate failed: %s', _a1e)
+            _grounding = _GROUNDING_UNSET
+        # ── HANS_OPINION_GROUNDING_G1_V1 ─────────────────────────────────
+        # Názorový/filosofický dotaz (imaginativní registr) → místo faktů
+        # injektuj Hansovy VLASTNÍ postoje + odvahu zaujmout stanovisko
+        # (zrcadlo faktického groundingu). Jen když intent NENÍ faktický —
+        # faktická cesta má G3B/A1/C1, tahle je pro „co si myslíš o…".
+        try:
+            _oc = getattr(self, '_grounding_outcome', '')
+            from scripts.hans_opinion import is_opinion_query, opinion_block
+            # 'opinion' = routing v _build_grounding už rozhodl; 'skip' =
+            # grounding neběžel (intent/knowledge nezapojeny) → rozhodni tady.
+            if _oc == 'opinion' or (_oc == 'skip'
+                                    and is_opinion_query(_raw_message)):
+                _ob = opinion_block(self.config)
+                if _ob:
+                    system += _ob
+                    logging.getLogger(__name__).info(
+                        'G1: názorový dotaz → blok vlastních postojů '
+                        'injektován (%d zn)', len(_ob))
+        except Exception as _oge:
+            logging.getLogger(__name__).warning(
+                'G1 opinion grounding failed: %s', _oge)
+        if _a1_abstain:
+            response = A1_ABSTAIN_TEXT
+            if on_sentence:
+                try:
+                    on_sentence(response)   # ať to TTS vysloví
+                except Exception:
+                    pass
+        else:
+            response = self._stream_message(
+                (system, user_message), name=name,
+                on_sentence=on_sentence, grounding=_grounding)  # CHAT_ON_SENTENCE_V1
         # G4D_DEDUP_ADDRESS_V1 — očisti opakované oslovení PŘED
         # rozdvojením do conv_store i diary→RAG (oba cíle čisté).
         if response:
@@ -1704,7 +2045,46 @@ class OpenWebUIDirectHandler:
                         _db.commit()
                 except Exception as _e:
                     print(f"[Chat] human_chat diary log failed: {_e}")
+            # HANS_CHAT_RECALL_V1 — ulož VĚRNÝ obsah rozhovoru do RAG (verbatim,
+            # datovaný) → „vzpomínáš na X?" stojí na skutečných datech, ne na
+            # vágní chat_reflection (ta ukládá jen dojem, ne téma). Na pozadí
+            # (RAG = síťový hop), best-effort.
+            try:
+                self._upload_chat_memory(name, _raw_message, response)
+            except Exception as _e:
+                print(f"[Chat] chat memory upload failed: {_e}")
         return response
+
+    def _upload_chat_memory(self, name: str, question: str, answer: str):
+        """HANS_CHAT_RECALL_V1 — verbatim rozhovor do RAG (hans_pripady), aby byl
+        později sémanticky dohledatelný. Threadovaně, deferral-safe."""
+        _kn = getattr(self, "knowledge", None)
+        if _kn is None or not (question or "").strip():
+            return
+        import threading as _th
+        import time as _t
+
+        def _work():
+            try:
+                from scripts.hans_persona import persona_name
+                pname = persona_name(self.config)
+            except Exception:
+                pname = "Hans"
+            ts = _t.time()
+            import datetime as _dt
+            when = _dt.datetime.fromtimestamp(ts).strftime("%A %-d.%-m.%Y %H:%M")
+            text = (f"Rozhovor s {name} ({when}):\n"
+                    f"{name}: {question.strip()}\n{pname}: {answer.strip()}")
+            try:
+                _kn.upload(
+                    collection_key="hans_pripady",
+                    doc_id=f"chatlog_{int(ts)}_{name}",
+                    title=f"Rozhovor s {name}: {question.strip()[:60]}",
+                    text=text,
+                    metadata={"kdy": when, "osoba": name, "typ": "rozhovor"})
+            except Exception as _e:
+                print(f"[Chat] chat memory upload (worker): {_e}")
+        _th.Thread(target=_work, daemon=True, name="ChatMemoryUpload").start()
 
     def _save_note(self, name: str, note_text: str):
         """Uloží poznámku do known_persons[name].notes v config.json."""
