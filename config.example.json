@@ -986,6 +986,8 @@
     "timeout": 30,
     "cooldown_default_s": 60,
     "reject_cooldown_s": 3600,
+    "kodi_confirm_to_tv": true,
+    "kodi_confirm_countdown_s": 45,
     "_note": "HANS_AGENT_V1: agentni vrstva — z konverzace odvodi akci, navrhne (confirm ano/ne), po potvrzeni provede. Whitelist: kodi_play_film, hans_sleep, add_book_wishlist. Router=hans-czech rezidentni, pre-gate hinty, cooldown+anti-echo, denik agent_action."
   },
   "calendar": {
@@ -998,5 +1000,15 @@
     "reminder_lead_hours": 2,
     "tz": "Europe/Prague",
     "_note": "HANS_CALENDAR_V1: per-osoba kalendare. Kazda osoba nasdili SVUJ Proton kalendar (Sdilet -> odkaz pro kohokoli) -> vloz jeji ICS URL do people[jmeno]. Pripominky chodi JEN majiteli. Read-only."
+  },
+  "pc_night_shutdown": {
+    "enabled": false,
+    "wake_for_analytics": true,
+    "analytics_hour": 3,
+    "night_start_hour": 2,
+    "night_end_hour": 6,
+    "settle_minutes": 20,
+    "chat_quiet_minutes": 30,
+    "_note": "HANS_PC_NIGHT_SHUTDOWN: po dokonceni nocni analytiky vypni PC (S3 suspend na teto desce rebootuje). Guardy: okno night_start..night_end, analytika usazena (zadny nocni event settle_minutes), zadny recent chat, PC vzhuru, 1x/noc. Rano ho probudi WOL. Vyzaduje NOPASSWD sudo poweroff na PC."
   }
 }

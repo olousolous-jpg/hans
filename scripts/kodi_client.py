@@ -571,6 +571,14 @@ class KodiClient:
                       title, mid, countdown, bool(img_remote), bool(voice_remote))
         return ok
 
+    def cancel_dialog(self) -> bool:
+        """HANS_AGENT_KODI_CONFIRM_V1 — zavři právě otevřený návrhový dialog na TV
+        (addon signál hans_cancel). Volá se, když uživatel odpoví v chatu (ano/ne),
+        ať okno na TV nečeká na vypršení timeoutu. Best-effort."""
+        r = self._call("JSONRPC.NotifyAll", {
+            "sender": "hans", "message": "hans_cancel", "data": {}})
+        return bool(r and r.get("result") == "OK")
+
     # ── KODI_AUTOPLAY_V1 — pokračování zábavy u konce titulu ───────────────────
     def get_play_state(self) -> dict | None:
         """Stav běžícího videa: {percentage, speed, totaltime, item} nebo None.

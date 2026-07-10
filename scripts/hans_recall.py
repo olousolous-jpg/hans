@@ -225,6 +225,53 @@ def _resolve_person(question: str, config: dict,
     return asker
 
 
+def films_watched_answer(db_path: str, question: str = "",
+                         limit: int = 5) -> str:
+    """Jaký film/pořad jsem viděl/sledoval — z deníku (kodi_playing),
+    deterministicky. „dnes" v dotazu → dnešní; jinak posledních pár. Žádný LLM.
+    Řeší, aby Hans neabstoval na „jaký film jsi viděl", když to v deníku má."""
+    conn = None
+    try:
+        conn = _ro(db_path)
+        q = (question or "").lower()
+        today = "dnes" in q or "dneska" in q
+        if today:
+            midnight = datetime.now().replace(
+                hour=0, minute=0, second=0, microsecond=0).timestamp()
+            rows = conn.execute(
+                "SELECT ts, title FROM diary WHERE event_type='kodi_playing' "
+                "AND ts >= ? ORDER BY ts DESC", (midnight,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT ts, title FROM diary WHERE event_type='kodi_playing' "
+                "ORDER BY ts DESC LIMIT ?", (limit * 5,)).fetchall()
+        if not rows:
+            return ("Nemám záznam o žádném filmu či pořadu, který bych "
+                    + ("dnes " if today else "") +
+                    "sledoval, pane. Nebudu si nic vymýšlet.")
+        seen, titles = set(), []
+        for ts, title in rows:
+            t = (title or "").strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                titles.append((ts, t))
+            if len(titles) >= limit:
+                break
+        if today:
+            names = "; ".join("„%s“" % t for _, t in titles)
+            return "Dnes jsem u obrazovky zaznamenal: %s." % names
+        last_ts, last = titles[0]
+        out = "Naposledy jsem sledoval „%s“ (%s)." % (last, _cz_when(last_ts))
+        if len(titles) > 1:
+            out += " Předtím: %s." % "; ".join("„%s“" % t for _, t in titles[1:])
+        return out
+    except Exception:
+        return ("K filmům teď nemám přístup do deníku, pane.")
+    finally:
+        if conn:
+            conn.close()
+
+
 def last_seen_answer(db_path: str, config: dict, question: str,
                      asker: Optional[str]) -> str:
     """Kdy jsem osobu naposledy viděl — přímo z person_seen. Žádný LLM."""

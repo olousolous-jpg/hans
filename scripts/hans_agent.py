@@ -411,6 +411,9 @@ class AgentRouter:
         self.timeout = int(c.get("timeout", 30))
         self.cooldown_default = int(c.get("cooldown_default_s", 60))
         self.reject_cooldown = int(c.get("reject_cooldown_s", 3600))
+        # HANS_AGENT_KODI_CONFIRM_V1 — u návrhu filmu zrcadli potvrzení i na TV
+        self.kodi_confirm_to_tv = bool(c.get("kodi_confirm_to_tv", True))
+        self.kodi_confirm_countdown = int(c.get("kodi_confirm_countdown_s", 45))
         self._pending: dict[str, Proposal] = {}       # name → návrh
         self._last_fire: dict[str, float] = {}         # hash → ts (cooldown)
         self._rejected: dict[str, float] = {}          # name|hash → ts (echo)
@@ -450,6 +453,10 @@ class AgentRouter:
             self._log(handler, pend, "ignored")
             return None
         self._pending.pop(name, None)
+        # HANS_AGENT_KODI_CONFIRM_V1 — odpověď padla v chatu → zavři i dialog na TV
+        # (ať okno na TV nečeká na vypršení timeoutu / nezůstane přes hrající film).
+        if pend.action.id == "kodi_play_film":
+            self._cancel_kodi_dialog(handler)
         if is_no:
             self._rejected[f"{name}|{pend.hash}"] = time.time()
             self._log(handler, pend, "rejected")
@@ -522,12 +529,78 @@ class AgentRouter:
                 text += " Mám to udělat?"
             prop.text = text
             self._pending[name] = prop
+            # HANS_AGENT_KODI_CONFIRM_V1 — u filmu zrcadli potvrzení i na TV
+            # (dialog Ano/Ne přímo na Kodi, ne jen v chatu). Best-effort.
+            if action.id == "kodi_play_film" and self._mirror_kodi_confirm(
+                    handler, prop):
+                text += " (potvrdit můžete i přímo na televizi.)"
+                prop.text = text
             self._log(handler, prop, "proposed")
             log.info("agent: návrh %s conf=%.2f pro %s", aid, conf, name)
             return text
         except Exception as e:
             log.warning("agent.propose selhalo: %s", e)
             return None
+
+    def _mirror_kodi_confirm(self, handler, prop: Proposal) -> bool:
+        """HANS_AGENT_KODI_CONFIRM_V1 — ukaž potvrzení návrhu filmu i na TV.
+        Reuse addon 'service.hans.suggest' (dialog Ano/Ne): na 'Pustit' addon film
+        pustí, timeout/Ne nic neudělá (žádné auto-přehrání) → bezpečné zrcadlo chat
+        potvrzení. Chat 'ano' i tlačítko na TV vedou k témuž filmu. Best-effort —
+        selhání (Kodi dole) jen vrátí False, chat potvrzení běží dál."""
+        if not self.kodi_confirm_to_tv:
+            return False
+        movie = (prop.args or {}).get("_movie")
+        if not movie or movie.get("movieid") is None:
+            return False
+        hi = getattr(handler, "_hans_idle", None)
+        kodi = getattr(hi, "kodi", None)
+        if not kodi or not hasattr(kodi, "suggest_movie"):
+            return False
+        title = movie.get("title") or prop.args.get("titul") or "film"
+        line = u'Mám pustit „%s"? Potvrďte „Pustit", nebo nechte být.' % title
+        fcfg = (self.config.get("film_suggest", {}) or {})
+        # Hansova tvář do dialogu (stejná cesta jako u návrhu filmu z klidu)
+        face = None
+        try:
+            if fcfg.get("avatar_to_kodi", True) and hasattr(hi, "_tv_face_image"):
+                face = hi._tv_face_image()
+        except Exception:
+            face = None
+        # Hlas na TV — jen když nic nehraje (přehrání by běžící film přerušilo),
+        # jako u vlastního návrhu filmu (voice_to_kodi).
+        voice = None
+        try:
+            playing = bool(kodi.get_now_playing()) if hasattr(
+                kodi, "get_now_playing") else True
+            tts = getattr(handler, "tts_speaker", None)
+            if (not playing and fcfg.get("voice_to_kodi", False)
+                    and tts and hasattr(tts, "_get_mp3")):
+                mp3 = tts._get_mp3(u'Mám pustit film „%s"?' % title)
+                if mp3:
+                    voice = str(mp3)
+        except Exception:
+            voice = None
+        try:
+            return bool(kodi.suggest_movie(
+                movie, countdown=self.kodi_confirm_countdown, line=line,
+                image_local=face, voice_local=voice,
+                voice_volume=int(fcfg.get("voice_volume", 90)),
+                voice_lead_ms=int(fcfg.get("voice_lead_ms", 900))))
+        except Exception as e:
+            log.warning("agent: zrcadlení potvrzení na TV selhalo: %s", e)
+            return False
+
+    def _cancel_kodi_dialog(self, handler):
+        """Zavři otevřený návrhový dialog na TV (uživatel odpověděl v chatu)."""
+        if not self.kodi_confirm_to_tv:
+            return
+        kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
+        if kodi and hasattr(kodi, "cancel_dialog"):
+            try:
+                kodi.cancel_dialog()
+            except Exception as e:
+                log.warning("agent: zavření TV dialogu selhalo: %s", e)
 
     def _default_text(self, action: Action, args: dict) -> str:
         if action.id == "kodi_play_film":

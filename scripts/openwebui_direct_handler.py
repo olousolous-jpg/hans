@@ -1406,6 +1406,20 @@ class OpenWebUIDirectHandler:
                         system_msg += "\n\n" + _prov.STEER
                 except Exception:
                     pass
+                # HANS_ART_HONESTY_V1 — neslibuj malování, které nespustíš.
+                # Obraz vznikne JEN příkazem „namaluj …" (ten se zpracuje mimo
+                # tuhle odpověď). Když uživatel dá zpětnou vazbu k obrazu,
+                # naveď ho na příkaz, nepředstírej, že už maluješ.
+                system_msg += (
+                    "\n\nMALOVÁNÍ — DŮLEŽITÉ: Obraz vznikne JEN když uživatel "
+                    "napíše příkaz „namaluj …\" / „nakresli …\" — ten spouští "
+                    "výtvarnou dílnu mimo tuhle tvou odpověď. V běžné odpovědi "
+                    "NEDOKÁŽEŠ malování sám spustit, takže NESLIBUJ „maluji\"/"
+                    "„nakreslím\", pokud uživatel PRÁVĚ nedal příkaz namaluj. "
+                    "Když ti dá zpětnou vazbu k obrazu (např. „to nejsem já\", "
+                    "„je to špatně\"), poděkuj a NAVEĎ ho: ať řekne „namaluj to "
+                    "znovu jako …\" nebo „namaluj mě jako …\" — teprve tím se "
+                    "obraz reálně překreslí.")
         # region agent log
         try:
             _dbg(

@@ -45,7 +45,7 @@ EVENT_MAP: dict[str, str] = {
     "idle_start": "zazil", "idle_end": "zazil", "teddy_arrived": "zazil",
     "teddy_gone": "zazil", "observation": "zazil", "phase_change": "zazil",
     "game_launched": "zazil", "downtime_noticed": "zazil",
-    "agent_action": "zazil",
+    "agent_action": "zazil", "pc_shutdown": "zazil",
     "capability_gained": "zazil", "capability_explored": "zazil",
     "kodi_paused": "zazil", "autoplay_next": "zazil",
     # řekli mi (od člověka v chatu / korekce)

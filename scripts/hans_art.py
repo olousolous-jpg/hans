@@ -219,8 +219,23 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
         "_HOME_SCENE_SYSTEM", "_STYLE_SCENE_SYSTEM", "_MOCKUP_SCENE_SYSTEM")}
     medium = _pick_medium() if (system not in _novary) else ""
     _tail = medium if medium else "oil painting, atmospheric lighting, rich detail, masterful"
-    fallback = (f"a quiet evocative scene inspired by '{title}', "
-                "symbolic objects, soft window light, " + _tail)
+    # HANS_ART_FALLBACK_NEUTRAL_V1 — když scene-prompt LLM selže, sestav
+    # SCENE-NEUTRÁLNÍ fallback řízený NÁMĚTEM (dřív „soft window light" =
+    # interiérový bias → vždy tichý pokoj u okna; a syrový český {title} vč.
+    # „(styl: X)" i instrukčních sloves leakoval do SDXL). LLM tu není (proto
+    # fallback) → český námět nepřeložím, ale aspoň bez interiéru a instrukcí.
+    _fsubj = title
+    _fstyle = ""
+    _sm = re.search(r"\(styl:\s*([^)]+)\)", _fsubj)
+    if _sm:                       # odděl „(styl: art nouveau)" → stylové klíč. slovo
+        _fstyle = _sm.group(1).strip()
+        _fsubj = (_fsubj[:_sm.start()] + _fsubj[_sm.end():]).strip()
+    _fsubj = re.sub(               # strhni řetěz instrukčních sloves (nejsou námět)
+        r"(?i)^\s*(?:(?:zkus|znovu|jinak|namaluj|namalovat|nakresli|nakreslit|"
+        r"vytvo[řr](?:it)?|nam[aá]luj|p[řr]ekresli|p[řr]emaluj|oprav)\s+"
+        r"(?:obr[aá]zek\s+|obraz\s+|jak\s+by\s+)?)+", "", _fsubj)
+    _fsubj = _fsubj.strip(" \"'„“”.:!?-") or "an evocative scene"
+    fallback = ", ".join(x for x in (_fsubj, _fstyle, _tail) if x)
     try:
         from scripts.ollama_client import ollama_generate
     except Exception:

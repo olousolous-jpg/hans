@@ -155,6 +155,9 @@ class HansRoutine:
         self._last_selfcritique_date = ""  # HANS_SELFCRITIQUE_V1 (sebekritika, kadence)
         self._last_immune_date = ""      # HANS_IMMUNE_A2_V1 (noční fact-check tvrzení)
         self._last_hygiene_date = ""     # HANS_MEMORY_HYGIENE_V1 (prořez firehose 1×/noc)
+        self._last_pc_shutdown_date = ""  # HANS_PC_NIGHT_SHUTDOWN (vypni PC po analytice 1×/noc)
+        self._last_analytics_wake_date = ""  # HANS_PC_NIGHT_ANALYTICS_WAKE (probuď PC pro analytiku 1×/noc)
+        self._analytics_wake_ts = 0.0
         self._identity = None            # HANS_IDENTITY_V1 (verzování CORE)
         self._severka = None             # HANS_SEVERKA_V1 (decision engine)
         # ROUTINE_STATE_PERSIST_V1 - guardy reflexi prezijou restart
@@ -496,6 +499,8 @@ class HansRoutine:
             self._last_selfcritique_date = s.get("last_selfcritique_date", "")  # HANS_SELFCRITIQUE_V1
             self._last_immune_date = s.get("last_immune_date", "")  # HANS_IMMUNE_A2_V1
             self._last_hygiene_date = s.get("last_hygiene_date", "")  # HANS_MEMORY_HYGIENE_V1
+            self._last_pc_shutdown_date = s.get("last_pc_shutdown_date", "")  # HANS_PC_NIGHT_SHUTDOWN
+            self._last_analytics_wake_date = s.get("last_analytics_wake_date", "")  # HANS_PC_NIGHT_ANALYTICS_WAKE
         except FileNotFoundError:
             pass
         except Exception as _e:
@@ -523,6 +528,8 @@ class HansRoutine:
                     "last_selfcritique_date": self._last_selfcritique_date,  # HANS_SELFCRITIQUE_V1
                     "last_immune_date": self._last_immune_date,  # HANS_IMMUNE_A2_V1
                     "last_hygiene_date": self._last_hygiene_date,  # HANS_MEMORY_HYGIENE_V1
+                    "last_pc_shutdown_date": self._last_pc_shutdown_date,  # HANS_PC_NIGHT_SHUTDOWN
+                    "last_analytics_wake_date": self._last_analytics_wake_date,  # HANS_PC_NIGHT_ANALYTICS_WAKE
                 }, f)
         except Exception as _e:
             _log.warning("routine_state: zapis selhal: %s", _e)
@@ -1060,7 +1067,8 @@ class HansRoutine:
         Běží ve vlákně, ať síťový fetch neblokuje tick. No-op když vypnuto."""
         try:
             cc = (self.config.get("calendar", {}) or {})
-            if not cc.get("enabled") or not (cc.get("ics_url") or "").strip():
+            from scripts.hans_calendar import is_enabled as _cal_enabled
+            if not _cal_enabled(self.config):  # per-osoba (people map)
                 return
             interval = int(cc.get("sync_interval_min", 30)) * 60
             last = getattr(self, "_last_cal_sync", 0.0)
@@ -1092,7 +1100,9 @@ class HansRoutine:
             if not self._night_lock.acquire(blocking=False):
                 continue  # předchozí běh ještě neskončil → přeskoč
             try:
+                self._maybe_wake_for_analytics()  # HANS_PC_NIGHT_ANALYTICS_WAKE
                 self._run_night_tasks()
+                self._maybe_shutdown_pc()  # HANS_PC_NIGHT_SHUTDOWN
             except Exception as _e:
                 _log.warning('night worker: %s', _e)
             finally:
@@ -1100,6 +1110,141 @@ class HansRoutine:
                     self._night_lock.release()
                 except Exception:
                     pass
+
+    # HANS_PC_NIGHT_SHUTDOWN — noční analytické eventy (marker „analytika běží")
+    _NIGHT_ANALYTICS_EVENTS = (
+        "evening_reflection", "tendency_snapshot", "night_summary", "dream",
+        "study_note", "study_mastery", "synthesis_idea", "self_critique",
+        "immune_check", "narrative_chapter", "creation_reflection",
+        "writing_section", "work_completion_reflection", "lesson_learned",
+        "book_completion_reflection", "musing", "introspection")
+
+    def _pc_up(self):
+        """Rychlá kontrola, jestli PC běží (ping, ~2s)."""
+        try:
+            return self._ping_host(self._wol_pc_ip)
+        except Exception:
+            return False
+
+    def _maybe_wake_for_analytics(self):
+        """HANS_PC_NIGHT_ANALYTICS_WAKE — v noční hodinu probuď PC (když je
+        vypnutý) pro noční analytiku. Analytika pak proběhne (_run_night_tasks)
+        a _maybe_shutdown_pc PC zase vypne. 1×/noc. Když PC běží / analytika
+        dnes už proběhla → nebudí."""
+        try:
+            c = (self.config.get("pc_night_shutdown", {}) or {})
+            if not c.get("enabled") or not c.get("wake_for_analytics", True):
+                return
+            now = datetime.now()
+            today = now.strftime("%Y-%m-%d")
+            if self._last_analytics_wake_date == today:
+                return
+            if now.hour != int(c.get("analytics_hour", 3)):
+                return
+            import sqlite3 as _sql
+            import time as _t
+            nowts = _t.time()
+            # analytika dnes v noci/večer už proběhla? → netřeba budit
+            conn = _sql.connect("file:%s?mode=ro" % self._diary_path,
+                                uri=True, timeout=3.0)
+            ph = ",".join("?" * len(self._NIGHT_ANALYTICS_EVENTS))
+            ra = conn.execute(
+                "SELECT MAX(ts) FROM diary WHERE event_type IN (%s) AND ts >= ?"
+                % ph, (*self._NIGHT_ANALYTICS_EVENTS, nowts - 16 * 3600)
+            ).fetchone()
+            conn.close()
+            self._last_analytics_wake_date = today
+            self._analytics_wake_ts = nowts
+            self._save_routine_state()
+            if ra and ra[0] and nowts - ra[0] < 6 * 3600:
+                return  # analytika už dnes běžela
+            if self._pc_up():
+                return  # PC běží → analytika proběhne sama
+            _log.info("PC night wake: budím PC pro noční analytiku")
+            self._send_wol_packet(self._wol_pc_mac)
+            for _ in range(9):  # čekej na náběh z S5 (~40-90s)
+                _t.sleep(10)
+                if self._pc_up():
+                    _log.info("PC night wake: PC naběhl → analytika poběží")
+                    return
+            _log.warning("PC night wake: PC nenaběhl do 90s")
+        except Exception as _e:
+            _log.warning("pc_night_wake: %s", _e)
+
+    def _maybe_shutdown_pc(self):
+        """HANS_PC_NIGHT_SHUTDOWN — po dokončení noční analytiky vypni PC.
+        S3 suspend je na téhle desce rozbitý (reboot); čistý poweroff + ranní
+        WOL. Guardy: hluboké noční okno, analytika usazená (žádný event N min),
+        žádný recent chat, PC vzhůru, 1× za noc."""
+        try:
+            c = (self.config.get("pc_night_shutdown", {}) or {})
+            if not c.get("enabled"):
+                return
+            from scripts import pc_remote
+            if not pc_remote.enabled(self.config):
+                return
+            now = datetime.now()
+            today = now.strftime("%Y-%m-%d")
+            if self._last_pc_shutdown_date == today:
+                return
+            h0 = int(c.get("night_start_hour", 2))
+            h1 = int(c.get("night_end_hour", 6))
+            if not (h0 <= now.hour < h1):
+                return
+            import sqlite3 as _sql
+            import time as _t
+            nowts = _t.time()
+            conn = _sql.connect("file:%s?mode=ro" % self._diary_path,
+                                uri=True, timeout=3.0)
+            # recent chat → nevypínej
+            chat_q = int(c.get("chat_quiet_minutes", 30)) * 60
+            rc = conn.execute(
+                "SELECT MAX(ts) FROM diary WHERE event_type='human_chat'"
+            ).fetchone()
+            if rc and rc[0] and nowts - rc[0] < chat_q:
+                conn.close()
+                return
+            # analytika usazená? poslední noční event > settle_minutes
+            settle = int(c.get("settle_minutes", 20)) * 60
+            ph = ",".join("?" * len(self._NIGHT_ANALYTICS_EVENTS))
+            ra = conn.execute(
+                "SELECT MAX(ts) FROM diary WHERE event_type IN (%s) "
+                "AND ts >= ?" % ph,
+                (*self._NIGHT_ANALYTICS_EVENTS, nowts - 16 * 3600)).fetchone()
+            conn.close()
+            if ra and ra[0] and nowts - ra[0] < settle:
+                return  # analytika ještě běží
+            # NEvypni PŘED analytikou: povol shutdown jen když analytika DNES
+            # proběhla, NEBO jsme kvůli ní budili a dali jí čas (settle) doběhnout.
+            had_today = bool(ra and ra[0] and nowts - ra[0] < 16 * 3600)
+            woke_settled = (self._last_analytics_wake_date == today
+                            and self._analytics_wake_ts
+                            and nowts - self._analytics_wake_ts >= settle)
+            if not (had_today or woke_settled):
+                return  # analytika ještě neproběhla (čekáme na wake+běh)
+            # PC vzhůru? (rychlý ping — když dole, není co vypínat; guard NEnastavuj)
+            if not self._pc_up():
+                return
+            # vypni
+            pc_remote.run(self.config, "sudo -n systemctl poweroff", timeout=10)
+            self._last_pc_shutdown_date = today
+            self._save_routine_state()
+            _log.info("PC night shutdown: analytika hotová → PC vypnut "
+                      "(ranní WOL probudí)")
+            try:
+                conn2 = _sql.connect(self._diary_path, timeout=5.0)
+                conn2.execute(
+                    "INSERT INTO diary (ts, event_type, title, note) "
+                    "VALUES (?,?,?,?)",
+                    (nowts, "pc_shutdown", "Vypnutí PC na noc",
+                     "Noční analytika dokončena — vypnul jsem počítač; "
+                     "ráno ho probudím."))
+                conn2.commit()
+                conn2.close()
+            except Exception:
+                pass
+        except Exception as _e:
+            _log.warning("pc_night_shutdown: %s", _e)
 
     def _run_night_tasks(self):
         """NIGHT_WORKER_THREAD_V1 — všechny noční LLM/analytické úlohy (dříve

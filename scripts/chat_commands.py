@@ -38,9 +38,21 @@ def register(command_id: str, *,
     _COMMANDS[command_id] = {
         "slash":    [s.lower().lstrip("/") for s in slash_aliases],
         "nl":       [re.compile(p, re.IGNORECASE) for p in nl_patterns],
+        # NL bez diakritiky — uživatelé často píšou „kalendar"/„udalosti".
+        # Fold i vzor i vstup → matchne s háčky i bez nich.
+        "nl_fold":  [re.compile(_fold_diacritics(p), re.IGNORECASE)
+                     for p in nl_patterns],
         "handler":  handler,
         "help":     help_text,
     }
+
+
+def _fold_diacritics(s: str) -> str:
+    """Odstraní diakritiku (á→a, ř→r, ž→z…). Bezpečné i pro regex vzory
+    (mění jen písmena, ne strukturu)."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", s or "")
+                   if not unicodedata.combining(c))
 
 
 # ── Parser ─────────────────────────────────────────────────────────────
@@ -64,10 +76,14 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
                 return (cmd_id, args)
         return None  # neznámý slash → ne-command
 
-    # Natural language
+    # Natural language (diakritika i bez ní)
+    msg_fold = _fold_diacritics(msg)
     for cmd_id, spec in _COMMANDS.items():
         for pat in spec["nl"]:
             if pat.search(msg):
+                return (cmd_id, msg)
+        for pat in spec.get("nl_fold", []):
+            if pat.search(msg_fold):
                 return (cmd_id, msg)
     return None
 
@@ -478,10 +494,11 @@ register(
     "kalendar",
     slash_aliases=["kalendar", "kalendář", "kalendar", "calendar"],
     nl_patterns=[
-        r"\bco.{0,8}m[áa]m.{0,15}(v\s+)?kalend[áa]ř",
-        r"\bco.{0,8}m[áa]m.{0,12}(dnes|z[ií]tra|tento t[ýy]den)",
+        r"kalend[áa]ř?",
+        r"\bco.{0,8}m[áa]m.{0,12}(dnes|z[ií]tra|tento t[ýy]den|tenhle t[ýy]den)",
         r"\bmoje?\s+ud[áa]losti",
-        r"\buka[žz].{0,12}kalend[áa]ř",
+        r"napl[áa]novan",  # co mám naplánováno / nemám něco naplánovaného
+        r"\bschůzk|\bschuzk",
     ],
     handler=_cmd_kalendar,
     help_text="Nadcházející události z Proton kalendáře (/kalendar, /kalendar sync)",
@@ -996,6 +1013,11 @@ def _cmd_namaluj(handler, name, args) -> str:
     if not subj:
         subj = "dojem z našeho nedávného rozhovoru"
 
+    # HANS_ART_SUBJECT_DISTILL_V1 — messy požadavek / odkaz na rozhovor
+    # („tu kočku", „zkus znovu", „o čem jsme se bavili") → destiluj JEDEN
+    # čistý námět přes LLM + kontext historie (řeší reference, ořeže instrukce).
+    subj = _distill_paint_subject(cfg, name, handler, subj)
+
     if not hans_art.comfy_available(cfg):
         return ("Rád bych, pane — ale má výtvarná dílna (ComfyUI na PC) teď neběží. "
                 "Až bude PC vzhůru, obraz namaluji.")
@@ -1012,12 +1034,72 @@ def _cmd_namaluj(handler, name, args) -> str:
             % (subj[:70], _st))
 
 
+def _distill_paint_subject(config, name, handler, subj: str) -> str:
+    """HANS_ART_SUBJECT_DISTILL_V1 — z messy požadavku + kontextu rozhovoru
+    destiluj JEDEN výtvarný námět (2-6 slov, česky). Řeší odkazy („tu kočku"
+    → kočka, „o čem jsme se bavili" → téma), ořeže instrukce („zkus znovu",
+    „vypadá nedokončeně"). Fallback = původní subj (LLM dole/podezřelý výstup)."""
+    import re as _re2
+    toks = set(_re2.findall(r"\w+", subj.lower()))
+    _ref = {"to", "ho", "ji", "tu", "ten", "tenhle", "tohle", "toho",
+            "tuhle", "tamtu", "mě", "mne", "mně", "mnou", "me", "sebe"}
+    messy = (len(subj.split()) > 4
+             or subj.startswith(("náš rozhovor:", "dojem z"))
+             or bool(toks & _ref)
+             or any(k in subj.lower() for k in (
+                 "zkus", "jeste", "ještě", "znovu", "vypad", "nedokon",
+                 "myslel jsem", "o mně", "o mne")))
+    if not messy:
+        return subj
+    try:
+        conv = getattr(handler, "conv_store", None)
+        hist = conv.get_history(name) if conv else []
+        ctx = "\n".join(
+            "%s: %s" % ("Uživatel" if m.get("role") == "user" else "Hans",
+                        (m.get("content") or "")[:150])
+            for m in (hist or [])[-6:])
+        from scripts.ollama_client import ollama_generate
+        model = ((config.get("dialog", {}) or {}).get("model")
+                 or "hans-czech:latest")
+        _who = ("Ten, kdo píše, se jmenuje %s. „mě/o mně\" = tato osoba "
+                "(portrét či scéna o ní), NE obecný pojem „uživatel\". "
+                % name) if name else ""
+        system = (
+            "Jsi extraktor výtvarného NÁMĚTU pro malbu. Z posledního "
+            "požadavku uživatele a kontextu rozhovoru urči JEDEN konkrétní "
+            "námět obrazu (CO má být namalováno), česky, 2 až 6 slov. Rozřeš "
+            "odkazy: „tu kočku\" → kočka; „to/o čem jsme se bavili\" → to "
+            "téma z kontextu; „dnešní počasí\" → konkrétní počasí z kontextu. "
+            + _who +
+            "IGNORUJ instrukce jako „zkus znovu\", „vypadá nedokončeně\" — to "
+            "NENÍ námět. NEPŘIDÁVEJ nic navíc. Vrať POUZE námět, jedním "
+            "krátkým slovním spojením.")
+        prompt = "%s\n\nPožadavek: %s\n\nNÁMĚT:" % (ctx, subj)
+        raw = ollama_generate(model, prompt, system=system, config=config,
+                              timeout=25, keep_alive=-1,
+                              options={"temperature": 0.1, "num_predict": 30})
+        if not raw:
+            return subj
+        out = raw.strip().splitlines()[0]
+        out = _re2.sub(r"(?i)^\s*n[áa]m[ěe]t\s*:?\s*", "", out)
+        out = out.strip(" \"'„“”?.!:•-")
+        if out and 1 <= len(out.split()) <= 8 and 2 <= len(out) <= 60 \
+                and not out.lower().startswith(("nevím", "nemám", "promiň")):
+            _log.info("art subject destilován: %r → %r", subj[:50], out)
+            return out
+    except Exception as _e:
+        _log.debug("distill subject: %s", _e)
+    return subj
+
+
 register(
     "namaluj",
     slash_aliases=["namaluj", "nakresli"],
-    nl_patterns=[r"\bnamaluj", r"\bnamalovat\b", r"\bnakresli", r"vytvoř\s+obr"],
+    nl_patterns=[r"\bnamaluj", r"\bnamalovat\b", r"\bnakresli", r"vytvoř\s+obr",
+                 r"\bp[řr]ekresli", r"\bp[řr]emaluj",
+                 r"\boprav\s+(ten\s+|ten[hz]le\s+)?(obraz|obr[áa]zek)"],
     handler=_cmd_namaluj,
-    help_text="Hans namaluje obraz na libovolné téma: namaluj <téma>",
+    help_text="Hans namaluje/překreslí obraz: namaluj <téma> (i namaluj to jinak)",
 )
 
 
@@ -1768,4 +1850,26 @@ register(
     ],
     handler=_cmd_videl,
     help_text="Kdy jsem koho naposledy viděl (přímo z deníku person_seen)",
+)
+
+
+def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
+    from scripts.hans_recall import films_watched_answer
+    out = films_watched_answer(_recall_db(handler), args or "")
+    return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+
+
+register(
+    "film",
+    slash_aliases=["film", "filmy"],
+    nl_patterns=[
+        r"posledn[ií].{0,10}film",
+        r"jak[ýy].{0,10}film",
+        r"co\s+(jsi|sis)\s+(dnes\w*\s+|včera\s+|naposledy\s+)?"
+        r"(vid[ěe]l|koukal|sledoval|d[íi]val)",
+        r"co\s+jsem?\s+(dnes\w*\s+)?(vid[ěe]l|koukal|sledoval)",
+        r"\bfilm\w*\s+(jsi|sis)\s+(vid|koukal|sledoval)",
+    ],
+    handler=_cmd_film,
+    help_text="Jaký film/pořad jsem viděl (přímo z deníku kodi_playing)",
 )
