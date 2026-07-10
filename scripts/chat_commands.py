@@ -1873,3 +1873,47 @@ register(
     handler=_cmd_film,
     help_text="Jaký film/pořad jsem viděl (přímo z deníku kodi_playing)",
 )
+
+
+# ─── /zdravi — zdraví závislostí (HANS_HEALTH_V1) ────────────────────────────
+def _cmd_zdravi(handler, name, args) -> str:  # HANS_HEALTH_V1
+    """Živá probe závislostí (Ollama/ComfyUI/Kodi/STT/PC/disk). /zdravi vylec =
+    zkusí self-heal zaseklé Ollamy."""
+    try:
+        from scripts import hans_health
+    except Exception as _e:
+        return "Nemohu teď zkontrolovat své zdraví, pane. (%s)" % _e
+    cfg = getattr(handler, "config", {}) or {}
+    do_heal = bool(args) and args.strip().lower() in (
+        "vylec", "vyléč", "heal", "restart", "oprav")
+    res = hans_health.run_health_check(cfg, heal=do_heal)
+    health = res.get("health", {})
+    if not health:
+        return "Kontrola zdraví je vypnutá, pane."
+    _lbl = {"ollama": "Mozek (Ollama)", "comfyui": "Malování (ComfyUI)",
+            "kodi": "Televize (Kodi)", "stt": "Sluch (přepis)",
+            "pc": "Počítač", "disk": "Disk"}
+    _ico = {"ok": "✅", "paused": "⏸️", "wedged": "⚠️", "down": "❌",
+            "unknown": "❔"}
+    lines = ["Stav mých systémů, pane:"]
+    for k, s in health.items():
+        st = s.get("status", "unknown")
+        lines.append("%s %s — %s" % (_ico.get(st, "❔"), _lbl.get(k, k),
+                                     s.get("detail", st)))
+    if res.get("healed"):
+        lines.append("(Zaseklý mozek jsem zkusil restartovat.)")
+    return "\n".join(lines)
+
+
+register(
+    "zdravi",
+    slash_aliases=["zdravi", "zdraví", "health"],
+    nl_patterns=[
+        r"jak\s+(ti|se\s+ti|se\s+m[áa]š?).{0,15}(zdrav|syst[ée]m|slu[žz]b)",
+        r"(zdrav|stav).{0,10}(syst[ée]m|slu[žz]eb|z[áa]vislost)",
+        r"(funguje|jede|b[ěe][žz][íi]).{0,12}(ollama|comfyui|mozek|zrak)",
+        r"jsi\s+v\s+po[řr][áa]dku",
+    ],
+    handler=_cmd_zdravi,
+    help_text="Zdraví závislostí (Ollama/ComfyUI/Kodi/STT/PC/disk); /zdravi vylec = self-heal",
+)

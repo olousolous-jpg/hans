@@ -256,6 +256,13 @@ button.btn:hover { opacity: 0.85; }
   </div>
 
   <!-- HANS_PLACE_V1 — model domova „kde jsem" -->
+  <!-- HANS_HEALTH_V1 — zdraví subsystémů -->
+  <div class="card" id="health-card" style="margin-bottom:16px;display:none">
+    <h2>🩺 Subsystémy</h2>
+    <div id="health-grid" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    <div id="health-age" style="font-size:0.72rem;color:var(--fg2);margin-top:8px"></div>
+  </div>
+
   <div class="card" id="place-card" style="margin-bottom:16px;display:none">
     <h2>🏠 Kde jsem</h2>
     <div style="display:flex;gap:16px;flex-wrap:wrap">
@@ -1241,6 +1248,29 @@ async function loadPlace() {
   } catch (e) {}
 }
 
+// HANS_HEALTH_V1 — karta „Subsystémy" (zdraví závislostí)
+async function loadHealth() {
+  try {
+    const h = await (await fetch('/api/health')).json();
+    const card = document.getElementById('health-card');
+    if (!card) return;
+    if (!h || !h.services || !h.services.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const ICON = {ok:'✅', paused:'⏸️', wedged:'⚠️', down:'❌', unknown:'❔'};
+    const COL = {ok:'var(--bg3)', paused:'var(--bg3)', wedged:'#5a4a1e', down:'#5a2530', unknown:'var(--bg3)'};
+    const grid = document.getElementById('health-grid');
+    grid.innerHTML = h.services.map(s =>
+      `<div title="${(s.detail||'').replace(/"/g,'')}" style="display:flex;align-items:center;gap:6px;`
+      + `padding:6px 10px;border-radius:8px;background:${COL[s.status]||'var(--bg3)'};font-size:0.82rem">`
+      + `${ICON[s.status]||'❔'} ${s.label}</div>`).join('');
+    const age = document.getElementById('health-age');
+    let t = (h.age_s == null) ? 'zatím neměřeno' :
+      (h.age_s < 90 ? 'právě teď' : 'před ' + Math.round(h.age_s/60) + ' min');
+    if (h.healed && h.healed.length) t += ' · mozek restartován';
+    age.textContent = 'Poslední kontrola: ' + t;
+  } catch (e) {}
+}
+
 // HANS_CREATIONS_V1 — karta „Co Hans napsal" (úvahy)
 async function loadMusings() {
   try {
@@ -1349,6 +1379,8 @@ loadMoviesSeen();
 setInterval(loadMoviesSeen, 60000);
 loadArt();
 setInterval(loadArt, 60000);
+loadHealth();
+setInterval(loadHealth, 30000);
 loadPlace();
 setInterval(loadPlace, 60000);
 loadMusings();

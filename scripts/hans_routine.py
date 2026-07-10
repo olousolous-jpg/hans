@@ -243,6 +243,16 @@ class HansRoutine:
         self._night_check_interval = float(cfg.get('night_check_interval_s',
                                                    config.get('night_check_interval_s', 60)))
         threading.Thread(target=self._night_worker_loop, daemon=True).start()
+        # HANS_HEALTH_V1 — živý watchdog závislostí (Ollama/ComfyUI/Kodi/STT/PC/
+        # disk) ve VLASTNÍM vlákně. Reálná probe (Ollama i inference → odhalí
+        # wedge) + self-heal zaseklé Ollamy (2× po sobě → restart na PC).
+        _hcfg = config.get('health', {}) or {}
+        self._health_enabled = bool(_hcfg.get('enabled', True))
+        self._health_interval = float(_hcfg.get('check_interval_s', 600))
+        self._health_wedge_strikes = 0   # po sobě jdoucí WEDGED před self-heal
+        self._health_last = {}           # poslední výsledek (pro surfacing)
+        if self._health_enabled:
+            threading.Thread(target=self._health_watcher_loop, daemon=True).start()
         # HANS_DISTILLATION_V1 — fáze 2a noční destilace záseku
         self._distillation = None
         self._distillation_running = False   # idempotence — jednou denně
@@ -1087,6 +1097,47 @@ class HansRoutine:
             threading.Thread(target=_do, daemon=True).start()
         except Exception:
             pass
+
+    def _health_watcher_loop(self):
+        """HANS_HEALTH_V1 — periodická probe závislostí + self-heal zaseklé
+        Ollamy. Vlastní vlákno (nezávislé na tick). Self-heal AŽ po N po sobě
+        jdoucích WEDGED (transientní timeout nerestartuje); DOWN (PC spí / služba
+        neběží) se NEheal-uje — to není zásek, ale legitimní nedostupnost."""
+        # po startu nech služby usadit
+        if self._stop.wait(min(120.0, self._health_interval)):
+            return
+        while not self._stop.is_set():
+            try:
+                from scripts import hans_health
+                health = hans_health.probe_all(self.config)
+                self._health_last = health
+                healed = []
+                oll = (health.get('ollama', {}) or {}).get('status')
+                if oll == hans_health.WEDGED:
+                    self._health_wedge_strikes += 1
+                    need = int((self.config.get('health', {}) or {}).get(
+                        'wedge_strikes', 2))
+                    if self._health_wedge_strikes >= need:
+                        if hans_health.heal_ollama(self.config):
+                            healed.append('ollama')
+                            self._health_wedge_strikes = 0
+                            if self._notifier:
+                                try:
+                                    self._notifier("Můj mozek se zasekl, "
+                                                   "restartoval jsem ho.")
+                                except Exception:
+                                    pass
+                else:
+                    self._health_wedge_strikes = 0
+                hans_health._write_state(health, healed)
+                bad = hans_health.degraded_services(health)
+                if bad:
+                    _log.warning('health: degradováno %s (healed=%s, strikes=%d)',
+                                 bad, healed, self._health_wedge_strikes)
+            except Exception as _e:
+                _log.debug('health watcher: %s', _e)
+            if self._stop.wait(self._health_interval):
+                break
 
     def _night_worker_loop(self):
         """NIGHT_WORKER_THREAD_V1 — periodicky spouští noční analytiku NEZÁVISLE

@@ -1010,5 +1010,15 @@
     "settle_minutes": 20,
     "chat_quiet_minutes": 30,
     "_note": "HANS_PC_NIGHT_SHUTDOWN: po dokonceni nocni analytiky vypni PC (S3 suspend na teto desce rebootuje). Guardy: okno night_start..night_end, analytika usazena (zadny nocni event settle_minutes), zadny recent chat, PC vzhuru, 1x/noc. Rano ho probudi WOL. Vyzaduje NOPASSWD sudo poweroff na PC."
+  },
+  "health": {
+    "enabled": false,
+    "check_interval_s": 600,
+    "ollama_probe_timeout": 25,
+    "wedge_strikes": 2,
+    "self_heal_ollama": false,
+    "ollama_restart_cmd": "sudo -n systemctl restart ollama",
+    "min_disk_gb": 2.0,
+    "_note": "HANS_HEALTH_V1: zivy watchdog zavislosti (Ollama/ComfyUI/Kodi/STT/PC/disk). Ollama probe = realna inference (odhali wedge, ktery /api/tags nepozna). Self-heal: 2x po sobe WEDGED -> restart Ollamy na PC pres SSH (vyzaduje NOPASSWD sudoers: '<user> ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ollama'). DOWN (PC spi) se neheal-uje."
   }
 }

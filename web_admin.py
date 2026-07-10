@@ -732,6 +732,29 @@ async def get_place():
     return out
 
 
+@app.get("/api/health")
+async def get_health():
+    """HANS_HEALTH_V1 — zdraví závislostí (Ollama/ComfyUI/Kodi/STT/PC/disk).
+    Čte data/health_state.json (zapisuje watchdog v hans_routine)."""
+    _LBL = {"ollama": "Mozek (Ollama)", "comfyui": "Malování (ComfyUI)",
+            "kodi": "Televize (Kodi)", "stt": "Sluch (přepis)",
+            "pc": "Počítač", "disk": "Disk"}
+    out = {"services": [], "degraded": [], "healed": [], "age_s": None}
+    try:
+        d = json.loads(Path("data/health_state.json").read_text(encoding="utf-8"))
+        for k, s in (d.get("services") or {}).items():
+            out["services"].append({"key": k, "label": _LBL.get(k, k),
+                                    "status": s.get("status", "unknown"),
+                                    "detail": s.get("detail", "")})
+        out["degraded"] = d.get("degraded", [])
+        out["healed"] = d.get("healed", [])
+        if d.get("ts"):
+            out["age_s"] = int(time.time() - d["ts"])
+    except Exception:
+        pass
+    return out
+
+
 @app.get("/api/musings")
 async def get_musings(limit: int = 6):
     """Co Hans napsal sám pro sebe (diary event 'musing')."""
