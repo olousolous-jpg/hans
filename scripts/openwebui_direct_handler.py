@@ -982,6 +982,21 @@ class OpenWebUIDirectHandler:
         except Exception:
             place_ctx = ""
 
+        # HANS_CALENDAR_V1 — nadcházející události z kalendáře TÉTO osoby (full mód).
+        # Soukromí: ukáže jen kalendář osoby, se kterou Hans mluví (name).
+        cal_ctx = ""
+        try:
+            from scripts.hans_calendar import is_enabled, CalendarStore
+            if not for_greeting and name and is_enabled(self.config):
+                _dbp = (self.config.get("diary", {}) or {}).get(
+                    "db_path", "data/hans_diary.db")
+                _cs = CalendarStore(self.config, _dbp).context_string(
+                    name, hours=72)
+                if _cs:
+                    cal_ctx = "\n\n" + _cs
+        except Exception:
+            cal_ctx = ""
+
         # Aktuální čas + fáze dne (TIME_AWARENESS_V1)
         _hi = getattr(self, '_hans_idle', None)
         time_ctx = ""
@@ -1345,7 +1360,7 @@ class OpenWebUIDirectHandler:
                 system_msg = ""
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
-                          + room_ctx + place_ctx + diary_ctx + story_ctx + study_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_SYNTHESIS_IDEAS_V1
+                          + room_ctx + place_ctx + cal_ctx + diary_ctx + story_ctx + study_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_SYNTHESIS_IDEAS_V1 / HANS_CALENDAR_V1
                           + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx + cap_ctx)  # …/ HANS_CAPABILITY_AWARENESS_V1

@@ -1049,9 +1049,36 @@ class HansRoutine:
             old = self._current_phase
             self._current_phase = new_phase
             self._on_phase_change(old, new_phase)
+        # HANS_CALENDAR_V1 — throttlovaný sync Proton kalendáře (ICS) na pozadí.
+        self._maybe_calendar_sync()
         # NIGHT_WORKER_THREAD_V1 — noční LLM analytika se sem UŽ NEVOLÁ; běží
         # ve vlastním vlákně (_night_worker_loop). Zaseklá Ollama tak
         # neblokuje tento tick ani volajícího (proaktivita/film/autoplay).
+
+    def _maybe_calendar_sync(self):
+        """HANS_CALENDAR_V1 — stáhne ICS feed (throttle sync_interval_min).
+        Běží ve vlákně, ať síťový fetch neblokuje tick. No-op když vypnuto."""
+        try:
+            cc = (self.config.get("calendar", {}) or {})
+            if not cc.get("enabled") or not (cc.get("ics_url") or "").strip():
+                return
+            interval = int(cc.get("sync_interval_min", 30)) * 60
+            last = getattr(self, "_last_cal_sync", 0.0)
+            now = time.time()
+            if now - last < interval:
+                return
+            self._last_cal_sync = now
+            import threading
+
+            def _do():
+                try:
+                    from scripts.hans_calendar import CalendarStore
+                    CalendarStore(self.config, self._diary_path).sync()
+                except Exception as e:
+                    _log.warning("calendar sync selhal: %s", e)
+            threading.Thread(target=_do, daemon=True).start()
+        except Exception:
+            pass
 
     def _night_worker_loop(self):
         """NIGHT_WORKER_THREAD_V1 — periodicky spouští noční analytiku NEZÁVISLE

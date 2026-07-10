@@ -1,6 +1,6 @@
 """
 Počasí z Open-Meteo API — zdarma, bez API klíče.
-Pardubice: lat=50.04, lon=15.78
+Výchozí souřadnice (Praha) — reálné z config.weather.
 Cachuje výsledek na 30 minut.
 """
 import time
@@ -27,7 +27,7 @@ _WMO = {
 
 class WeatherCHMU:
 
-    def __init__(self, lat: float = 50.04, lon: float = 15.78):
+    def __init__(self, lat: float = 50.08, lon: float = 14.42):
         self._lat = lat
         self._lon = lon
         self._url = (

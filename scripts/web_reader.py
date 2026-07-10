@@ -34,7 +34,7 @@ RSS_FEEDS = {
     "zpravy":    "https://ct24.ceskatelevize.cz/rss/hlavni-zpravy",
     "veda":      "https://ct24.ceskatelevize.cz/rss/veda",
     "kultura":   "https://ct24.ceskatelevize.cz/rss/kultura",
-    "pocasi":    "https://www.yr.no/en/forecast/daily-table/2-3068799/Czech%20Republic/Pardubice%20Region/Pardubice",
+    "pocasi":    "https://www.yr.no/en/forecast/daily-table/1-72088/Czech%20Republic/Prague/Prague",
 }
 
 WIKIPEDIA_API = "https://cs.wikipedia.org/api/rest_v1/page/summary/{title}"

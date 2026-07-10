@@ -395,6 +395,98 @@ register(
     help_text="Diagnostika OODA — co by Hans teď vybral (akci nevykoná)",
 )
 
+def _cmd_seznam(handler, name, args) -> str:  # HANS_AGENT_V1 — poznámky/seznam
+    """/seznam — výpis poznámek; /seznam hotovo N; /seznam smaz N."""
+    import sqlite3 as _sql
+    cfg = getattr(handler, "config", {}) or {}
+    dbp = (cfg.get("diary", {}) or {}).get("db_path", "data/hans_diary.db")
+    a = (args or "").strip().lower()
+    try:
+        db = _sql.connect(dbp, timeout=5.0)
+        db.execute("CREATE TABLE IF NOT EXISTS hans_notes ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, text TEXT, "
+                   "done INTEGER NOT NULL DEFAULT 0)")
+        m = re.match(r"(hotovo|smaz|smaž)\s+(\d+)", a)
+        if m:
+            nid = int(m.group(2))
+            if m.group(1).startswith("hotov"):
+                db.execute("UPDATE hans_notes SET done=1 WHERE id=?", (nid,))
+                db.commit(); db.close()
+                return f"✓ Položka {nid} označena jako hotová."
+            db.execute("DELETE FROM hans_notes WHERE id=?", (nid,))
+            db.commit(); db.close()
+            return f"✓ Položka {nid} smazána."
+        rows = db.execute("SELECT id, text, done FROM hans_notes "
+                          "ORDER BY done ASC, id ASC LIMIT 40").fetchall()
+        db.close()
+        if not rows:
+            return "Seznam je prázdný, pane."
+        lines = ["📝 Seznam:"]
+        for i, t, d in rows:
+            lines.append(f"  {'✓' if d else '•'} [{i}] {t}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"/seznam: chyba ({e})"
+
+
+register(
+    "seznam",
+    slash_aliases=["seznam", "poznamky", "poznámky", "todo"],
+    nl_patterns=[
+        r"\bco.{0,8}m[áa]m.{0,12}seznam",
+        r"\buka[žz].{0,12}seznam",
+        r"\bm[ůu]j\s+seznam",
+        r"\bseznam.{0,12}pozn[áa]mek",
+        r"\bco.{0,8}jsem.{0,8}(si\s+)?poznamenal",
+    ],
+    handler=_cmd_seznam,
+    help_text="Výpis poznámek/úkolů (/seznam, /seznam hotovo N, /seznam smaz N)",
+)
+
+def _cmd_kalendar(handler, name, args) -> str:  # HANS_CALENDAR_V1
+    """/kalendar — nadcházející události z Proton kalendáře; /kalendar sync."""
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts.hans_calendar import CalendarStore, is_enabled, people_map
+    except Exception:
+        return "/kalendar: modul nedostupný."
+    person = (name or "").lower()
+    if not is_enabled(cfg) or person not in people_map(cfg):
+        return ("Váš kalendář zatím nemám napojený, pane. Nasdílejte mi v Proton "
+                "Calendar odkaz („pro kohokoli\") a přidejte ho do "
+                "config.calendar.people.")
+    try:
+        dbp = (cfg.get("diary", {}) or {}).get("db_path", "data/hans_diary.db")
+        st = CalendarStore(cfg, dbp)
+        if (args or "").strip().lower().startswith("sync"):
+            n = st.sync()
+            return (f"✓ Kalendář synchronizován — {n} událostí." if n >= 0
+                    else "⚠ Synchronizace se nezdařila (síť/odkaz).")
+        evs = st.upcoming(person, hours=24 * 14, limit=15)
+        if not evs:
+            return "V nejbližších dvou týdnech nemám ve vašem kalendáři žádnou událost."
+        lines = ["📅 Nadcházející:"]
+        for e in evs:
+            loc = f" ({e['location']})" if e.get("location") else ""
+            lines.append(f"  • {st._fmt_when(e)} — {e['summary']}{loc}")
+        return "\n".join(lines)
+    except Exception as ex:
+        return f"/kalendar: chyba ({ex})"
+
+
+register(
+    "kalendar",
+    slash_aliases=["kalendar", "kalendář", "kalendar", "calendar"],
+    nl_patterns=[
+        r"\bco.{0,8}m[áa]m.{0,15}(v\s+)?kalend[áa]ř",
+        r"\bco.{0,8}m[áa]m.{0,12}(dnes|z[ií]tra|tento t[ýy]den)",
+        r"\bmoje?\s+ud[áa]losti",
+        r"\buka[žz].{0,12}kalend[áa]ř",
+    ],
+    handler=_cmd_kalendar,
+    help_text="Nadcházející události z Proton kalendáře (/kalendar, /kalendar sync)",
+)
+
 def _cmd_work(handler, name, args) -> str:  # WORK_CMD_V1 + WORK_REFACTOR_SHARED_V1
     """/work <téma> — tenký wrapper. Jádro je v hans_idle._create_work,
     aby ho mohla volat i automatika (idle smyčka) přes shim."""

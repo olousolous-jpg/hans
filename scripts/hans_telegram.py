@@ -252,6 +252,109 @@ class TelegramBridge:
                     _log.debug("mark_channel_delivered: %s", e)
                 _log.info("telegram: otázka → %s: %.60s", u["person"], q.question)
 
+    def _maybe_calendar_reminders(self):
+        """HANS_CALENDAR_V1 — připomeň blížící se události z Proton kalendáře.
+        SOUKROMÍ: každá událost jde JEN majiteli kalendáře (event['person']),
+        NE ostatním Telegram uživatelům. Throttle 5 min; mark_reminded brání
+        opakování; send_proactive respektuje tiché okno."""
+        cc = (self.config.get("calendar", {}) or {})
+        if not cc.get("enabled"):
+            return
+        try:
+            from scripts.hans_calendar import is_enabled, CalendarStore
+        except Exception:
+            return
+        if not is_enabled(self.config):
+            return
+        now = time.time()
+        if now - getattr(self, "_last_cal_check", 0) < 300:
+            return
+        self._last_cal_check = now
+        try:
+            store = CalendarStore(self.config, self._diary_path())
+            due = store.due_reminders(
+                lead_hours=float(cc.get("reminder_lead_hours", 2)))
+            if not due:
+                return
+            # osoba → její chat_id (jen jí posílej její kalendář)
+            person_cid = {}
+            for cid, u in self._users.items():
+                p = (u.get("person") or "").lower()
+                if cid and p and p not in person_cid:
+                    person_cid[p] = cid
+            for ev in due:
+                owner = (ev.get("person") or "").lower()
+                cid = person_cid.get(owner)
+                if not cid:
+                    continue  # majitel nemá Telegram → nikam neposílej
+                text = store.reminder_text(ev)
+                if self.send_proactive(text, chat_id=cid):
+                    store.mark_reminded(owner, ev["uid"], ev["start_ts"])
+                    _log.info("telegram: připomínka → %s: %.50s", owner, text)
+        except Exception as e:
+            _log.debug("calendar reminders: %s", e)
+
+    def _maybe_deliver_requested_art(self):
+        """HANS_ART_REQUEST_V1 — doruč obraz JEN uživateli, který si o něj
+        v Telegramu řekl („namaluj…"). Autonomní malování Hanse (sny, den…)
+        se NEposílá. Když je pending požadavek a objeví se nový obraz, pošli
+        ho žadateli a pending zruš (čeká max 6 min na render)."""
+        pend = getattr(self, "_pending_paint", None)
+        if not pend:
+            return
+        now = time.time()
+        if now - getattr(self, "_last_art_check", 0) < 15:
+            return
+        self._last_art_check = now
+        # vyprš staré požadavky (render se nepovedl / trvá moc dlouho)
+        for cid in [c for c, ts in pend.items() if now - ts > 360]:
+            pend.pop(cid, None)
+            try:
+                self.send(u"Obraz se mi teď nepodařilo vytvořit, pane. "
+                          u"Zkuste to prosím znovu.", chat_id=cid)
+            except Exception:
+                pass
+        if not pend:
+            return
+        try:
+            import json as _json
+            con = sqlite3.connect("file:%s?mode=ro" % self._diary_path(),
+                                  uri=True, timeout=3.0)
+            if getattr(self, "_last_art_id", None) is None:
+                row = con.execute("SELECT MAX(rowid) FROM diary WHERE "
+                                  "event_type='artwork'").fetchone()
+                self._last_art_id = (row[0] if row and row[0] else 0)
+            rows = con.execute(
+                "SELECT rowid, title, COALESCE(note,''), COALESCE(data,'') "
+                "FROM diary WHERE event_type='artwork' AND rowid > ? "
+                "ORDER BY rowid ASC LIMIT 3", (self._last_art_id,)).fetchall()
+            con.close()
+        except Exception as e:
+            _log.debug("art deliver query: %s", e)
+            return
+        if not rows:
+            return
+        # nejnovější nový obraz → pošli VŠEM čekajícím žadatelům, pak vyčisti
+        rid, title, note, data = rows[-1]
+        self._last_art_id = rid
+        path = ""
+        try:
+            path = (_json.loads(data) or {}).get("path", "") if data else ""
+        except Exception:
+            path = ""
+        cap = f"🎨 Hotovo — {title}"
+        if note:
+            cap += f"\n{note[:200]}"
+        waiting = list(pend.keys())
+        for cid in waiting:
+            if path and os.path.exists(path):
+                self.send_photo(path, caption=cap, chat_id=cid)
+            else:
+                self.send(cap, chat_id=cid)
+            pend.pop(cid, None)
+        _log.info("telegram: vyžádaný obraz → %d žadatelům: %.40s",
+                  len(waiting), title)
+
     # ── INBOUND (long-poll) ─────────────────────────────────────────────────
     def start(self):
         if not self.enabled or self._thread is not None:
@@ -272,6 +375,8 @@ class TelegramBridge:
                 self._flush_deferred()  # TELEGRAM_QUIET_HOURS_V1 — doruč po 9:00
                 self._escalate_questions()  # HANS_QUESTIONS_ROUTING_V1
                 self._maybe_push_questions()  # TELEGRAM_QUESTIONS_V1
+                self._maybe_calendar_reminders()  # HANS_CALENDAR_V1
+                self._maybe_deliver_requested_art()  # HANS_ART_REQUEST_V1
                 params = {"timeout": 30}
                 if self._offset is not None:
                     params["offset"] = self._offset
@@ -315,7 +420,14 @@ class TelegramBridge:
                 return
             # HANS_TELEGRAM_NL_INTENT_V1 — žádost o obsah v přirozené řeči
             _intent = self._detect_intent(text)
-            if _intent == "artwork":
+            if _intent == "paint":
+                # HANS_ART_REQUEST_V1 — označ, že tento uživatel čeká na obraz;
+                # NEvracej se → padne do chatu (namaluj příkaz → render na pozadí),
+                # výsledek pak doručí _maybe_deliver_requested_art.
+                if not hasattr(self, "_pending_paint"):
+                    self._pending_paint = {}
+                self._pending_paint[cid] = time.time()
+            elif _intent == "artwork":
                 self._cmd_artwork(cid, self._pick_mode(text)); return
             if _intent == "diary":
                 self._cmd_diary(cid); return
@@ -391,7 +503,14 @@ class TelegramBridge:
         if self._route_inspect_command(text, cmd, cid):
             return True
         if cmd in ("help", "pomoc", "napoveda", "nápověda", "start"):
-            self.send("Můžete mi normálně psát (povídáme si), nebo použít příkazy:\n"
+            self.send("Většinu věcí mi můžete říct i normální řečí — sám poznám, "
+                      "co chcete, a nabídnu to (s potvrzením). Např.:\n"
+                      "  „pusť Smrtonosnou past\" · „přidej na nákup mléko\" ·\n"
+                      "  „nastuduj něco o hradech\" · „jaké je počasí\" ·\n"
+                      "  „kdo je doma\" · „co hraje\" · „běž spát\"\n\n"
+                      "Příkazy:\n"
+                      "/kalendar — nadcházející události (z vašeho Proton kalendáře)\n"
+                      "/seznam — můj seznam poznámek/úkolů (/seznam hotovo N, /seznam smaz N)\n"
                       "/obraz — pošlu poslední obraz (napiš „náhodný obraz\" pro náhodný)\n"
                       "/denik — výpis z mého deníku\n"
                       "/uvaha — má poslední úvaha\n"
@@ -410,7 +529,7 @@ class TelegramBridge:
     # které smí projít přes Telegram (vše read-only „ukaž co Hans vytvořil";
     # sub-příkazy jako „teď" spustí práci na pozadí, stejně jako lokálně).
     _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika",
-                               "nitky", "zajmy"})
+                               "nitky", "zajmy", "seznam", "kalendar"})
 
     def _route_inspect_command(self, text: str, cmd: str, cid: str) -> bool:
         """Zkusí obsloužit inspekční slash příkaz přes chat_commands. True když ano."""
@@ -532,7 +651,11 @@ class TelegramBridge:
         t = (text or "").lower()
         if not t:
             return None
-        if re.search(r"obraz|obrázek|obrazek|namaloval|malb|namaluj", t) and re.search(self._ASK, t):
+        # HANS_ART_REQUEST_V1 — „namaluj/nakresli [téma]" = maluj NOVÝ obraz
+        # (a pošli výsledek), NE poslat poslední. Rozlišit od „pošli obrázek".
+        if re.search(r"namaluj|nakresli|namalovat|nakreslit|vytvoř\w*\s+obr", t):
+            return "paint"
+        if re.search(r"obraz|obrázek|obrazek|namaloval|malb", t) and re.search(self._ASK, t):
             return "artwork"
         if re.search(r"den[ií]k|deníč|zápis", t) and re.search(self._ASK, t):
             return "diary"
@@ -623,6 +746,12 @@ class TelegramBridge:
                 up = float(f.read().split()[0])
             lines.append("Běžím: %dd %dh %dm" % (
                 int(up // 86400), int((up % 86400) // 3600), int((up % 3600) // 60)))
+        except Exception:
+            pass
+        try:
+            from scripts.ollama_client import game_mode_on
+            lines.append("Herní mód: " + ("ZAPNUT (grafika uvolněna pro hru)"
+                                           if game_mode_on() else "vypnut"))
         except Exception:
             pass
         try:

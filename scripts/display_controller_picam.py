@@ -1065,8 +1065,8 @@ class PicamDisplayController:
         from scripts.weather_chmu import WeatherCHMU
         _loc = config.get('weather', {})
         self._weather = WeatherCHMU(
-            lat=float(_loc.get('lat', 50.04)),
-            lon=float(_loc.get('lon', 15.78)),
+            lat=float(_loc.get('lat', 50.08)),
+            lon=float(_loc.get('lon', 14.42)),
         )
         if openwebui_chat:
             openwebui_chat._weather = self._weather

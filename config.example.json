@@ -486,8 +486,8 @@
     "enabled": true
   },
   "weather": {
-    "lat": 50.04,
-    "lon": 15.78
+    "lat": 50.08,
+    "lon": 14.42
   },
   "hans_dialog": {
     "hans_personality": "Formální anglický majordomus z 19. století. Mluví česky, stručně a důstojně.",
@@ -987,5 +987,16 @@
     "cooldown_default_s": 60,
     "reject_cooldown_s": 3600,
     "_note": "HANS_AGENT_V1: agentni vrstva — z konverzace odvodi akci, navrhne (confirm ano/ne), po potvrzeni provede. Whitelist: kodi_play_film, hans_sleep, add_book_wishlist. Router=hans-czech rezidentni, pre-gate hinty, cooldown+anti-echo, denik agent_action."
+  },
+  "calendar": {
+    "enabled": false,
+    "people": {
+      "alice": ""
+    },
+    "horizon_days": 60,
+    "sync_interval_min": 30,
+    "reminder_lead_hours": 2,
+    "tz": "Europe/Prague",
+    "_note": "HANS_CALENDAR_V1: per-osoba kalendare. Kazda osoba nasdili SVUJ Proton kalendar (Sdilet -> odkaz pro kohokoli) -> vloz jeji ICS URL do people[jmeno]. Pripominky chodi JEN majiteli. Read-only."
   }
 }

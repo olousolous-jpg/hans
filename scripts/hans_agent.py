@@ -131,6 +131,153 @@ def _ground_book(handler, args):
     return True, args, ""
 
 
+# ── Info dotazy (instant, bez potvrzení — jen odpoví z živých dat) ───────────
+
+def _run_weather(handler, args) -> str:
+    try:
+        from scripts.weather_chmu import WeatherCHMU
+        _w = (getattr(handler, "config", {}) or {}).get("weather", {}) or {}
+        s = WeatherCHMU(lat=float(_w.get("lat", 50.08)),
+                        lon=float(_w.get("lon", 14.42))).get_context_string()
+        return s.replace("Počasí:", "Za oknem:").strip() if s else \
+            "Aktuální počasí se mi teď nedaří zjistit, pane."
+    except Exception:
+        return "Aktuální počasí se mi teď nedaří zjistit, pane."
+
+
+def _run_pc_health(handler, args) -> str:
+    try:
+        from scripts import pc_remote
+        lines = pc_remote.display_lines(handler.config)
+        if not lines:
+            return "Počítač je teď nedostupný — nejspíš spí, pane."
+        return "Počítač: " + ", ".join(lines) + "."
+    except Exception:
+        return "Stav počítače se mi teď nedaří zjistit, pane."
+
+
+def _run_who_home(handler, args) -> str:
+    hi = getattr(handler, "_hans_idle", None)
+    names = [n for n in (getattr(hi, "_present_names", None) or [])
+             if n and n not in ("Unknown", "?", "")]
+    if names:
+        if len(names) == 1:
+            return f"Vidím tu {names[0]}."
+        return "Vidím tu: " + ", ".join(names) + "."
+    # fallback — nedávno spatření z deníku (posl. 15 min)
+    try:
+        import sqlite3
+        db = sqlite3.connect(_diary_path(handler))
+        r = db.execute(
+            "SELECT title FROM diary WHERE event_type='person_seen' "
+            "AND ts > ? ORDER BY ts DESC LIMIT 1",
+            (time.time() - 900,)).fetchone()
+        db.close()
+        if r and r[0]:
+            return f"Naposledy jsem tu zahlédl {r[0]}, teď tu ale nikoho nevidím."
+    except Exception:
+        pass
+    return "Teď tu nikoho nevidím, pane."
+
+
+def _run_now_playing(handler, args) -> str:
+    kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
+    if not kodi:
+        return "K přehrávači se teď nedaří připojit, pane."
+    try:
+        np = kodi.get_now_playing()
+    except Exception:
+        np = None
+    if np and np.get("title"):
+        t = np.get("title")
+        yr = np.get("year")
+        return f"Na TV právě hraje „{t}“{f' ({yr})' if yr else ''}."
+    return "Na TV teď nic nehraje, pane."
+
+
+# ── Ovládání médií (confirm) ─────────────────────────────────────────────────
+
+def _run_kodi_pause(handler, args) -> str:
+    kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
+    if not kodi:
+        return "K přehrávači se nedaří připojit, pane."
+    return "Pozastavuji." if kodi.pause_playback() else \
+        "Pozastavení se nezdařilo, pane."
+
+
+def _run_kodi_stop(handler, args) -> str:
+    kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
+    if not kodi:
+        return "K přehrávači se nedaří připojit, pane."
+    return "Zastaveno." if kodi.stop_playback() else \
+        "Zastavení se nezdařilo, pane."
+
+
+def _ground_playing(handler, args):
+    """Pauza/stop dávají smysl jen když něco hraje."""
+    kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
+    if not kodi:
+        return False, args, "kodi nedostupné"
+    try:
+        np = kodi.get_now_playing()
+    except Exception:
+        np = None
+    if not np or not np.get("title"):
+        return False, args, "nic nehraje"
+    return True, args, ""
+
+
+# ── Studijní téma z chatu (confirm) ──────────────────────────────────────────
+
+def _run_add_study(handler, args) -> str:
+    topic = (args.get("tema") or "").strip()
+    if len(topic) < 2:
+        return "Které téma mám nastudovat, pane?"
+    try:
+        from scripts.hans_study import add_pending_topic
+        res = add_pending_topic(_diary_path(handler), topic)
+        if res == "exists":
+            return f"Téma „{topic}“ už mám ve studijním plánu."
+        return (f"Dobře — „{topic}“ jsem si zařadil do studijního plánu. "
+                f"Pustím se do něj, jakmile dokončím současné studium.")
+    except Exception as e:
+        log.warning("add_study: %s", e)
+        return "Zařazení tématu se nezdařilo, pane."
+
+
+def _ground_study(handler, args):
+    t = (args.get("tema") or "").strip()
+    return (len(t) >= 2, args, "" if len(t) >= 2 else "bez tématu")
+
+
+# ── Poznámky / paměťové sliby (confirm, light) ───────────────────────────────
+
+def _run_add_note(handler, args) -> str:
+    text = (args.get("text") or "").strip()
+    if len(text) < 2:
+        return "Co mám poznamenat, pane?"
+    try:
+        import sqlite3
+        db = sqlite3.connect(_diary_path(handler))
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS hans_notes ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, text TEXT, "
+            "done INTEGER NOT NULL DEFAULT 0)")
+        db.execute("INSERT INTO hans_notes (ts, text, done) VALUES (?,?,0)",
+                   (time.time(), text[:500]))
+        db.commit()
+        db.close()
+        return f"Poznamenal jsem si: {text}"
+    except Exception as e:
+        log.warning("add_note: %s", e)
+        return "Poznámku se nepodařilo uložit, pane."
+
+
+def _ground_note(handler, args):
+    t = (args.get("text") or "").strip()
+    return (len(t) >= 2, args, "" if len(t) >= 2 else "prázdná poznámka")
+
+
 ACTIONS: dict[str, Action] = {
     "kodi_play_film": Action(
         "kodi_play_film",
@@ -153,9 +300,77 @@ ACTIONS: dict[str, Action] = {
         "Přidat knihu na seznam ke čtení. Argument 'titul' = název knihy, "
         "kterou uživatel zmíní že by si chtěl přečíst / ať přečteš.",
         hints=["kniha", "knihu", "přečíst", "precist", "číst", "cist",
-               "na seznam", "wishlist", "knížk", "knizk"],
+               "na seznam ke", "wishlist", "knížk", "knizk"],
         args=["titul"], run=_run_book_wishlist, grounding=_ground_book,
         needs_confirm=True, cooldown_s=30),
+
+    # ── Info dotazy (instant, bez potvrzení) ────────────────────────────────
+    "report_weather": Action(
+        "report_weather",
+        "Odpovědět na dotaz o AKTUÁLNÍM počasí / jak je venku.",
+        hints=["počasí", "pocasi", "venku", "prší", "prsi", "sněží", "snezi",
+               "teplo venku", "zima venku", "za oknem", "slunečno"],
+        args=[], run=_run_weather, grounding=None,
+        needs_confirm=False, cooldown_s=10),
+    "report_pc_health": Action(
+        "report_pc_health",
+        "Odpovědět na dotaz o stavu POČÍTAČE (teploty, VRAM, RAM, zda běží).",
+        hints=["počítač", "pocitac", "jak je na tom pc", "teplota pc",
+               "vram", "kolik ram", "gpu", "grafick", "jak se má počítač"],
+        args=[], run=_run_pc_health, grounding=None,
+        needs_confirm=False, cooldown_s=10),
+    "report_who_is_home": Action(
+        "report_who_is_home",
+        "Odpovědět na dotaz, KDO je teď doma / v místnosti / kdo tu je.",
+        hints=["kdo je doma", "kdo je tu", "je někdo doma", "je nekdo doma",
+               "kdo tu je", "někdo tu", "nekdo tu", "jsem sám", "jsem sam",
+               "kdo tady"],
+        args=[], run=_run_who_home, grounding=None,
+        needs_confirm=False, cooldown_s=10),
+    "report_now_playing": Action(
+        "report_now_playing",
+        "Odpovědět na dotaz, co PRÁVĚ hraje na TV.",
+        hints=["co hraje", "co běží", "co bezi", "co dávají", "co davaji",
+               "co se přehrává", "co je na tv"],
+        args=[], run=_run_now_playing, grounding=None,
+        needs_confirm=False, cooldown_s=10),
+
+    # ── Ovládání médií (confirm) ────────────────────────────────────────────
+    "kodi_pause": Action(
+        "kodi_pause",
+        "Pozastavit (pauza) běžící film/přehrávání na TV.",
+        hints=["pauza", "pauzni", "pozastav", "zastav to", "dej pauzu",
+               "stopni", "stop na chvíli"],
+        args=[], run=_run_kodi_pause, grounding=_ground_playing,
+        needs_confirm=True, cooldown_s=15),
+    "kodi_stop": Action(
+        "kodi_stop",
+        "Úplně zastavit (ukončit) běžící film/přehrávání na TV.",
+        hints=["vypni film", "vypni to", "ukonči film", "ukonci film",
+               "zastav film", "vypni tv", "konec filmu"],
+        args=[], run=_run_kodi_stop, grounding=_ground_playing,
+        needs_confirm=True, cooldown_s=15),
+
+    # ── Studijní téma z chatu (confirm) ─────────────────────────────────────
+    "add_study_topic": Action(
+        "add_study_topic",
+        "Zařadit téma ke studiu do hloubky. Argument 'tema' = co si uživatel "
+        "přeje aby Hans nastudoval / prostudoval / naučil se.",
+        hints=["nastuduj", "prostuduj", "studuj", "nauč se", "nauc se",
+               "zaměř se na", "zamer se na", "zjisti víc o", "prozkoumej téma"],
+        args=["tema"], run=_run_add_study, grounding=_ground_study,
+        needs_confirm=True, cooldown_s=30),
+
+    # ── Poznámky / paměťové sliby (confirm, light) ──────────────────────────
+    "add_note": Action(
+        "add_note",
+        "Přidat poznámku / úkol / položku na seznam. Argument 'text' = co si "
+        "uživatel přeje poznamenat (nákup, připomínka, TODO).",
+        hints=["poznamenej", "zapiš si", "zapis si", "na nákup", "na nakup",
+               "nezapomeň", "nezapomen", "připomeň", "pripomen", "na seznam",
+               "poznámka", "poznamka", "dej na seznam"],
+        args=["text"], run=_run_add_note, grounding=_ground_note,
+        needs_confirm=True, cooldown_s=10),
 }
 
 
@@ -284,13 +499,28 @@ class AgentRouter:
                 if not ok:
                     log.info("agent: %s grounding zamítl (%s)", aid, gmsg)
                     return None
-            text = (decision.get("propose_text")
-                    or self._default_text(action, args))
-            text = text.strip()
+            prop = Proposal(action, args,
+                            decision.get("propose_text", ""), conf,
+                            decision.get("reason", ""))
+            # INSTANT akce (needs_confirm=False) — info dotazy jen odpoví
+            # z živých dat, žádné ano/ne. Proveď hned a vrať výsledek.
+            if not action.needs_confirm:
+                try:
+                    result = action.run(handler, args)
+                except Exception as e:
+                    log.warning("agent instant %s selhala: %s", aid, e)
+                    return None
+                if not result:
+                    return None
+                self._last_fire[h] = time.time()
+                self._log(handler, prop, "answered", result=result)
+                log.info("agent: instant %s conf=%.2f pro %s", aid, conf, name)
+                return result
+            # CONFIRM akce — navrhni + ulož pending, čekej na ano/ne.
+            text = (prop.text or self._default_text(action, args)).strip()
             if not text.endswith(("?",)):
                 text += " Mám to udělat?"
-            prop = Proposal(action, args, text, conf,
-                            decision.get("reason", ""))
+            prop.text = text
             self._pending[name] = prop
             self._log(handler, prop, "proposed")
             log.info("agent: návrh %s conf=%.2f pro %s", aid, conf, name)
@@ -306,6 +536,14 @@ class AgentRouter:
             return "Mám se ztišit a jít spát?"
         if action.id == "add_book_wishlist":
             return f"Mám „{args.get('titul')}“ přidat na seznam ke čtení?"
+        if action.id == "kodi_pause":
+            return "Mám pozastavit přehrávání?"
+        if action.id == "kodi_stop":
+            return "Mám zastavit přehrávání?"
+        if action.id == "add_study_topic":
+            return f"Mám si „{args.get('tema')}“ zařadit ke studiu?"
+        if action.id == "add_note":
+            return f"Mám si poznamenat „{args.get('text')}“?"
         return "Mám to zařídit?"
 
     # ── LLM router ──────────────────────────────────────────────────────────

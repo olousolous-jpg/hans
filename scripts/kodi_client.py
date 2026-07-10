@@ -385,6 +385,39 @@ class KodiClient:
         except Exception:
             return False
 
+    def _active_player_id(self) -> int | None:
+        """ID aktivního video přehrávače (nebo None)."""
+        try:
+            r = self._call("Player.GetActivePlayers", {})
+            for p in (r or {}).get("result", []) or []:
+                if p.get("type") in ("video", "audio"):
+                    return p.get("playerid")
+        except Exception:
+            pass
+        return None
+
+    def pause_playback(self) -> bool:
+        """HANS_AGENT_V1 — pauza/pokračování aktivního přehrávače (toggle)."""
+        pid = self._active_player_id()
+        if pid is None:
+            return False
+        try:
+            r = self._call("Player.PlayPause", {"playerid": pid})
+            return bool(r) and "error" not in (r or {})
+        except Exception:
+            return False
+
+    def stop_playback(self) -> bool:
+        """HANS_AGENT_V1 — úplně zastav aktivní přehrávač."""
+        pid = self._active_player_id()
+        if pid is None:
+            return False
+        try:
+            r = self._call("Player.Stop", {"playerid": pid})
+            return bool(r) and "error" not in (r or {})
+        except Exception:
+            return False
+
     def pick_favorite(self, titles, min_days: int = 0,
                       limit: int = 800) -> dict | None:
         """FILM_PERSON_FAVS_V1 — vyber konkrétní OBLÍBENÝ film osoby (dle názvu)

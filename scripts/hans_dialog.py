@@ -540,16 +540,16 @@ class HansDialog:
         from scripts.weather_chmu import WeatherCHMU
         _loc = config.get('weather', {})
         self._weather = WeatherCHMU(
-            lat=float(_loc.get('lat', 50.04)),
-            lon=float(_loc.get('lon', 15.78)),
+            lat=float(_loc.get('lat', 50.08)),
+            lon=float(_loc.get('lon', 14.42)),
         )
 
         # Pocasi
         from scripts.weather_chmu import WeatherCHMU
         _loc = config.get('weather', {})
         self._weather = WeatherCHMU(
-            lat=float(_loc.get('lat', 50.04)),
-            lon=float(_loc.get('lon', 15.78)),
+            lat=float(_loc.get('lat', 50.08)),
+            lon=float(_loc.get('lon', 14.42)),
         )  # 10 min
 
         gem = config.get("openrouter", {})

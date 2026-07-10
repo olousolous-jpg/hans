@@ -634,6 +634,46 @@ def _generate_mastery(config: dict, topic: str, subs: list, notes: list) -> str:
         return ""
 
 
+def add_pending_topic(diary_db_path: str, topic: str) -> str:
+    """HANS_AGENT_V1 — zařadí téma z chatu do studijní fronty (status='pending').
+    Aktivuje se v ensure_program s PŘEDNOSTÍ před durable koníčky, jakmile
+    dokončí současný program. Idempotentní (topic_norm ve všech stavech).
+    Vrací 'added' | 'exists' | 'error'."""
+    t = (topic or "").strip()
+    if len(t) < 2:
+        return "error"
+    tn = _norm(t)
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        try:
+            db.execute("""CREATE TABLE IF NOT EXISTS study_program (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL,
+                topic_norm TEXT NOT NULL, curriculum TEXT NOT NULL,
+                current_index INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'active',
+                sessions_done INTEGER NOT NULL DEFAULT 0,
+                started_ts REAL NOT NULL, updated_ts REAL NOT NULL,
+                last_session_ts REAL NOT NULL DEFAULT 0)""")
+            ex = db.execute(
+                "SELECT 1 FROM study_program WHERE topic_norm=? LIMIT 1",
+                (tn,)).fetchone()
+            if ex:
+                return "exists"
+            now = time.time()
+            db.execute(
+                "INSERT INTO study_program (topic, topic_norm, curriculum, "
+                "current_index, status, sessions_done, started_ts, updated_ts, "
+                "last_session_ts) VALUES (?,?,?,0,'pending',0,?,?,0)",
+                (t, tn, "[]", now, now))
+            db.commit()
+            return "added"
+        finally:
+            db.close()
+    except Exception as e:
+        _log.warning("add_pending_topic: %s", e)
+        return "error"
+
+
 class StudyStore:
     def __init__(self, config: dict, diary_db_path: str):
         self.config = config
@@ -730,6 +770,20 @@ class StudyStore:
         except Exception:
             return set()
 
+    def _next_pending_topic(self) -> Optional[dict]:
+        """HANS_AGENT_V1 — nejstarší pending téma z chatu (FIFO) nebo None."""
+        try:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT id, topic FROM study_program WHERE status='pending' "
+                    "ORDER BY id ASC LIMIT 1").fetchone()
+                return {"id": row["id"], "topic": row["topic"]} if row else None
+            finally:
+                conn.close()
+        except Exception:
+            return None
+
     def all_programs(self, limit: int = 20) -> List[dict]:
         try:
             conn = self._connect()
@@ -751,6 +805,34 @@ class StudyStore:
         active = self.get_active_program()
         if active:
             return active
+
+        # HANS_AGENT_V1 — PENDING téma z chatu má PŘEDNOST před durable koníčky
+        # (Hans/uživatel se k němu zavázal). Vygeneruj kurikulum a aktivuj.
+        pend = self._next_pending_topic()
+        if pend:
+            curriculum = _generate_curriculum(config, pend["topic"], [])
+            if len(curriculum) < 3:
+                _log.info("study.ensure_program: kurikulum pending '%s' "
+                          "se nevygenerovalo (LLM dole?) — zkusím příště",
+                          pend["topic"])
+                return None
+            try:
+                conn = self._connect()
+                try:
+                    conn.execute(
+                        "UPDATE study_program SET curriculum=?, status='active', "
+                        "updated_ts=? WHERE id=?",
+                        (json.dumps(curriculum, ensure_ascii=False),
+                         time.time(), pend["id"]))
+                    conn.commit()
+                finally:
+                    conn.close()
+                _log.info("study: pending téma '%s' aktivováno (%d pod-témat)",
+                          pend["topic"], len(curriculum))
+                return self.get_active_program()
+            except Exception as e:
+                _log.warning("aktivace pending tématu selhala: %s", e)
+                return None
 
         c = _cfg(config)
         min_ev = int(c.get("min_evidence", 8))
