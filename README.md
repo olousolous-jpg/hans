@@ -155,6 +155,11 @@ adaptér navíc. (`hans_agent`)
   **ověří reálnou volnou VRAM** (`rocm-smi`/ComfyUI), než pustíš hru.
 - **Zdraví PC** — přes SSH vidí reálnou teplotu GPU/CPU, paměť a stav; za herního
   módu se telemetrie **cyklují na očních displejích**. (`pc_remote`)
+- **Sebeúdržba (watchdog)** — Hans hlídá zdraví vlastních závislostí (Ollama,
+  ComfyUI, Kodi, přepis řeči, PC, disk). Zaseknutí „mozku" pozná **skutečnou
+  zkušební inferencí** (ne jen pingem, který zásek neodhalí) a umí si Ollamu na
+  PC **sám restartovat**; stav hlásí na dashboard i v chatu. (`hans_health`,
+  `/zdravi`)
 - **Návrh vlastní nástěnky** — po dostudování designu Hans napíše designovou
   kritiku + návrh své webové nástěnky a vyrenderuje mockup. (`hans_dashboard`)
 
@@ -173,6 +178,28 @@ hloubky → poznámky do RAG → po dokončení mistrovská reflexe, která grou
 OpenAlex (akademické abstrakty), **Wikisource** (primární texty) a **Internet
 Archive** (plný text public-domain knih) — s deduplikací, ať necituje totéž
 dvakrát. (`hans_study`)
+
+### Od studia k reálnému dílu (uzavřený tvůrčí oblouk)
+Studium nekončí u textu — Hans z **nastudovaného vytvoří reálný artefakt** a sám
+ho postupně zlepšuje:
+1. **Brief** — ze *všech* studijních poznámek k tématu (ne jen pár úryvků)
+   destiluje **nejlepší možný prompt** pro nástroj. Tady se persona vypouští:
+   Hans (ze studia) říká **co** aplikovat, nástroj ví **jak** to udělat. Grounded
+   — jen principy, které reálně studoval. (`hans_brief`, `/brief`)
+2. **Výběr nástroje** — po dostudování domény si Hans **groundovaně najde vhodný
+   LLM** v knihovně Ollama (jméno/velikost/popularita/schopnosti přímo z
+   ollama.com, žádná domněnka), ověří, že se vejde do VRAM, a **navrhne ho ke
+   schválení**. (`hans_toolscout`, `/nastroj`)
+3. **Dílo** — nástroj (coder model) vykoná brief → **samostatná webová stránka**
+   (kód + vlastní obrázky: místa pro obrázek si Hans nechá vyrenderovat SDXL podle
+   toho, co mají zobrazovat). Verze se ukládají a jsou k vidění ve web adminu.
+   (`hans_maker`, `/vytvor`)
+4. **Kritika a spirála** — po díle Hans **sám navrhne, co ještě prohloubit** (a
+   proč), a **zeptá se tě** (Telegram i chat). Můžeš schválit, **napsat vlastní
+   kritiku** (podle ní se doučí hlubší specifika — bez opakování nastudovaného),
+   nebo odmítnout. Po prohloubení vznikne **lepší verze**. Když Hans doménu
+   dostuduje a vytvoří první dílo, **sám si zapíše novou schopnost** („umím
+   vytvořit dílo o X") a příště ji nabídne. (`/prohloubit`)
 
 ### Sebepoznání — ví, co dokáže
 Hans má **faktické povědomí o vlastních schopnostech** (kurátorovaný manifest) —

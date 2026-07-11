@@ -164,6 +164,11 @@ reading list — extending it (e.g. smart lights) is one more adapter. (`hans_ag
   web button **verifies real free VRAM** (`rocm-smi`/ComfyUI) before you launch.
 - **PC health** — over SSH he sees real GPU/CPU temperature, memory and status;
   during game mode the telemetry **cycles on the eye displays**. (`pc_remote`)
+- **Self-maintenance (watchdog)** — Hans monitors the health of his own
+  dependencies (Ollama, ComfyUI, Kodi, speech-to-text, PC, disk). He detects a
+  wedged "brain" with a **real trial inference** (not just a ping, which won't
+  catch a hang) and can **restart Ollama on the PC by himself**; status is
+  surfaced on the dashboard and in chat. (`hans_health`, `/zdravi`)
 - **Designs his own dashboard** — after studying design he writes a design critique
   and proposal for his web dashboard, and renders a mockup. (`hans_dashboard`)
 
@@ -183,6 +188,28 @@ For the strongest topics he escalates from Wikipedia to **real research**: OpenA
 (academic abstracts), **Wikisource** (primary texts) and the **Internet Archive**
 (full text of public-domain books) — deduplicated so he doesn't cite the same
 source twice. (`hans_study`)
+
+### From study to a real work (a closed creative arc)
+Study doesn't end at text — Hans turns **what he learned into a real artifact**
+and gradually improves it:
+1. **Brief** — from *all* of his study notes on a topic (not just a few snippets)
+   he distills the **best possible prompt** for a tool. Here the persona steps
+   aside: Hans (from study) says **what** to apply, the tool knows **how**.
+   Grounded — only principles he actually studied. (`hans_brief`, `/brief`)
+2. **Tool selection** — after finishing a domain he **finds a suitable LLM in a
+   grounded way** in the Ollama library (name/size/popularity/capabilities straight
+   from ollama.com, no guessing), checks it fits in VRAM, and **proposes it for
+   approval**. (`hans_toolscout`, `/nastroj`)
+3. **The work** — the tool (a coder model) executes the brief → a **standalone web
+   page** (code + its own images: image slots are rendered by SDXL based on what
+   they should depict). Versions are saved and viewable in the web admin.
+   (`hans_maker`, `/vytvor`)
+4. **Critique and spiral** — after the work Hans **proposes what to deepen** (and
+   why) and **asks you** (Telegram and chat). You can approve, **give your own
+   critique** (he then studies deeper specifics — without repeating what he already
+   knows), or decline. Deepening produces a **better version**. When he finishes a
+   domain and makes his first work, he **records a new capability** himself ("I can
+   make a work about X") and offers it next time. (`/prohloubit`)
 
 ### Self-knowledge — he knows what he can do
 Hans has a **factual awareness of his own capabilities** (a curated manifest) — so
