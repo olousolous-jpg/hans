@@ -1299,6 +1299,27 @@ class OpenWebUIDirectHandler:
         except Exception:
             severka_ctx = ""
 
+        # HANS_STUDY_DEEPEN_V2 — čekající návrh prohloubení (ask-first): Hans se
+        # smí zmínit, že vytvořil dílo a navrhuje prohloubit studium, a zeptat se.
+        deepen_ctx = ""
+        try:
+            from scripts.hans_study import StudyStore as _SSd
+            _dbp_d = (self.config.get("diary_db")
+                      or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                      or "data/hans_diary.db")
+            _dp = _SSd(self.config, _dbp_d).get_pending_deepen()
+            if _dp and not for_greeting:
+                _p0 = _dp[0]
+                deepen_ctx = ("\n\nVytvořil jsem dílo z tématu „%s“ a při "
+                              "ohlédnutí vidím, co by chtělo prohloubit (%s). Mám "
+                              "připravený návrh, co se k tomu ještě doučit — čeká "
+                              "na uživatele. Když to přijde přirozeně, smíš se "
+                              "zeptat, co na dílo říká, a zmínit „/prohloubit“ "
+                              "(schválit / vlastní kritika / ne)." % (
+                                  _p0["topic"], (_p0.get("critique") or "")[:120]))
+        except Exception:
+            deepen_ctx = ""
+
         # HANS_CORRECTION_LEARNING_V1 (#4) — nedávné lekce z korekcí (Hans je
         # má v kontextu, aby chybu neopakoval; read-only, NEmění paměť/postoje).
         lessons_ctx = ""
@@ -1361,7 +1382,7 @@ class OpenWebUIDirectHandler:
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
                           + room_ctx + place_ctx + cal_ctx + diary_ctx + story_ctx + study_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_SYNTHESIS_IDEAS_V1 / HANS_CALENDAR_V1
-                          + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + lessons_ctx + teddy_ctx + current
+                          + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + deepen_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx + cap_ctx)  # …/ HANS_CAPABILITY_AWARENESS_V1
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
@@ -1888,6 +1909,55 @@ class OpenWebUIDirectHandler:
             import traceback; traceback.print_exc(); print(f"[Chat] _stream_message error: {e}")
         return None
 
+    def _maybe_deepen_response(self, name: str, message: str):
+        """HANS_STUDY_DEEPEN_V2 — reakce na návrh prohloubení ČISTÝM TEXTEM.
+        Gated na čekající návrh → klasifikuje (schvaluje/zamítá/kritizuje/nic) a
+        rovnou aplikuje. Vrací odpověď nebo None (není reakce → normální chat)."""
+        from scripts.hans_study import StudyStore
+        dbp = (self.config.get("diary_db")
+               or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+               or "data/hans_diary.db")
+        st = StudyStore(self.config, dbp)
+        pend = st.get_pending_deepen()
+        if not pend:
+            return None
+        p0 = pend[0]
+        from scripts.ollama_client import ollama_generate
+        model = (self.config.get("dialog", {}) or {}).get("model") or "hans-czech:latest"
+        sysp = ("Byl vytvořen web/dílo o „%s“ a Hans navrhl prohloubit studium "
+                "(kritika díla: %s). Rozhodni, jak uživatel na TENTO návrh reaguje. "
+                "Odpověz JEDNÍM slovem: SCHVALUJE (souhlasí, ať se prohloubí) / "
+                "ZAMITA (nechce) / KRITIZUJE (dává vlastní kritiku díla nebo říká, "
+                "co doučit) / NIC (zpráva s návrhem vůbec nesouvisí)."
+                % (p0["topic"], (p0.get("critique") or "")[:120]))
+        raw = ollama_generate(model, "Zpráva uživatele: %s" % message[:300],
+                              system=sysp, config=self.config, timeout=25,
+                              keep_alive=-1,
+                              options={"temperature": 0, "num_predict": 6})
+        if not raw:
+            return None
+        verdict = raw.strip().upper()
+        if "NIC" in verdict:
+            return None
+        if "ZAMIT" in verdict or "ZAMÍT" in verdict:
+            st.reject_deepen_proposal(p0["id"])
+            return "Dobře, pane. „%s“ nechám tak, jak je." % p0["topic"]
+        user_crit = message.strip() if "KRITIZ" in verdict else ""
+        import threading as _th
+
+        def _apply():
+            try:
+                st.apply_deepen_proposal(self.config, p0["id"],
+                                         user_critique=user_crit)
+            except Exception:
+                pass
+        _th.Thread(target=_apply, daemon=True).start()
+        if user_crit:
+            return ("Beru tvou kritiku, pane — podle ní prohloubím studium „%s“. "
+                    "Nová pod-témata pak uvidíš v /studium." % p0["topic"])
+        return ("Schváleno, pane. Prohloubím studium „%s“ a příště z něj vytvořím "
+                "lepší dílo." % p0["topic"])
+
     def send_chat_message(self, name: str, user_message: str,
                           on_sentence=None) -> str | None:
         """
@@ -1949,6 +2019,20 @@ class OpenWebUIDirectHandler:
                 return _reply
         except Exception as _ce:
             print(f"[Chat] command dispatch error: {_ce}")
+
+        # HANS_STUDY_DEEPEN_V2 — kritika/rozhodnutí ČISTÝM TEXTEM (ne jen
+        # /prohloubit). Gated: jen když čeká návrh prohloubení. Klasifikuje
+        # reakci uživatele a rovnou ji aplikuje.
+        try:
+            _dr = self._maybe_deepen_response(name, user_message)
+            if _dr:
+                try:
+                    self.conv_store.add_exchange(name, user_message, _dr)
+                except Exception:
+                    pass
+                return _dr
+        except Exception as _de:
+            print(f"[Chat] deepen response error: {_de}")
 
         # ── HANS_AGENT_V1 — agentní vrstva (kontextové akce z konverzace) ──
         # PO parse_command (příkazy mají přednost), PŘED běžným chatem.

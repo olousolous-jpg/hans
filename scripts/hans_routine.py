@@ -1517,6 +1517,61 @@ class HansRoutine:
                 except Exception as _tse:
                     _log.warning("Toolscout selhal: %s", _tse)
 
+            # HANS_MAKER_V1 + HANS_STUDY_DEEPEN_V1 — spirála studium→dílo→kritika:
+            # dostudované téma → vyrob artefakt pro aktuální kolo (B); až artefakt
+            # je → kriticky prohluť studium o hlubší pod-témata (C, pod capem) →
+            # znovu se nastuduje (jen NOVÉ) → příště lepší dílo. 1 těžký krok/noc.
+            _mk_auto = (self.config.get("maker", {}) or {}).get("auto", True)
+            if (_mk_auto and not _creative_busy and self._in_night_window()
+                    and self._chat_quiet_ok()):
+                try:
+                    from scripts import hans_maker as _mk
+                    _mc = sqlite3.connect(self._diary_path, timeout=10)
+                    _mc.row_factory = sqlite3.Row
+                    _comp = _mc.execute("SELECT topic, deepen_round FROM "
+                                        "study_program WHERE status='completed'"
+                                        ).fetchall()
+                    _mc.close()
+                    for _pr in _comp:
+                        _tp = _pr["topic"]
+                        _rnd = int(_pr["deepen_round"] or 0)
+                        if not _mk.has_artifact_for_round(self._diary_path, _tp, _rnd):
+                            # B) vyrob dílo pro aktuální kolo (těžké → jeden/noc)
+                            _creative_busy = True
+                            _res = _mk.make_from_study(self.config,
+                                                       self._diary_path, _tp,
+                                                       "coder", _rnd)
+                            if _res.get("status") == "made" and self._notifier:
+                                self._notifier("Z toho, co jsem nastudoval o %s, "
+                                               "jsem vytvořil dílo." % _tp)
+                            _log.info("Maker '%s' kolo %d: %s", _tp, _rnd,
+                                      _res.get("status"))
+                            break
+                        else:
+                            # C) dílo hotové → NAVRHNI prohloubení (kritika +
+                            # hlubší témata), ulož jako pending a ZEPTEJ SE
+                            # uživatele (ask-first). Aplikuje se až na schválení
+                            # přes /prohloubit. HANS_STUDY_DEEPEN_V2.
+                            from scripts.hans_study import StudyStore as _SS
+                            _dres = _SS(self.config, self._diary_path
+                                        ).create_deepen_proposal(self.config, _tp)
+                            if _dres.get("status") == "proposed":
+                                if self._notifier:
+                                    _subs = "; ".join(_dres["subtopics"][:4])
+                                    self._notifier(
+                                        "Vytvořil jsem dílo o %s. Sám vidím, že "
+                                        "mu chybí: %s Navrhuji doučit se: %s. Co "
+                                        "na to říkáš? (/prohloubit schválit, "
+                                        "/prohloubit <vlastní kritika>, nebo "
+                                        "/prohloubit ne)" % (
+                                            _tp, _dres.get("critique", ""), _subs))
+                                _log.info("Deepen NÁVRH '%s' kolo %d (+%d, pending)",
+                                          _tp, _dres["round"],
+                                          len(_dres["subtopics"]))
+                                break
+                except Exception as _mke:
+                    _log.warning("Maker/deepen selhal: %s", _mke)
+
             # HANS_AUTHORSHIP_V1 — autorský projekt: 1 noční session = napiš další
             # sekci díla na pokračování (grounded v RAG čtení/studia). Po dokončení
             # osnovy dovětek + složení do data/works/. Deferral-safe (deferred=retry).

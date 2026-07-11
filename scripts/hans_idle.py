@@ -246,6 +246,24 @@ class HansIdle:
             "CREATE INDEX IF NOT EXISTS idx_diary_ts ON diary(ts)")
         self._db.commit()
 
+    def _capability_check(self):
+        """HANS_CAPABILITY_AWARENESS_V1 — všiml jsem si nové schopnosti? (manifest
+        diff proti tomu, co jsem „znal"). Volá se při startu + ranním probuzení."""
+        try:
+            from scripts.hans_capabilities import detect_new_capabilities
+            _capdb = self.config.get("diary_db", "data/hans_diary.db")
+            _newcaps = detect_new_capabilities(_capdb)
+            if _newcaps:
+                _log.info('capabilities: Hans zaznamenal %d nových schopností',
+                          len(_newcaps))
+                if hasattr(self, '_mood'):
+                    try:
+                        self._mood._shift('engaged', 0.4, 'nová schopnost')
+                    except Exception:
+                        pass
+        except Exception as _cce:
+            _log.debug('capability check failed: %s', _cce)
+
     def _morning_health_check(self):
         """HANS_MORNING_HEALTH_V1 — po probuzení (a po deferred catchupu)
         projdi noční logy. Reálné chyby → nálada 'worried' + nález uložený
@@ -536,25 +554,13 @@ class HansIdle:
             except Exception as _dte:
                 _log.debug('downtime check failed: %s', _dte)
 
-        # HANS_CAPABILITY_AWARENESS_V1 (V2) — 1× za běh: přibyla mi nová schopnost?
-        # (manifest se rozšířil oproti tomu, co jsem „znal") → deníkový event +
-        # Hans o tom pak sám ví. Faktické (manifest diff), ne konfabulace.
+        # HANS_CAPABILITY_AWARENESS_V1 (V2) — přibyla mi nová schopnost?
+        # Kontrola 1× při startu (catch-up po restartu) + při ranním probuzení
+        # (níže, wake edge) — ne periodicky. Když si schopnost připíše sám po
+        # vytvoření díla, maker spustí detekci OKAMŽITĚ (bez čekání na ráno).
         if not getattr(self, '_capabilities_checked', False):
             self._capabilities_checked = True
-            try:
-                from scripts.hans_capabilities import detect_new_capabilities
-                _capdb = self.config.get("diary_db", "data/hans_diary.db")
-                _newcaps = detect_new_capabilities(_capdb)
-                if _newcaps:
-                    _log.info('capabilities: Hans zaznamenal %d nových schopností',
-                              len(_newcaps))
-                    if hasattr(self, '_mood'):
-                        try:
-                            self._mood._shift('engaged', 0.4, 'nová schopnost')
-                        except Exception:
-                            pass
-            except Exception as _cce:
-                _log.debug('capability check failed: %s', _cce)
+            self._capability_check()
 
         # Denní rytmus — detekce fáze dne
         if hasattr(self, '_routine'):
@@ -568,6 +574,7 @@ class HansIdle:
                 if _prev is True and _slp is False:
                     self._morning_health_check()
                     self._morning_lessons_check()  # HANS_CORRECTION_LEARNING_V1
+                    self._capability_check()       # ranní: co jsem se v noci naučil
                 self._prev_routine_sleeping = _slp
             except Exception as _mhe:
                 _log.debug('morning_health edge check failed: %s', _mhe)

@@ -2001,3 +2001,174 @@ register(
     handler=_cmd_nastroj,
     help_text="Najdi LLM nástroj pro dílo: /nastroj <téma>; schválit/zamítnout N",
 )
+
+
+# ─── /brief — destilát studia do prompt/briefu pro dílo (HANS_BRIEF_V1) ───────
+def _cmd_brief(handler, name, args) -> str:  # HANS_BRIEF_V1
+    """/brief — poslední brief; /brief <téma> [coder|esej|obraz] = destiluj
+    studium do nejlepšího promptu pro tvorbu díla (bez persony, grounded)."""
+    import threading as _th
+    from scripts import hans_brief as hb
+    cfg = getattr(handler, "config", {}) or {}
+    db = _recall_db(handler)
+    a = (args or "").strip()
+
+    # bez argumentu → poslední brief
+    if not a:
+        last = hb.BriefStore(db).latest()
+        if not last:
+            done = hb.completed_study_topics(db)
+            hint = (" Dostudoval jsem: %s." % ", ".join(done)) if done else ""
+            return ("Zatím jsem žádný brief nedestiloval, pane. Napiš "
+                    "/brief <téma> a připravím prompt z nastudovaného.%s" % hint)
+        return ("Poslední brief — %s (%s), z poznámek: %s\n\n%s" % (
+            last["topic"], last["target"],
+            (last.get("source_notes") or "")[:120], last["brief"]))
+
+    # /brief <téma> [cíl]
+    parts = a.rsplit(None, 1)
+    target = "coder"
+    topic = a
+    if len(parts) == 2 and parts[1].lower() in (
+            "coder", "kod", "kód", "esej", "essay", "obraz", "image"):
+        topic = parts[0]
+        t = parts[1].lower()
+        target = ("essay" if t in ("esej", "essay")
+                  else "image" if t in ("obraz", "image") else "coder")
+
+    def _build():
+        try:
+            r = hb.build_brief(cfg, db, topic, target)
+            _log.info("/brief %s (%s) → %s", topic, target, r.get("status"))
+        except Exception as _e:
+            _log.warning("/brief selhal: %s", _e)
+    _th.Thread(target=_build, daemon=True).start()
+    return ("Destiluji, co jsem se naučil o „%s“, do promptu pro dílo (%s), "
+            "pane — chvíli to potrvá. Pak zadej /brief a ukážu ho." % (
+                topic, target))
+
+
+register(
+    "brief",
+    slash_aliases=["brief", "zadani", "zadání"],
+    nl_patterns=[
+        r"(p[řr]iprav|udělej).{0,15}(brief|zad[áa]n[íi]|prompt)",
+    ],
+    handler=_cmd_brief,
+    help_text="Destiluj studium do promptu pro dílo: /brief <téma> [coder|esej|obraz]",
+)
+
+
+# ─── /vytvor — celá smyčka studium → brief → nástroj → artefakt (HANS_MAKER_V1) ─
+def _cmd_vytvor(handler, name, args) -> str:  # HANS_MAKER_V1
+    """/vytvor <téma> [coder|obraz] — Hans z nastudovaného vyrobí reálný
+    artefakt (coder→HTML/CSS, obraz→SDXL). Běží na pozadí (pomalé)."""
+    import threading as _th
+    from scripts import hans_maker as hm
+    cfg = getattr(handler, "config", {}) or {}
+    db = _recall_db(handler)
+    a = (args or "").strip()
+    if not a:
+        arts = hm.latest_artifacts(db, 3)
+        if arts:
+            out = ["Má poslední díla, pane:"]
+            for x in arts:
+                out.append("• %s (%s) → %s" % (x.get("topic", x.get("title")),
+                           x.get("target", "?"), x.get("path", "")))
+            return "\n".join(out)
+        return ("Zatím jsem žádné dílo nevytvořil, pane. Napiš /vytvor <téma> "
+                "a z nastudovaného vyrobím artefakt (např. /vytvor Design).")
+    parts = a.rsplit(None, 1)
+    target, topic = "coder", a
+    if len(parts) == 2 and parts[1].lower() in ("coder", "obraz", "image"):
+        topic = parts[0]
+        target = "image" if parts[1].lower() in ("obraz", "image") else "coder"
+
+    def _make():
+        try:
+            r = hm.make_from_study(cfg, db, topic, target)
+            _log.info("/vytvor %s (%s) → %s (%s)", topic, target,
+                      r.get("status"), r.get("path", r.get("reason", "")))
+        except Exception as _e:
+            _log.warning("/vytvor selhal: %s", _e)
+    _th.Thread(target=_make, daemon=True).start()
+    return ("Pouštím se do díla k „%s“ (%s) z toho, co jsem nastudoval, pane. "
+            "Vyrobí to nástroj podle mého briefu — chvíli to potrvá (i pár "
+            "minut). Pak zadej /vytvor a ukážu, co vzniklo." % (topic, target))
+
+
+register(
+    "vytvor",
+    slash_aliases=["vytvor", "vytvoř", "vyrob", "artefakt"],
+    nl_patterns=[
+        r"vytvo[řr].{0,20}(z\s+toho|co\s+ses|nastudova|dílo|artefakt)",
+    ],
+    handler=_cmd_vytvor,
+    help_text="Vyrob artefakt z nastudovaného: /vytvor <téma> [coder|obraz]",
+)
+
+
+# ─── /prohloubit — schválení/kritika návrhu prohloubení studia (DEEPEN_V2) ────
+def _cmd_prohloubit(handler, name, args) -> str:  # HANS_STUDY_DEEPEN_V2
+    """/prohloubit — Hansovy návrhy prohloubení; /prohloubit schválit = přijmi;
+    /prohloubit <vlastní kritika> = prohluť podle tebe; /prohloubit ne = zamítni."""
+    import threading as _th
+    from scripts.hans_study import StudyStore
+    cfg = getattr(handler, "config", {}) or {}
+    db = _recall_db(handler)
+    st = StudyStore(cfg, db)
+    a = (args or "").strip()
+    low = a.lower()
+
+    pend = st.get_pending_deepen()
+    # bez argumentu → výpis návrhů
+    if not a:
+        if not pend:
+            return ("Teď nemám žádný návrh na prohloubení, pane. Vytvořím ho, "
+                    "až dokončím dílo z nastudovaného.")
+        out = ["Mé návrhy na prohloubení studia, pane:"]
+        for p in pend:
+            out.append("• %s (kolo %d)\n  Kritika: %s\n  Doučil bych se: %s" % (
+                p["topic"], p["round"], p["critique"] or "—",
+                "; ".join(p["subtopics"])))
+        out.append("\n/prohloubit schválit  ·  /prohloubit <vlastní kritika>  ·  "
+                   "/prohloubit ne")
+        return "\n".join(out)
+
+    if not pend:
+        return "Nemám čekající návrh, pane."
+
+    # zamítnout
+    if low in ("ne", "zamítnout", "zamitnout", "odmítnout", "odmitnout", "ignoruj"):
+        st.reject_deepen_proposal(pend[0]["id"])
+        return "Dobře, pane. Prohloubení „%s“ nechám být." % pend[0]["topic"]
+
+    # schválit (dle Hansova návrhu) NEBO vlastní kritika
+    is_approve = low in ("schválit", "schvalit", "ano", "ok", "jo", "souhlasím",
+                         "souhlasim", "schvaluji")
+    user_crit = "" if is_approve else a
+
+    def _apply():
+        try:
+            r = st.apply_deepen_proposal(cfg, pend[0]["id"], user_critique=user_crit)
+            _log.info("/prohloubit → %s (+%s)", r.get("status"),
+                      len(r.get("added", [])))
+        except Exception as _e:
+            _log.warning("/prohloubit selhalo: %s", _e)
+    _th.Thread(target=_apply, daemon=True).start()
+    if user_crit:
+        return ("Beru tvou kritiku, pane, a podle ní prohloubím studium „%s“. "
+                "Chvíli to potrvá; pak uvidíš nová pod-témata v /studium." %
+                pend[0]["topic"])
+    return ("Schváleno, pane. Prohloubím studium „%s“ podle svého návrhu — "
+            "nová pod-témata uvidíš v /studium a příště z nich vytvořím lepší "
+            "dílo." % pend[0]["topic"])
+
+
+register(
+    "prohloubit",
+    slash_aliases=["prohloubit", "prohloub", "deepen"],
+    nl_patterns=[],
+    handler=_cmd_prohloubit,
+    help_text="Návrh prohloubení studia: /prohloubit [schválit|ne|<vlastní kritika>]",
+)

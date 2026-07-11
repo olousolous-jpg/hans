@@ -706,6 +706,17 @@ class StudyStore:
                            "fail_count INTEGER NOT NULL DEFAULT 0")
             except sqlite3.OperationalError:
                 pass  # sloupec už existuje
+            # HANS_STUDY_DEEPEN_V1 — kolo prohloubení (spirála studium→dílo→kritika)
+            try:
+                db.execute("ALTER TABLE study_program ADD COLUMN "
+                           "deepen_round INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+            # HANS_STUDY_DEEPEN_V2 — ask-first: návrhy prohloubení čekají na schválení
+            db.execute("""CREATE TABLE IF NOT EXISTS deepen_proposals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, topic TEXT,
+                topic_norm TEXT, round INTEGER, critique TEXT, subtopics TEXT,
+                status TEXT DEFAULT 'pending')""")
             db.commit()
 
     def _connect(self):
@@ -1034,6 +1045,188 @@ class StudyStore:
             self.synthesize_progress(config, prog, knowledge, diary_writer)
         except Exception as e:
             _log.warning("synthesize_progress selhal: %s", e)
+
+    # ── HANS_STUDY_DEEPEN_V2 — ask-first prohloubení (kritika → schválení) ────
+    def _generate_deepening(self, config: dict, topic: str, studied: list,
+                            work_gap: str, max_new: int):
+        """LLM: KRÁTKÁ kritika díla (co mu chybí do hloubky) + NOVÁ hlubší
+        pod-témata (konkrétní, bez opakování nastudovaného). Když je zadán
+        `work_gap` (kritika od uživatele), řídí se JÍ. Vrací {critique, subtopics}
+        nebo None (LLM dole)."""
+        try:
+            from scripts.ollama_client import ollama_generate
+            model = (_cfg(config).get("model")
+                     or (config.get("evening_reflection", {}) or {}).get("model")
+                     or "jobautomation/OpenEuroLLM-Czech:latest")
+            sysp = (
+                "Jsi kurátor studia. Autor nastudoval pod-témata níže a vytvořil "
+                "z nich dílo. Buď KRITICKÝ: v 1 větě řekni, co dílu chybí do "
+                "hloubky, a navrhni %d NOVÝCH pod-témat, která jdou VÍC DO HLOUBKY "
+                "a do konkrétna (specifické techniky, postupy, hodnoty, příklady), "
+                "STAVÍ na nastudovaném, ale ŽÁDNÉ z nastudovaných NEOPAKUJÍ. Vrať "
+                "POUZE JSON: {\"critique\":\"…\",\"subtopics\":[\"…\"]} (česky)."
+                % max_new)
+            studied_txt = "\n".join("- %s" % s for s in studied)
+            gap = ("\n\nSměr kritiky (řiď se jím): %s" % work_gap) if work_gap else ""
+            raw = ollama_generate(
+                model, "Téma: %s\n\nUŽ NASTUDOVÁNO (NEOPAKUJ):\n%s%s\n\nJSON:"
+                % (topic, studied_txt, gap),
+                system=sysp, config=config, timeout=150, keep_alive=0,
+                options={"temperature": 0.4, "num_ctx": 4096, "num_predict": 450})
+            if not raw:
+                return None
+            m = re.search(r"\{.*\}", raw, re.S)
+            if m:
+                d = json.loads(m.group(0))
+                subs = [str(x).strip() for x in (d.get("subtopics") or [])
+                        if str(x).strip()][:max_new]
+                if subs:
+                    return {"critique": str(d.get("critique", "")).strip(),
+                            "subtopics": subs}
+        except Exception as e:
+            _log.debug("_generate_deepening: %s", e)
+        return None
+
+    def create_deepen_proposal(self, config: dict, topic: str,
+                               max_new: int = 4) -> dict:
+        """Po vytvoření díla vygeneruj NÁVRH prohloubení (kritika + hlubší
+        pod-témata) a ulož ho jako PENDING — NEAPLIKUJE (čeká na schválení
+        uživatelem). Cap `study.max_deepen_rounds`. Idempotentní per (téma,kolo).
+        Vrací {status: proposed/idle/deferred, id, critique, subtopics, round}."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT curriculum, deepen_round, topic FROM study_program "
+                "WHERE topic_norm=? AND status='completed' ORDER BY id DESC "
+                "LIMIT 1", (_norm(topic),)).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return {"status": "idle", "reason": "žádný dokončený program"}
+        cap = int(_cfg(config).get("max_deepen_rounds", 2))
+        cur_round = int(row["deepen_round"] or 0)
+        if cur_round >= cap:
+            return {"status": "idle", "reason": "strop prohloubení (%d)" % cap}
+        # už existuje návrh pro tohle kolo? (idempotence)
+        conn = self._connect()
+        try:
+            ex = conn.execute(
+                "SELECT 1 FROM deepen_proposals WHERE topic_norm=? AND round=? "
+                "LIMIT 1", (_norm(topic), cur_round)).fetchone()
+        finally:
+            conn.close()
+        if ex:
+            return {"status": "idle", "reason": "návrh pro toto kolo už existuje"}
+        studied = json.loads(row["curriculum"] or "[]")
+        gen = self._generate_deepening(config, row["topic"], studied, "", max_new)
+        if gen is None:
+            return {"status": "deferred", "reason": "LLM nedostupný"}
+        subs = [s for s in gen["subtopics"]
+                if _norm(s) not in {_norm(x) for x in studied}]
+        if not subs:
+            return {"status": "idle", "reason": "žádné nové pod-téma"}
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "INSERT INTO deepen_proposals (ts, topic, topic_norm, round, "
+                "critique, subtopics, status) VALUES (?,?,?,?,?,?,'pending')",
+                (time.time(), row["topic"], _norm(topic), cur_round,
+                 gen["critique"], json.dumps(subs, ensure_ascii=False)))
+            conn.commit()
+            pid = cur.lastrowid
+        finally:
+            conn.close()
+        _log.info("deepen návrh [%d] '%s' kolo %d: %d témat", pid, topic,
+                  cur_round, len(subs))
+        return {"status": "proposed", "id": pid, "critique": gen["critique"],
+                "subtopics": subs, "round": cur_round, "topic": row["topic"]}
+
+    def get_pending_deepen(self, topic: str = None) -> list:
+        conn = self._connect()
+        try:
+            if topic:
+                rows = conn.execute(
+                    "SELECT id, topic, round, critique, subtopics FROM "
+                    "deepen_proposals WHERE status='pending' AND topic_norm=? "
+                    "ORDER BY id DESC", (_norm(topic),)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, topic, round, critique, subtopics FROM "
+                    "deepen_proposals WHERE status='pending' ORDER BY id DESC"
+                ).fetchall()
+        finally:
+            conn.close()
+        out = []
+        for r in rows:
+            out.append({"id": r["id"], "topic": r["topic"], "round": r["round"],
+                        "critique": r["critique"],
+                        "subtopics": json.loads(r["subtopics"] or "[]")})
+        return out
+
+    def reject_deepen_proposal(self, prop_id: int) -> bool:
+        conn = self._connect()
+        try:
+            cur = conn.execute("UPDATE deepen_proposals SET status='rejected' "
+                               "WHERE id=? AND status='pending'", (prop_id,))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def apply_deepen_proposal(self, config: dict, prop_id: int = None,
+                              user_critique: str = "") -> dict:
+        """Schválení: znovu otevře studijní program s hlubšími pod-tématy.
+        prop_id=None → nejnovější pending. user_critique → přegeneruje pod-témata
+        podle KRITIKY UŽIVATELE (má přednost před původním návrhem). Vrací
+        {status: deepened/idle/deferred, added, round, topic}."""
+        pend = self.get_pending_deepen()
+        if not pend:
+            return {"status": "idle", "reason": "žádný čekající návrh"}
+        prop = next((p for p in pend if p["id"] == prop_id), None) if prop_id \
+            else pend[0]
+        if not prop:
+            return {"status": "idle", "reason": "návrh nenalezen"}
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT id, curriculum, deepen_round, topic FROM study_program "
+                "WHERE topic_norm=? AND status='completed' ORDER BY id DESC "
+                "LIMIT 1", (_norm(prop["topic"]),)).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return {"status": "idle", "reason": "program není dokončený"}
+        studied = json.loads(row["curriculum"] or "[]")
+        # kritika od uživatele → přegeneruj témata podle ní; jinak z návrhu
+        if user_critique.strip():
+            gen = self._generate_deepening(config, row["topic"], studied,
+                                           user_critique.strip(), 4)
+            if gen is None:
+                return {"status": "deferred", "reason": "LLM nedostupný"}
+            subs = gen["subtopics"]
+        else:
+            subs = prop["subtopics"]
+        added = [s for s in subs if _norm(s) not in {_norm(x) for x in studied}]
+        if not added:
+            return {"status": "idle", "reason": "žádné nové pod-téma"}
+        new_round = int(row["deepen_round"] or 0) + 1
+        conn = self._connect()
+        try:
+            conn.execute(
+                "UPDATE study_program SET curriculum=?, status='active', "
+                "deepen_round=?, updated_ts=? WHERE id=?",
+                (json.dumps(studied + added, ensure_ascii=False), new_round,
+                 time.time(), row["id"]))
+            conn.execute("UPDATE deepen_proposals SET status='approved' WHERE id=?",
+                         (prop["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        _log.info("deepen SCHVÁLENO '%s' +%d témat → kolo %d%s", prop["topic"],
+                  len(added), new_round, " (kritika uživatele)" if user_critique
+                  else "")
+        return {"status": "deepened", "added": added, "round": new_round,
+                "topic": prop["topic"]}
 
     def synthesize_progress(self, config: dict, prog: Optional[dict] = None,
                             knowledge=None, diary_writer=None) -> Optional[str]:

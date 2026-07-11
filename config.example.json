@@ -770,7 +770,8 @@
       "wikisource_max_chars": 3000,
       "archive_enabled": true,
       "archive_max_chars": 2500
-    }
+    },
+    "max_deepen_rounds": 2
   },
   "authorship": {
     "enabled": true,
@@ -1028,5 +1029,28 @@
     "safety_gb": 1.0,
     "search_limit": 12,
     "_note": "HANS_TOOLSCOUT_V1: po dostudovani domeny (study_program completed) Hans navrhne LLM nastroj pro finalni dilo. Grounded v Ollama library (jmeno/velikost/popularita/capabilities), NE LLM domnenka. Human-in-the-loop: /nastroj schvalit N -> ollama pull na PC. VRAM fit vuci GPU 16GB a rezidentnimu chatu 10.8GB."
+  },
+  "brief": {
+    "enabled": false,
+    "model": "",
+    "max_material_chars": 12000,
+    "num_ctx": 8192,
+    "num_predict": 700,
+    "temperature": 0.3,
+    "llm_timeout": 180,
+    "_note": "HANS_BRIEF_V1: destiler studium->nejlepsi prompt pro tvorbu dila. Zdroj = vsechny study_note + study_mastery z deniku (kompletni, ne RAG k=3). Analyticky model (ne persona), grounded (jen co je v poznamkach). Cile: coder(EN, pro code-gen)/image(EN, SDXL)/essay(CZ osnova). model prazdny=base OpenEuroLLM."
+  },
+  "maker": {
+    "enabled": false,
+    "coder_model": "",
+    "num_gpu": 0,
+    "num_ctx": 8192,
+    "num_predict": 4096,
+    "temperature": 0.3,
+    "llm_timeout": 600,
+    "_note": "HANS_MAKER_V1: exekuce briefu -> artefakt. coder cil: coder-schopny model (qwen2.5-coder z toolscoutu, jinak qwen2.5:14b) -> data/works/artifacts/<slug>/index.html. num_gpu:0 = RAM/CPU, NESAHA na rezidentni hans-czech ani hru (pomalejsi, one-shot). image cil -> ComfyUI. coder_model prazdny = auto z nainstalovanych.",
+    "auto": false,
+    "gen_images": true,
+    "max_images": 4
   }
 }

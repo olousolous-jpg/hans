@@ -530,7 +530,8 @@ class TelegramBridge:
     # sub-příkazy jako „teď" spustí práci na pozadí, stejně jako lokálně).
     _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika",
                                "nitky", "zajmy", "seznam", "kalendar",
-                               "zdravi", "nastroj"})
+                               "zdravi", "nastroj", "brief", "vytvor",
+                               "prohloubit"})
 
     def _route_inspect_command(self, text: str, cmd: str, cid: str) -> bool:
         """Zkusí obsloužit inspekční slash příkaz přes chat_commands. True když ano."""

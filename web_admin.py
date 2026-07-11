@@ -32,6 +32,17 @@ TEMPLATES_DIR = Path("templates")
 TEMPLATES_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="Hans Admin", docs_url=None, redoc_url=None)
+# HANS_MAKER_V1 — Hansova díla (vygenerované stránky) servírovaná staticky, ať
+# se relativní obrázky (images/imgN.png) načtou (na rozdíl od file://).
+try:
+    import os as _os
+    _works_dir = "data/works/artifacts"
+    _os.makedirs(_works_dir, exist_ok=True)
+    app.mount("/works", StaticFiles(directory=_works_dir, html=True),
+              name="works")
+    print("[web_admin] Hansova práce -> /works/")
+except Exception as _we:
+    print(f"[web_admin] works mount failed: {_we}")
 # Hansovy otázky — async fronta dotazů obyvatelům
 try:
     import json as _qj
@@ -753,6 +764,24 @@ async def get_health():
     except Exception:
         pass
     return out
+
+
+@app.get("/api/works")
+async def get_works():
+    """HANS_MAKER_V1 — Hansova práce: vygenerované stránky po verzích (kola
+    prohloubení). Každá verze = URL na plně vykreslenou stránku (/works/…)."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent))
+        from scripts.hans_maker import list_works
+        works = list_works(str(DIARY_PATH))
+        for w in works:
+            for v in w["versions"]:
+                v["url"] = "/works/" + v["rel"]
+        return {"works": works}
+    except Exception as e:
+        print(f"[web_admin] get_works error: {e}")
+        return {"works": []}
 
 
 @app.get("/api/musings")

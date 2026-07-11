@@ -167,6 +167,7 @@ button.btn:hover { opacity: 0.85; }
       <button data-tab="faces" onclick="showTab('faces')">😀 Obličeje</button>
       <button data-tab="objects" onclick="showTab('objects')">📦 Objekty</button>
       <button data-tab="conversations" onclick="showTab('conversations')">💬 Konverzace</button>
+      <button data-tab="works" onclick="showTab('works')">🛠️ Hansova práce</button>
       <button data-tab="questions" onclick="showTab('questions')">❓ Otázky<span id="q-nav-badge" style="background:var(--yellow);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:0.7em;margin-left:auto;display:none">0</span></button>
       <button data-tab="cfg-identity" onclick="showTab('cfg-identity')">⚙ Nastavení</button>
       <button data-tab="log" onclick="showTab('log')">📋 Log</button>
@@ -317,6 +318,16 @@ button.btn:hover { opacity: 0.85; }
   </div>
 </div>
 
+<!-- ── HANSOVA PRÁCE (HANS_MAKER_V1 — vygenerované stránky po verzích) -->
+<div id="tab-works" class="tab-content">
+  <div class="filter-bar" style="margin-bottom:14px">
+    <button class="btn btn-neutral" onclick="loadWorks()">↺ Obnovit</button>
+    <span style="color:var(--fg2);font-size:0.85rem;margin-left:8px">Stránky, které Hans vytvořil z nastudovaného — každé kolo prohloubení = nová verze.</span>
+  </div>
+  <div id="works-list"></div>
+  <div id="works-empty" style="color:var(--fg2);display:none">Zatím žádné dílo. Hans ho vytvoří po dostudování tématu (nebo příkazem /vytvor).</div>
+</div>
+
 <!-- ── DENÍK (WEBADMIN_V2 — karty posledních úvah s ◀▶ historií; firehose za „Rozšířené") -->
 <div id="tab-diary" class="tab-content">
   <div class="filter-bar" style="margin-bottom:14px">
@@ -447,7 +458,8 @@ let logTimer = null;
 // ── Tab switching (APP_SHELL_V1) ──────────────────────────────────────────────
 const PAGE_TITLES = {
   dashboard: 'Dashboard', diary: 'Deník', faces: 'Obličeje', objects: 'Objekty',
-  conversations: 'Konverzace', questions: 'Otázky', 'cfg-identity': 'Nastavení', log: 'Log',
+  conversations: 'Konverzace', works: 'Hansova práce', questions: 'Otázky',
+  'cfg-identity': 'Nastavení', log: 'Log',
 };
 function showTab(name) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -462,6 +474,7 @@ function showTab(name) {
   const loaders = {
     'diary': loadDiaryCards, 'faces': loadFaces, 'objects': loadObjects,
     'conversations': loadConversations, 'log': loadLog, 'questions': loadQuestions,
+    'works': loadWorks,
   };
   if (loaders[name]) loaders[name]();
 }
@@ -1271,6 +1284,38 @@ async function loadHealth() {
   } catch (e) {}
 }
 
+// HANS_MAKER_V1 — karta „Hansova práce" (vygenerované stránky po verzích)
+async function loadWorks() {
+  try {
+    const d = await (await fetch('/api/works')).json();
+    const list = document.getElementById('works-list');
+    const empty = document.getElementById('works-empty');
+    if (!list) return;
+    if (!d || !d.works || !d.works.length) {
+      list.innerHTML = '';
+      if (empty) empty.style.display = '';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    list.innerHTML = d.works.map(w => {
+      const vers = w.versions.map(v =>
+        `<a href="${v.url}" target="_blank" style="display:inline-block;padding:4px 10px;`
+        + `margin:3px 4px 3px 0;border-radius:6px;background:var(--bg3);color:var(--fg);`
+        + `text-decoration:none;font-size:0.82rem">kolo ${v.round}${v.has_images?' 🖼️':''} ↗</a>`
+      ).join('');
+      const latest = w.versions[w.versions.length - 1];
+      return `<div style="margin-bottom:16px">`
+        + `<div style="font-weight:600;margin-bottom:5px">${w.topic} `
+        + `<span style="color:var(--fg2);font-weight:400;font-size:0.8rem">`
+        + `(${w.versions.length} ${w.versions.length===1?'verze':'verzí'})</span></div>`
+        + `<div>${vers}</div>`
+        + `<iframe src="${latest.url}" loading="lazy" style="width:100%;height:440px;`
+        + `border:1px solid var(--bg3);border-radius:8px;margin-top:8px;background:#fff"></iframe>`
+        + `</div>`;
+    }).join('');
+  } catch (e) {}
+}
+
 // HANS_CREATIONS_V1 — karta „Co Hans napsal" (úvahy)
 async function loadMusings() {
   try {
@@ -1385,6 +1430,7 @@ loadPlace();
 setInterval(loadPlace, 60000);
 loadMusings();
 setInterval(loadMusings, 60000);
+// „Hansova práce" se načítá lazy při přepnutí na tab (showTab → loaders.works)
 buildDiaryCards();
 setInterval(refreshDiaryCardsLive, 15000);   // Deník karty „live" (offset 0)
 

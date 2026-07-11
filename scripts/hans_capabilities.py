@@ -57,16 +57,70 @@ _CAPABILITIES = [
      "— má první vzpomínka, co a kdy jsem četl, kdy jsem koho viděl (žádný "
      "odhad, jen skutečné záznamy)",
      "jaká je tvá první vzpomínka?; co jsi četl?; kdy jsi mě viděl?"),
+    ("make_work", "Umím z toho, co jsem nastudoval, VYTVOŘIT reálné dílo — třeba "
+     "webovou stránku (kód + vlastní obrázky) aplikující naučené principy; po "
+     "dokončení navrhnu, co ještě prohloubit", "/vytvor <téma>; /brief <téma>"),
 ]
+
+# HANS_LEARNED_CAPABILITIES_V1 — dynamická vrstva: schopnosti, které si Hans SÁM
+# zapíše, když dostuduje doménu a vytvoří první dílo (co se naučil + jak to
+# použít). Data soubor (NE zdroják) → bezpečné pro Hansovo vlastní rozšiřování.
+_LEARNED_FILE = "data/hans_learned_capabilities.json"
+
+
+def _load_learned() -> list:
+    try:
+        with open(_LEARNED_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return [(d["id"], d["text"], d.get("how", "")) for d in data
+                if d.get("id") and d.get("text")]
+    except Exception:
+        return []
+
+
+def _all_capabilities() -> list:
+    """Hardcoded systémové schopnosti + Hansem naučené (dedup dle id)."""
+    seen = {cid for cid, _, _ in _CAPABILITIES}
+    out = list(_CAPABILITIES)
+    for cid, t, how in _load_learned():
+        if cid not in seen:
+            out.append((cid, t, how))
+            seen.add(cid)
+    return out
+
+
+def add_learned_capability(cap_id: str, text: str, how: str = "") -> bool:
+    """Hans si SÁM zapíše novou schopnost (co se naučil + jak použít). Idempotentní
+    dle id. Připíše do data souboru → self-detekce ji příště zaregistruje jako
+    `capability_gained` a Hans si ji může zvědavě vyzkoušet."""
+    try:
+        os.makedirs(os.path.dirname(_LEARNED_FILE), exist_ok=True)
+        existing = []
+        try:
+            with open(_LEARNED_FILE, encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+        ids = {d.get("id") for d in existing} | {c[0] for c in _CAPABILITIES}
+        if cap_id in ids:
+            return False
+        existing.append({"id": cap_id, "text": text, "how": how})
+        with open(_LEARNED_FILE, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        _log.info("Hans si zapsal novou schopnost: %s", cap_id)
+        return True
+    except Exception as e:
+        _log.warning("add_learned_capability: %s", e)
+        return False
 
 
 def capabilities_list() -> list[str]:
-    return [t for _, t, _ in _CAPABILITIES]
+    return [t for _, t, _ in _all_capabilities()]
 
 
 def capabilities_context() -> str:
     """Blok do chat system promptu: co Hans REÁLNĚ umí + pokyn to používat."""
-    lines = "\n".join(f"- {t}" for _, t, _ in _CAPABILITIES)
+    lines = "\n".join(f"- {t}" for _, t, _ in _all_capabilities())
     return (
         "\n\nCO REÁLNĚ DOKÁŽEŠ (tvé skutečné schopnosti — NABÍZEJ je a POUŽÍVEJ, "
         "NIKDY je neodmítej jako bys je neměl):\n" + lines +
@@ -79,7 +133,7 @@ def capabilities_context() -> str:
 def capabilities_report() -> str:
     """Text pro chat /schopnosti."""
     out = ["Co dokážu, pane:"]
-    for _, cap, how in _CAPABILITIES:
+    for _, cap, how in _all_capabilities():
         out.append(f"• {cap}  ({how})")
     return "\n".join(out)
 
@@ -106,14 +160,14 @@ def detect_new_capabilities(diary_db_path: str = "data/hans_diary.db") -> list:
     """Porovnej manifest s tím, co Hans „znal". NOVÉ položky → deníkový event
     `capability_gained` (1. osoba) + aktualizuj známé. Vrátí seznam (id, text).
     PRVNÍ běh (žádný soubor): seedne vše TIŠE (baseline, neohlašuje staré)."""
-    cur_ids = {cid for cid, _, _ in _CAPABILITIES}
+    cur_ids = {cid for cid, _, _ in _all_capabilities()}
     known = _load_known()
     first_run = not os.path.exists(_KNOWN_FILE)
     if first_run:
         _save_known(cur_ids)
         _log.info("capabilities: baseline seedován (%d schopností)", len(cur_ids))
         return []
-    new = [(cid, t) for cid, t, _ in _CAPABILITIES if cid not in known]
+    new = [(cid, t) for cid, t, _ in _all_capabilities() if cid not in known]
     if not new:
         return []
     import sqlite3
@@ -137,14 +191,14 @@ def detect_new_capabilities(diary_db_path: str = "data/hans_diary.db") -> list:
 
 # ── V3: zvědavost — Hans si novou schopnost SÁM vyzkouší a zjistí, co umí ────
 def _text_for(cap_id: str) -> str:
-    for cid, t, _ in _CAPABILITIES:
+    for cid, t, _ in _all_capabilities():
         if cid == cap_id:
             return t
     return cap_id
 
 
 def _how_for(cap_id: str) -> str:
-    for cid, _, how in _CAPABILITIES:
+    for cid, _, how in _all_capabilities():
         if cid == cap_id:
             return how
     return ""
