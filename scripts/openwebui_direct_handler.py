@@ -543,6 +543,27 @@ class OpenWebUIDirectHandler:
         except Exception:
             pass
 
+        # HANS_CHAT_RECALL_V2 — recall PŘEDCHOZÍHO rozhovoru („pamatuješ na X",
+        # „mluvili jsme o…", „co jsi navrhl"). Sémantický RAG vágní recall často
+        # nedohledá (uložené repliky ≠ znění dotazu) → deterministicky prohledej
+        # skutečný human_chat. PŘEDNOST (real data), obchází RAG práh + šum.
+        try:
+            from scripts.hans_recall import is_recall_query, conversation_recall
+            if is_recall_query(str(_text)):
+                _dbp_r = (self.config.get("diary_db")
+                          or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                          or "data/hans_diary.db")
+                _rc = conversation_recall(_dbp_r, str(_text))
+                if _rc:
+                    self._grounding_outcome = 'grounded'
+                    _blk = "\n\n".join("[Dřívější rozhovor — %s]\n%s" % (kdy, note)
+                                       for kdy, note in _rc)
+                    return ("\n\nSKUTEČNÝ ZÁZNAM dřívějšího rozhovoru (odpověz JEN "
+                            "z něj, nevymýšlej datum ani detaily; na co v záznamu "
+                            "není, přiznej „to si nevybavuji“):\n" + _blk)
+        except Exception:
+            pass
+
         try:
             # 1) intent — je dotaz faktický?
             res = _intent.classify(str(_text))

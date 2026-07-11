@@ -104,7 +104,8 @@
     "popup_enabled": false,
     "enabled": true,
     "api_token": "",
-    "synthesis_model": "hans-czech:latest"
+    "synthesis_model": "hans-czech:latest",
+    "history_max_messages": 20
   },
   "tts": {
     "enabled": true,

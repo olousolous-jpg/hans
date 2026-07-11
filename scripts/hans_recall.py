@@ -58,6 +58,162 @@ def _ro(db_path: str) -> sqlite3.Connection:
     return sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
 
 
+# ── konverzační recall (HANS_CHAT_RECALL_V2) — „pamatuješ na náš rozhovor o X" ─
+# Sémantický RAG vágní recall dotaz často nedohledá (uložené repliky = kuchařský
+# text, dotaz = „pamatuješ co jsi navrhl"). Tady deterministicky prohledáme
+# skutečný human_chat (obě strany) na obsahová slova dotazu — spolehlivě najde
+# původní výměnu, kterou RAG mine.
+_CONV_STOP = {
+    "pamatuješ", "pamatujes", "vzpomínáš", "vzpominas", "náš", "naš", "ten",
+    "tom", "tam", "který", "ktery", "která", "ktera", "které", "ktere", "jsi",
+    "jsem", "jsme", "mi", "mě", "me", "že", "ze", "se", "si", "už", "uz",
+    "před", "pred", "byl", "byla", "bylo", "kdy", "kde", "proč", "proc",
+    "řekl", "rekl", "říkal", "rikal", "mluvili", "bavili", "povídali",
+    "povidali", "nějak", "nejak", "prosím", "prosim", "můžeš", "muzes",
+    "tomhle", "tamtom", "jak", "and", "the", "můj", "muj", "moje", "tvůj",
+}
+
+
+# synonymové shluky pro časté recall domény — dotaz a původní zpráva se často
+# NEPŘEKRÝVAJÍ doslovně („recept/doporučil" × „oběd/navrhni") → shluk je spojí.
+_SYN_CLUSTERS = [
+    {"recep", "jídl", "jidl", "oběd", "obed", "večeř", "vecer", "snída", "snida",
+     "pokrm", "vaře", "vare", "uvař", "uvar", "jíst", "jist", "kuchy", "chuť",
+     "chut", "ingred", "chod", "menu", "svač", "polév", "polev"},   # jídlo/recept
+    {"dopor", "navrh", "nabíd", "nabid", "řekl", "rekl", "zmíni", "zmini",
+     "radil", "porad", "navrho", "říka", "rika", "sliby", "slíb", "slib"},
+    #                                                     doporučit/navrhnout/slíbit
+    {"film", "seri", "kino", "sledo", "kouka", "díval", "dival", "epizod",
+     "pořad", "porad"},                                                  # filmy/TV
+    {"kníh", "knih", "čet", "cet", "kapit", "autor", "romá", "roma",
+     "povíd", "povid", "příbě", "pribe"},                             # knihy/čtení
+    {"koup", "náku", "naku", "objed", "poříd", "porid", "sezn", "seznam"},
+    #                                                          nákup/seznam/pořízení
+    {"schůz", "schuz", "setk", "návště", "navste", "termí", "termi", "sraz",
+     "domlu", "domluv", "sejde"},                        # schůzka/setkání/termín
+    {"zdrav", "nemoc", "bolí", "boli", "lék", "lekar", "dokto", "cvič", "cvic"},
+    #                                                              zdraví/lékař
+    {"cest", "výlet", "vylet", "dovol", "prázd", "prazd", "hotel", "leten"},
+    #                                                              cestování/výlet
+    {"prác", "prac", "úkol", "ukol", "projekt", "termín", "termin", "šéf", "sef"},
+    #                                                                   práce/úkol
+    {"počít", "pocit", "kompu", "notebo", "mobil", "aplik", "program", "web",
+     "software"},                                                     # technika/PC
+]
+_DNY = {"pondělí": 0, "pondeli": 0, "úterý": 1, "utery": 1, "středa": 2,
+        "streda": 2, "středu": 2, "stredu": 2, "čtvrtek": 3, "ctvrtek": 3,
+        "pátek": 4, "patek": 4, "pátkem": 4, "sobota": 5, "sobotu": 5,
+        "sobotě": 5, "sobote": 5, "neděle": 6, "nedele": 6, "neděli": 6,
+        "nedeli": 6}
+
+
+def _conv_keywords(query: str) -> list:
+    """Obsahová slova z dotazu (bez stopwords, ≥4 znaky), stemovaná na prefix
+    kvůli českému skloňování (sobotní→sobot, oběd→oběd, recept→recep)."""
+    kws = []
+    for w in re.findall(r"[a-zA-Zá-žÁ-Ž]{4,}", (query or "").lower()):
+        if w in _CONV_STOP:
+            continue
+        stem = w[:5]
+        if stem not in kws:
+            kws.append(stem)
+    return kws
+
+
+def _kw_groups(query: str) -> list:
+    """Query klíčová slova → shluky pro shodu (zpráva odpovídá shluku, obsahuje-li
+    kterýkoli stem). Rozšíří o synonyma."""
+    groups = []
+    for kw in _conv_keywords(query):
+        grp = {kw}
+        for cl in _SYN_CLUSTERS:
+            if kw in cl:
+                grp |= cl
+        groups.append(grp)
+    return groups
+
+
+def _resolve_day_reference(query: str, now: float):
+    """Časová reference v dotazu → (start_ts, end_ts) daného dne, jinak None.
+    „v pátek" → nejbližší MINULÝ pátek; „včera"/„dnes"/„předevčírem"."""
+    q = (query or "").lower()
+    dt_now = datetime.fromtimestamp(now)
+    target = None
+    if re.search(r"\bp[řr]edev[čc][íi]r", q):
+        target = dt_now.date().toordinal() - 2
+    elif re.search(r"\bv[čc]er", q):
+        target = dt_now.date().toordinal() - 1
+    elif re.search(r"\bdnes|\bdneska", q):
+        target = dt_now.date().toordinal()
+    else:
+        for name, wd in _DNY.items():
+            if re.search(r"\b" + name + r"\b", q):
+                # nejbližší minulý (nebo dnešní) výskyt daného dne v týdnu
+                back = (dt_now.weekday() - wd) % 7
+                target = dt_now.date().toordinal() - back
+                break
+    if target is None:
+        return None
+    day = datetime.fromordinal(target)
+    start = day.timestamp()
+    return (start, start + 86400)
+
+
+def conversation_recall(db_path: str, query: str, days: int = 30,
+                        min_age_hours: float = 0.3, limit: int = 4) -> list:
+    """Recall PŘEDCHOZÍHO rozhovoru (deterministicky). Když dotaz nese ČASOVOU
+    referenci („v pátek"/„včera"), zúží se na TEN den (nezávisle na doslovných
+    slovech) a v něm seřadí dle shody (se synonymy). Jinak čistě dle klíčových
+    slov přes celé okno. Vynechá právě proběhlou výměnu (min_age_hours). Vrací
+    [(kdy, note)] nebo []."""
+    now = time.time()
+    groups = _kw_groups(query)
+    day_ref = _resolve_day_reference(query, now)
+    try:
+        conn = _ro(db_path)
+        if day_ref:
+            lo, hi = day_ref
+            hi = min(hi, now - min_age_hours * 3600)
+            rows = conn.execute(
+                "SELECT ts, note FROM diary WHERE event_type='human_chat' AND "
+                "ts>=? AND ts<=? ORDER BY ts DESC", (lo, hi)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT ts, note FROM diary WHERE event_type='human_chat' AND "
+                "ts>=? AND ts<=? ORDER BY ts DESC",
+                (now - days * 86400, now - min_age_hours * 3600)).fetchall()
+        conn.close()
+    except Exception:
+        return []
+
+    def _score(note):
+        low = (note or "").lower()
+        return sum(1 for g in groups if any(s in low for s in g))
+
+    if day_ref:
+        # den je kotva → vezmi všechny, seřaď dle shody (i skóre 0 projde, ale
+        # nejrelevantnější první); prázdný den → nic
+        scored = [( _score(n), ts, n) for ts, n in rows if (n or "").strip()]
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+    else:
+        if not groups:
+            return []
+        need = max(1, (len(groups) + 1) // 2)
+        scored = [(s, ts, n) for ts, n in rows
+                  for s in (_score(n),) if s >= need]
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+    return [(_cz_when(ts), (note or "").strip()) for _s, ts, note in scored[:limit]]
+
+
+def is_recall_query(text: str) -> bool:
+    """Ptá se uživatel na dřívější rozhovor? (pamatuješ / mluvili jsme / říkal jsi)"""
+    t = (text or "").lower()
+    return bool(re.search(
+        r"pamatuj|vzpom[íi]n|mluvili\s+jsme|bavili\s+jsme|[řr][íi]kal\s+jsi|"
+        r"co\s+jsme|jsme\s+se\s+bavili|zm[íi]nil\s+jsi|navrh\w*\s+jsi|"
+        r"[řr]ekl\s+jsi", t))
+
+
 # ── první / nejstarší vzpomínka ──────────────────────────────────────────────
 
 def first_memory_answer(db_path: str) -> str:
