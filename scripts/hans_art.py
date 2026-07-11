@@ -29,7 +29,7 @@ from scripts.avatar_render import (
     _comfy_url, _comfy_workflow, _comfy_submit, _comfy_wait,
     _first_image, _comfy_fetch_image,
     _ollama_loaded, _ollama_unload, _comfy_free, _ollama_warm,
-    _comfy_upload_image, _comfy_workflow_img2img,
+    _comfy_upload_image, _comfy_workflow_img2img, _comfy_workflow_ipadapter,
 )
 
 _log = logging.getLogger("hans_art")
@@ -1013,6 +1013,119 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
         _log.warning("art: log person artwork failed: %s", e)
     _log.info("art: Hans namaloval podobu osoby '%s' → %s", nm, rel_path)
     return rel_path, caption
+
+
+def paint_self(config: dict, diary_db_path: str, full_figure: bool = True,
+               style: str = ""):
+    """HANS_ART_SELF_V1 — Hans namaluje SÁM SEBE z vlastního avatar descriptoru
+    (jeho vzhled: butler, frak…), volitelně jako CELOU POSTAVU. Řeší, že „namaluj
+    sebe" nemá znamenat namalovat uživatele. Vrací (rel_path, caption) nebo None.
+    Nikdy nehází. VRAM: unload LLM → render → warm."""
+    try:
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            return None
+    except Exception:
+        pass
+    try:
+        from scripts.avatar_descriptor import latest_descriptor
+        from scripts.avatar_render import build_prompt
+    except Exception as e:
+        _log.warning("art: paint_self import: %s", e)
+        return None
+    desc = latest_descriptor(diary_db_path) or {
+        "role": "english butler", "attire": "black tailcoat, white gloves, "
+        "high collar", "age_look": "late 50s", "build": "tall, slim",
+        "demeanor": "formal and reserved", "setting": "wood-panelled study"}
+    framing = ("full body shot, full-length portrait, standing upright, the "
+               "complete figure from head to shoes, entire body and legs "
+               "visible, shoes visible, wide framing, distant full-length view"
+               if full_figure else "portrait, upper body")
+    prompt = build_prompt(desc, "dignified, poised, looking at viewer", framing)
+    if style:
+        prompt = prompt + ", in the style of " + str(style)
+    ckpt = _ckpt(config)
+    if not ckpt:
+        _log.warning("art: paint_self — image_model nenastaven")
+        return None
+    acfg = _acfg(config)
+    scfg = (acfg.get("self_portrait", {}) or {})
+    base = _comfy_url(config)
+    try:
+        urllib.request.urlopen(f"{base}/system_stats", timeout=10).read()
+    except Exception:
+        return None
+    steps = int(acfg.get("steps", 28))
+    cfg_s = float(acfg.get("cfg", 6.5))
+    seed = uuid.uuid4().int % (2 ** 31)
+    client_id = uuid.uuid4().hex
+    os.makedirs(ART_DIR, exist_ok=True)
+    fname = f"{int(time.time())}_hans_self.png"
+    dest = os.path.join(ART_DIR, fname)
+
+    # HANS_ART_SELF_V1 — TEMPLATE = Hansův vytvořený avatar (img2img) → DRŽÍ jeho
+    # vzhled. Bez avatara fallback na txt2img z descriptoru.
+    avatar_path = ((config.get("hans_avatar", {}) or {}).get("face_image")
+                   or "data/avatar/v1/idle.png")
+    img_name = None
+    if os.path.exists(avatar_path):
+        tmp = _resize_to_temp(avatar_path)
+        if tmp:
+            img_name = _comfy_upload_image(base, tmp)
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+    # rozměry: celá postava = na výšku (IP-Adapter dá novou kompozici z portrétní
+    # reference, na rozdíl od img2img, který drží kompozici vstupu = portrét)
+    w, h = (832, 1216) if full_figure else (1024, 1024)
+    ipa_model = scfg.get("ipadapter_file",
+                         "ip-adapter-plus_sdxl_vit-h.safetensors")
+    ipa_clip = scfg.get("clip_vision",
+                        "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors")
+    ipa_weight = float(scfg.get("ipadapter_weight", 0.75))
+
+    _ollama_unload(config, _ollama_loaded(config))
+    rtimeout = int(acfg.get("render_timeout", 600))
+    ok = False
+    try:
+        if img_name:
+            # IP-ADAPTER — NOVÁ kompozice (celá postava) + PODOBA avatara
+            wf = _comfy_workflow_ipadapter(ckpt, prompt, seed, w, h, steps,
+                                           cfg_s, img_name, ipa_model, ipa_clip,
+                                           ipa_weight)
+            _log.info("art: paint_self IP-ADAPTER z avatara (w=%.2f, %dx%d) — %.80s",
+                      ipa_weight, w, h, prompt)
+        else:
+            wf = _comfy_workflow(ckpt, prompt, seed, w, h, steps, cfg_s)
+            _log.info("art: paint_self txt2img (bez avatara) — %.80s", prompt)
+        pid = _comfy_submit(base, wf, client_id)
+        hist = _comfy_wait(base, pid, timeout=rtimeout) if pid else None
+        img = _first_image(hist) if hist else None
+        if img and _comfy_fetch_image(base, img, dest):
+            ok = True
+    except Exception as e:
+        _log.warning("art: paint_self render selhal: %s", e)
+    finally:
+        _comfy_free(config)
+        _ollama_warm(config, config.get("models", {}).get("dialog",
+                                                          "hans-czech:latest"))
+    if not ok:
+        return None
+    rel_path = os.path.join("data", "hans_art", fname)
+    caption = "Má vlastní podoba" + (" — celá postava" if full_figure else "")
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        db.execute("INSERT INTO diary (ts, event_type, title, note, data) "
+                   "VALUES (?,?,?,?,?)",
+                   (time.time(), "artwork", "Autoportrét", caption,
+                    json.dumps({"path": rel_path, "prompt": prompt,
+                                "source": "self"}, ensure_ascii=False)))
+        db.commit()
+        db.close()
+    except Exception as e:
+        _log.debug("art: paint_self log: %s", e)
+    return (rel_path, caption)
 
 
 def paint_subject(config: dict, diary_db_path: str, subject: str,

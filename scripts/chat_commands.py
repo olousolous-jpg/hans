@@ -982,6 +982,35 @@ def _cmd_namaluj(handler, name, args) -> str:
     except Exception as e:
         return "Malování není dostupné: %s" % e
 
+    # HANS_ART_SELF_V1 — „namaluj sebe / svůj avatar / jak vypadáš" = Hans maluje
+    # SÁM SEBE (ne uživatele!). Musí PŘED strip sloves (ten „se" spolkne jako
+    # spojku) i před distill (ten „mě=tazatel" by „sebe" zmapoval na uživatele).
+    _raw = (args or "").lower()
+    if _re.search(r"\bsebe\b|s[áa]m\s+sebe|\bsv[ůu][jě]?\s+avatar|sv[ée]ho\s+avatar"
+                  r"|jak\s+(ty\s+)?vypad[áa]|autoportr[ée]t|namaluj\s+se\b|"
+                  r"nakresli\s+se\b", _raw):
+        _full = bool(_re.search(
+            r"post(av|avu|avě|avou)|cel(ou|é|ého)\s*(t[ěe]lo|postav)?|"
+            r"full\s*body|od\s+hlavy", _raw))
+        _style_self = ""
+        _ss = _re.search(
+            r"(?i)(?:ve?\s+stylu|stylem|jako\s+od|po\s+vzoru)\s+(.+)$", _raw)
+        if _ss:
+            _style_self = _ss.group(1).strip(" ?.!,")
+
+        def _self_render():
+            try:
+                r = hans_art.paint_self(cfg, db, full_figure=_full,
+                                        style=_style_self)
+                _log.info("namaluj SEBE (full=%s) → %s", _full,
+                          "ok" if r else "nevyšlo")
+            except Exception as _e:
+                _log.warning("paint_self: %s", _e)
+        _t.Thread(target=_self_render, daemon=True).start()
+        return ("Namaluji sám sebe, pane — %s ze své avatarové podoby. Chvíli "
+                "to potrvá, pak se podívej do galerie." %
+                ("celou postavu" if _full else "podobiznu"))
+
     # vytáhni téma z požadavku (odřízni sloveso a spojky)
     subj = (args or "").strip()
     subj = _re.sub(r"(?i)^\s*(prosím\s+|můžeš\s+|mohl\s+bys\s+)?"

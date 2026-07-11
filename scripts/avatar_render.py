@@ -243,6 +243,47 @@ def _comfy_workflow_img2img(ckpt: str, prompt: str, seed: int, image_name: str,
     return wf
 
 
+def _comfy_workflow_ipadapter(ckpt: str, prompt: str, seed: int, w: int, h: int,
+                              steps: int, cfg: float, image_name: str,
+                              ipadapter_file: str, clip_vision_name: str,
+                              weight: float = 0.75,
+                              weight_type: str = "linear") -> dict:
+    """SDXL txt2img graf s IP-ADAPTEREM: prázdný latent (NOVÁ kompozice/póza dle
+    dimenzí w×h) + referenční obrázek přes IP-Adapter → drží PODOBU reference,
+    ale volná kompozice (např. celá postava z portrétní reference)."""
+    return {
+        "4": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": ckpt}},
+        "5": {"class_type": "EmptyLatentImage",
+              "inputs": {"width": w, "height": h, "batch_size": 1}},
+        "6": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": prompt, "clip": ["4", 1]}},
+        "7": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": _NEG, "clip": ["4", 1]}},
+        "10": {"class_type": "LoadImage",
+               "inputs": {"image": image_name}},
+        "11": {"class_type": "IPAdapterModelLoader",
+               "inputs": {"ipadapter_file": ipadapter_file}},
+        "12": {"class_type": "CLIPVisionLoader",
+               "inputs": {"clip_name": clip_vision_name}},
+        "13": {"class_type": "IPAdapterAdvanced",
+               "inputs": {"model": ["4", 0], "ipadapter": ["11", 0],
+                          "image": ["10", 0], "clip_vision": ["12", 0],
+                          "weight": weight, "weight_type": weight_type,
+                          "combine_embeds": "concat", "start_at": 0.0,
+                          "end_at": 1.0, "embeds_scaling": "V only"}},
+        "3": {"class_type": "KSampler",
+              "inputs": {"seed": seed, "steps": steps, "cfg": cfg,
+                         "sampler_name": "dpmpp_2m", "scheduler": "karras",
+                         "denoise": 1.0, "model": ["13", 0],
+                         "positive": ["6", 0], "negative": ["7", 0],
+                         "latent_image": ["5", 0]}},
+        "8": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9": {"class_type": "PreviewImage", "inputs": {"images": ["8", 0]}},
+    }
+
+
 def _comfy_submit(base: str, workflow: dict, client_id: str) -> Optional[str]:
     data = json.dumps({"prompt": workflow, "client_id": client_id}).encode()
     req = urllib.request.Request(f"{base}/prompt", data=data,

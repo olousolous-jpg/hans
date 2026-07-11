@@ -583,6 +583,11 @@
     "person_likeness": {
       "enabled": true,
       "denoise": 0.5
+    },
+    "self_portrait": {
+      "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors",
+      "clip_vision": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+      "ipadapter_weight": 0.75
     }
   },
   "unknown_tracker": {
