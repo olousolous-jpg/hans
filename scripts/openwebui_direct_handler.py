@@ -553,7 +553,7 @@ class OpenWebUIDirectHandler:
                 _dbp_r = (self.config.get("diary_db")
                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                           or "data/hans_diary.db")
-                _rc = conversation_recall(_dbp_r, str(_text))
+                _rc = conversation_recall(_dbp_r, str(_text), person=name)
                 if _rc:
                     self._grounding_outcome = 'grounded'
                     _blk = "\n\n".join("[Dřívější rozhovor — %s]\n%s" % (kdy, note)

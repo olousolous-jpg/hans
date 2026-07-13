@@ -1011,6 +1011,29 @@ def _cmd_namaluj(handler, name, args) -> str:
                 "to potrvá, pak se podívej do galerie." %
                 ("celou postavu" if _full else "podobiznu"))
 
+    # HANS_ART_TV_V1 — „namaluj co dávají v TV / co běží / co hraje" → ŽIVÝ Kodi
+    # stav (ne konverzace!). Namaluje aktuálně běžící pořad/film.
+    if _re.search(r"co\s+(d[áa]v|b[ěe][žz]|hraj|je)\w*\s+(pr[áa]v[ěe]\s+)?"
+                  r"(v\s+)?(tv|telev|kin[eě]|obrazovc)|"
+                  r"co\s+(se\s+)?(pr[áa]v[ěe]\s+)?(hraje|d[áa]v[áa]|b[ěe][žz][íi]|"
+                  r"koukám|d[íi]v[áa]m)|(film|po[řr]ad|seri[áa]l)\s+co\s+(hraje|"
+                  r"b[ěe][žz]|d[áa]v)", _raw):
+        try:
+            from scripts.kodi_client import KodiClient
+            _np = KodiClient(cfg).get_now_playing()
+        except Exception as _ke:
+            _log.debug("namaluj TV kodi: %s", _ke)
+            _np = None
+        if _np and (_np.get("title") or _np.get("label")):
+            _tv = (_np.get("title") or _np.get("label") or "").split(",")[0].strip()
+            _t.Thread(target=lambda: hans_art.paint_subject(cfg, db, _tv),
+                      daemon=True).start()
+            _log.info("namaluj CO V TV → '%s'", _tv)
+            return ("Namaluji, co právě běží na obrazovce, pane — „%s“. Chvíli "
+                    "to potrvá, pak se podívej do galerie." % _tv)
+        return ("V tuto chvíli na televizi nic nehraje, pane — nemám co "
+                "namalovat z obrazovky.")
+
     # vytáhni téma z požadavku (odřízni sloveso a spojky)
     subj = (args or "").strip()
     subj = _re.sub(r"(?i)^\s*(prosím\s+|můžeš\s+|mohl\s+bys\s+)?"
@@ -1901,6 +1924,62 @@ register(
     ],
     handler=_cmd_film,
     help_text="Jaký film/pořad jsem viděl (přímo z deníku kodi_playing)",
+)
+
+
+def _cmd_rozhovory(handler, name, args) -> str:  # HANS_CHAT_SUMMARY_V1
+    """Sumář toho, o čem se TAZATEL s Hansem bavil (deterministicky z deníku).
+    Časová reference v dotazu („v pátek", „27. dubna 2026", „minulý týden")
+    zúží období; bez ní = poslední den, kdy spolu mluvili. Delší období →
+    témata; „připomeň rozhovor o X" → doslovné vybavení té výměny."""
+    from scripts.hans_recall import (chat_summary, topic_conversation,
+                                     _extract_conv_topic)
+    cfg = getattr(handler, "config", {}) or {}
+    q = args or ""
+    topic = _extract_conv_topic(q)
+    if topic:
+        out = topic_conversation(_recall_db(handler), name, topic)
+        if out:
+            return out
+    out = chat_summary(_recall_db(handler), name, q, config=cfg)
+    return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+
+
+register(
+    "rozhovory",
+    slash_aliases=["rozhovory", "rozhovor", "souhrn", "sumar", "sumář"],
+    nl_patterns=[
+        # Uživatel píše s překlepy a i/y („bavily", „pripomenou") → vzory musí
+        # být tolerantní; jinak dotaz propadne do LLM a to si vymyslí rozhovor,
+        # který se nikdy nestal (doložený případ 13.7. — smyšlený Vietnam).
+        # „o čem jsme (se) bavili/mluvili/povídali (v pátek / 27. dubna)"
+        r"o\s+[čc]em\s+jsme\b",
+        r"co\s+jsme\s+(spolu\s+)?(prob[íi]r|[řr]e[šs]il|probir)",
+        # „shrň náš rozhovor", „shrň o čem jsme mluvili"
+        r"(shr[ňn]|shrnout|sum[áa]rizuj)\s+\w*\s*(n[áa][šs]\s+)?"
+        r"(rozhovor|konverzac|chat)",
+        # „vytáhni/vytáhneš vzpomínku z 27. dubna", „vzpomínky z minulého týdne"
+        r"(vyt[áa]h\w*|uk[áa][žz]\w*|najdi)\s+\w*\s*vzpom[íi]nk",
+        r"vzpom[íi]nk\w*\s+z\s+(\d|[a-zá-ž]{4,})",
+        # „na co jsem se tě ptal (v pátek)"
+        r"na\s+co\s+jsem\s+se\s+t[ěe]\s+ptal",
+        # detail na vyžádání: „připomeň (mi) rozhovor o Maradonovi"
+        r"(p[řr]ipome[ňnt]\w*|vzpome[ňn]\w*|zopakuj)\s+.{0,25}"
+        r"(rozhovor|konverzac|bavil|mluvil|pov[íi]dal)",
+        r"(rozhovor|konverzac\w*)\s+o\s+\w{3,}",
+        r"(bavil|mluvil|pov[íi]dal)[iy]\s+jsme\s+(se\s+)?o\s+\w{3,}",
+        # „pošli detail o rychlém obědě…", „ukaž ten recept", „vypiš záznam o…"
+        # Bez tohohle Hans odpověď VYGENERUJE ZNOVU (doložený případ 13.7. —
+        # do receptu si přidal koriandr, který v původním zápisu nebyl).
+        r"(po[šs]l\w*|uka[žz]\w*|zopakuj\w*|vypi[šs]\w*|dej\s+mi)\s+"
+        r".{0,25}(detail|recept|postup|z[áa]znam|z[áa]pis)",
+        r"co\s+jsi\s+(mi\s+)?(psal|napsal|poslal|[řr][íi]kal|navrhl|"
+        r"doporu[čc]il)",
+        r"\b(ten|tu|to)\s+(recept|postup|n[áa]vrh)\b",
+    ],
+    handler=_cmd_rozhovory,
+    help_text="O čem jsme se bavili (z deníku): /rozhovory [v pátek | "
+              "27. dubna 2026 | minulý týden]; detail: „připomeň rozhovor o X“",
 )
 
 
