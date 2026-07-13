@@ -9,6 +9,7 @@ instead of lores 640×480 — gives ArcFace and YOLOv8 a sharper input.
 import cv2
 import numpy as np
 import time
+import json
 import os
 from pathlib import Path
 from scripts.fisheye_corrector import FisheyeCorrector
@@ -259,6 +260,15 @@ class PicamDisplayController:
             self._picam2.pre_callback = self._frame_cb  # FRAME_CB_METHOD_V1
             self._picam2.start()
             _setup_af(self._picam2, self.config)
+            # CAMERA_STALL_RECOVERY_V1 — zapamatuj SKUTEČNĚ vyjednané rozměry
+            # (picamera2 mohla zvolit jiný sensor mode) → hard reset je zopakuje.
+            try:
+                _cc = self._picam2.camera_configuration()
+                self._cam_main_size  = tuple(_cc['main']['size'])
+                self._cam_lores_size = tuple(_cc['lores']['size'])
+            except Exception:
+                self._cam_main_size  = (self._MAIN_W, self._MAIN_H)
+                self._cam_lores_size = (self._HAILO_W, self._HAILO_H)
             # hdr_patch
             if self.config.get('camera_model') == 'v3_wide':
                 _hdr = int(self.config.get('hdr_mode', 3))
@@ -346,10 +356,84 @@ class PicamDisplayController:
         _config_last_check = time.time()
 
         # ── Frame loop ────────────────────────────────────────────────────
+        # CAMERA_STALL_RECOVERY_V1 — senzor umí odpadnout (slunce/přehřátí/I2C);
+        # dřív se loop jen zacyklil na prázdných framech a Hans "zamrzl".
+        _cam_cfg        = self.config.get("camera", {})
+        _stall_after_s  = float(_cam_cfg.get("stall_recover_after_s", 8.0))
+        _stall_cooldown = float(_cam_cfg.get("stall_recover_cooldown_s", 20.0))
+        _hb_path        = Path("data/.hans_heartbeat")   # HANS_HEARTBEAT_V1
+        _stall_since    = None
+        _last_recover   = 0.0
+        _recover_fails  = 0
+        _hb_last        = 0.0
+
         while self.processing:
+            # Heartbeat pro externí watchdog + stav kamery pro dashboard.
+            # Dokud loop točí, Hans žije (i když je zrovna slepý).
+            _now_hb = time.time()
+            if _now_hb - _hb_last >= 5.0:
+                _hb_last = _now_hb
+                if self._vision_paused:
+                    _cam_state = "paused"          # spánek — framy nejdou záměrně
+                elif _stall_since is None:
+                    _cam_state = "ok"
+                elif _recover_fails >= 2:
+                    _cam_state = "dead"            # ani tvrdý reset nepomohl
+                else:
+                    _cam_state = "stalled"
+                try:
+                    _hb_path.write_text(json.dumps({
+                        "ts": int(_now_hb),
+                        "camera": _cam_state,
+                        "stall_s": (0 if _stall_since is None
+                                    else int(_now_hb - _stall_since)),
+                        "recover_fails": _recover_fails,
+                    }))
+                except Exception:
+                    pass
+
             main_frame, lores_frame = self._get_frames()
             if main_frame is None:
+                # BLIND_UI_ALIVE_V1 — bez framů se dřív jelo rovnou `continue`,
+                # takže se PŘESKOČIL tk_mgr.pump() (ř. níže) → menu/chat okna
+                # zmrzly, i když Hans jinak žil. UI musí žít i naslepo.
+                self._pump_ui_blind()
+
+                # Ve spánku framy nejdou ZÁMĚRNĚ (SLEEP_VISION_OFF_V1) → neléčit.
+                if self._vision_paused:
+                    _stall_since = None
+                    continue
+                _now = time.time()
+                if _stall_since is None:
+                    _stall_since = _now
+                    continue
+                _stalled = _now - _stall_since
+                if (_stalled >= _stall_after_s
+                        and _now - _last_recover >= _stall_cooldown):
+                    _last_recover = _now
+                    # 2 marné měkké pokusy → eskaluj na tvrdý reset senzoru
+                    _hard = _recover_fails >= 2
+                    _syslog.warning(
+                        "camera: žádný frame %.0fs — %s obnova senzoru (pokus %d)",
+                        _stalled, "TVRDÁ" if _hard else "měkká", _recover_fails + 1)
+                    if self._recover_camera(hard=_hard):
+                        _syslog.info(
+                            "camera: ✅ obnovena (%s) po %.0fs výpadku",
+                            "tvrdý reset" if _hard else "stop/start", _stalled)
+                        _stall_since   = None
+                        _recover_fails = 0
+                    else:
+                        _recover_fails += 1
+                        _syslog.error(
+                            "camera: obnova selhala (%dx) — senzor nejspíš "
+                            "odpadl fyzicky (slunce/přehřátí/kabel)",
+                            _recover_fails)
+                        _stall_since = _now   # další pokus až za cooldown
                 continue
+            # Frame dorazil → stall skončil
+            if _stall_since is not None:
+                _stall_since   = None
+                _recover_fails = 0
 
             lores_frame = self.fisheye.undistort_lores(lores_frame)
 
@@ -1370,6 +1454,106 @@ class PicamDisplayController:
             return self._frame_q.get(timeout=0.2)
         except Exception:
             return None, None
+
+    # ── Camera stall recovery ─────────────────────────────────────────────
+
+    def _pump_ui_blind(self):  # BLIND_UI_ALIVE_V1
+        """Obsluha UI, když kamera nedodává framy (výpadek senzoru / spánek).
+
+        Hlavní smyčka jinak v téhle větvi dělá `continue` a nikdy se nedostane
+        k `tk_mgr.pump()` → tkinter menu i chat popup zmrznou (uživatel: „menu
+        na raspi neodpovídá"). Tady je pumpneme ručně, ať Hans zůstane
+        OVLADATELNÝ i naslepo. Držet LEVNÉ a nikdy nehodit."""
+        try:
+            tk_mgr.pump()
+        except Exception:
+            pass
+        if self._preview_on:
+            try:
+                cv2.waitKey(1)      # ať cv2 okno nezamrzne jako „neodpovídá"
+            except Exception:
+                pass
+
+    def _sleep_pumped(self, secs: float):  # BLIND_UI_ALIVE_V1
+        """Čekání, které nezmrazí UI — během obnovy kamery (stop/start, tvrdý
+        reset) se jinak několik sekund nepumpuje tkinter → menu „neodpovídá"."""
+        _end = time.time() + secs
+        while time.time() < _end:
+            self._pump_ui_blind()
+            time.sleep(0.05)
+
+    def _frames_flowing(self, wait_s: float = 3.0) -> bool:  # CAMERA_STALL_RECOVERY_V1
+        """Ověř, že reálně teče ČERSTVÝ frame (ne jen že start() nehodil chybu)."""
+        try:
+            while self._frame_q.qsize() > 0:   # zahoď staré framy
+                self._frame_q.get_nowait()
+        except Exception:
+            pass
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            self._pump_ui_blind()      # menu musí žít i během čekání na senzor
+            m, _l = self._get_frames()
+            if m is not None:
+                return True
+        return False
+
+    def _recover_camera(self, hard: bool = False) -> bool:  # CAMERA_STALL_RECOVERY_V1
+        """Senzor odpadl (slunce / přehřátí / I2C I/O error) → framy přestaly téct.
+
+        hard=False → měkce: stop() + start() (stačí na zaseklý V4L2 buffer).
+        hard=True  → tvrdě: close() + nová Picamera2 (re-init senzoru přes I2C);
+                     jediná šance na senzor, který odpadl ze sběrnice.
+
+        VOLAT JEN Z MAIN LOOP THREADU — picamera2 NENÍ thread-safe (cross-thread
+        stop() zatuhl celý proces, viz SLEEP_VISION_HANG_FIX)."""
+        if self._picam2 is None and not hard:
+            return False
+
+        if not hard:
+            try:
+                try:
+                    self._picam2.stop()
+                except Exception as e:
+                    _syslog.warning("camera: stop() selhal: %s", e)
+                self._sleep_pumped(1.0)
+                self._picam2.start()
+                self._sleep_pumped(1.0)
+                return self._frames_flowing()
+            except Exception as e:
+                _syslog.warning("camera: měkká obnova selhala: %s", e)
+                return False
+
+        # ── Tvrdý reset: zavřít a znovu otevřít celý senzor ────────────────
+        try:
+            if self._picam2 is not None:
+                for _step in ("stop", "close"):
+                    try:
+                        getattr(self._picam2, _step)()
+                    except Exception:
+                        pass          # mrtvá kamera → stop/close smí selhat
+            self._picam2 = None
+            self._sleep_pumped(2.0)           # dej senzoru čas na power-down
+
+            tuning = _get_tuning_for_model(self.config)
+            cam = Picamera2(tuning=tuning) if tuning else Picamera2()
+            main_size  = getattr(self, '_cam_main_size',  (self._MAIN_W, self._MAIN_H))
+            lores_size = getattr(self, '_cam_lores_size', (self._HAILO_W, self._HAILO_H))
+            cfg = cam.create_preview_configuration(
+                main    = {'size': tuple(main_size),  'format': 'RGB888'},
+                lores   = {'size': tuple(lores_size), 'format': 'RGB888'},
+                controls= {'FrameRate': self.config.get("camera", {}).get("framerate", 30)},
+            )
+            cam.configure(cfg)
+            _apply_camera_model(cam, self.config)
+            cam.pre_callback = self._frame_cb
+            cam.start()
+            _setup_af(cam, self.config)
+            self._picam2 = cam
+            self._sleep_pumped(1.0)
+            return self._frames_flowing(wait_s=4.0)
+        except Exception as e:
+            _syslog.error("camera: tvrdý reset selhal: %s", e)
+            return False
 
     # ── Key handlers ──────────────────────────────────────────────────────
 

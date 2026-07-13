@@ -745,24 +745,41 @@ async def get_place():
 
 @app.get("/api/health")
 async def get_health():
-    """HANS_HEALTH_V1 — zdraví závislostí (Ollama/ComfyUI/Kodi/STT/PC/disk).
-    Čte data/health_state.json (zapisuje watchdog v hans_routine)."""
-    _LBL = {"ollama": "Mozek (Ollama)", "comfyui": "Malování (ComfyUI)",
-            "kodi": "Televize (Kodi)", "stt": "Sluch (přepis)",
-            "pc": "Počítač", "disk": "Disk"}
+    """HANS_HEALTH_V1 — zdraví závislostí (Ollama/kamera/ComfyUI/Kodi/STT/PC/disk).
+    Čte data/health_state.json (zapisuje watchdog v hans_routine); kamera se
+    dočítá ŽIVĚ z heartbeatu (mění se rychle, periodický snapshot by lhal)."""
+    _LBL = {"ollama": "Mozek (Ollama)", "camera": "Zrak (kamera)",
+            "comfyui": "Malování (ComfyUI)", "kodi": "Televize (Kodi)",
+            "stt": "Sluch (přepis)", "pc": "Počítač", "disk": "Disk"}
     out = {"services": [], "degraded": [], "healed": [], "age_s": None}
+    svc = {}
     try:
         d = json.loads(Path("data/health_state.json").read_text(encoding="utf-8"))
-        for k, s in (d.get("services") or {}).items():
-            out["services"].append({"key": k, "label": _LBL.get(k, k),
-                                    "status": s.get("status", "unknown"),
-                                    "detail": s.get("detail", "")})
+        svc = dict(d.get("services") or {})
         out["degraded"] = d.get("degraded", [])
         out["healed"] = d.get("healed", [])
         if d.get("ts"):
             out["age_s"] = int(time.time() - d["ts"])
     except Exception:
         pass
+
+    # CAMERA_STALL_RECOVERY_V1 — zrak čti živě (ne ze starého snapshotu)
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent))
+        from scripts.hans_health import probe_camera, degraded_services
+        svc["camera"] = probe_camera(load_config())
+        out["degraded"] = degraded_services(svc)
+    except Exception:
+        pass
+
+    # Pořadí karet: zrak a mozek napřed (na nich Hans stojí)
+    _ORDER = ["ollama", "camera", "comfyui", "kodi", "stt", "pc", "disk"]
+    for k in sorted(svc, key=lambda x: (_ORDER.index(x) if x in _ORDER else 99, x)):
+        s = svc[k] or {}
+        out["services"].append({"key": k, "label": _LBL.get(k, k),
+                                "status": s.get("status", "unknown"),
+                                "detail": s.get("detail", "")})
     return out
 
 

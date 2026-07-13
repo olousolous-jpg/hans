@@ -158,12 +158,53 @@ def probe_disk(config: dict) -> dict:
         return {"status": UNKNOWN, "detail": str(e)[:80]}
 
 
+# ── Kamera (zrak) ────────────────────────────────────────────────────────────
+def probe_camera(config: dict) -> dict:
+    """CAMERA_STALL_RECOVERY_V1 — zrak. Čte živý heartbeat z main loopu
+    (data/.hans_heartbeat: {ts, camera, stall_s, recover_fails}).
+
+    Senzor imx708 umí odpadnout z I2C (slunce/přehřátí) — pak Hans běží dál,
+    ale je slepý. Bez tohohle to nikdo nepozná (dřív navíc celý zamrzl)."""
+    hb = _ROOT / "data" / ".hans_heartbeat"
+    try:
+        if not hb.exists():
+            return {"status": UNKNOWN, "detail": "Hans neběží / starý build"}
+        raw = hb.read_text().strip()
+        age = time.time() - hb.stat().st_mtime
+        if age > 60:
+            return {"status": UNKNOWN,
+                    "detail": "Hans neběží (tep před %d s)" % int(age)}
+        try:
+            st = json.loads(raw)
+        except Exception:
+            return {"status": UNKNOWN, "detail": "starý formát tepu"}
+
+        cam   = st.get("camera", "unknown")
+        fails = int(st.get("recover_fails", 0) or 0)
+        stall = int(st.get("stall_s", 0) or 0)
+        if cam == "ok":
+            return {"status": OK, "detail": "vidí"}
+        if cam == "paused":
+            return {"status": PAUSED, "detail": "spánek — zrak vypnutý"}
+        if cam == "stalled":
+            return {"status": WEDGED,
+                    "detail": "výpadek %d s — zkouším obnovit" % stall}
+        if cam == "dead":
+            return {"status": DOWN,
+                    "detail": "senzor odpadl (slunce/přehřátí) — %d× marná obnova"
+                              % fails}
+        return {"status": UNKNOWN, "detail": str(cam)[:60]}
+    except Exception as e:
+        return {"status": UNKNOWN, "detail": str(e)[:80]}
+
+
 # ── agregace ─────────────────────────────────────────────────────────────────
 def probe_all(config: dict) -> dict:
     """Proboduje všechny závislosti. Vrací {service: {status, detail, ...}}.
     Deferral-safe — každá probe je try/except, žádná neshodí celek."""
     checks = {
         "ollama": probe_ollama,
+        "camera": probe_camera,
         "comfyui": probe_comfyui,
         "kodi": probe_kodi,
         "stt": probe_stt,
