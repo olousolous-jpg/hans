@@ -51,6 +51,10 @@ class ReadResult:
     summary: str         # sumarizovaný výstup pro Hanse
     topic: str           # co to spustilo ("kodi", "object", "interest", "news")
     fetched_at: float = 0.0
+    # HANS_DEFERRED_SUMMARY_V1 — mozek byl mimo → summary se NEVYROBILA.
+    # raw_text se PODRŽÍ, poznatek se doplní v catchup, až Ollama naběhne.
+    # NIKDY nevydávat raw_text za Hansův poznatek.
+    pending: bool = False
 
     def __post_init__(self):
         if not self.fetched_at:
@@ -114,7 +118,8 @@ class WebReader:
                 title    = data.get("title", title),
                 url      = page_url,
                 raw_text = extract,
-                summary  = summary,
+                summary  = summary or "",       # HANS_DEFERRED_SUMMARY_V1
+                pending  = summary is None,
                 topic    = "wikipedia",
             )
         except Exception as e:
@@ -152,7 +157,8 @@ class WebReader:
             title    = art["title"],
             url      = art["url"],
             raw_text = text,
-            summary  = summary,
+            summary  = summary or "",       # HANS_DEFERRED_SUMMARY_V1
+            pending  = summary is None,
             topic    = "wikipedia",
         )
 
@@ -341,7 +347,8 @@ class WebReader:
             title    = f"Zprávy: {feed_key}",
             url      = RSS_FEEDS.get(feed_key, ""),
             raw_text = headlines,
-            summary  = summary,
+            summary  = summary or "",       # HANS_DEFERRED_SUMMARY_V1
+            pending  = summary is None,
             topic    = "news",
         )
 
@@ -380,7 +387,8 @@ class WebReader:
                 title    = title,
                 url      = url,
                 raw_text = text,
-                summary  = summary,
+                summary  = summary or "",       # HANS_DEFERRED_SUMMARY_V1
+                pending  = summary is None,
                 topic    = topic,
             )
         except Exception as e:
@@ -390,10 +398,13 @@ class WebReader:
     # ── Sumarizace přes Ollama ────────────────────────────────────────────────
 
     def _summarize(self, text: str, query: str, style: str,
-                   max_text: int = 1500) -> str:
+                   max_text: int = 1500) -> Optional[str]:
         """
         Pošle text na Ollama a vrátí sumarizaci v Hansově stylu.
-        Fallback: první 2 věty raw textu.
+        HANS_DEFERRED_SUMMARY_V1 — když mozek NEODPOVÍ, vrátí None
+        (dřív vracel první 2 věty RAW textu → ty se ukládaly jako Hansův
+        poznatek = tichá kontaminace paměti; volající to teď odloží jako
+        `pending` a doplní v catchup). NIKDY nefabrikovat shrnutí z raw textu.
         max_text = kolik znaků textu se pošle modelu (CURIOSITY_DEEP_V1 —
         u hloubkového čtení 6k+, jinak výchozí 1500 = jen úvod).
         """
@@ -424,6 +435,6 @@ class WebReader:
         except Exception as e:
             _log.warning("Summarize error: %s", e)
 
-        # Fallback — první dvě věty raw textu
-        sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-        return " ".join(sentences[:2])
+        # HANS_DEFERRED_SUMMARY_V1 — mozek mimo (nebo herní mód) → NEfabrikuj.
+        # Volající odloží raw_text jako pending a doplní v catchup.
+        return None

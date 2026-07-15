@@ -611,7 +611,9 @@ class HansCuriosity:
         def _worker():
             try:
                 result: Optional[ReadResult] = fn()
-                if result and result.summary:
+                # HANS_DEFERRED_SUMMARY_V1 — pending = mozek byl mimo, summary
+                # se nevyrobila; přesto ULOŽ (raw_text se podrží, doplní catchup).
+                if result and (result.summary or result.pending):
                     result.topic = topic
                     self._store(result)
                     ck = f"{topic}:{key}"
@@ -632,6 +634,14 @@ class HansCuriosity:
 
     def _store(self, result: ReadResult):
         """Uloží výsledek do paměti a deníku."""
+        # HANS_DEFERRED_SUMMARY_V1 — mozek byl mimo → poznatek se NEvyrobil.
+        # Podrž raw_text v deníku (data JSON, pending:1), NEpřidávej do _recent
+        # (Hans o tom nesmí mluvit jako o poznaném), nespouštěj otázku/entitu.
+        # Catchup ho zpracuje, až Ollama naběhne.
+        if getattr(result, "pending", False):
+            self._store_pending(result)
+            return
+
         with self._lock:
             self._recent.insert(0, result)
             self._recent = self._recent[:self._max_recent]
@@ -676,6 +686,147 @@ class HansCuriosity:
         ).start()
         self._maybe_expire_old_questions()
 
+        # HANS_DEFERRED_SUMMARY_V1 — úspěšné čtení = mozek je prokazatelně
+        # nahoře → dožeň dřívější odložené (pending) záznamy. Throttle uvnitř.
+        _th.Thread(target=self._catchup_pending, daemon=True,
+                   name='HansCatchup').start()
+
+    def _store_pending(self, result: ReadResult):
+        """HANS_DEFERRED_SUMMARY_V1 — ulož čtení, u kterého mozek nestihl
+        vyrobit poznatek. Do deníku jde NEUTRÁLNÍ marker (ne raw text) a do
+        `data` JSON se podrží raw_text pro pozdější zpracování v catchup.
+        NIKDY se nevydává za Hansův poznatek a nejde do _recent."""
+        import json as _json
+        raw = (result.raw_text or "").strip()
+        if not raw:
+            _log.debug("pending bez raw_text (%s) — skip", result.title)
+            return
+        payload = _json.dumps({
+            "pending":  1,
+            "raw_text": raw[:8000],
+            "query":    result.title,
+            "source":   result.source,
+            "topic":    result.topic,
+            "url":      result.url,
+        }, ensure_ascii=False)
+        marker = f"[{result.topic}] (nezpracováno — mozek byl mimo, doženu to)"
+        _title = result.title[:120]
+        try:
+            if self._diary_writer:
+                self._diary_writer("web_read", _title, data=payload, note=marker)
+            else:
+                conn = sqlite3.connect(self._diary_path)
+                conn.execute(
+                    "INSERT INTO diary (ts, event_type, title, data, note) "
+                    "VALUES (?,?,?,?,?)",
+                    (result.fetched_at, "web_read", _title, payload, marker))
+                conn.commit()
+                conn.close()
+            _log.info("Read DEFERRED [%s] '%s' — mozek mimo, podrženo (%d B raw)",
+                      result.topic, result.title, len(raw))
+        except Exception as e:
+            _log.warning("Deferred store error: %s", e)
+
+    def _catchup_batch(self, limit: int) -> int:
+        """HANS_DEFERRED_SUMMARY_V1 — jádro: vezmi `limit` NEJSTARŠÍCH pending
+        `web_read`, z podrženého raw_textu vyrob skutečný poznatek, přepiš
+        deníkový řádek (marker → poznatek, pending:0). Vrací počet zpracovaných;
+        0 = nic nezbývá NEBO mozek mlčí (raw se nevydává, řádek zůstane pending).
+        Bez zámku — volá se pod `_catchup_lock` (viz `_catchup_pending`/`catchup_drain`)."""
+        import json as _json
+        try:
+            from scripts.ollama_client import game_mode_on
+            if game_mode_on():
+                return 0  # herní mód → mozek schválně off, nedožeň teď
+        except Exception:
+            pass
+        try:
+            conn = sqlite3.connect(self._diary_path)
+            rows = conn.execute(
+                "SELECT id, data FROM diary WHERE event_type='web_read' "
+                "AND data LIKE '%\"pending\": 1%' ORDER BY ts ASC LIMIT ?",
+                (limit,)).fetchall()
+        except Exception as e:
+            _log.debug("catchup query: %s", e)
+            return 0
+        done = 0
+        for _id, data in rows:
+            try:
+                d = _json.loads(data or "{}")
+            except Exception:
+                continue
+            raw = (d.get("raw_text") or "").strip()
+            query = d.get("query") or ""
+            if not raw:
+                continue
+            summary = self._reader._summarize(
+                text=raw, query=query,
+                style=("Nejdřív JEDNOU větou stručně uveď, KDO nebo CO to je. "
+                       "Pak JEDNOU větou napiš, co tě nejvíc zaujalo. Drž se "
+                       "faktů z textu, nic si nepřidávej."),
+                max_text=len(raw) or 6000,
+            )
+            if not summary:
+                # mozek stále mlčí → nech pending, přeruš (další stejně selžou)
+                break
+            topic = d.get("topic") or "wikipedia"
+            new_note = f"[{topic}] {summary}"
+            d["pending"] = 0
+            try:
+                conn.execute(
+                    "UPDATE diary SET note=?, data=? WHERE id=?",
+                    (new_note, _json.dumps(d, ensure_ascii=False), _id))
+                conn.commit()
+                done += 1
+                _log.info("Catchup web_read #%s zpracováno: %s", _id, summary[:70])
+            except Exception as e:
+                _log.debug("catchup update #%s: %s", _id, e)
+        conn.close()
+        return done
+
+    def _catchup_lock_get(self):
+        if not getattr(self, "_catchup_lock", None):
+            self._catchup_lock = threading.Lock()
+        return self._catchup_lock
+
+    def _catchup_pending(self, limit: int = 5):
+        """Per-read trigger — po úspěšném čtení dožeň malou dávku. Non-blocking:
+        když už catchup/drain běží, tiše odejdi (ten backlog pokryje)."""
+        lock = self._catchup_lock_get()
+        if not lock.acquire(blocking=False):
+            return
+        try:
+            n = self._catchup_batch(limit)
+            if n:
+                _log.info("HANS_DEFERRED_SUMMARY_V1 catchup: %d záznamů doplněno", n)
+        finally:
+            lock.release()
+
+    def catchup_drain(self, batch: int = 10, max_batches: int = 200):
+        """HANS_DEFERRED_SUMMARY_V1 — na naběhnutí mozku (brain_up) DOJEĎ CELÝ
+        backlog odložených čtení, NEJSTARŠÍ NAPŘED, nečekej na další čtení.
+        Blocking zámek (běží v bg threadu). Skončí, když nic nezbývá, mozek
+        znovu spadne (batch vrátí 0) nebo po `max_batches` (pojistka)."""
+        lock = self._catchup_lock_get()
+        lock.acquire()
+        try:
+            total = 0
+            for _ in range(max_batches):
+                n = self._catchup_batch(batch)
+                if n == 0:
+                    break        # backlog prázdný nebo mozek zas mlčí
+                total += n
+            if total:
+                _log.info("HANS_DEFERRED_SUMMARY_V1 drain (brain_up): %d záznamů dožito", total)
+        finally:
+            lock.release()
+
+    def catchup_drain_async(self, batch: int = 10):
+        """Spusť `catchup_drain` na pozadí (neblokuj volajícího — např.
+        health-check thread na brain_up)."""
+        threading.Thread(target=self.catchup_drain, kwargs={"batch": batch},
+                         daemon=True, name="HansCatchupDrain").start()
+
     def _entity_store(self):
         # HANS_ENTITY_STORE_C1_V1 — lazy singleton EntityStore
         _es = getattr(self, "_es_inst", None)
@@ -692,6 +843,7 @@ class HansCuriosity:
             rows = conn.execute("""
                 SELECT ts, title, note FROM diary
                 WHERE event_type='web_read'
+                  AND (data IS NULL OR data NOT LIKE '%"pending": 1%')
                 ORDER BY ts DESC LIMIT 5
             """).fetchall()
             conn.close()

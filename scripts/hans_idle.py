@@ -79,6 +79,13 @@ class HansIdle:
                 self._mood._shift(mood, intensity, reason)
         self._body.on_mood_change = _body_mood_cb
         def _body_brain_up_cb(down_min):
+            # HANS_DEFERRED_SUMMARY_V1 — mozek naběhl → hned dojeď backlog
+            # odložených čtení (nejstarší napřed), nečekej na další čtení.
+            try:
+                if getattr(self, '_curiosity', None) is not None:
+                    self._curiosity.catchup_drain_async()
+            except Exception as _e:
+                _log.debug("brain_up catchup_drain: %s", _e)
             # HANS_TELEGRAM_BRAIN_NOTIFY_V1 — mozek online: dej vědět na
             # Telegram, když uživatel nedávno psal (pending), ať ví, že
             # může psát naplno. BEZ WOL.
