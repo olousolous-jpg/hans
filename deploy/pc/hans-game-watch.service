@@ -1,0 +1,25 @@
+# hans-game-watch.service — HANS_GAME_AUTODETECT_V1
+# Systemd USER služba: auto herní mód (watcher procesů → Hansův /pause|/resume).
+# Instalace remote z Pi (SSH):
+#   scp hans-game-watch.sh <user>@PC:~/.local/bin/hans-game-watch.sh
+#   ssh <user>@PC 'chmod +x ~/.local/bin/hans-game-watch.sh'
+#   scp hans-game-watch.service <user>@PC:~/.config/systemd/user/
+#   ssh <user>@PC 'systemctl --user daemon-reload && systemctl --user enable --now hans-game-watch'
+# Vyžaduje linger (loginctl enable-linger <user>) → běží od bootu bez přihlášení.
+# Logy:  ssh <user>@PC 'journalctl --user -u hans-game-watch -f'
+[Unit]
+Description=Hans auto herní mód — watcher procesů (HANS_GAME_AUTODETECT_V1)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/hans-game-watch.sh
+Restart=always
+RestartSec=5
+# Přepsání výchozích hodnot (odkomentuj podle potřeby):
+# Environment=HANS=http://192.168.1.50:7860
+# Environment=GRACE_S=20
+# Environment=EXTRA_PAT=nazev_native_hry
+
+[Install]
+WantedBy=default.target
