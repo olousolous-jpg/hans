@@ -170,6 +170,14 @@ class HansMood:
             extras.append(f"Naposledy jsi viděl: {self._state.last_person}.")
         if self._kodi_title:
             extras.append(f"Kodi hraje: {self._kodi_title}.")
+        # HANS_MOOD_REASON_V1 — konkrétní důvod nálady patří do promptu.
+        # Bez něj Hans neví, PROČ je (např.) worried, a musí mlčet.
+        if self._state.shift_reason:
+            extras.append(
+                f"Tvá nálada má konkrétní důvod: {self._state.shift_reason}. "
+                f"Když se tě někdo zeptá, proč se tak cítíš, uveď PRÁVĚ TENTO důvod "
+                f"a nic si k němu nedomýšlej."
+            )
         return base + (" " + " ".join(extras) if extras else "")
 
     def get_diary_mood_note(self) -> str:

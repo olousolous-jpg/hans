@@ -484,7 +484,23 @@ class HansIdle:
                 _log.error("event_objects_seen.mood: %s", _e)
 
     def event_unknown_person(self):
-        """Hans viděl neznámou tvář. Posune mood k 'worried'."""
+        """Hans viděl neznámou tvář. Posune mood k 'worried'.
+
+        HANS_UNKNOWN_FACE_DEBOUNCE_V1 — ZNÁMÝ člověk občas na pár framů spadne
+        do „unknown" (spodní úhel kamery, pohyb, světlo) → náladu to křečovitě
+        překlápělo do worried, i když je před kamerou trvale ZNÁMÝ (doloženo:
+        známý člen domácnosti viděn každých ~40 s, přesto 3× „neznámá tvář").
+        Potlač „neznámou tvář" jako PŘECHODOVÝ výpadek rozpoznání, když byl
+        známý člověk viděn nedávno. Reálný cizinec (nikdo známý přítomen, nebo
+        dávno) projde. Bez potřeby kamery/přetrénování; laditelné z logů."""
+        _win = float((self.config.get('hans_idle', {}) or {})
+                     .get('unknown_face_suppress_s', 45))
+        _last = getattr(self, '_last_seen', 0)
+        _present = getattr(self, '_present_names', None)
+        if _present and _win > 0 and (time.time() - _last) < _win:
+            _log.info("unknown_person POTLAČEN (flicker) — známý %s viděn "
+                      "před %.0fs (< %.0fs)", _present, time.time() - _last, _win)
+            return
         if hasattr(self, '_mood') and self._mood is not None:
             try:
                 self._mood.update_objects(["unknown_person"])
@@ -1834,13 +1850,14 @@ class HansIdle:
                         active.id,
                         resolution="Případ uzavřen po dostatečném prošetření.")
                     _log.info("Případ uzavřen: %s", active.title)
-                    # CASE_RESOLUTION_FROM_CLUES_V1 — subjekt + stopy; závěr udělá LLM
-                    _clue_texts = [
-                        c.get("text", "")
-                        for c in (getattr(active, "clues", None) or [])
-                        if c.get("text")]
+                    # CASE_RESOLUTION_SUMMARY_V1 — NE firehose všech stop (dřív se
+                    # slepily desítky náhodných „kodi: …" + prázdných „četl:" hlaviček
+                    # + useknutých dialogů → zeď nesmyslů). Vyfiltruj balast, dedupuj,
+                    # vezmi pár SMYSLUPLNÝCH stop.
+                    _clue_texts = self._clean_case_clues(
+                        getattr(active, "clues", None) or [])
                     _subject = _clue_texts[0] if _clue_texts else active.title
-                    _rest = "; ".join(_clue_texts[1:])
+                    _rest = "; ".join(_clue_texts[1:6])   # max ~5 stop, ne firehose
                     _close_note = "Subjekt: " + _subject
                     if _rest:
                         _close_note += "\nStopy: " + _rest
@@ -1857,6 +1874,36 @@ class HansIdle:
         except Exception as e:
             _log.debug("Activity case: %s", e)
 
+    def _clean_case_clues(self, clues: list) -> list[str]:
+        """CASE_RESOLUTION_SUMMARY_V1 — z nasbíraných stop nech jen SMYSLUPLNÉ:
+        zahoď prázdné/hlavičkové („… nedávno přečetl:"), příliš krátké,
+        useknuté (nekončí interpunkcí u dialogových vět) a duplicity."""
+        out, seen = [], set()
+        for c in clues:
+            t = (c.get("text", "") if isinstance(c, dict) else str(c)).strip()
+            if not t:
+                continue
+            tl = t.lower()
+            # prázdná čtecí hlavička bez obsahu
+            if "nedávno přečetl:" in tl and len(t) < 45:
+                continue
+            # holá „kodi: X; četl: <hlavička>" → nech jen část s obsahem
+            # dedup na začátek textu
+            key = re.sub(r"\s+", " ", tl)[:50]
+            if key in seen:
+                continue
+            # dialogová věta useknutá uprostřed (nekončí . ! ? " ) → balast
+            words = t.split()
+            looks_dialog = any(t.startswith(p) for p in (
+                "S tím", "Dovolím si", "Máte", "Ano,", "To je", "Tady", "A "))
+            if looks_dialog and t[-1:] not in ".!?\"“”":
+                continue
+            if len(t) < 12 or len(words) < 3:
+                continue
+            seen.add(key)
+            out.append(t)
+        return out
+
     def _build_case_context(self) -> list[str]:
         """Posbírej kontext pro Koláčův případ — co Hans vidí/četl/sleduje."""
         parts: list[str] = []
@@ -1867,15 +1914,19 @@ class HansIdle:
             t = mv.get("title", "")
             if t:
                 parts.append(f"kodi: {t}")
-        # Co Hans nedávno četl
+        # Co Hans nedávno četl — POZOR: get_context_string vrací víceřádkový text,
+        # 1. řádek je HLAVIČKA („… si nedávno přečetl:") → dřív se brala ta a stopa
+        # byla prázdná „četl: Hans si nedávno přečetl:". Vezmi OBSAHOVÝ řádek.
         if hasattr(self, "_curiosity"):
             try:
                 read = self._curiosity.get_context_string(max_items=1)
-                if read:
-                    # vytáhni jen téma
-                    line = read.splitlines()[0] if read else ""
-                    if line:
-                        parts.append(f"četl: {line[:60]}")
+                _content = [l.strip(" -•") for l in (read or "").splitlines()[1:]
+                            if l.strip()]
+                if _content:
+                    # „[dd.mm. HH:MM] Titul: shrnutí" → strhni časové razítko
+                    _c = re.sub(r"^\[[^\]]*\]\s*", "", _content[0])
+                    if _c:
+                        parts.append(f"četl: {_c[:80]}")
             except Exception:
                 pass
         # Aktuální kniha

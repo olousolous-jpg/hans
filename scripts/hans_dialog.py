@@ -917,7 +917,9 @@ class HansDialog:
                                     if l.lower().startswith('kola')]
                     if _kolac_lines:
                         _clue = _kolac_lines[-1].split(':', 1)[1].strip()
-                        if len(_clue) > 10:
+                        # jen KOMPLETNÍ replika — ne useknutá („S tím nemohu sou")
+                        if (len(_clue) >= 16 and len(_clue.split()) >= 4
+                                and _clue[-1] in ".!?\"“”)"):
                             _cases.add_clue(_active.id, _clue[:200])
             self._topics.advance()
             # HANS_KOLAC_MIND_V1 — Koláč si pamatuje svou pozici z dialogu
@@ -927,8 +929,11 @@ class HansDialog:
                     _kl = [l for l in dialog.strip().split("\n")
                            if l.strip().lower().startswith("kola") and ":" in l]
                     if _kl:
-                        _km.remember(getattr(topic, "subject", ""),
-                                     _kl[-1].split(":", 1)[1].strip())
+                        _pos = _kl[-1].split(":", 1)[1].strip()
+                        # neukládej do Koláčovy paměti useknuté/nekompletní pozice
+                        if (len(_pos) >= 16 and len(_pos.split()) >= 4
+                                and _pos[-1] in ".!?\"“”)"):
+                            _km.remember(getattr(topic, "subject", ""), _pos)
             except Exception as _ke:
                 _log.debug("kolac remember: %s", _ke)
             for line in dialog.strip().split("\n"):
