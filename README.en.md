@@ -322,3 +322,15 @@ the architecture rather than plug-and-play — please frame discussion according
 
 > Private data (diary, face biometrics, keys, configuration) stays **local** —
 > `.gitignore` keeps it out of the repository.
+
+## License
+
+Hans is licensed under the **PolyForm Noncommercial License 1.0.0**. You may
+freely use, modify, and share it for **any noncommercial purpose** — personal,
+study, research, educational, or nonprofit (full text: [LICENSE](LICENSE)).
+
+**Commercial use requires a separate license** from the authors — reach out via
+a [GitHub issue](https://github.com/olousolous-jpg/hans/issues).
+
+> Earlier versions were released under GPL-3.0 and remain available under GPL.
+> The new license applies to versions from this change onward.

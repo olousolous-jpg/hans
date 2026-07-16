@@ -310,3 +310,15 @@ slouží jako ukázka architektury — k tomu směřuj i diskuzi.
 
 > Soukromá data (deník, biometrie tváří, klíče, konfigurace) zůstávají **lokálně**
 > — `.gitignore` je drží mimo repozitář.
+
+## Licence
+
+Hans je pod licencí **PolyForm Noncommercial License 1.0.0**. Smíš ho volně
+používat, upravovat a sdílet pro **jakékoli nekomerční účely** — osobní,
+studijní, výzkumné, vzdělávací i neziskové (plné znění: [LICENSE](LICENSE)).
+
+**Komerční užití vyžaduje samostatnou licenci** od autorů — napiš přes
+[GitHub issue](https://github.com/olousolous-jpg/hans/issues).
+
+> Dřívější verze byly zveřejněné pod GPL-3.0; ty pod GPL zůstávají dostupné.
+> Nová licence platí pro verze od této změny dál.
