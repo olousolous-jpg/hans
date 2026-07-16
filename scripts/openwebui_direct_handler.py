@@ -564,6 +564,22 @@ class OpenWebUIDirectHandler:
         except Exception:
             pass
 
+        # HANS_FILM_RECALL_V1 — dotaz na FILM podle názvu: dohledej Hansovy
+        # VLASTNÍ deníkové záznamy (movie_opinion/kodi_playing) o tom filmu, ať
+        # nezapře, co ví (doložený případ „Proud krve"). RAG kolekce hans_filmy
+        # ani conversation_recall tyhle eventy nenajdou. PŘED intent/RAG.
+        try:
+            from scripts.hans_recall import film_knowledge_answer as _film_recall
+            _dbp_f = (self.config.get("diary_db")
+                      or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                      or "data/hans_diary.db")
+            _fr = _film_recall(_dbp_f, str(_text))
+            if _fr:
+                self._grounding_outcome = 'grounded'
+                return _fr
+        except Exception:
+            pass
+
         try:
             # 1) intent — je dotaz faktický?
             res = _intent.classify(str(_text))
@@ -1225,6 +1241,16 @@ class OpenWebUIDirectHandler:
                 current += f" {notes}"
         else:
             current = f"\n\nAktuálně mluvíš s {name}."
+
+        # HANS_ADDRESSEE_V1 — kontext (deník, myšlenky, RAG) mluví o uživateli ve
+        # 3. osobě („pán domu…“). Bez tohoto pravidla to model recykluje a mluví
+        # o adresátovi, jako by to byl někdo třetí („Standa tě pozdravuje“).
+        current += (
+            f" {name} je TÁŽ osoba, o které tvé zápisky a myšlenky mluví ve třetí"
+            f" osobě (např. „pán domu“, „{name} přišel“). Teď mluvíš PŘÍMO S NÍ:"
+            f" oslovuj ji ve druhé osobě (ty/vy) a vokativem."
+            f" NIKDY o ní nemluv ve třetí osobě a NIKDY nikomu netlumoč její vzkazy."
+        )
 
         read_ctx = ""
         _hi = getattr(self, '_hans_idle', None)

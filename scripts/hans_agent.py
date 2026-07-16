@@ -44,6 +44,23 @@ def _norm(s: str) -> str:
     return (s or "").strip().lower().strip("!?.,")
 
 
+# HANS_AGENT_NO_WORDGATE_V1 — strukturální (gramatické) začátky otázek/žádostí.
+# NENÍ to seznam spouštěcích slov akcí (to dělá LLM router), jen hrubý signál
+# „tohle je dotaz/žádost, ať se Hans zamyslí“. Diakritika i bez ní.
+_REQUEST_OPENERS = frozenset({
+    # tázací zájmena/příslovce
+    "co", "kdo", "kde", "kdy", "kolik", "jak", "proc", "proč", "kam", "odkud",
+    "ci", "čí", "jaka", "jaky", "jake", "jaká", "jaký", "jaké", "která", "ktery",
+    "který", "které", "kterou",
+    # sloveso „být“ na začátku = zjišťovací otázka („je někdo doma“, „jsou tu…“)
+    "je", "jsou", "byl", "byla", "bylo",
+    # 2. osoba / zdvořilá žádost
+    "muzes", "můžeš", "muzeš", "mohl", "mohla", "mohls", "dokazes", "dokážeš",
+    "zvladnes", "zvládneš", "prosim", "prosím", "chci", "chtel", "chtěl",
+    "potreboval", "potřeboval",
+})
+
+
 def _args_hash(action: str, args: dict) -> str:
     raw = action + "|" + json.dumps(args or {}, sort_keys=True,
                                     ensure_ascii=False)
@@ -195,6 +212,32 @@ def _run_now_playing(handler, args) -> str:
     return "Na TV teď nic nehraje, pane."
 
 
+def _run_home_status(handler, args) -> str:
+    """HANS_AGENT_HOME_STATUS_V1 — kompozitní odpověď na VÁGNÍ „děje se něco
+    doma?“. Agreguje ŽIVÁ deterministická data (co hraje + kdo je doma), NIKDY
+    nedomýšlí. Prázdný zdroj = „klid“, NE staré datum (přesně proti případu
+    „Proud krve“, kde chat konfabuloval starý Kodi titul jako přítomnost)."""
+    try:
+        np = _run_now_playing(handler, {}) or ""
+    except Exception:
+        np = ""
+    try:
+        wh = _run_who_home(handler, {}) or ""
+    except Exception:
+        wh = ""
+    _l = lambda s: s.lower()
+    plays = bool(np) and "nic nehraje" not in _l(np) and "nedaří připojit" not in _l(np)
+    home  = bool(wh) and "nikoho nevid" not in _l(wh)
+    parts = []
+    if plays:
+        parts.append(np.rstrip("."))
+    if home:
+        parts.append(wh.rstrip("."))
+    if not parts:
+        return "Doma je klid, pane — na TV nic nehraje a nikoho tu teď nevidím."
+    return ". ".join(parts) + "."
+
+
 # ── Ovládání médií (confirm) ─────────────────────────────────────────────────
 
 def _run_kodi_pause(handler, args) -> str:
@@ -321,10 +364,14 @@ ACTIONS: dict[str, Action] = {
         needs_confirm=False, cooldown_s=10),
     "report_who_is_home": Action(
         "report_who_is_home",
-        "Odpovědět na dotaz, KDO je teď doma / v místnosti / kdo tu je.",
+        "Odpovědět na dotaz o PŘÍTOMNOSTI osob TEĎ — kdo je doma / v místnosti / "
+        "kdo tu je, ale i „kde je <jméno>?“, „je <jméno> doma?“, „co dělá "
+        "<jméno>?“ (odpověď = koho Hans právě VIDÍ; NEDOMÝŠLET činnost, jen "
+        "přítomnost). Vyber TUTO akci u dotazů na aktuální polohu/přítomnost "
+        "konkrétní osoby.",
         hints=["kdo je doma", "kdo je tu", "je někdo doma", "je nekdo doma",
                "kdo tu je", "někdo tu", "nekdo tu", "jsem sám", "jsem sam",
-               "kdo tady"],
+               "kdo tady", "kde je", "co dělá", "co dela"],
         args=[], run=_run_who_home, grounding=None,
         needs_confirm=False, cooldown_s=10),
     "report_now_playing": Action(
@@ -333,6 +380,20 @@ ACTIONS: dict[str, Action] = {
         hints=["co hraje", "co běží", "co bezi", "co dávají", "co davaji",
                "co se přehrává", "co je na tv"],
         args=[], run=_run_now_playing, grounding=None,
+        needs_confirm=False, cooldown_s=10),
+    "report_home_status": Action(
+        "report_home_status",
+        "Odpovědět na ŠIROKÝ/VÁGNÍ dotaz o dění doma jako celku — „děje se "
+        "něco doma?“, „co se doma děje?“, „co je doma nového?“, „je doma "
+        "všechno v pořádku?“, „jak to vypadá doma?“. Shrne živý stav (co hraje "
+        "na TV + kdo je doma). Vyber TUTO akci místo report_now_playing/"
+        "report_who_is_home, když dotaz NENÍ konkrétně jen o TV ani jen o "
+        "přítomnosti, ale o dění doma obecně.",
+        hints=["děje se něco", "deje se neco", "co se doma", "co je doma",
+               "doma nového", "doma noveho", "vypadá to doma", "vypada to doma",
+               "všechno v pořádku doma", "vsechno v poradku doma",
+               "jak to doma", "co je doma nového", "něco nového doma"],
+        args=[], run=_run_home_status, grounding=None,
         needs_confirm=False, cooldown_s=10),
 
     # ── Ovládání médií (confirm) ────────────────────────────────────────────
@@ -411,6 +472,9 @@ class AgentRouter:
         self.timeout = int(c.get("timeout", 30))
         self.cooldown_default = int(c.get("cooldown_default_s", 60))
         self.reject_cooldown = int(c.get("reject_cooldown_s", 3600))
+        # HANS_AGENT_NO_WORDGATE_V1 — True: pusť router i na obecné otázky/žádosti
+        # (ne jen na hint slova akcí). False = staré chování (jen hinty).
+        self.route_all_requests = bool(c.get("route_all_requests", True))
         # HANS_AGENT_KODI_CONFIRM_V1 — u návrhu filmu zrcadli potvrzení i na TV
         self.kodi_confirm_to_tv = bool(c.get("kodi_confirm_to_tv", True))
         self.kodi_confirm_countdown = int(c.get("kodi_confirm_countdown_s", 45))
@@ -419,7 +483,15 @@ class AgentRouter:
         self._rejected: dict[str, float] = {}          # name|hash → ts (echo)
 
     # ── pre-gate ────────────────────────────────────────────────────────────
-    def _actionable(self, text: str) -> bool:
+    # HANS_AGENT_NO_WORDGATE_V1 — pre-gate dřív propustil router JEN když zpráva
+    # trefila hint slovo konkrétní akce → novým formulacím („děje se něco doma?“)
+    # se router NIKDY nezeptal a propadly do LLM = konfabulace živého stavu.
+    # Teď: hint = rychlá cesta (zpětná kompatibilita), NAVÍC pusť router, kdykoli
+    # zpráva STRUKTURÁLNĚ vypadá jako dotaz/žádost (otazník / tázací nebo
+    # rozkazovací začátek). Rozhodnutí CO spustit dál dělá LLM router (whitelist);
+    # heuristika jen rozhoduje JESTLI se Hans vůbec zamyslí. Router = rezidentní
+    # hans-czech (VRAM zdarma), cena = latence jednoho krátkého volání.
+    def _hint_match(self, text: str) -> bool:
         t = _norm(text)
         if len(t) < 2:
             return False
@@ -428,6 +500,23 @@ class AgentRouter:
                 if h in t:
                     return True
         return False
+
+    def _looks_like_request(self, text: str) -> bool:
+        """Strukturální (NE per-akce sémantická) heuristika: vypadá zpráva jako
+        otázka nebo žádost? Otazník, nebo tázací/rozkazovací začátek."""
+        raw = (text or "").strip()
+        if len(raw) < 2:
+            return False
+        if raw.endswith("?"):
+            return True
+        t = _norm(raw)
+        first = t.split()[0] if t.split() else ""
+        return first in _REQUEST_OPENERS
+
+    def _actionable(self, text: str) -> bool:
+        if not self.route_all_requests:
+            return self._hint_match(text)           # legacy chování (config off)
+        return self._hint_match(text) or self._looks_like_request(text)
 
     # ── confirm smyčka ──────────────────────────────────────────────────────
     def check_confirmation(self, handler, name: str,
@@ -638,6 +727,11 @@ class AgentRouter:
             "otázkou>\"}\n"
             "Pravidla: Když si uživatel žádnou akci ze seznamu nepřeje "
             "(běžná otázka, povídání), vrať action=null a confidence 0. "
+            "DŮLEŽITÉ: dotaz na INFORMACE/ZNALOST o něčem („co víš o X“, "
+            "„zjisti/zjistit víc o X“, „řekni mi o X“, „znáš X?“, „pamatuješ "
+            "na X“) NENÍ akce — uživatel chce, abys mu o tom POVĚDĚL, ne abys "
+            "něco spustil (NEpouštěj film, NEpřidávej na seznam) → action=null. "
+            "Akci (pustit/přidat/…) zvol JEN u jasného POKYNU něco UDĚLAT. "
             "Nikdy nevymýšlej akci mimo seznam. args vyplň jen když je znáš "
             "z textu (titul filmu/knihy). Buď konzervativní — při pochybnosti "
             "action=null.")

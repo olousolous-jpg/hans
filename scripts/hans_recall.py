@@ -32,7 +32,7 @@ _MESICE_GEN = ("", "ledna", "února", "března", "dubna", "května", "června",
 
 # Čtecí event typy (co Hans reálně četl/studoval)
 _READ_TYPES = ("web_read", "reading_takeaway", "book_read", "study_note",
-               "book_completion_reflection")
+               "book_completion_reflection", "book_reflection")
 
 
 _DNY_AKUZ = ("v pondělí", "v úterý", "ve středu", "ve čtvrtek", "v pátek",
@@ -690,14 +690,29 @@ _TOPIC_PAT = re.compile(
 )
 _STOPWORDS = {"něco", "neco", "dnes", "dneska", "včera", "vcera", "naposledy",
               "nějakou", "nejakou", "knihu", "článek", "clanek", "si", "už",
-              "uz", "vůbec", "vubec", "někdy", "nekdy", "ty"}
+              "uz", "vůbec", "vubec", "někdy", "nekdy", "ty",
+              # zájmena — nejsou téma; „četl jsi JI?" nesmí dát bogus topic „ji“
+              # → falešné „o ‚ji' nemám záznam". Prázdné téma → radši nech projít.
+              "ji", "ho", "je", "jej", "něj", "nej", "ni", "ně", "to", "tom",
+              "toho", "této", "teto", "tuto", "tu", "ten", "tim", "tím"}
+
+
+# Explicitní PŘEDMĚT „o knize/filmu/tématu X“ — má přednost před koncovým
+# „…četl jsi JI?“ (jinak _TOPIC_PAT chytne zájmeno). Řeší compound dotaz
+# „co víš o knize Sherlock Holmes? četl jsi ji?“.
+_SUBJECT_PAT = re.compile(
+    r"\bo\s+(?:knize|kn[íi][žz]ce|kn[íi]žk\w*|filmu|seri[áa]lu|po[řr]adu|"
+    r"t[éeě]\s+knize|t[ée]matu|autorovi|spisovateli)\s+(.{2,50}?)\s*[?.!,]",
+    re.IGNORECASE)
 
 
 def _extract_topic(question: str) -> str:
     """Vytáhni téma z dotazu na čtení ('četl jsi o hradech?' → 'hradech').
     '' když dotaz téma nemá (obecné 'co jsi četl')."""
     q = (question or "").strip()
-    m = _TOPIC_PAT.search(q)
+    m = _SUBJECT_PAT.search(q)          # nejdřív explicitní předmět „o knize X“
+    if not m:
+        m = _TOPIC_PAT.search(q)
     if not m:
         # slash tvar: „/cetl o hradech" → args = „o hradech"
         m = re.match(r"^o\s+(.{2,60}?)\s*\??$", q, re.IGNORECASE)
@@ -898,6 +913,91 @@ def last_seen_answer(db_path: str, config: dict, question: str,
     except Exception as e:
         _log.warning("last_seen_answer selhal: %s", e)
         return ""
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ── Recall filmu podle TITULU (HANS_FILM_RECALL_V1) ──────────────────────────
+# Doložený případ „Proud krve“: Hans na „co víš o filmu X“ zapřel („nemám
+# záznam“), ačkoli v deníku má vlastní `movie_opinion` (děj, žánr, názor) a
+# `kodi_playing` (kdy viděl). conversation_recall hledá jen v human_chat a RAG
+# kolekce hans_filmy tyhle deníkové eventy neindexuje → false-negative brzdy.
+# Řešení: REVERZNÍ shoda — vezmi TITULY z deníku jako slovník a najdi, který se
+# vyskytuje v dotazu (žádné křehké parsování názvu). Vrátí GROUNDED blok
+# z Hansových VLASTNÍCH záznamů (nic se nedomýšlí).
+
+_FILM_CTX = re.compile(
+    r"\b(film|filmu|filmy|filmem|serial|serialu|seri[aá]l|po[řr]ad|kino|"
+    r"co v[ií][sš] o|rekni mi o|reknes mi o|zn[aá][sš]|vid[eě]l jsi|"
+    r"vim o|v[ií][sš] o|pamatuje[sš] .*film)\b", re.IGNORECASE)
+
+
+def _looks_like_film_query(question: str) -> bool:
+    """Vypadá dotaz jako na film / „co víš o X“? (levný gate před DB reverzní
+    shodou — ať se titulový slovník netahá na každou zprávu)."""
+    return bool(_FILM_CTX.search(_fold(question or "")))
+
+
+def film_knowledge_answer(db_path: str, question: str = "") -> Optional[str]:
+    """HANS_FILM_RECALL_V1 — když dotaz zmiňuje FILM podle názvu, dohledej v
+    deníku Hansovy VLASTNÍ záznamy o tom filmu (movie_opinion = názor/děj,
+    kodi_playing = kdy viděl) a vrať GROUNDED blok. None = žádný známý titul
+    v dotazu → normální tok. Deterministické, žádný LLM."""
+    if not question or not _looks_like_film_query(question):
+        return None
+    conn = None
+    try:
+        conn = _ro(db_path)
+        q_fold = _fold(question).lower()
+        # slovník titulů z deníku (distinct, filmové event types)
+        rows = conn.execute(
+            "SELECT DISTINCT title FROM diary WHERE event_type IN "
+            "('movie_opinion','kodi_playing','movie_browsed','film_suggestion') "
+            "AND title IS NOT NULL AND length(title) >= 4").fetchall()
+        # reverzní shoda na hranici slov; jen distinktivní tituly
+        best = None
+        for (title,) in rows:
+            tf = _fold(title).lower().strip()
+            if len(tf) < 4:
+                continue
+            multiword = " " in tf
+            if not multiword and len(tf) < 6:
+                continue  # krátké jednoslovné (Hra, Past…) → riziko falešné shody
+            if re.search(r"\b" + re.escape(tf) + r"\b", q_fold):
+                if best is None or len(tf) > len(_fold(best).lower()):
+                    best = title
+        if not best:
+            return None
+        # Hansovy vlastní názory/poznámky (obsah bývá v `data`, fallback `note`)
+        ops = conn.execute(
+            "SELECT ts, COALESCE(NULLIF(data,''), note) FROM diary "
+            "WHERE event_type='movie_opinion' AND title=? "
+            "AND COALESCE(NULLIF(data,''), note) IS NOT NULL "
+            "ORDER BY ts DESC LIMIT 4", (best,)).fetchall()
+        # kolikrát/kdy viděl
+        seen = conn.execute(
+            "SELECT COUNT(*), MAX(ts) FROM diary WHERE event_type='kodi_playing' "
+            "AND title=?", (best,)).fetchone()
+        notes = [str(n).strip() for _, n in ops if n and str(n).strip()]
+        if not notes and not (seen and seen[0]):
+            return None  # titul se objevil, ale nic konkrétního → nech projít dál
+        parts = [f"SKUTEČNÝ ZÁZNAM o „{best}“ z TVÉHO deníku (odpověz JEN z něj, "
+                 f"nic si nedomýšlej; na co tu není, přiznej „to si nevybavuji“):"]
+        if notes:
+            parts.append("Tvé dřívější poznámky a názory:")
+            parts.extend(f"- {n}" for n in notes)
+        if seen and seen[0]:
+            kdy = _cz_when(seen[1]) if seen[1] else "dříve"
+            krat = "jednou" if seen[0] == 1 else f"{seen[0]}×"
+            parts.append(f"(V záznamu přehrávání: viděl jsi to {krat}, naposledy {kdy}.)")
+        return "\n\n" + "\n".join(parts)
+    except Exception as e:
+        _log.warning("film_knowledge_answer selhal: %s", e)
+        return None
     finally:
         if conn is not None:
             try:

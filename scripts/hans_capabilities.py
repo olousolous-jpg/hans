@@ -42,6 +42,10 @@ _CAPABILITIES = [
      "přítomen", "automaticky"),
     ("films", "Navrhuji FILMY a sám pokračuji v přehrávání na TV (Kodi); umím "
      "říct, co se právě přehrává", "co hraje?; automaticky z klidu"),
+    ("live_state", "Odpovím na přirozený dotaz o AKTUÁLNÍM dění doma — co hraje "
+     "na TV, kdo je právě přítomen, jak je venku, stav PC — z ŽIVÝCH dat, ne z "
+     "paměti (když to nevím, přiznám to místo dohadu)",
+     "děje se něco doma?; kdo je doma?; co dělá <jméno>?"),
     ("pc_health", "Vidím reálný STAV svého PC — teplotu GPU/CPU, paměť — přes SSH",
      "/stav"),
     ("game_mode", "Umím uvolnit grafiku pro HRU (herní mód) a ukázat telemetrii "
