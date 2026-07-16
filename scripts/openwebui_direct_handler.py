@@ -564,6 +564,20 @@ class OpenWebUIDirectHandler:
         except Exception:
             pass
 
+        # HANS_COMMITMENTS_V1 — „co jsi mi slíbil?" → deterministicky z uložených
+        # SLIBŮ (ne hledání v textu); prázdno → honestní „nic", NE výmysl.
+        try:
+            from scripts.hans_commitments import commitments_answer as _commit_ans
+            _dbp_c = (self.config.get("diary_db")
+                      or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                      or "data/hans_diary.db")
+            _cr = _commit_ans(_dbp_c, str(_text), person=name)
+            if _cr:
+                self._grounding_outcome = 'grounded'
+                return _cr
+        except Exception:
+            pass
+
         # HANS_FILM_RECALL_V1 — dotaz na FILM podle názvu: dohledej Hansovy
         # VLASTNÍ deníkové záznamy (movie_opinion/kodi_playing) o tom filmu, ať
         # nezapře, co ví (doložený případ „Proud krve"). RAG kolekce hans_filmy

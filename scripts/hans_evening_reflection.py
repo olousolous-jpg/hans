@@ -224,6 +224,15 @@ class HansEveningReflection:
         except Exception as _ce:
             _log.warning("extract_corrections selhal (reflexe OK): %s", _ce)
 
+        # HANS_COMMITMENTS_V1 — Hansovy vlastní SLIBY z chatu → trvalý store,
+        # ať si pamatuje, co slíbil (a časem to i dotáhne). base model,
+        # keep_alive=0, filtruje provozní akce (WOL/hlídání) i sliby člověka.
+        try:
+            from scripts.hans_commitments import extract_commitments as _xcommit
+            _xcommit(self._config, self._diary_path)
+        except Exception as _cme:
+            _log.warning("extract_commitments selhal (reflexe OK): %s", _cme)
+
         # HANS_PERSON_INTERESTS_WIRING_V1 — per-osoba zájmy (přiživeno na
         # průchod nitek, sdílí _gather_dialogs). base model keep_alive=0.
         try:
