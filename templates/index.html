@@ -1238,6 +1238,8 @@ async function loadArt() {
         <a href="${url}" target="_blank"><img src="${url}" alt="" style="width:210px;height:158px;object-fit:cover;border-radius:8px;background:var(--bg3)"></a>
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px"><span style="font-size:0.78rem;line-height:1.2;font-weight:600">${esc(a.book)}</span>${badge}</div>
         <div style="font-size:0.68rem;color:var(--fg2);margin-top:1px">${esc(a.date)}</div>
+        <!-- HANS_ART_ORIGIN_V1_WEB — původ díla (z čeho vycházel) nad vlastní kritikou -->
+        ${a.origin ? `<div style="font-size:0.7rem;color:var(--fg);margin-top:3px;font-style:italic;max-height:4.3em;overflow:hidden;line-height:1.25">${esc(a.origin)}</div>` : ''}
         <div style="font-size:0.7rem;color:var(--fg2);margin-top:3px;max-height:4.3em;overflow:hidden;line-height:1.25">${esc(a.caption)}</div>
       </div>`;
     }).join('');

@@ -1025,19 +1025,37 @@ def _cmd_namaluj(handler, name, args) -> str:
             _log.debug("namaluj TV kodi: %s", _ke)
             _np = None
         if _np and (_np.get("title") or _np.get("label")):
-            _tv = (_np.get("title") or _np.get("label") or "").split(",")[0].strip()
-            _t.Thread(target=lambda: hans_art.paint_subject(cfg, db, _tv),
+            # HANS_ART_TV_GROUNDING_V1 — námět z POPISU děje (Kodi plot), při
+            # chybějícím popisku dohledej na internetu; teprve pak jen název.
+            _disp = (_np.get("title") or _np.get("label") or "").split(",")[0].strip()
+            try:
+                _subj, _src = hans_art.tv_paint_subject(cfg, db, _np)
+            except Exception as _te:
+                _log.debug("tv_paint_subject: %s", _te)
+                _subj, _src = _disp, "jen podle názvu"
+            _t.Thread(target=lambda: hans_art.paint_subject(cfg, db, _subj),
                       daemon=True).start()
-            _log.info("namaluj CO V TV → '%s'", _tv)
-            return ("Namaluji, co právě běží na obrazovce, pane — „%s“. Chvíli "
-                    "to potrvá, pak se podívej do galerie." % _tv)
+            _log.info("namaluj CO V TV → '%s' (%s)", _subj[:60], _src)
+            _note = {"z popisu pořadu": "podle jeho děje",
+                     "z internetu (popisek u pořadu chyběl)":
+                        "u pořadu chyběl popisek, tak jsem si děj dohledal na internetu",
+                     "jen podle názvu":
+                        "popisek chyběl a nedohledal jsem víc, takže jen podle názvu"
+                     }.get(_src, "")
+            return ("Namaluji, co právě běží na obrazovce, pane — „%s“%s. Chvíli "
+                    "to potrvá, pak se podívej do galerie." %
+                    (_disp, (" (%s)" % _note) if _note else ""))
         return ("V tuto chvíli na televizi nic nehraje, pane — nemám co "
                 "namalovat z obrazovky.")
 
     # vytáhni téma z požadavku (odřízni sloveso a spojky)
     subj = (args or "").strip()
-    subj = _re.sub(r"(?i)^\s*(prosím\s+|můžeš\s+|mohl\s+bys\s+)?"
-                   r"(mi\s+)?(namaluj|namalovat|nakresli|nakreslit|vytvoř|vytvořit)"
+    # \w* za kmenem slovesa pokryje ČASOVANÉ tvary: „namaluješ/namaluje/namaloval
+    # bys/nakreslíš" (dřív se ořízl jen „namaluj" → zbylo „eš o tom obraz").
+    subj = _re.sub(r"(?i)^\s*(prosím\s+|můžeš\s+|mohl\s+bys\s+|nemohl\s+bys\s+)?"
+                   r"(mi\s+)?(namaluj\w*|namalovat|namaloval\w*|nakresl\w*|"
+                   r"vytvoř\w*|přemaluj\w*|překresl\w*)"
+                   r"(\s+bys?|\s+byste)?"
                    r"\s*(mi\s+)?(prosím\s+)?(obraz|obrázek)?\s*"
                    r"(o\s+|s\s+|se\s+|na\s+t[eé]ma\s+|ohledně\s+|podle\s+|"
                    r"toho\s+jak\s+)?", "", subj).strip(" ?.!,")
@@ -1094,9 +1112,14 @@ def _distill_paint_subject(config, name, handler, subj: str) -> str:
     import re as _re2
     toks = set(_re2.findall(r"\w+", subj.lower()))
     _ref = {"to", "ho", "ji", "tu", "ten", "tenhle", "tohle", "toho",
-            "tuhle", "tamtu", "mě", "mne", "mně", "mnou", "me", "sebe"}
-    messy = (len(subj.split()) > 4
-             or subj.startswith(("náš rozhovor:", "dojem z"))
+            "tuhle", "tamtu", "mě", "mne", "mně", "mnou", "me", "sebe",
+            # odkazy na PŘEDCHOZÍ téma („o tom", „o něm") → destiluj z kontextu
+            "tom", "tomhle", "tomto", "něm", "nem", "něj", "nej", "nich"}
+    # POZOR: NEspouštět destilaci jen podle DÉLKY — explicitní víceslovný námět
+    # („velký mimoň a spousta malých") se pak s těžkým kontextem přebil na téma
+    # z předchozího rozhovoru („Les Camerounais"). Destiluj JEN u skutečných
+    # odkazů (zájmena) nebo instrukčního šumu — jinak zadání RESPEKTUJ.
+    messy = (subj.startswith(("náš rozhovor:", "dojem z"))
              or bool(toks & _ref)
              or any(k in subj.lower() for k in (
                  "zkus", "jeste", "ještě", "znovu", "vypad", "nedokon",
@@ -1123,6 +1146,10 @@ def _distill_paint_subject(config, name, handler, subj: str) -> str:
             "odkazy: „tu kočku\" → kočka; „to/o čem jsme se bavili\" → to "
             "téma z kontextu; „dnešní počasí\" → konkrétní počasí z kontextu. "
             + _who +
+            "DŮLEŽITÉ: když požadavek UŽ pojmenovává konkrétní věc k namalování "
+            "(„velký mimoň a spousta malých\", „západ slunce nad mořem\"), vrať "
+            "PŘESNĚ TU VĚC (jen zkrať) — kontext použij POUZE k rozřešení "
+            "zájmen (to/tom/ho/toho); NIKDY jím NEPŘEBÍJEJ jasně zadaný námět. "
             "IGNORUJ instrukce jako „zkus znovu\", „vypadá nedokončeně\" — to "
             "NENÍ námět. NEPŘIDÁVEJ nic navíc. Vrať POUZE námět, jedním "
             "krátkým slovním spojením.")

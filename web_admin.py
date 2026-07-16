@@ -670,8 +670,12 @@ async def art_list(limit: int = 12):
             "SELECT ts, title, note, data FROM diary WHERE event_type='artwork' "
             "ORDER BY ts DESC LIMIT ?", (int(limit),)).fetchall()
         conn.close()
+        # HANS_ART_ORIGIN_V1_WEB — štítky pro VŠECHNY reálné zdroje (dřív chyběly
+        # self/person/subject → autoportrét se zobrazoval jako „kniha“).
         _SRC_LABEL = {"dream": "sen", "day": "den a nálada", "home": "domov",
-                      "home_photo": "domov", "book": "kniha", "": "kniha"}
+                      "home_photo": "domov", "book": "kniha", "": "kniha",
+                      "self": "autoportrét", "person": "portrét",
+                      "subject": "námět"}
         for ts, title, note, data in rows:
             f = None
             src = ""
@@ -683,11 +687,19 @@ async def art_list(limit: int = 12):
                 pass
             if not f:
                 continue
+            # HANS_ART_ORIGIN_V1_WEB — z čeho Hans vycházel (sen/četba/námět),
+            # ne jen jeho kritika. Data v diary.data jsou, jen se zahazovala.
+            try:
+                from scripts.hans_art import origin_line as _origin
+                _org = _origin(title, data)
+            except Exception:
+                _org = ""
             out.append({
                 "ts": ts,
                 "date": datetime.fromtimestamp(ts).strftime("%-d.%-m.%Y"),
                 "book": title or "kniha",
                 "caption": note or "",
+                "origin": _org,
                 "file": f,
                 "source": src,
                 "kind": _SRC_LABEL.get(src, "kniha"),

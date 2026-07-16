@@ -153,6 +153,47 @@ def _mark_done(db_path: str, book_id: str) -> None:
         _log.warning("art: mark_done failed: %s", e)
 
 
+def origin_line(title: str, data) -> str:
+    """HANS_ART_ORIGIN_V1 — z čeho Hans u obrazu vycházel (sen/film/kniha/námět).
+
+    Vrací JEDNU českou větu do popisku obrazu. Nikdy nevyhazuje výjimku;
+    když zdroj není znám, vrátí prázdný řetězec (radši nic než domyšlené).
+    """
+    import json as _json
+    d = {}
+    try:
+        d = _json.loads(data) if isinstance(data, str) else (data or {})
+    except Exception:
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    src = (d.get("source") or "").strip()
+    t = (title or "").strip()
+
+    def _short(s, n=180):
+        s = " ".join(str(s or "").split())
+        return s if len(s) <= n else s[:n].rstrip() + "…"
+
+    if src == "dream":
+        dream = _short(d.get("dream"))
+        return f"Vycházel jsem ze svého snu: „{dream}“" if dream else "Vycházel jsem ze svého snu."
+    if src == "day":
+        mood = (d.get("mood") or "").strip()
+        return (f"Vycházel jsem z dnešního dne — nálada: {mood}." if mood
+                else "Vycházel jsem z dnešního dne.")
+    if src == "home":
+        return "Maloval jsem svůj domov — pohled z místa, kde stojím."
+    if src == "self":
+        return "Autoportrét — maloval jsem sebe podle svého avatara."
+    if src == "person":
+        return f"Portrét: {t}." if t else "Portrét."
+    if src == "subject":
+        return f"Námět, který jste mi zadal: {t}." if t else ""
+    if src in ("book", "") and t:
+        return f"Vycházel jsem z četby: {t}."
+    return f"Námět: {t}." if t else ""
+
+
 def _log_artwork(db_path: str, title: str, caption: str, rel_path: str, prompt: str) -> None:
     try:
         db = sqlite3.connect(db_path, timeout=5.0)
@@ -235,6 +276,15 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
         r"vytvo[řr](?:it)?|nam[aá]luj|p[řr]ekresli|p[řr]emaluj|oprav)\s+"
         r"(?:obr[aá]zek\s+|obraz\s+|jak\s+by\s+)?)+", "", _fsubj)
     _fsubj = _fsubj.strip(" \"'„“”.:!?-") or "an evocative scene"
+    # HANS_ART_EN_TITLE_V1 — i ve fallbacku dej SDXL ROZPOZNATELNÝ anglický
+    # název (Mimoni→Minions), když existuje langlink. Český námět SDXL nechápe.
+    try:
+        _en_fb = _en_name(_fsubj,
+                          lang=(config.get("curiosity", {}) or {}).get("wiki_lang", "cs"))
+        if _en_fb:
+            _fsubj = _en_fb
+    except Exception:
+        pass
     fallback = ", ".join(x for x in (_fsubj, _fstyle, _tail) if x)
     try:
         from scripts.ollama_client import ollama_generate
@@ -407,15 +457,25 @@ def _evaluate_artwork(config: dict, db_path: str, title: str,
             + "Co je na obrazu skutečně vidět (nezávislý popis):\n%s\n\n" % vision_desc
             + "Napiš svůj verdikt.")
     try:
+        # HANS_ART_VERDICT_LEN_V1 — bez num_predict se verdikt sekal na výchozím
+        # limitu Ollamy (~128 tok); dej mu prostor na celou kritiku.
         out = ollama_generate(model, user, system=system, config=config,
-                              timeout=int(acfg.get("verdict_timeout", 120)))
+                              timeout=int(acfg.get("verdict_timeout", 120)),
+                              options={"num_predict":
+                                       int(acfg.get("verdict_num_predict", 320))})
     except Exception as e:
         _log.warning("art: verdict LLM failed: %s", e)
         return fallback
     out = (out or "").strip().strip('"')
     if out:
         _log.info("art: Hansův verdikt: %.120s", out)
-        return out[:500]
+        # ořez na CELOU větu (ne uprostřed) — hard cap až kdyby to ujelo
+        cap = int(acfg.get("verdict_max_chars", 900))
+        if len(out) > cap:
+            cut = max(out.rfind(". ", 0, cap), out.rfind("! ", 0, cap),
+                      out.rfind("? ", 0, cap))
+            out = out[:cut + 1] if cut > cap // 2 else out[:cap]
+        return out
     return fallback
 
 
@@ -713,7 +773,11 @@ _SUBJECT_SCENE_SYSTEM = (
     "English SDXL image prompt — an evocative, artistic INTERPRETATION (an "
     "impression), not a literal diagram or text. Output ONLY the prompt (no "
     "preamble, no quotes). Choose fitting composition, colors and mood for the "
-    "subject. Reply in ENGLISH ONLY (no Chinese/Japanese). NO text, letters or "
+    "subject. If the description gives an English/franchise name in parentheses, "
+    "USE THAT English name in the prompt — SDXL does not understand Czech names. "
+    "If the subject is a FICTIONAL CHARACTER or franchise, depict the CHARACTER(S) "
+    "themselves (their look), not a movie poster or cinema scene. "
+    "Reply in ENGLISH ONLY (no Chinese/Japanese). NO text, letters or "
     "words in the image, NO watermark. End with: digital painting, atmospheric, "
     "detailed, artistic, high quality."
 )
@@ -721,6 +785,30 @@ _SUBJECT_SCENE_SYSTEM = (
 
 _HONORIFIC = re.compile(
     r"^\s*(pan[íaou]?|pán[aeu]?|slečn[aou]|sir|mr|mrs|ms|dr)\s+", re.IGNORECASE)
+
+
+def _en_name(name: str, lang: str = "cs") -> str:
+    """HANS_ART_EN_TITLE_V1 — ANGLICKÝ/franšízový název přes Wiki langlink
+    („Mimoni"→„Minions", „Cardiffský hrad"→„Cardiff Castle"). SDXL nerozumí
+    českým jménům → u fikce i reálií pak namaluje ROZPOZNATELNOU věc, ne
+    generickou scénu. '' když langlink není nebo je stejný."""
+    n = (name or "").strip()
+    if not n or lang == "en":
+        return ""
+    try:
+        from scripts.hans_study import _en_title
+        en = (_en_title(n, lang=lang) or "").strip()
+        # rozcestník = nejednoznačné → k ničemu
+        if not en or re.search(r"\(disambiguation\)|rozcestník|may refer to",
+                               en, re.I):
+            return ""
+        # strhni Wiki disambiguační příponu „(film)"/„(character)" — není součást jména
+        en = re.sub(r"\s*\([^)]*\)\s*$", "", en).strip()
+        if en and en.lower() != n.lower():
+            return en
+    except Exception as e:
+        _log.debug("art: _en_name(%s) selhal: %s", n, e)
+    return ""
 
 
 def _ground_via_wikipedia(config: dict, db_path: str, subject: str) -> str:
@@ -756,9 +844,15 @@ def _ground_via_wikipedia(config: dict, db_path: str, subject: str) -> str:
             _log.debug("art: '%s' → rozcestník, přeskakuji", subject)
             return ""
         if gloss.strip():
-            _log.info("art: namet '%s' dohledan na Wikipedii → '%s' "
-                      "(ulozeno do entity store)", subject, art["title"])
-            return "%s: %s" % (art["title"], gloss.strip())
+            name = art["title"]
+            _en = _en_name(art.get("page_title", name),   # HANS_ART_EN_TITLE_V1
+                           lang=art.get("lang", lang))
+            if _en:
+                name = "%s (English name to use in the image prompt: %s)" % (name, _en)
+            _log.info("art: namet '%s' dohledan na Wikipedii → '%s'%s "
+                      "(ulozeno do entity store)", subject, art["title"],
+                      f" [EN: {_en}]" if _en else "")
+            return "%s: %s" % (name, gloss.strip())
     except Exception as e:
         _log.debug("art: wiki grounding selhal: %s", e)
     return ""
@@ -781,7 +875,12 @@ def _ground_subject(config: dict, db_path: str, subject: str) -> str:
         gloss = (ent.get("gloss") if ent else "") or ""
         if gloss.strip():
             name = ent.get("name", s_clean)
-            _log.info("art: namet '%s' ukotven na entitu '%s'", s, name)
+            _wl = (config.get("curiosity", {}) or {}).get("wiki_lang", "cs")
+            _en = _en_name(name, lang=_wl)          # HANS_ART_EN_TITLE_V1
+            if _en:
+                name = "%s (English name to use in the image prompt: %s)" % (name, _en)
+            _log.info("art: namet '%s' ukotven na entitu '%s'%s", s,
+                      ent.get("name", s_clean), f" [EN: {_en}]" if _en else "")
             return "%s: %s" % (name, gloss.strip())
         # C1 miss → Wikipedia fallback (dohledej + ulož do store)
         enriched = _ground_via_wikipedia(config, db_path, s_clean)
@@ -790,6 +889,35 @@ def _ground_subject(config: dict, db_path: str, subject: str) -> str:
     except Exception as e:
         _log.debug("art: grounding námětu selhal: %s", e)
     return s
+
+
+def tv_paint_subject(config: dict, db_path: str, now_playing: dict) -> tuple:
+    """HANS_ART_TV_GROUNDING_V1 — nejlepší malovací NÁMĚT z běžícího pořadu.
+    Dřív se malovalo jen z názvu → u pořadu bez popisku vznikla odpojená scéna
+    („Vyprávěj, přijímačky" → černobílá cesta lesem). Kaskáda:
+      (1) PLOT z Kodi (přímý popis děje) → nejlepší,
+      (2) plot chybí → DOHLEDEJ popis na Wikipedii (i EN přes langlink),
+      (3) ani to → jen název (a přiznat to volajícímu).
+    Vrací (subject_pro_malbu, source_label). source_label = odkud popis je."""
+    np = now_playing or {}
+    title = (np.get("title") or np.get("label") or "").strip()
+    show  = (np.get("showtitle") or "").strip()
+    plot  = (np.get("plot") or np.get("plotoutline") or "").strip()
+    # zobrazovaný název: „Seriál – epizoda" u dílu, jinak název
+    disp = ("%s – %s" % (show, title)) if (show and title and
+            show.lower() != title.lower()) else (title or show)
+    if plot and len(plot) >= 40:
+        return ("%s: %s" % (disp, plot[:400]), "z popisu pořadu")
+    # plot chybí → internet (Wikipedia); zkus seriál i epizodní název
+    for q in (show, title):
+        q = (q or "").strip()
+        if not q:
+            continue
+        g = _ground_via_wikipedia(config, db_path, q)
+        if g:
+            _log.info("art TV: popisek chyběl → dohledáno na Wikipedii pro '%s'", q)
+            return (g, "z internetu (popisek u pořadu chyběl)")
+    return (disp or title or show or "televizní obrazovka", "jen podle názvu")
 
 
 def _style_from_study(config: dict, style: str) -> str:
