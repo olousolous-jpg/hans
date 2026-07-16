@@ -44,6 +44,29 @@ def _norm(s: str) -> str:
     return _WS.sub(" ", (s or "").strip().lower())
 
 
+def _sig_tokens(s: str) -> set:
+    """Významná slova tématu (>2 znaky) pro měkký dedup blízkých témat."""
+    return {w for w in _norm(s).split() if len(w) > 2}
+
+
+def _already_covered(topic: str, studied_norms) -> Optional[str]:
+    """HANS_STUDY_NEAR_DUP_V1 — je téma už POKRYTÉ existujícím programem? Vrátí
+    norm shodného programu, nebo None. Kryje přesnou shodu I blízká synonyma:
+    když se významná slova jednoho tématu plně kryjí s druhým (jedno je
+    podmnožina druhého), je to překryv („design" ⊂ „web design", „grafický
+    design" ⊃ „design") → nezakládej duplicitní program, jen by se přestudovalo
+    totéž. Konzervativní: musí jít o ÚPLNé krytí významných slov, ne jen průnik."""
+    tn = _norm(topic)
+    nt = _sig_tokens(topic)
+    for sn in studied_norms:
+        if sn == tn:
+            return sn
+        st = _sig_tokens(sn)
+        if nt and st and (nt <= st or st <= nt):
+            return sn
+    return None
+
+
 def _cfg(config: dict) -> dict:
     return (config.get("study", {}) or {})
 
@@ -654,10 +677,11 @@ def add_pending_topic(diary_db_path: str, topic: str) -> str:
                 sessions_done INTEGER NOT NULL DEFAULT 0,
                 started_ts REAL NOT NULL, updated_ts REAL NOT NULL,
                 last_session_ts REAL NOT NULL DEFAULT 0)""")
-            ex = db.execute(
-                "SELECT 1 FROM study_program WHERE topic_norm=? LIMIT 1",
-                (tn,)).fetchone()
-            if ex:
+            # HANS_STUDY_NEAR_DUP_V1 — přesná shoda I blízké synonymum (přesah
+            # slov) → nezakládej duplicitní téma z chatu, jen by se přestudovalo.
+            norms = [r[0] for r in db.execute(
+                "SELECT topic_norm FROM study_program").fetchall()]
+            if _already_covered(t, norms):
                 return "exists"
             now = time.time()
             db.execute(
@@ -757,9 +781,14 @@ class StudyStore:
         try:
             conn = self._connect()
             try:
+                # HANS_STUDY_SEQUENTIAL_V1 — DOKONČI JEDNO PŘED DALŠÍM: ber
+                # NEJSTARŠÍ aktivní (id ASC), ne nejnovější. Dřív id DESC →
+                # nový/reaktivovaný (prohloubený) program vždy předběhl starší
+                # → Design uvízl na 8/12 za novějším studiem architektury. Teď
+                # se fronta aktivních dojíždí od nejstaršího = sekvenčně.
                 row = conn.execute(
                     "SELECT * FROM study_program WHERE status='active' "
-                    "ORDER BY id DESC LIMIT 1").fetchone()
+                    "ORDER BY id ASC LIMIT 1").fetchone()
                 return self._row_to_dict(row) if row else None
             finally:
                 conn.close()
@@ -863,10 +892,21 @@ class StudyStore:
             return None
 
         done = self._studied_topic_norms()
-        candidates = [h for h in hobbies if _norm(h.name) not in done]
+        # HANS_STUDY_NEAR_DUP_V1 — vynech nejen PŘESNĚ studované, ale i blízká
+        # synonyma (přesah slov) → Hans nezaloží „web design", když už studoval
+        # „design", a nepřestuduje totéž.
+        candidates = []
+        for h in hobbies:
+            cov = _already_covered(h.name, done)
+            if cov:
+                _log.info("study.ensure_program: '%s' už pokryto programem "
+                          "'%s' (blízké téma) → nezakládám duplicitní",
+                          h.name, cov)
+                continue
+            candidates.append(h)
         if not candidates:
             _log.info("study.ensure_program: všechny durable koníčky už "
-                      "mají program (%d)", len(hobbies))
+                      "mají (nebo pokrývá blízký) program (%d)", len(hobbies))
             return None
         # HANS_STUDY_ENGAGEMENT_SELECT_V1 — vyber nejdřív koníček s NEJVĚTŠÍM
         # objemem zájmu (ne arbitrárně mezi remízami na evidence_count). Hans
