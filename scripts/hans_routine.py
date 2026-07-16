@@ -851,8 +851,19 @@ class HansRoutine:
                 _log.warning('SLEEP: stop_tracking failed: %s', _e)
             # 3) Pohni kamerou nahoru — kamera je fyzicky obráceně, takže tilt_min = fyzicky nahoru
             # (SLEEP_TILT_FLIP_V1 — z naživo testu 22:00: +tilt = dolů, -tilt = nahoru)
+            # HANS_GUARD_V1: při zapnutém hlídání kameru NEZVEDAT — jinak by
+            # v noci (kdy hlídání nejvíc dává smysl) střežila strop.
+            _guard_on = False
             try:
-                if self._servo is not None and hasattr(self._servo, 'manual_tilt'):
+                from scripts import hans_guard as _hg
+                _guard_on = _hg.armed()
+            except Exception:
+                pass
+            if _guard_on:
+                _log.info('SLEEP: hlídání zapnuto → kamera zůstává v místnosti')
+            try:
+                if (not _guard_on and self._servo is not None
+                        and hasattr(self._servo, 'manual_tilt')):
                     tmin = getattr(self._servo, 'tilt_min', -30)
                     self._servo.manual_tilt(tmin)
                     _log.info('SLEEP: servo tilt -> %d (strop, kamera obráceně)', tmin)

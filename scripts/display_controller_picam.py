@@ -490,6 +490,15 @@ class PicamDisplayController:
                 frame_idx=frame_idx,  # B6C_VOTING_PIPELINE_V1
             )
 
+            # HANS_GUARD_V1 — hlídací režim: běží NEZÁVISLE na recognition
+            # gate (i ve spánku, kdy je vidění jinak vypnuté). Levné: sample
+            # ~1×/s uvnitř, mimo hlídání se hned vrací.
+            if main_frame is not None and frame_idx % 5 == 0:
+                try:
+                    self._guard_tick(main_frame)
+                except Exception:
+                    pass
+
             # ── Hailo face detection ──────────────────────────────────────
             # B5B_HAILO_PIPELINE_V1: extracted to self._pipeline.detect_faces
             if frame_idx % DETECT_EVERY == 0 and not self._vision_paused:  # SLEEP_VISION_OFF_V1 — recognition gate (framy tečou dál, jen detekce stojí)
@@ -1418,6 +1427,34 @@ class PicamDisplayController:
             self._frame_q.put((main, lores))
         except Exception:
             pass
+
+    def _guard_tick(self, frame):  # HANS_GUARD_V1
+        """Hlídací režim — poplach na pohyb / náhlou změnu světla."""
+        g = getattr(self, "_guard", None)
+        if g is None:
+            from scripts.hans_guard import GuardWatch
+            g = GuardWatch(self.config, notifier=self._guard_notify,
+                           video_notifier=self._guard_notify_video)  # HANS_GUARD_RECORD_V1_WIRE
+            self._guard = g
+        g.tick(frame)
+
+    def _guard_notify(self, path: str, caption: str):  # HANS_GUARD_V1
+        """Snímek na Telegram (jediný kanál, který dosáhne mimo dům)."""
+        tg = getattr(self.openwebui_chat, "telegram", None)
+        if tg is None or not getattr(tg, "enabled", False):
+            _syslog.warning("guard: Telegram není zapojen → snímek jen na disku")
+            return
+        tg.send_photo(path, caption=caption)
+
+    def _guard_notify_video(self, path: str, caption: str):  # HANS_GUARD_RECORD_V1_WIRE
+        """Záznam po poplachu na Telegram. Odkaz by z dovolené nefungoval (Pi je
+        v LAN) → posíláme rovnou soubor. Video zůstává i lokálně v data/guard/."""
+        tg = getattr(self.openwebui_chat, "telegram", None)
+        if tg is None or not getattr(tg, "enabled", False):
+            _syslog.warning("guard: Telegram není zapojen → záznam jen na disku (%s)", path)
+            return
+        if not tg.send_video(path, caption=caption):
+            _syslog.warning("guard: záznam se nepodařilo odeslat → zůstává na disku (%s)", path)
 
     def pause_vision(self):  # SLEEP_VISION_OFF_V1 — gate-only (SLEEP_VISION_HANG_FIX)
         """Spánek: zastav recognition přes frame-gate (framy nepřitečou do fronty).

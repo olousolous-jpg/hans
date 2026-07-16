@@ -1058,5 +1058,30 @@
     "auto": false,
     "gen_images": true,
     "max_images": 4
+  },
+  "guard": {
+    "_note": "HANS_GUARD_V1 — hlídací režim (/hlidej). Aktivuje se JEN příkazem; stav v data/.hans_guard.",
+    "motion_pixels_pct": 0.02,
+    "_motion_pixels_pct_note": "Podíl změněných pixelů, který spustí poplach (0.02 = 2 % obrazu). Vyšší = méně citlivé.",
+    "motion_delta": 25,
+    "_motion_delta_note": "O kolik se musí pixel změnit (0-255), aby se počítal jako pohyb.",
+    "light_jump": 18.0,
+    "_light_jump_note": "Skok jasu proti klouzavé základně = rozsvícení. Postupné rozednívání práh nepřekročí.",
+    "light_only_in_dark": true,
+    "_light_only_in_dark_note": "Světelný poplach JEN ve tmě (rozsvícení = někdo je v domě). Přes den běží jen detekce pohybu — jinak by slunce zpoza mraku dělalo falešné poplachy. false = hlídat světlo pořád.",
+    "dark_below": 50,
+    "_dark_below_note": "Co je jeste tma (prumerny jas 0-255). Pod touhle hodnotou se svetelna detekce zapne. Řídí se skutečnou tmou, ne hodinami (v prosinci je tma od 16:00).",
+    "sample_every_s": 1.0,
+    "cooldown_s": 60,
+    "_cooldown_s_note": "Minimální odstup mezi dvěma poplachy.",
+    "warmup_s": 20,
+    "_warmup_s_note": "Po zapnutí chvíli nehlídá — ať tě nevyfotí, jak odcházíš.",
+    "max_per_day": 60,
+    "record_s": 60,
+    "_record_s_note": "Po poplachu natoc video (sekundy) a posli ho na Telegram; 0 = vypnuto. Ulozi se i lokalne do data/guard/rec_*.mp4.",
+    "record_fps": 10,
+    "record_width": 640,
+    "record_keep": 20,
+    "_record_keep_note": "Kolik poslednich videi si nechat (starsi se mazou)."
   }
 }

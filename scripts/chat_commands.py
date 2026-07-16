@@ -2010,6 +2010,135 @@ register(
 )
 
 
+# ─── /hlidej — hlídací režim (HANS_GUARD_V1) ─────────────────────────────────
+# Prázdný dům: Hans střeží místnost a při POHYBU / NÁHLÉ ZMĚNĚ SVĚTLA pošle
+# snímek na Telegram. Obchází noční spánek vidění (framy tečou vždy) a drží
+# kameru v místnosti (jinak by v noci koukala do stropu).
+
+def _guard_camera_down(handler) -> None:
+    """Zapnuto během spánku → vrať kameru z stropu do místnosti."""
+    try:
+        hi = getattr(handler, "_hans_idle", None)
+        routine = getattr(hi, "_routine", None) if hi else None
+        servo = getattr(routine, "_servo", None) if routine else None
+        if routine is not None and getattr(routine, "_sleeping", False) \
+                and servo is not None and hasattr(servo, "manual_tilt"):
+            servo.manual_tilt(0)
+            _log.info("/hlidej: Hans spí → kamera vrácena do místnosti")
+    except Exception as e:
+        _log.warning("/hlidej: návrat kamery selhal: %s", e)
+
+
+def _cmd_hlidej(handler, name, args) -> str:
+    from scripts import hans_guard as g
+    a = (args or "").strip().lower()
+    # NL cesta posílá CELOU větu jako args → „vypni hlídání" nesmí režim
+    # omylem ZAPNOUT. Rozhoduje záměr ve větě, ne přesná shoda.
+    if re.search(r"\b(stop|vypni|vypnout|konec|off|zru[šs])\b", a):
+        g.disarm()
+        return "Hlídání jsem vypnul, pane. Snímky už posílat nebudu."
+    if re.search(r"\b(stav|status)\b", a):
+        return g.status_text()
+
+    cfg = getattr(handler, "config", {}) or {}
+    tg = getattr(handler, "telegram", None)
+    if tg is None or not getattr(tg, "enabled", False):
+        return ("Hlídat mohu, ale nemám kam poslat snímky — Telegram není "
+                "zapojený, pane. Bez něj by poplach nikdo neviděl.")
+    g.arm(by=name or "")
+    _guard_camera_down(handler)
+    c = (cfg.get("guard", {}) or {})
+    return ("Hlídám, pane. Při pohybu nebo náhlé změně světla pošlu snímek "
+            "na Telegram (nejvýš jednou za %d s, do %d snímků denně). "
+            "Postupné rozednívání poplach nespustí. Kamera zůstane namířená "
+            "do místnosti i v noci. Vypnout: /hlidej stop."
+            % (int(c.get("cooldown_s", 60)), int(c.get("max_per_day", 60))))
+
+
+register(
+    "hlidej",
+    slash_aliases=["hlidej", "hlídej", "guard", "hlidani", "hlídání"],
+    nl_patterns=[
+        r"(hl[íi]dej|str[ěe][žz]|dohl[íi]žej)\s+(dům|dum|byt|m[íi]stnost|to\b)",
+        r"zapni\s+(hl[íi]d[áa]n[íi]|str[áa][žz])",
+        r"vypni\s+(hl[íi]d[áa]n[íi]|str[áa][žz])",
+    ],
+    handler=_cmd_hlidej,
+    help_text="Hlídací režim: /hlidej [stop|stav] — při pohybu/změně světla "
+              "pošlu snímek na Telegram",
+)
+
+
+# ─── /vypnipc — ruční vypnutí PC (HANS_PC_SHUTDOWN_CMD_V1) ───────────────────
+# Protějšek /wol. Vypínání samo je hotové (HANS_PC_NIGHT_SHUTDOWN: S3 suspend
+# je na téhle desce rozbitý → čistý poweroff přes SSH + ranní WOL); tady se
+# jen dává na povel. Ověření pingem, ať Hans netvrdí „vypnuto“ naslepo.
+
+def _pc_ping(config: dict, timeout: int = 2) -> bool:
+    import subprocess
+    ip = (str(config.get("wol_pc_ip", "") or "")
+          or str((config.get("pc_remote", {}) or {}).get("host", "") or ""))
+    if not ip:
+        return False
+    try:
+        return subprocess.run(["ping", "-c", "1", "-W", str(timeout), ip],
+                              capture_output=True,
+                              timeout=timeout + 2).returncode == 0
+    except Exception:
+        return False
+
+
+def _cmd_vypnipc(handler, name, args) -> str:
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts import pc_remote
+    except Exception:
+        return "Na počítač teď nedosáhnu, pane."
+    if not pc_remote.enabled(cfg):
+        return ("Vzdálený přístup k počítači nemám povolený "
+                "(pc_remote.enabled), pane — vypnout ho neumím.")
+    if not _pc_ping(cfg):
+        return "Počítač je už teď vypnutý (neodpovídá), pane. Nic nedělám."
+    out = pc_remote.run(cfg, "sudo -n systemctl poweroff", timeout=10)
+    if out is None:
+        # poweroff často utne SSH spojení dřív, než stihne vrátit výstup —
+        # proto None NEznamená selhání; rozhodne až ping.
+        _log.info("/vypnipc: poweroff bez výstupu (SSH nejspíš utnuto)")
+    import time as _t
+    for _ in range(10):
+        _t.sleep(3)
+        if not _pc_ping(cfg):
+            try:
+                db = _recall_db(handler)
+                import sqlite3 as _sql
+                c = _sql.connect(db, timeout=5.0)
+                c.execute("INSERT INTO diary (ts, event_type, title, note) "
+                          "VALUES (?,?,?,?)",
+                          (_t.time(), "pc_shutdown", "Vypnutí PC na povel",
+                           "Na požádání jsem vypnul počítač."))
+                c.commit()
+                c.close()
+            except Exception:
+                pass
+            return ("Počítač je vypnutý, pane. Můj mozek tím usnul — "
+                    "ráno ho probudím, nebo si řekněte o /wol.")
+    return ("Poslal jsem počítači povel k vypnutí, ale ještě odpovídá, pane. "
+            "Možná se vypíná pomalu — nebo se něco vzpírá.")
+
+
+register(
+    "vypnipc",
+    slash_aliases=["vypnipc", "vypnipc", "shutdown", "pcoff", "vypnout"],
+    nl_patterns=[
+        r"(vypni|vypnout|zhasni|uspi|usp[íi])\s+\w{0,6}\s*"
+        r"(pc|po[čc][íi]ta[čc]|mozek)",
+        r"m[ůu][žz]e[šs]\s+vypnout\s+(pc|po[čc][íi]ta[čc])",
+    ],
+    handler=_cmd_vypnipc,
+    help_text="Vypnu počítač (PC) — protějšek /wol",
+)
+
+
 # ─── /zdravi — zdraví závislostí (HANS_HEALTH_V1) ────────────────────────────
 def _cmd_zdravi(handler, name, args) -> str:  # HANS_HEALTH_V1
     """Živá probe závislostí (Ollama/ComfyUI/Kodi/STT/PC/disk). /zdravi vylec =

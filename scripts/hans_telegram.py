@@ -343,8 +343,16 @@ class TelegramBridge:
         except Exception:
             path = ""
         cap = f"🎨 Hotovo — {title}"
+        # HANS_ART_ORIGIN_V1 — nejdřív Z ČEHO jsem vycházel, teprve pak kritika.
+        try:
+            from scripts.hans_art import origin_line as _origin
+            _o = _origin(title, data)
+        except Exception:
+            _o = ""
+        if _o:
+            cap += f"\n{_o}"
         if note:
-            cap += f"\n{note[:200]}"
+            cap += f"\n\n{note[:200]}"
         waiting = list(pend.keys())
         for cid in waiting:
             if path and os.path.exists(path):
@@ -437,6 +445,8 @@ class TelegramBridge:
                 self._cmd_musing(cid); return
             if _intent == "wol":
                 self._cmd_wol(cid); return
+            if _intent == "pcoff":
+                self._cmd_pcoff(cid); return
         # běžná zpráva → chat (mozek); až teď nastav pending pro brain-notify
         self._pending_brain_notify = True  # HANS_TELEGRAM_BRAIN_NOTIFY_V1
         reply = None
@@ -460,6 +470,36 @@ class TelegramBridge:
     def _diary_path(self) -> str:
         return ((self.config.get("hans_idle", {}) or {}).get("diary_db")
                 or self.config.get("diary_db") or "data/hans_diary.db")
+
+    def send_video(self, file_path: str, caption: str = "",
+                   chat_id: str = None) -> bool:
+        """HANS_GUARD_RECORD_V1 — pošle video (sendVideo). Nikdy nevyhodí.
+
+        Proč video a ne odkaz: Pi je v LAN, odkaz je z dovolené nedostupný.
+        Telegram bot smí do 50 MB; minuta 640×360 @10fps ≈ jednotky MB.
+        """
+        if not self.enabled or not file_path or not os.path.exists(file_path):
+            return False
+        cid = chat_id or self.chat_id
+        if not cid:
+            return False
+        try:
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            if size_mb > 49:
+                _log.warning("telegram video %.1f MB > limit → neposílám", size_mb)
+                return False
+            with open(file_path, "rb") as f:
+                r = requests.post(
+                    _API % (self.token, "sendVideo"),
+                    data={"chat_id": cid, "caption": (caption or "")[:1000]},
+                    files={"video": f}, timeout=120)
+            ok = bool(r.ok and (r.json() or {}).get("ok"))
+            if not ok:
+                _log.warning("telegram sendVideo selhal: %s", r.text[:200])
+            return ok
+        except Exception as e:
+            _log.warning("telegram sendVideo: %s", e)
+            return False
 
     def send_photo(self, file_path: str, caption: str = "",
                    chat_id: str = None) -> bool:
@@ -495,6 +535,8 @@ class TelegramBridge:
             self._cmd_status(cid); return True
         if cmd in ("wol", "probudit", "wakeup", "probud", "probuď"):
             self._cmd_wol(cid); return True
+        if cmd in ("vypnipc", "shutdown", "pcoff", "vypnout"):
+            self._cmd_pcoff(cid); return True
         if cmd in ("herni", "herní", "hra", "game", "hrani", "hraní"):
             self._cmd_game(cid, text); return True
         # HANS_TELEGRAM_INSPECT_V1 — read-only inspekční příkazy z registru
@@ -520,7 +562,10 @@ class TelegramBridge:
                       "/napad — mé vlastní postřehy (synteze)\n"
                       "/kritika — co u sebe chci zlepšit (sebekritika)\n"
                       "/wol — probudím počítač (PC) přes síť\n"
+                      "/vypnipc — vypnu počítač (PC)\n"
                       "/herni — herní mód: uvolním grafiku pro hru (/herni vyp = zpět)\n"
+                      "/hlidej — hlídám dům: při pohybu nebo změně světla pošlu "
+                      "snímek (/hlidej stop = konec, /hlidej stav = jak jsem na tom)\n"
                       "/help — tato nápověda", chat_id=cid)
             return True
         return False
@@ -533,6 +578,10 @@ class TelegramBridge:
                                "zdravi", "nastroj", "brief", "vytvor",
                                "prohloubit"})
 
+    # HANS_GUARD_TELEGRAM_V1 — příkazy, které MĚNÍ chování domu (ne read-only).
+    # Smí je jen role 'full'; hlavní use-case = zapnout/vypnout hlídání z dovolené.
+    _MUTATING_CMDS = frozenset({"hlidej"})
+
     def _route_inspect_command(self, text: str, cmd: str, cid: str) -> bool:
         """Zkusí obsloužit inspekční slash příkaz přes chat_commands. True když ano."""
         try:
@@ -540,8 +589,16 @@ class TelegramBridge:
         except Exception:
             return False
         resolved = parse_command(text)  # (cmd_id, args) | None
-        if not resolved or resolved[0] not in self._INSPECT_CMDS:
+        if not resolved:
             return False
+        _cid_ = resolved[0]
+        if _cid_ not in self._INSPECT_CMDS and _cid_ not in self._MUTATING_CMDS:
+            return False
+        # HANS_GUARD_TELEGRAM_V1 — mutující příkaz smí jen role 'full'.
+        if _cid_ in self._MUTATING_CMDS and not self._is_full(cid):
+            self.send("Tenhle příkaz vám bohužel provést nemohu, pane.",
+                      chat_id=cid)
+            return True
         if self._handler is None:
             self.send("Tenhle příkaz teď neumím obsloužit (chybí spojení s mozkem).",
                       chat_id=cid)
@@ -612,7 +669,21 @@ class TelegramBridge:
         except Exception:
             path = ""
         if path and os.path.exists(path):
+            # HANS_ART_ORIGIN_V1 — popisek = původ díla + kritika, ne jen kritika.
             cap = (note or "Můj obraz").strip()
+            try:
+                from scripts.hans_art import origin_line as _origin
+                con2 = sqlite3.connect("file:%s?mode=ro" % self._diary_path(),
+                                       uri=True, timeout=3.0)
+                _t = con2.execute(
+                    "SELECT title FROM diary WHERE event_type='artwork' "
+                    "AND data = ? ORDER BY ts DESC LIMIT 1", (data,)).fetchone()
+                con2.close()
+                _o = _origin(_t[0] if _t else "", data)
+            except Exception:
+                _o = ""
+            if _o:
+                cap = f"{_o}\n\n{cap}"
             if not self.send_photo(path, caption=cap, chat_id=cid):
                 self.send("Obraz se mi nepodařilo odeslat.", chat_id=cid)
         else:
@@ -665,6 +736,9 @@ class TelegramBridge:
             return "status"
         if re.search(r"úvah|uvah|myšlenk|myslenk", t) and re.search(self._ASK, t):
             return "musing"
+        if re.search(r"(vypni|vypnout|zhasni).*(pc|počítač|pocitac|mozek)|"
+                     r"\bshutdown\b", t):
+            return "pcoff"
         if re.search(r"probu[ďd]|\bwol\b|(zapni|nastartuj|nahoď|nahod).*(pc|počítač|pocitac|mozek)", t):
             return "wol"
         return None
@@ -717,6 +791,25 @@ class TelegramBridge:
         if ip:
             threading.Thread(target=self._wol_verify, args=(ip, cid),
                              daemon=True).start()
+
+    def _cmd_pcoff(self, cid: str):
+        """HANS_PC_SHUTDOWN_CMD_V1 — protějšek /wol: vypni PC na povel."""
+        try:
+            from scripts.chat_commands import _cmd_vypnipc
+        except Exception:
+            self.send("Na počítač teď nedosáhnu.", chat_id=cid)
+            return
+        self.send("Posílám počítači povel k vypnutí. Ověřím, zda zhasl…",
+                  chat_id=cid)
+
+        def _work():
+            try:
+                msg = _cmd_vypnipc(self._handler, None, "")
+            except Exception as e:
+                msg = "Vypnutí se nezdařilo: %s" % e
+            self.send(msg, chat_id=cid)
+
+        threading.Thread(target=_work, daemon=True).start()
 
     def _cmd_status(self, cid: str):
         """HANS_TELEGRAM_CONTENT_V1 — stav systému (teplota, RAM, CPU, disk, mozek)."""
