@@ -666,6 +666,9 @@
   "wol_pc_mac": "",
   "wol_pc_ip": "192.168.1.10",
   "wol_minutes_before_wakeup": 30,
+  "wol_on_presence": true,
+  "wol_startup_grace_s": 300,
+  "_wol_startup_grace_s_note": "Restart Hanse NESMÍ probudit PC (WOL_NO_WAKE_ON_RESTART_V1): start uvnitř ranního WOL okna dnešní auto-wake potlačí a presence WOL prvních N s po startu nefíruje. Normální ranní wake, denní presence i /wol fungují dál.",
   "pc_remote": {
     "_note": "Volitelné: SSH z Pi na PC pro reálnou telemetrii (sensors+rocm-smi) a self-heal. Vyžaduje SSH server na PC + veřejný klíč z Pi v authorized_keys. Deferral-safe (PC nedostupné → None). enabled:false = vypnuto.",
     "enabled": false,

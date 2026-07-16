@@ -2129,11 +2129,12 @@ def _cmd_vypnipc(handler, name, args) -> str:
 register(
     "vypnipc",
     slash_aliases=["vypnipc", "vypnipc", "shutdown", "pcoff", "vypnout"],
-    nl_patterns=[
-        r"(vypni|vypnout|zhasni|uspi|usp[íi])\s+\w{0,6}\s*"
-        r"(pc|po[čc][íi]ta[čc]|mozek)",
-        r"m[ůu][žz]e[šs]\s+vypnout\s+(pc|po[čc][íi]ta[čc])",
-    ],
+    # HANS_UNIFY_ACTIONS_V1 — přirozená řeč („vypni pc") ZÁMĚRNĚ nemá regex:
+    # vypnutí PC je destruktivní → padá k agentní akci pc_shutdown, která se
+    # NAPŘED zeptá a vypíše, co na PC běží. Explicitní /vypnipc slash zůstává
+    # okamžitý (výslovný povel = výslovný záměr). Ztráta při mozku dole = žádná
+    # (PC dole ⇒ není co vypínat), slash funguje vždy.
+    nl_patterns=[],
     handler=_cmd_vypnipc,
     help_text="Vypnu počítač (PC) — protějšek /wol",
 )

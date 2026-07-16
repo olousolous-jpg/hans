@@ -423,6 +423,9 @@ class TelegramBridge:
         # TELEGRAM_MULTIUSER_V1 — obrázky/příkazy jen pro 'full' uživatele.
         # 'chat' role (např. vedlejší uživatel) → vše padá rovnou do chatu (žádné obrázky).
         if self._is_full(cid):
+            # HANS_SHUTDOWN_CONTEXT_V1 — čeká potvrzení vypnutí PC? ano/ne
+            if self._resolve_pending_pcoff(cid, text):
+                return
             # HANS_TELEGRAM_CONTENT_V1 — Telegram příkazy (obraz/deník/úvaha)
             if self._handle_command(text, cid):
                 return
@@ -446,7 +449,7 @@ class TelegramBridge:
             if _intent == "wol":
                 self._cmd_wol(cid); return
             if _intent == "pcoff":
-                self._cmd_pcoff(cid); return
+                self._request_pcoff(cid); return
         # běžná zpráva → chat (mozek); až teď nastav pending pro brain-notify
         self._pending_brain_notify = True  # HANS_TELEGRAM_BRAIN_NOTIFY_V1
         reply = None
@@ -745,18 +748,10 @@ class TelegramBridge:
 
     @staticmethod
     def _send_magic(mac: str):
-        """WOL magic packet (UDP broadcast :9) — stejně jako hans_routine."""
-        import socket
-        m = mac.replace(":", "").replace("-", "").lower()
-        if len(m) != 12 or not all(c in "0123456789abcdef" for c in m):
+        """WOL magic packet — sdílená implementace v pc_remote (HANS_WOL_SHARED_V1)."""
+        from scripts import pc_remote
+        if not pc_remote.wake(mac=mac):
             raise ValueError("neplatná MAC")
-        packet = bytes.fromhex("FF" * 6 + m * 16)
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(packet, ("255.255.255.255", 9))
-        finally:
-            s.close()
 
     def _wol_verify(self, ip: str, cid: str):
         import subprocess
@@ -791,6 +786,47 @@ class TelegramBridge:
         if ip:
             threading.Thread(target=self._wol_verify, args=(ip, cid),
                              daemon=True).start()
+
+    def _request_pcoff(self, cid: str):
+        """HANS_SHUTDOWN_CONTEXT_V1 — přirozená žádost o vypnutí PC („vypni pc")
+        se NAPŘED potvrzuje a vypíše, co na PC běží (sdílený status s chat
+        agentem). Slash /vypnipc zůstává okamžitý (výslovný povel)."""
+        try:
+            from scripts.hans_agent import _shutdown_confirm_text
+            body = _shutdown_confirm_text(self._handler)
+        except Exception:
+            body = "Opravdu mám vypnout počítač, pane?"
+        if not hasattr(self, "_pending_pcoff"):
+            self._pending_pcoff = {}
+        self._pending_pcoff[cid] = time.time()
+        self.send(body + "\n\n(napište ano pro potvrzení, nebo ne)",
+                  chat_id=cid)
+
+    def _resolve_pending_pcoff(self, cid: str, text: str) -> bool:
+        """Vyřídí čekající potvrzení vypnutí PC. True = zpráva byla ano/ne na
+        pending (dál se nezpracovává). Nejednoznačné/prošlé → pending zahoď,
+        vrať False (zpráva pokračuje normálně)."""
+        pend = getattr(self, "_pending_pcoff", None)
+        if not pend or cid not in pend:
+            return False
+        if time.time() - pend.get(cid, 0) > 120:
+            pend.pop(cid, None)
+            return False
+        pend.pop(cid, None)
+        try:
+            from scripts.hans_agent import _YES, _NO
+        except Exception:
+            _YES, _NO = {"ano", "jo", "jasně", "ok", "vypni"}, {"ne", "nevypínej"}
+        t = text.strip().lower().strip("!?.,")
+        first = t.split()[0] if t.split() else ""
+        if t in _YES or first in _YES:
+            self._cmd_pcoff(cid)
+            return True
+        if t in _NO or first in _NO:
+            self.send("Dobře, počítač nechám běžet, pane.", chat_id=cid)
+            return True
+        # nejednoznačné — pending zrušen, zpráva ať jde do chatu
+        return False
 
     def _cmd_pcoff(self, cid: str):
         """HANS_PC_SHUTDOWN_CMD_V1 — protějšek /wol: vypni PC na povel."""

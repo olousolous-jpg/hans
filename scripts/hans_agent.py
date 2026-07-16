@@ -321,6 +321,67 @@ def _ground_note(handler, args):
     return (len(t) >= 2, args, "" if len(t) >= 2 else "prázdná poznámka")
 
 
+# HANS_UNIFY_ACTIONS_V1 — /vypnipc a /hlidej žily jen jako regexy v
+# chat_commands (paralelní vrstva vedle routeru). Tady dostávají agentní akci
+# sdílející TÝŽ kód (deleguje na _cmd_*), aby router chytil i novní formulace,
+# co regex mine, a shutdown dostal potvrzení. Regexy zůstávají jako rychlá,
+# na mozku nezávislá cesta. (WOL zůstává deterministický — přes agenta by byl
+# k ničemu: běží na PC, který WOL teprve zapíná.)
+def _run_pc_shutdown(handler, args) -> str:
+    from scripts.chat_commands import _cmd_vypnipc
+    return _cmd_vypnipc(handler, None, "")
+
+
+def _shutdown_confirm_text(handler) -> str:
+    """HANS_SHUTDOWN_CONTEXT_V1 — potvrzení vypnutí PC s GROUNDED stavem, ať
+    uživatel ví, co vypnutím ukončí. KLÍČOVÉ: vytížení GPU/CPU NEPLETE s hrou —
+    v neherním režimu grafiku i procesor zatěžuje Hansova VLASTNÍ LLM (chat,
+    ranní analytika `num_gpu:0` na CPU, malování), NE hra. Hru pozná jen HERNÍ
+    MÓD (flag), nikdy ne telemetrie."""
+    cfg = getattr(handler, "config", {}) or {}
+    notes = []
+    game = False
+    try:
+        from scripts.ollama_client import game_mode_on
+        game = bool(game_mode_on())
+    except Exception:
+        pass
+    if game:
+        notes.append("je zapnutý herní mód (nejspíš běží hra)")
+    try:
+        from scripts import pc_remote
+        t = pc_remote.telemetry(cfg) or {}
+        # AKTIVITU pozná TEPLOTA (aktivní výpočet), NE VRAM: VRAM je trvale
+        # vysoká kvůli rezidentním modelům (keep_alive), i když se nic nepočítá.
+        gtemp = t.get("gpu_edge_c")
+        ctemp = t.get("cpu_temp_c")
+        busy = ((gtemp is not None and gtemp >= 55.0)
+                or (ctemp is not None and ctemp >= 68.0))
+        if busy and not game:
+            det = []
+            if gtemp is not None:
+                det.append(f"GPU {gtemp:.0f} °C")
+            if ctemp is not None:
+                det.append(f"CPU {ctemp:.0f} °C")
+            notes.append("právě něco zpracovávám (%s) — nejspíš má vlastní "
+                         "analytika, čtení či malování; v neherním režimu "
+                         "vytěžuje počítač MŮJ mozek, ne hra — vypnutím to "
+                         "přeruším" % ", ".join(det))
+    except Exception:
+        pass
+    if notes:
+        return ("Než počítač vypnu, pane — " + "; ".join(notes)
+                + ". Opravdu vypnout?")
+    return ("Na počítači teď nevidím nic rozpracovaného, pane. "
+            "Opravdu mám počítač vypnout?")
+
+
+def _run_guard(handler, args) -> str:
+    from scripts.chat_commands import _cmd_hlidej
+    # _cmd_hlidej si záměr (zapni/vypni) přečte z řetězce sám.
+    return _cmd_hlidej(handler, None, (args.get("mode") or "").strip().lower())
+
+
 ACTIONS: dict[str, Action] = {
     "kodi_play_film": Action(
         "kodi_play_film",
@@ -432,6 +493,27 @@ ACTIONS: dict[str, Action] = {
                "poznámka", "poznamka", "dej na seznam"],
         args=["text"], run=_run_add_note, grounding=_ground_note,
         needs_confirm=True, cooldown_s=10),
+
+    # ── Ovládání PC + hlídání (mutace, confirm) ─────────────────────────────
+    "pc_shutdown": Action(
+        "pc_shutdown",
+        "Vypnout stolní POČÍTAČ (PC) na povel — když uživatel jasně řekne ať "
+        "vypneš/zhasneš počítač. NENÍ to uspání tebe (Hanse) — to je hans_sleep.",
+        hints=["vypni pc", "vypni počítač", "vypni pocitac", "zhasni pc",
+               "vypnout počítač", "vypnout pocitac", "vypni ten pocitac"],
+        args=[], run=_run_pc_shutdown, grounding=None,
+        needs_confirm=True, cooldown_s=60),
+    "guard_toggle": Action(
+        "guard_toggle",
+        "Zapnout nebo VYPNOUT hlídací režim místnosti (při pohybu/změně světla "
+        "pošle snímek na Telegram — pro hlídání prázdného domu). Argument "
+        "'mode' = 'on' (zapni hlídání) nebo 'stop' (vypni hlídání). Volič u "
+        "„hlídej dům/místnost“, „zapni hlídání“, „vypni hlídání“. Na pouhý "
+        "DOTAZ na stav („hlídáš ještě?“) tuto akci NEvol.",
+        hints=["hlídej", "hlidej", "hlídání", "hlidani", "stráž", "straz",
+               "hlídat dům", "hlidat dum", "hlídej místnost", "zapni hlidani"],
+        args=["mode"], run=_run_guard, grounding=None,
+        needs_confirm=True, cooldown_s=15),
 }
 
 
@@ -613,7 +695,12 @@ class AgentRouter:
                 log.info("agent: instant %s conf=%.2f pro %s", aid, conf, name)
                 return result
             # CONFIRM akce — navrhni + ulož pending, čekej na ano/ne.
-            text = (prop.text or self._default_text(action, args)).strip()
+            # HANS_SHUTDOWN_CONTEXT_V1 — u vypnutí PC přebij text živým stavem
+            # (co na PC běží); LLM propose_text to vědět nemůže.
+            if action.id == "pc_shutdown":
+                text = _shutdown_confirm_text(handler)
+            else:
+                text = (prop.text or self._default_text(action, args)).strip()
             if not text.endswith(("?",)):
                 text += " Mám to udělat?"
             prop.text = text
@@ -706,6 +793,13 @@ class AgentRouter:
             return f"Mám si „{args.get('tema')}“ zařadit ke studiu?"
         if action.id == "add_note":
             return f"Mám si poznamenat „{args.get('text')}“?"
+        if action.id == "pc_shutdown":
+            return "Mám vypnout počítač?"
+        if action.id == "guard_toggle":
+            m = (args.get("mode") or "").strip().lower()
+            if any(k in m for k in ("stop", "vypni", "off", "konec", "zru")):
+                return "Mám vypnout hlídací režim?"
+            return "Mám spustit hlídací režim?"
         return "Mám to zařídit?"
 
     # ── LLM router ──────────────────────────────────────────────────────────

@@ -64,6 +64,10 @@ _CAPABILITIES = [
     ("make_work", "Umím z toho, co jsem nastudoval, VYTVOŘIT reálné dílo — třeba "
      "webovou stránku (kód + vlastní obrázky) aplikující naučené principy; po "
      "dokončení navrhnu, co ještě prohloubit", "/vytvor <téma>; /brief <téma>"),
+    ("pc_power", "Umím na povel VYPNOUT počítač (PC) i probudit ho přes síť "
+     "(Wake-on-LAN)", "vypni počítač; /vypnipc; /wol"),
+    ("guard", "Umím HLÍDAT místnost, když nejste doma — při pohybu nebo náhlé "
+     "změně světla pošlu snímek a video na Telegram", "hlídej dům; /hlidej [stop|stav]"),
 ]
 
 # HANS_LEARNED_CAPABILITIES_V1 — dynamická vrstva: schopnosti, které si Hans SÁM

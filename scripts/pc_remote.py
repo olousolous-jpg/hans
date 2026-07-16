@@ -39,6 +39,29 @@ def _ssh_base(config: dict) -> list:
             "-o", f"ConnectTimeout={to}", f"{user}@{host}"]
 
 
+def wake(config: dict = None, mac: str = None) -> bool:
+    """HANS_WOL_SHARED_V1 — Wake-on-LAN: pošle magic packet (UDP broadcast :9).
+    Jediná pravda pro WOL (sdílí telegram most i noční rutina). MAC vezme z
+    argumentu, jinak z config['wol_pc_mac']. Vrací True, když se packet odeslal
+    (NEověřuje, že PC naběhl — to řeší ping u volajícího)."""
+    import socket
+    if not mac:
+        mac = str((config or {}).get("wol_pc_mac", "") or "")
+    m = str(mac).replace(":", "").replace("-", "").lower()
+    if len(m) != 12 or not all(c in "0123456789abcdef" for c in m):
+        return False
+    packet = bytes.fromhex("FF" * 6 + m * 16)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.sendto(packet, ("255.255.255.255", 9))
+        return True
+    except Exception:
+        return False
+    finally:
+        s.close()
+
+
 def run(config: dict, remote_cmd: str, timeout: int | None = None):
     """Spusť příkaz na PC přes SSH. Vrátí stdout (str) nebo None při selhání
     (PC spí / SSH chyba / nenulový exit). Deferral-safe."""

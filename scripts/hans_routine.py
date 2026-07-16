@@ -219,6 +219,28 @@ class HansRoutine:
         # WOL_PRESENCE_TOGGLE_V1 — samostatný vypínač presence WOL
         self._wol_on_presence = bool(cfg.get('wol_on_presence',
                                             config.get('wol_on_presence', True)))
+        # WOL_NO_WAKE_ON_RESTART_V1 — restart Hanse NESMÍ probudit PC.
+        # (1) Naběhli-li jsme UŽ uvnitř ranního WOL okna, označ dnešek za
+        #     vyřízený → scheduled ranní wake se řídí PŘECHODEM do okna za běhu
+        #     (Hans běží přes noc), ne stavem při startu. (2) Krátká startovací
+        #     lhůta pro presence WOL, ať přítomnost hned po restartu nezapíná PC.
+        #     Normální ranní wake, denní presence i manuální /wol fungují dál.
+        import time as _wt
+        self._wol_boot_ts = _wt.time()
+        self._wol_startup_grace_s = int(cfg.get('wol_startup_grace_s',
+                                               config.get('wol_startup_grace_s', 300)))
+        try:
+            from datetime import datetime as _dt0, timedelta as _td0
+            _n = _dt0.now()
+            _wake0 = _n.replace(hour=self._sleep_end_hour, minute=0,
+                                second=0, microsecond=0)
+            _start0 = _wake0 - _td0(minutes=self._wol_min_before)
+            if _n.hour < self._sleep_end_hour and _n >= _start0:
+                self._wol_last_date = _n.date()
+                _log.info("WOL: start uvnitř ranního okna → dnešní auto-wake "
+                          "potlačen (restart nezapíná PC)")
+        except Exception as _e:
+            _log.warning("WOL restart-guard init: %s", _e)
         # WOL_TIMER_THREAD_V1 — nezavisle na tick-loopu
         if self._wol_pc_enabled:
             import threading as _thr
@@ -667,6 +689,12 @@ class HansRoutine:
         if not self._wol_pc_enabled or not self._wol_on_presence or not self._wol_pc_mac:
             return
         import time as _t
+        # WOL_NO_WAKE_ON_RESTART_V1 — přítomnost hned po startu Hanse nezapíná PC
+        # (jinak by restart + někdo v místnosti = probuzení). Denní presence
+        # po uplynutí lhůty funguje normálně.
+        if (_t.time() - getattr(self, "_wol_boot_ts", 0)) < getattr(
+                self, "_wol_startup_grace_s", 300):
+            return
         now = _t.time()
         cd = float(self.config.get("hans_routine", {}).get(
             "wol_presence_cooldown_min",
@@ -778,20 +806,12 @@ class HansRoutine:
 
     @staticmethod
     def _send_wol_packet(mac):
-        """Pošli WOL magic packet (UDP broadcast :9)."""
-        import socket
-        mac_clean = mac.replace(':', '').replace('-', '').lower()
-        if len(mac_clean) != 12 or not all(c in '0123456789abcdef' for c in mac_clean):
-            raise ValueError('Invalid MAC: %r' % mac)
-        # Magic: 6×0xFF + 16×MAC
-        packet = bytes.fromhex('FF' * 6 + mac_clean * 16)
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(packet, ('255.255.255.255', 9))
+        """Pošli WOL magic packet — sdílená implementace (HANS_WOL_SHARED_V1)."""
+        from scripts import pc_remote
+        if pc_remote.wake(mac=mac):
             _log.info('WOL: magic packet sent to %s', mac)
-        finally:
-            s.close()
+        else:
+            raise ValueError('Invalid MAC: %r' % mac)
 
     # ── HANS_DISTILLATION_V1 — fáze 2a wire-up + trigger ──────────────
     def set_distillation(self, distillation):
