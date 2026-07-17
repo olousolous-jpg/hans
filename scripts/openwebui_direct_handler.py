@@ -525,6 +525,27 @@ class OpenWebUIDirectHandler:
         # HANS_SELFCONSISTENCY_A1_V1 — zaznamenej výsledek groundingu pro
         # volajícího (A1 short-circuit běží jen u 'factual_nofacts').
         self._grounding_outcome = 'skip'
+
+        # HANS_SOURCE_QUERY_V1 — „odkud to víš / kde jsi to četl / máš zdroj"?
+        # MUSÍ BÝT PRVNÍ (dřív než _intent/_knowledge gate) — dotaz na
+        # provenienci NEpotřebuje intent/RAG infrastrukturu; přebije obecnou
+        # anti-konfab klauzuli (V2). Diagnóza 17.7. 12:07: můj předchozí
+        # umístění za _intent gate způsobilo, že se do check nedostalo (intent
+        # může být None u meta-dotazů).
+        try:
+            from scripts.hans_recall import is_source_query, sources_reply
+            _log_dbg = logging.getLogger(__name__)
+            if is_source_query(str(_text)):
+                _dbp_s = (self.config.get("diary_db")
+                          or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                          or "data/hans_diary.db")
+                self._grounding_outcome = 'grounded'
+                _log_dbg.info('HANS_SOURCE_QUERY_V1: match → sources_reply grounding')
+                return sources_reply(_dbp_s, user_text=str(_text))
+        except Exception as _sqe:
+            logging.getLogger(__name__).warning(
+                'HANS_SOURCE_QUERY_V1 check selhal: %s', _sqe)
+
         _intent = getattr(self, 'intent', None)
         _knowledge = getattr(self, 'knowledge', None)
         if _intent is None or _knowledge is None:
@@ -1465,6 +1486,9 @@ class OpenWebUIDirectHandler:
                     " ani detaily, které nemáš doložené. Raději méně a pravdivě"
                     " než sebejistá smyšlenka.")
                 # HANS_CHAT_ANTICONFAB_V2 — neznámý pojem + žádné vymyšlené zdroje.
+                # HANS_SOURCE_QUERY_V1 (17.7.): zúženo. Absolutní zákaz odkazů
+                # znemožnil sdílet URL, které Hans REÁLNĚ má (entity.source,
+                # study_seen_works). Teď: zákaz VÝMYSLU, ne zákaz sdílení.
                 system_msg += (
                     "\n\nNEZNÁMÉ POJMY A ZDROJE — DŮLEŽITÉ: Když se tě někdo"
                     " zeptá „co je X“ a X nemáš výše v kontextu ani tomu"
@@ -1472,13 +1496,16 @@ class OpenWebUIDirectHandler:
                     " uctivě přiznej, že o tom nemáš spolehlivou znalost, a"
                     " případně požádej o upřesnění (pojem může být i zkomolený"
                     " z dřívějšího záznamu). Drž se jednoho výkladu; neměň"
-                    " příběh při dalším dotazu. A NIKDY nenabízej „odkazy“,"
-                    " „články“, „PDF“, „dokumenty k nahlédnutí“ ani konkrétní"
-                    " citace (název, časopis, rok) — nemáš přístup k externím"
-                    " klikacím zdrojům a nemáš uložené žádné PDF. Pokud tě někdo"
-                    " požádá o zdroje, upřímně vysvětli, že si své poznatky"
-                    " neukládáš jako odkazovatelné dokumenty; smyšlená citace"
-                    " nebo odkaz je horší než přiznání, že zdroj nemáš.")
+                    " příběh při dalším dotazu."
+                    "\n\nZDROJE - DULEZITE: NIKDY nevymyslej odkazy, URL, nazvy"
+                    " clanku, PDF nebo citace, ktere NEJSOU v tomto promptu."
+                    " ALE: pokud v tomto promptu MAS konkretni URL nebo nazev"
+                    " zdroje (napr. z bloku 'Zdroje, ktere mas v pameti' nebo"
+                    " groundingu), MUZES a MAS ho uzivateli sdilet doslova."
+                    " Neodbyvej frazi 'nemam pristup k externim zdrojum' -"
+                    " pokud v promptu URL je, mas ji. Pokud opravdu v promptu"
+                    " nic neni, priznaj to a rekni: 'to je z me obecne znalosti,"
+                    " konkretni clanek v pameti nemam'.")
                 # HANS_PROVENANCE_V1 — source-monitoring: rozlišuj vzpomínku
                 # od představy/úvahy (řádky kontextu nesou značku původu).
                 try:
@@ -2080,6 +2107,27 @@ class OpenWebUIDirectHandler:
                 return _reply
         except Exception as _ce:
             print(f"[Chat] command dispatch error: {_ce}")
+
+        # HANS_SOURCE_QUERY_V1 — bypass LLM (17.7.). hans-czech persona
+        # odmítá sdílet URL i s explicitním groundingem — persona finetune
+        # silnější než system prompt. Vzor `commitments_answer` /
+        # `film_knowledge_answer`: deterministická odpověď mimo LLM.
+        try:
+            from scripts.hans_recall import is_source_query, sources_answer
+            if is_source_query(user_message):
+                _dbp_sa = (self.config.get("diary_db")
+                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                           or "data/hans_diary.db")
+                _sa = sources_answer(_dbp_sa, user_message, asker=name)
+                if _sa:
+                    print("[Chat] HANS_SOURCE_QUERY_V1 → deterministic bypass")
+                    try:
+                        self.conv_store.add_exchange(name, user_message, _sa)
+                    except Exception:
+                        pass
+                    return _sa
+        except Exception as _sae:
+            print(f"[Chat] source query answer error: {_sae}")
 
         # HANS_STUDY_DEEPEN_V2 — kritika/rozhodnutí ČISTÝM TEXTEM (ne jen
         # /prohloubit). Gated: jen když čeká návrh prohloubení. Klasifikuje

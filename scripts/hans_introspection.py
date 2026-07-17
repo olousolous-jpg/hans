@@ -209,7 +209,9 @@ class HansIntrospection:
                 {"role": "user",   "content": prompt},
             ],
             ollama_url=self._ollama,
-            options={"num_predict": 80},
+            # HANS_DIARY_LONGER_V1 (17.7.) — 80 tokens = ~1 věta; 250 dá prostor
+            # na 3-4 věty introspekce (deník má být rozpoznatelný text, ne heslo).
+            options={"num_predict": 250},
         )
 
     # ── Persistence ───────────────────────────────────────────────────────────

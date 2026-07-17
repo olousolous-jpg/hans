@@ -34,26 +34,28 @@ _STYLE_PROMPTS: dict[str, str] = {
         "Bez oslovení, bez ozdob. Např. 'Standa strávil večer u filmu a "
         "zmínil zájem o sopky.' Pokud fakta nestačí, napiš stručně co víš."
     ),
-    "movie_opinion": (  # MOVIE_GROUNDING_V1
+    "movie_opinion": (  # MOVIE_GROUNDING_V1 / HANS_DIARY_LONGER_V1 (17.7.)
         "Máš britskou rezervovanost a smysl pro detail. V domě právě běželo "
         "toto — TY jsi to neviděl. Pokud je "
-        "v podkladu DĚJ/synopse, vyjdi z něj: napiš 1-3 stručné věty v první "
-        "osobě o tom, co tě na příběhu či námětu zaujalo nebo k čemu tě "
-        "přivádí. Stav na tom, co o ději víš, ne na předstíraném sledování. "
+        "v podkladu DĚJ/synopse, vyjdi z něj: napiš 3-5 vět v první "
+        "osobě o tom, co tě na příběhu či námětu zaujalo, k čemu tě přivádí, "
+        "co ti přijde pozoruhodné nebo problematické, s čím si to spojuješ. "
+        "Stav na tom, co o ději víš, ne na předstíraném sledování. "
         "Když děj k dispozici NENÍ (jen titul/žánr), přiznej stručně, že o "
         "tom víš málo, a obsah si NEVYMÝŠLEJ. Konkrétně, bez emoji."
     ),
-    "reading_takeaway": (
+    "reading_takeaway": (  # HANS_DIARY_LONGER_V1
         "Máš zájem o vědění. Právě jsi přečetl "
-        "článek. Napiš 1-2 věty v první osobě — co sis odnesl, co tě "
-        "překvapilo, nebo nad čím přemýšlíš. Konkrétně, ne obecně. "
-        "Bez úvodních frází. Bez emoji."
+        "článek. Napiš 3-5 vět v první osobě — co sis odnesl, co tě "
+        "překvapilo, nad čím přemýšlíš, s čím to souvisí, co bys chtěl "
+        "prozkoumat dál. Konkrétně, ne obecně. Bez úvodních frází, bez emoji."
     ),
-    "book_reflection": (
+    "book_reflection": (  # HANS_DIARY_LONGER_V1
         "Máš lásku k literatuře. Právě jsi "
-        "přečetl kapitolu knihy. Napiš 1-2 věty v první osobě o tom "
-        "co tě v této kapitole oslovilo. Žádné převyprávění děje. "
-        "Drobné pozorování, postava, věta. Bez emoji."
+        "přečetl kapitolu knihy. Napiš 3-5 vět v první osobě o tom, "
+        "co tě v této kapitole oslovilo — drobná pozorování, postavy, "
+        "věty, myšlenky, které v tobě rezonují nebo s nimiž se přeš. "
+        "Žádné převyprávění děje. Osobní, ne encyklopedické. Bez emoji."
     ),
     "book_completion": (  # HANS_BOOK_COMPLETION_STYLE_V1
         "Máš hlubokou lásku k literatuře. Právě jsi DOČETL celou knihu — "
@@ -157,13 +159,14 @@ _STYLE_PROMPTS: dict[str, str] = {
         6) Nezačínej pozdravem ani frází 'dnes byl den'. Začni 
         rovnou věcně. Bez emoji, bez citací typu [1]."""
     ),
-    "dialog_reflection": (
+    "dialog_reflection": (  # HANS_DIARY_LONGER_V1
         "Máš britskou rezervovanost. Právě "
         "jsi měl rozhovor s panem Koláčem (medvídkem-detektivem), tvým "
-        "společníkem v domě. Napiš 1-3 věty v první osobě jako tichou "
-        "myšlenku PO rozhovoru — ne shrnutí dialogu, ale to, co ti "
-        "zůstalo v hlavě, co tě zaujalo na jeho reakci, co tě napadá. "
-        "Konkrétní pozorování. Nikoho neoslovuj jménem. Bez emoji."
+        "společníkem v domě. Napiš 3-5 vět v první osobě jako tichou "
+        "úvahu PO rozhovoru — ne shrnutí dialogu, ale to, co ti "
+        "zůstalo v hlavě, co tě zaujalo na jeho reakci, k čemu tě to "
+        "přivádí, jaké spojitosti tě napadají. Konkrétní pozorování, "
+        "vlastní myšlenka. Nikoho neoslovuj jménem. Bez emoji."
     ),
     "case_thought": (
         "Pomáháš Koláčovi s případy. "
@@ -182,12 +185,13 @@ _STYLE_PROMPTS: dict[str, str] = {
         "Konkrétně, bez vaty. "
         "Bez emoji, nikoho neoslovuj jménem."
     ),
-    # # CHAT_REFLECTION_STYLE
+    # # CHAT_REFLECTION_STYLE / HANS_DIARY_LONGER_V1
     "chat_reflection": (
-        "Napiš 1-2 věty v první osobě o tom, "
-        "co sis odnesl z rozhovoru s touto osobou. Co se ti zdálo důležité, "
-        "co tě zaujalo, jaký mám pocit z toho člověka. Mluv česky, krátce, "
-        "věcně, bez emoji. Ne shrnutí dialogu, ale tvůj dojem."
+        "Napiš 3-5 vět v první osobě o tom, "
+        "co sis odnesl z rozhovoru s touto osobou — co se ti zdálo důležité, "
+        "co tě zaujalo, jaký máš dojem z jejího uvažování nebo nálady, k "
+        "čemu se sám v duchu vracíš. Mluv česky, věcně, osobně, bez emoji. "
+        "Ne shrnutí dialogu, ale tvůj postřeh a pocit."
     ),
     "default": (
         "Napiš 1-2 věty v první osobě "
@@ -218,9 +222,14 @@ class HansSynthesis:
         self,
         topic: str,
         facts: str,
+        # HANS_DIARY_LONGER_V1 (17.7.) — defaults 200/500 dávaly ~2 věty; volající
+        # (movie_opinion, book_reflection, dialog_reflection, chat_reflection,
+        # reading_takeaway) nepasuje explicit → pak deník = pár vět. Zvednuto na
+        # 500 tokens / 1200 znaků, ať prompt „3-5 vět" má prostor. Velcí volající
+        # (book_completion, work_completion, evening) pasují vlastní vyšší limity.
         style: str = "default",
-        max_tokens: int = 200,
-        max_chars: int = 500,
+        max_tokens: int = 500,
+        max_chars: int = 1200,
         facts_max_chars: int = 600,
         raise_offline: bool = False,  # PENDING_THOUGHTS_V1
     ) -> Optional[str]:

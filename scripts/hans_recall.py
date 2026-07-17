@@ -646,6 +646,172 @@ def is_recall_query(text: str) -> bool:
         r"zm[íi]nil\s+jsi|navrh\w*\s+jsi|[řr]ekl\s+jsi", t))
 
 
+# ── HANS_SOURCE_QUERY_V1 — dotaz na zdroj Hansova tvrzení ────────────────────
+
+def is_source_query(text: str) -> bool:
+    """Ptá se uživatel „odkud to víš / kde jsi to četl / máš k tomu zdroj / odkaz"?
+    Tolerantní k i/y a překlepům + bez diakritiky. NEsmí trefit obecnou zvědavost
+    („co je zdroj X"). Rozšířeno o reálné formulace uživatele („mas odkaz na
+    clanek, kde se o tom pisr?" — chat 17.7. 11:59)."""
+    t = (text or "").lower()
+    # Klasické + reálné formulace dotazu na provenienci Hansova tvrzení.
+    pats = (
+        # „odkud to (víš/máš)"
+        r"\bodkud\s+(to|tohle|to\s+m[áa][šs]|to\s+v[íi][šs])",
+        # „kde jsi to (četl/našel/vzal/slyšel)" i bez „jsi"
+        r"\bkde\s+(jsi|si)?\s*(to|tohle|toto)?\s*(?:vzal|na[šs]el|na[čc]etl|[čc]etl|sly[šs]el|na[šs]el)",
+        # „kde to najdu / kde se to dočtu / kde se o tom píše"
+        r"\bkde\s+(to|se\s+(to|o\s+tom))\s+(?:najdu|na[čc]tu|do[čc]t[eě][šs]?|d[ao]ct[eěií]?|p[íi][šs]e)",
+        # „na základě čeho / z čeho to víš/máš / podle čeho"
+        r"\bna\s+z[áa]klad[ěe]\s+[čc]eho",
+        r"\bz\s+[čc]eho\s+(to|tohle)?\s*(v[íi][šs]|m[áa][šs])",
+        r"\bpodle\s+[čc]eho",
+        # „máš (k tomu) zdroj / odkaz / článek / důkaz"
+        r"\bm[áa][šs]\s+(k\s+tomu\s+)?(zdroj|odkaz|[čc]l[áa]nek|d[ůu]kaz|citaci|pramen)",
+        r"\bjak[ýy]\s+(m[áa][šs])?\s*(zdroj|odkaz|pramen)",
+        # „dej mi / ukaž mi / pošli mi (odkaz / zdroj / článek)"
+        r"\b(dej|ukaz|uk[áa][žz]|po[šs]li|hoď|hoď mi)\s+(mi\s+)?(odkaz|zdroj|[čc]l[áa]nek|pramen)",
+        # „(můžeš / můžeš mi) ukázat/dát/poslat (zdroj/odkaz/článek)"
+        r"\b(m[ůu][žz]e[šs]|dok[áa][žz]e[šs])\s+(m[eě]?\s+|mi\s+)?(uk[áa]zat|d[áa]t|posl[aá]t|pou[žz][ií]t)\s+.*?(zdroj|odkaz|[čc]l[áa]nek|pramen)",
+        # „uveď/uved zdroj"
+        r"\buve[ďdt]\s+(zdroj|odkaz|pramen)",
+        # „proč si to myslíš"
+        r"\bpro[čc]\s+si\s+(to|tohle)?\s*mysl[íi][šs]",
+        # samotný „důkaz?"
+        r"\bd[ůu]kaz\b",
+        # samostatné „zdroj?" / „odkaz." / „a článek?" — krátký standalone dotaz
+        r"^\s*(a\s+)?(zdroj|odkaz|[čc]l[áa]nek|pramen)(\s+pros[íi]m)?\s*[\.!\?]*\s*$",
+    )
+    return any(re.search(p, t) for p in pats)
+
+
+def _find_entity_in_text(db_path: str, text: str) -> Optional[tuple]:
+    """Najdi entity.name, která je zmíněna v textu (case insensitive, whole word).
+    Vrací (name, source_url) nebo None. Preferuje delší jméno (specifičtější)."""
+    if not text:
+        return None
+    conn = None
+    try:
+        conn = _ro(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT name, source FROM entities WHERE source IS NOT NULL "
+            "AND source != '' AND length(name) >= 4").fetchall()
+    except Exception:
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+    t_lower = text.lower()
+    best = None
+    for r in rows:
+        name = r["name"]
+        if name.lower() in t_lower:
+            if best is None or len(name) > len(best[0]):
+                best = (name, r["source"])
+    return best
+
+
+def _last_hans_topics(db_path: str, limit: int = 3) -> list:
+    """Extrahuj potenciální témata z NĚKOLIKA posledních Hansových replik.
+    Vrací list stringů (celý text Hansovy repliky) — volající pak matchuje entity.
+    """
+    conn = None
+    try:
+        conn = _ro(db_path)
+        rows = conn.execute(
+            "SELECT note FROM diary WHERE event_type='human_chat' "
+            "ORDER BY ts DESC LIMIT ?", (limit * 3,)).fetchall()
+    except Exception:
+        return []
+    finally:
+        if conn:
+            conn.close()
+    out = []
+    for (note,) in rows:
+        # note = "<osoba>: ...\nHans: ..." — vytáhni jen Hansovu část
+        if not note:
+            continue
+        idx = note.find("Hans:")
+        if idx >= 0:
+            out.append(note[idx + 5:].strip())
+        if len(out) >= limit:
+            break
+    return out
+
+
+def sources_answer(db_path: str, user_text: str,
+                   asker: Optional[str] = None) -> Optional[str]:
+    """HANS_SOURCE_QUERY_V1 — DETERMINISTICKÁ odpověď (bypass LLM).
+
+    Hans-czech (persona finetune) neposlouchá grounding — odmítá sdílet URL
+    i když je má doslova v promptu (17.7. doložený případ „Icon of the Seas").
+    Malý model je natrénovaný na personu „nemám externí zdroje" silněji než
+    kterákoliv system-prompt instrukce. Řešení: pro dotaz na zdroj obejdi LLM
+    a vygeneruj odpověď sám. Vzor: `commitments_answer`, `film_knowledge_answer`.
+
+    Vrací string (Hansovým hlasem) nebo None (nic k nabídnutí → propadne do LLM).
+    """
+    hit = _find_entity_in_text(db_path, user_text)
+    if not hit:
+        # fallback z posledních Hansových replik (user řekl jen „a odkud to víš")
+        for hans_reply in _last_hans_topics(db_path, limit=3):
+            hit = _find_entity_in_text(db_path, hans_reply)
+            if hit:
+                break
+
+    oslov = ("%s" % asker.capitalize()) if asker else "pane"
+    if hit:
+        name, url = hit
+        return ("Ano, %s. O tématu '%s' jsem se dočetl na Wikipedii. "
+                "Zde je odkaz: %s" % (oslov, name, url))
+
+    # nic konkrétního — poctivé přiznání (bez konfabulace)
+    return ("K tomu, o čem jsme mluvili, nemám v paměti uložený konkrétní "
+            "článek s odkazem, %s. Zůstává mi jen obecná znalost, kterou "
+            "jsem si osvojil — konkrétní zdroj Vám k tomu nabídnout nemohu, "
+            "nechci si nic vymýšlet." % oslov)
+
+
+def sources_reply(db_path: str, user_text: str = "", limit: int = 5) -> str:
+    """HANS_SOURCE_QUERY_V1 — grounding blok pro dotaz „odkud to víš".
+
+    STRATEGIE (17.7. — přepracováno na FAKTA, ne instrukce; malý model neuměl
+    dvoustupňovou inferenci „najdi téma v seznamu → vytáhni URL"):
+      1. Zkus najít KONKRÉTNÍ entitu zmíněnou v user promptu → hotová URL.
+      2. Fallback na entitu z předchozí Hansovy repliky (dohledá téma o kterém
+         právě mluvil, i když user řekne jen „a odkud to víš").
+      3. Když nic nenajde → čestně přiznat obecnou znalost.
+    """
+    # 1) entita v samotném dotazu ("ukaž mi zdroj o Icon of the Seas")
+    hit = _find_entity_in_text(db_path, user_text)
+    if not hit:
+        # 2) entita v Hansově předchozí odpovědi (user: „a odkud to víš?")
+        for hans_reply in _last_hans_topics(db_path, limit=3):
+            hit = _find_entity_in_text(db_path, hans_reply)
+            if hit:
+                break
+
+    if hit:
+        name, url = hit
+        return (
+            "\n\nUZIVATEL SE PTA NA ZDROJ. Toto jsou TVA FAKTA (ne instrukce, "
+            "ne 'externi zdroje' - jsou to zaznamy z tve pameti):\n\n"
+            "O tematu \"%s\" mas v pameti clanek na URL: %s\n\n"
+            "Odpovez uzivateli PRESNE tuto URL. Priklad odpovedi: 'Cetl jsem "
+            "o tom na Wikipedii. Odkaz: %s'. NEtvrd 'nemam pristup k externim "
+            "zdrojum' - mas ho tady, prave ted, v tomto promptu."
+        ) % (name, url, url)
+
+    # 3) nic konkrétního — poctivé přiznání
+    return (
+        "\n\nUZIVATEL SE PTA NA ZDROJ. K tematu, o kterem jste mluvili, "
+        "NEMAS v pameti zadny konkretni ulozeny clanek s URL. Odpovez "
+        "cestne: 'To vim z obecne znalosti, konkretni clanek jsem k tomu "
+        "necetl'. NIKDY nevymyslej URL, nazvy clanku, ani citace.")
+
+
 # ── první / nejstarší vzpomínka ──────────────────────────────────────────────
 
 def first_memory_answer(db_path: str) -> str:
