@@ -504,6 +504,79 @@ register(
     help_text="Nadcházející události z Proton kalendáře (/kalendar, /kalendar sync)",
 )
 
+
+# ─── /rozvrh — Hansův behaviorální rozvrh (HANS_SCHEDULE_V1) ─────────────────
+def _cmd_rozvrh(handler, name, args) -> str:  # HANS_SCHEDULE_V1
+    """/rozvrh — kompletní Hansův rozvrh autonomních rutin (kdy naposledy tikly,
+    zaostávají-li). Doplněk k /zdravi, který ukazuje jen zaostávající."""
+    try:
+        from scripts.hans_schedule import ScheduleStore
+        import os, time
+        db = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "data", "hans_diary.db")
+        st = ScheduleStore(db)
+        rows = st.all()
+        if not rows:
+            return "Rozvrh je prázdný, pane."
+    except Exception as e:
+        return f"/rozvrh: chyba ({e})"
+
+    labels = {
+        "nightly_analytics":  "Noční analytika",
+        "morning_reflection": "Ranní reflexe",
+        "study_tick":         "Studijní tick",
+        "curiosity_tick":     "Zvědavý tick",
+        "calendar_sync":      "Sync Proton kalendáře",
+        "catchup_drain":      "Dohnání odložených čtení",
+    }
+    now = time.time()
+    lines = ["📋 Můj rozvrh (autonomní rutiny):"]
+    stale_list = st.stale_list(now)
+    stale_names = {s["name"] for s in stale_list}
+    for r in rows:
+        lbl = labels.get(r["name"], r["name"])
+        last_ts = r["last_run_ts"]
+        if not last_ts:
+            when = "ještě neproběhla"
+        else:
+            age_h = (now - last_ts) / 3600
+            if age_h < 1:
+                when = f"před {age_h*60:.0f} min"
+            elif age_h < 24:
+                when = f"před {age_h:.1f}h"
+            else:
+                when = f"před {age_h/24:.1f} dny"
+        gap_h = r["expected_gap_s"] / 3600
+        marker = "⚠️ " if r["name"] in stale_names else "  "
+        skip = ""
+        if r["last_skip_reason"] and not r["last_run_ok"]:
+            skip = f" [posl. skip: {r['last_skip_reason']}]"
+        enabled = "" if r["enabled"] else " (vypnuto)"
+        lines.append(f"{marker}• {lbl} — {when} (max gap {gap_h:.0f}h){skip}{enabled}")
+    if stale_list:
+        lines.append("")
+        lines.append(f"⚠️ Zaostává: {len(stale_list)} z {len(rows)} rutin.")
+    else:
+        lines.append("")
+        lines.append("✅ Vše běží podle plánu.")
+    return "\n".join(lines)
+
+
+register(
+    "rozvrh",
+    slash_aliases=["rozvrh", "schedule"],
+    nl_patterns=[
+        r"m[ůu]j\s+rozvrh",
+        r"tv[ůu]j\s+rozvrh",
+        r"hans[ůu]v\s+(rozvrh|kalend[áa]ř)",
+        r"tv[ůu]j\s+kalend[áa]ř",   # „tvůj kalendář" = Hansův (ne Proton)
+        r"\brutin[yaou]?\b",
+        r"co\s+d[ěe]l[áa]š\s+(v\s+noci|automaticky|rutinn[ěe])",
+    ],
+    handler=_cmd_rozvrh,
+    help_text="Můj rozvrh autonomních rutin (kdy naposled tikly, zaostávají-li)",
+)
+
 def _cmd_work(handler, name, args) -> str:  # WORK_CMD_V1 + WORK_REFACTOR_SHARED_V1
     """/work <téma> — tenký wrapper. Jádro je v hans_idle._create_work,
     aby ho mohla volat i automatika (idle smyčka) přes shim."""
@@ -2157,14 +2230,25 @@ def _cmd_zdravi(handler, name, args) -> str:  # HANS_HEALTH_V1
         return "Kontrola zdraví je vypnutá, pane."
     _lbl = {"ollama": "Mozek (Ollama)", "comfyui": "Malování (ComfyUI)",
             "kodi": "Televize (Kodi)", "stt": "Sluch (přepis)",
-            "pc": "Počítač", "disk": "Disk"}
+            "pc": "Počítač", "disk": "Disk", "camera": "Kamera",
+            "schedule": "Rozvrh (autonomní rutiny)"}
     _ico = {"ok": "✅", "paused": "⏸️", "wedged": "⚠️", "down": "❌",
-            "unknown": "❔"}
+            "unknown": "❔", "warn": "⚠️"}
     lines = ["Stav mých systémů, pane:"]
     for k, s in health.items():
         st = s.get("status", "unknown")
         lines.append("%s %s — %s" % (_ico.get(st, "❔"), _lbl.get(k, k),
                                      s.get("detail", st)))
+    # HANS_SCHEDULE_V1 — zvlášť vypsat KTERÉ rutiny zaostávají (detail)
+    sched_stale = ((health.get("schedule") or {}).get("stale")) or []
+    if sched_stale:
+        lines.append("")
+        lines.append("Zaostávající rutiny:")
+        for x in sched_stale:
+            reason = " [%s]" % x["last_skip_reason"] if x["last_skip_reason"] else ""
+            lines.append("  • %s — %.1fh po termínu (max %.1fh)%s"
+                         % (x["name"], x["late_s"] / 3600,
+                            x["expected_gap_s"] / 3600, reason))
     if res.get("healed"):
         lines.append("(Zaseklý mozek jsem zkusil restartovat.)")
     return "\n".join(lines)

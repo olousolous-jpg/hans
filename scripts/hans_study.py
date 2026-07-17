@@ -167,6 +167,24 @@ def _search_queries(sub: str, topic: str) -> List[str]:
     head = s.split(":")[0].strip()           # část před dvojtečkou
     core = _GENERIC_LEADIN.sub("", head).strip()        # bez "Základy/Teorie…"
     core = re.sub(r"\s+v\s+\w+$", "", core).strip()     # "Kompozice v designu"→"Kompozice"
+
+    # HANS_STUDY_SEARCH_ABBREV_V1 — LLM deepen generuje popisné věty s kanonickým
+    # pojmem v ZÁVORCE („Analýza přístupnosti webových stránek (WCAG) a aplikací:…").
+    # Wikipedia dlouhou frázi nenajde; zkratka JE článek. Zkratky (2-10 zn, velká
+    # písmena / číslice / lomítka) mají PŘEDNOST před ostatními kandidáty.
+    for m in re.finditer(r"\(([A-Z][A-Z0-9/.-]{1,10})\)", s):
+        _add(m.group(1))
+
+    # HANS_STUDY_SEARCH_SHORT_V1 — když core je moc dlouhý (>4 slova), přidej
+    # KRÁTKÉ jádro = první 3 obsahová slova (bez závorek). Trefí kanonický článek
+    # dřív než rozvláčná fráze („Analýza přístupnosti webových stránek" místo
+    # celé věty).
+    core_short = re.sub(r"\([^)]*\)", "", core).strip()
+    core_short = re.sub(r"\s+", " ", core_short)
+    words = core_short.split()
+    if len(words) > 4:
+        _add(" ".join(words[:3]))
+
     # JÁDRO nejdřív = nejkanoničtější článek (full-text search dá u dlouhé popisné
     # fráze často nesmysl-ale-neprázdný výsledek → stopne se na něm; čisté jádro
     # trefí správný článek). Pak širší fallbacky.
@@ -1098,14 +1116,27 @@ class StudyStore:
             model = (_cfg(config).get("model")
                      or (config.get("evening_reflection", {}) or {}).get("model")
                      or "jobautomation/OpenEuroLLM-Czech:latest")
+            # HANS_STUDY_DEEPEN_TITLES_V1 — pod-témata MUSÍ být KRÁTKÉ KANONICKÉ
+            # názvy (max 5 slov, žádné dvojtečky/závorky/vysvětlení), jinak
+            # Wikipedia nenajde článek → study se zasekne na 3 nocích × pod-tématu.
+            # Vzory: „WCAG 2.2", „Design tokens", „3D fotogrammetrie",
+            #        „Micro-interactions", „Neuromarketing".
             sysp = (
                 "Jsi kurátor studia. Autor nastudoval pod-témata níže a vytvořil "
                 "z nich dílo. Buď KRITICKÝ: v 1 větě řekni, co dílu chybí do "
-                "hloubky, a navrhni %d NOVÝCH pod-témat, která jdou VÍC DO HLOUBKY "
-                "a do konkrétna (specifické techniky, postupy, hodnoty, příklady), "
-                "STAVÍ na nastudovaném, ale ŽÁDNÉ z nastudovaných NEOPAKUJÍ. Vrať "
-                "POUZE JSON: {\"critique\":\"…\",\"subtopics\":[\"…\"]} (česky)."
-                % max_new)
+                "hloubky, a navrhni %d NOVÝCH pod-témat, která jdou VÍC DO "
+                "HLOUBKY, STAVÍ na nastudovaném, ale ŽÁDNÉ z nastudovaných "
+                "NEOPAKUJÍ.\n\n"
+                "PRAVIDLA PRO NÁZVY POD-TÉMAT (jinak Wikipedia nenajde článek):\n"
+                "  1. MAX 5 slov (kratší lepší)\n"
+                "  2. ŽÁDNÉ dvojtečky, středníky, závorky s vysvětlením\n"
+                "  3. Kanonický pojem, ne popisná věta\n"
+                "  Vzory: \"WCAG 2.2\", \"Design tokens\", \"3D fotogrammetrie\","
+                " \"Micro-interactions\", \"Neuromarketing\"\n"
+                "  ŠPATNĚ: \"Analýza přístupnosti (WCAG) a aplikací: konkrétní "
+                "techniky pro zajištění inkluzivity...\" (moc dlouhé)\n\n"
+                "Vrať POUZE JSON: {\"critique\":\"…\",\"subtopics\":[\"…\"]} "
+                "(česky)." % max_new)
             studied_txt = "\n".join("- %s" % s for s in studied)
             gap = ("\n\nSměr kritiky (řiď se jím): %s" % work_gap) if work_gap else ""
             raw = ollama_generate(
@@ -1453,6 +1484,21 @@ def run_study_session(config: dict, diary_db_path: str, knowledge=None,
                      if _norm(h.name) not in store._studied_topic_norms()]
         return "deferred" if unstudied else "idle"
     res = store.study_next(config, knowledge=knowledge, diary_writer=diary_writer)
+    # HANS_SCHEDULE_V1 — razítko včetně důvodu skip (deferred/idle).
+    # ok=True jen když session opravdu proběhla (studied/completed); jinak si
+    # audit může všimnout, PROČ study visí (nejčastěji brain_down = deferred).
+    try:
+        from scripts import hans_schedule
+        if res is None:
+            hans_schedule.mark('study_tick', ok=False, skip_reason='deferred')
+        else:
+            rr = res.get("result", "studied")
+            if rr in ("studied", "completed"):
+                hans_schedule.mark('study_tick', ok=True)
+            else:
+                hans_schedule.mark('study_tick', ok=False, skip_reason=rr)
+    except Exception:
+        pass
     if res is None:
         return "deferred"
     return res.get("result", "studied")

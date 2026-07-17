@@ -24,6 +24,29 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_TZ = "Europe/Prague"
 
+# HANS_CALENDAR_URL_SCRUB_V1 — chybové hlášky z requests nesou CELÝ ICS odkaz
+# (…CacheKey=…&PassphraseKey=…) = tajný přístup ke kalendáři. Do logu smí jen
+# host + druh chyby, NIKDY klíče.
+import re as _re
+
+_SECRET_KEY_RE = _re.compile(r'(CacheKey|PassphraseKey)=[^&\s\'"]+', _re.I)
+_PROTON_URL_RE = _re.compile(r'https?://[^\s\'"]*calendar\.proton\.me[^\s\'"]*',
+                             _re.I)
+# requests hlášku URL rozděluje (host zvlášť, cesta zvlášť) → path token
+# /…/url/<TOKEN>/ zůstane i po smazání query klíčů; zamaskuj i ten.
+_PROTON_PATH_RE = _re.compile(r'(/url/)[^/\s\'"]+', _re.I)
+
+
+def _scrub_secret(err, url: str = "") -> str:
+    """Odstraní tajný ICS odkaz z chybové hlášky (host+chyba ano, klíče ne)."""
+    msg = str(err)
+    if url:
+        msg = msg.replace(url, "<ics_url>")
+    msg = _PROTON_URL_RE.sub("<ics_url>", msg)
+    msg = _SECRET_KEY_RE.sub(r"\1=<redacted>", msg)
+    msg = _PROTON_PATH_RE.sub(r"\1<token>", msg)
+    return msg
+
 
 def _cfg(config: dict) -> dict:
     return (config.get("calendar", {}) or {})
@@ -145,7 +168,8 @@ class CalendarStore:
                 return -1
             cal = icalendar.Calendar.from_ical(r.text)
         except Exception as e:
-            log.warning("calendar[%s]: fetch/parse selhal: %s", person, e)
+            log.warning("calendar[%s]: fetch/parse selhal: %s", person,
+                        _scrub_secret(e, url))
             return -1
         horizon = int(_cfg(self.config).get("horizon_days", 60))
         now = _dt.datetime.now(self._tz)

@@ -13,6 +13,8 @@ from typing import Optional
 
 import requests
 
+from scripts._log_circuit import for_url as _breaker_for, is_conn_error
+
 _log = logging.getLogger("ollama_client")
 
 # ── OLLAMA_GAME_MODE_V1 — herní mód ────────────────────────
@@ -215,8 +217,13 @@ def ollama_warmup(
     if game_mode_on():   # OLLAMA_GAME_MODE_V1 — nepřihřívej, ať VRAM zůstane volná
         return False
     url = _resolve_url(ollama_url, config)
+    br = _breaker_for(url)  # LOG_CIRCUIT_V1
     try:
-        _log.info("Warmup: loading %s ...", model)
+        # když už víme, že endpoint je dole, ani INFO nespamuj
+        if br.snapshot().get("down"):
+            _log.debug("Warmup: loading %s ... (endpoint stále down)", model)
+        else:
+            _log.info("Warmup: loading %s ...", model)
         t0 = time.time()
         r = requests.post(
             f"{url}/api/generate",
@@ -225,9 +232,14 @@ def ollama_warmup(
         )
         r.raise_for_status()
         _log.info("Warmup: %s ready (%.1fs)", model, time.time() - t0)
+        br.note_success(_log)
         return True
     except Exception as exc:
-        _log.error("Warmup failed for %s: %s", model, exc)
+        if is_conn_error(exc):
+            if br.should_log(exc):
+                _log.error("Warmup failed for %s: %s", model, exc)
+        else:
+            _log.error("Warmup failed for %s: %s", model, exc)
         return False
 
 
@@ -235,13 +247,16 @@ def ollama_warmup(
 
 def _post_with_retry(url: str, payload: dict, timeout: int,
                      extractor) -> Optional[str]:
-    """POST s retry při timeout."""
+    """POST s retry při timeout. LOG_CIRCUIT_V1: potlač spam z mrtvého endpointu."""
+    br = _breaker_for(url)
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 2):
         try:
             r = requests.post(url, json=payload, timeout=timeout)
             r.raise_for_status()
-            return extractor(r.json())
+            out = extractor(r.json())
+            br.note_success(_log)
+            return out
         except requests.exceptions.Timeout as exc:
             last_exc = exc
             if attempt <= MAX_RETRIES:
@@ -251,10 +266,15 @@ def _post_with_retry(url: str, payload: dict, timeout: int,
                 _log.error("Ollama timeout (%ds) after %d attempts: %s",
                            timeout, attempt, url)
         except requests.exceptions.ConnectionError as exc:
-            _log.error("Ollama connection error: %s — %s", url, exc)
+            if br.should_log(exc):
+                _log.error("Ollama connection error: %s — %s", url, exc)
             return None
         except Exception as exc:
-            _log.error("Ollama request error: %s — %s", url, exc)
+            if is_conn_error(exc):
+                if br.should_log(exc):
+                    _log.error("Ollama connection error: %s — %s", url, exc)
+            else:
+                _log.error("Ollama request error: %s — %s", url, exc)
             return None
     return None
 

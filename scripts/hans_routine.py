@@ -1123,6 +1123,8 @@ class HansRoutine:
                 try:
                     from scripts.hans_calendar import CalendarStore
                     CalendarStore(self.config, self._diary_path).sync()
+                    from scripts import hans_schedule  # HANS_SCHEDULE_V1
+                    hans_schedule.mark('calendar_sync')
                 except Exception as e:
                     _log.warning("calendar sync selhal: %s", e)
             threading.Thread(target=_do, daemon=True).start()
@@ -1335,6 +1337,14 @@ class HansRoutine:
         # Noční aktivity (jednou za noc)
         today = datetime.now().strftime("%Y-%m-%d")
         if self.is_night:
+            # HANS_SCHEDULE_V1 — razítko, že noční okno tikalo (i když jednotlivé
+            # kroky byly deferred kvůli brain_down; audit chce vědět, že se sem
+            # cesta vůbec dostala).
+            try:
+                from scripts import hans_schedule
+                hans_schedule.mark('nightly_analytics')
+            except Exception:
+                pass
             if self._night_summary_enabled and self._last_summary_date != today:
                 self._last_summary_date = today
                 self._write_night_summary()

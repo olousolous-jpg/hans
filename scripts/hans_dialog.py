@@ -625,9 +625,9 @@ class HansDialog:
                     else:
                         self._on_teddy_arrived()
 
-                _log.info("Loop tick — teddy=%s last_dialog=%.0fs ago",
-                          self._teddy_visible,
-                          time.time() - self._last_dialog if self._last_dialog else 999)
+                _log.debug("Loop tick — teddy=%s last_dialog=%.0fs ago",
+                           self._teddy_visible,
+                           time.time() - self._last_dialog if self._last_dialog else 999)
                 if (self._teddy_visible and
                         self._idle_active and
                         time.time() - self._last_dialog >= self._dialog_interval):
@@ -888,7 +888,11 @@ class HansDialog:
 
             # HANS_KOLAC_MIND_V1 — dvě mysli (Hans ↔ Koláč zvlášť). Toaster
             # (Švitorka) mód zůstává na jednorázovém skriptování (komediální gag).
-            # Fallback na _call_gemini, když dvě mysli selžou.
+            # HANS_DIALOG_OLLAMA_ONLY_V1 — když je Ollama dolů (PC v noci vypnutý),
+            # dialog se TIŠE odloží (žádný externí LLM fallback → žádný log spam).
+            if not self._ollama_available():
+                _log.debug("dialog: skip (Ollama dolů — mozek spí)")
+                return
             _two = (self.config.get("hans_dialog", {}).get("two_minds", True)
                     and not getattr(topic, "is_toaster", False))
             dialog = None
@@ -1158,17 +1162,17 @@ class HansDialog:
         return "\n".join(convo) if convo else None
 
     def _call_gemini(self, user_prompt: str) -> str | None:
-        """Zkusi nejdrive Ollama, pak OpenRouter jako fallback."""
+        """HANS_DIALOG_OLLAMA_ONLY_V1 — jen lokální Ollama (Hansův mozek).
+        Když je PC dolů / Ollama nedostupná, dialog se TIŠE odloží (jako u
+        [[ollama-deferred-processing]] jinde). OpenRouter fallback byl legacy
+        z doby, kdy Ollama nebyla stabilní; free tier vyčerpaný → spam v logu
+        a stejně nedokončený dialog. Kód `_call_openrouter` zůstává pro ruční
+        test, ale rutinní cesta ho nevolá."""
         user_prompt = localize_kolac(user_prompt, self.config)  # KOLAC_NAME_CONFIGURABLE_V1
-        if self._ollama_available():
-            _log.info("Pouzivam lokalni Ollama")
-            result = self._call_ollama(user_prompt)
-            if result:
-                return result
-            _log.warning("Ollama selhala, zkousim OpenRouter")
-
-        _log.info("Pouzivam OpenRouter")
-        return self._call_openrouter(user_prompt)
+        if not self._ollama_available():
+            _log.debug("dialog: Ollama nedostupná → skip (mozek dolů)")
+            return None
+        return self._call_ollama(user_prompt)
 
     def _call_openrouter(self, user_prompt: str) -> str | None:
         url = "https://openrouter.ai/api/v1/chat/completions"

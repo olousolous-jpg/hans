@@ -484,7 +484,8 @@
   "openrouter": {
     "api_key": "",
     "model": "openai/gpt-oss-20b:free",
-    "enabled": true
+    "enabled": false,
+    "_note": "HANS_DIALOG_OLLAMA_ONLY_V1 (17.7.): fallback vyřazen. Free tier vyčerpaný, spam v logu. Hansův dialog nyní jen přes lokální Ollama (PC nahoře); když PC dolů, dialog se tiše odloží."
   },
   "weather": {
     "lat": 50.08,

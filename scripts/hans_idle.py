@@ -598,6 +598,11 @@ class HansIdle:
                     self._morning_health_check()
                     self._morning_lessons_check()  # HANS_CORRECTION_LEARNING_V1
                     self._capability_check()       # ranní: co jsem se v noci naučil
+                    try:
+                        from scripts import hans_schedule  # HANS_SCHEDULE_V1
+                        hans_schedule.mark('morning_reflection')
+                    except Exception:
+                        pass
                 self._prev_routine_sleeping = _slp
             except Exception as _mhe:
                 _log.debug('morning_health edge check failed: %s', _mhe)

@@ -35,6 +35,7 @@ PAUSED = "paused"      # záměrně vypnuto (herní mód)
 WEDGED = "wedged"      # server žije, ale visí → self-heal kandidát
 DOWN = "down"          # nedostupné (PC spí / služba neběží)
 UNKNOWN = "unknown"
+WARN = "warn"          # behaviorální varování (rozvrh zaostává) — NEspouští heal
 
 
 def _cfg(config: dict) -> dict:
@@ -198,6 +199,31 @@ def probe_camera(config: dict) -> dict:
         return {"status": UNKNOWN, "detail": str(e)[:80]}
 
 
+# ── behaviorální sebe-audit ──────────────────────────────────────────────────
+def probe_schedule(config: dict) -> dict:
+    """HANS_SCHEDULE_V1 — behaviorální sebe-audit: prošly autonomní rutiny?
+    Status WARN (ne WEDGED/DOWN → nespouští heal), obsahuje seznam stale.
+    Odchytí tiché selhání typu „studium visí 14 dní" (Design 8/12 → 1.7.)."""
+    try:
+        from scripts.hans_schedule import ScheduleStore
+        import os
+        db = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "data", "hans_diary.db")
+        st = ScheduleStore(db)
+        stale = st.stale_list()
+        if not stale:
+            return {"status": OK, "detail": "všechny rutiny běží podle plánu",
+                    "stale": []}
+        # WARN, ne DOWN — audit hlásí, ne restartuje
+        worst = stale[0]
+        return {"status": WARN,
+                "detail": f"{len(stale)} rutin zaostává (nejhorší: "
+                          f"{worst['name']} o {worst['late_s']/3600:.1f}h)",
+                "stale": stale}
+    except Exception as e:
+        return {"status": UNKNOWN, "detail": str(e)[:80], "stale": []}
+
+
 # ── agregace ─────────────────────────────────────────────────────────────────
 def probe_all(config: dict) -> dict:
     """Proboduje všechny závislosti. Vrací {service: {status, detail, ...}}.
@@ -210,6 +236,7 @@ def probe_all(config: dict) -> dict:
         "stt": probe_stt,
         "pc": probe_pc,
         "disk": probe_disk,
+        "schedule": probe_schedule,  # HANS_SCHEDULE_V1 (behaviorální)
     }
     only = _cfg(config).get("probes")  # volitelně podmnožina
     out = {}
@@ -273,11 +300,26 @@ def read_state() -> Optional[dict]:
         return None
 
 
+def _schedule_sentence(health: dict) -> str:
+    """HANS_SCHEDULE_V1 — behaviorální varování (1. osoba, konkrétní)."""
+    sch = (health or {}).get("schedule") or {}
+    stale = sch.get("stale") or []
+    if not stale:
+        return ""
+    if len(stale) == 1:
+        s = stale[0]
+        return "Rozvrh: rutina '%s' zaostává o %.0fh." % (
+            s['name'], s['late_s'] / 3600)
+    return "Rozvrh: %d rutin zaostává (nejhůř '%s' o %.0fh)." % (
+        len(stale), stale[0]['name'], stale[0]['late_s'] / 3600)
+
+
 def summary_sentence(health: dict, healed: list) -> str:
     """Krátká věta pro Hansovo surfacing (1. osoba, upřímně)."""
     bad = degraded_services(health)
+    sched = _schedule_sentence(health)
     if not bad:
-        return ""
+        return sched  # čistá dependency, jen rozvrh (nebo prázdno)
     labels = {"ollama": "můj mozek (Ollama)", "comfyui": "malování (ComfyUI)",
               "kodi": "televize (Kodi)", "stt": "sluch (přepis řeči)",
               "pc": "počítač", "disk": "místo na disku"}
@@ -285,6 +327,8 @@ def summary_sentence(health: dict, healed: list) -> str:
     s = "Zaznamenal jsem potíž: " + ", ".join(parts) + "."
     if "ollama" in healed:
         s += " Zkusil jsem svůj mozek restartovat."
+    if sched:
+        s += " " + sched
     return s
 
 

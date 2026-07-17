@@ -210,9 +210,13 @@ class HansKnowledge:
             return RAGResult(collection_key=collection_key)
 
         kid = self._collections[collection_key]
+        # LOG_CIRCUIT_V1 — potlač spam z mrtvého OpenWebUI (PC v noci vypnutý)
+        from scripts._log_circuit import for_url as _breaker_for, is_conn_error
+        _url = f"{self._base_url}/api/v1/retrieval/query/collection"
+        br = _breaker_for(_url)
         try:
             r = requests.post(
-                f"{self._base_url}/api/v1/retrieval/query/collection",
+                _url,
                 headers=self._headers_json(),
                 json={"collection_names": [kid], "query": text, "k": int(k)},
                 timeout=self._timeout,
@@ -221,8 +225,13 @@ class HansKnowledge:
                 _log.warning("query HTTP %d: %s", r.status_code, r.text[:200])
                 return RAGResult(collection_key=collection_key)
             data = r.json()
+            br.note_success(_log)
         except Exception as e:
-            _log.warning("query selhal (%s): %s", collection_key, e)
+            if is_conn_error(e):
+                if br.should_log(e):
+                    _log.warning("query selhal (%s): %s", collection_key, e)
+            else:
+                _log.warning("query selhal (%s): %s", collection_key, e)
             return RAGResult(collection_key=collection_key)
 
         # ChromaDB tvar: documents/distances/metadatas jsou listy listů,

@@ -555,6 +555,7 @@ class TelegramBridge:
                       "  „kdo je doma\" · „co hraje\" · „běž spát\"\n\n"
                       "Příkazy:\n"
                       "/kalendar — nadcházející události (z vašeho Proton kalendáře)\n"
+                      "/rozvrh — můj rozvrh (autonomní rutiny — kdy naposled tikly)\n"
                       "/seznam — můj seznam poznámek/úkolů (/seznam hotovo N, /seznam smaz N)\n"
                       "/obraz — pošlu poslední obraz (napiš „náhodný obraz\" pro náhodný)\n"
                       "/denik — výpis z mého deníku\n"
@@ -579,7 +580,7 @@ class TelegramBridge:
     _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika",
                                "nitky", "zajmy", "seznam", "kalendar",
                                "zdravi", "nastroj", "brief", "vytvor",
-                               "prohloubit"})
+                               "prohloubit", "rozvrh"})
 
     # HANS_GUARD_TELEGRAM_V1 — příkazy, které MĚNÍ chování domu (ne read-only).
     # Smí je jen role 'full'; hlavní use-case = zapnout/vypnout hlídání z dovolené.

@@ -621,6 +621,14 @@ class HansCuriosity:
                         self._last_read[ck] = time.time()
                     _log.info("Read OK [%s] '%s': %s",
                               topic, result.title, result.summary[:80])
+                    try:
+                        from scripts import hans_schedule  # HANS_SCHEDULE_V1
+                        hans_schedule.mark(
+                            'curiosity_tick',
+                            ok=not getattr(result, 'pending', False),
+                            skip_reason='pending' if getattr(result, 'pending', False) else '')
+                    except Exception:
+                        pass
                 else:
                     _log.debug("Read returned empty for %s:%s", topic, key)
             except Exception as e:
@@ -818,6 +826,13 @@ class HansCuriosity:
                 total += n
             if total:
                 _log.info("HANS_DEFERRED_SUMMARY_V1 drain (brain_up): %d záznamů dožito", total)
+            # HANS_SCHEDULE_V1 — razítko i když total=0 (drain se spustil, jen
+            # nic nebylo k dohnání = zdravé — audit nemá hlásit "backlog visí").
+            try:
+                from scripts import hans_schedule
+                hans_schedule.mark('catchup_drain')
+            except Exception:
+                pass
         finally:
             lock.release()
 
