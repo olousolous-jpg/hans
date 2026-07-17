@@ -22,6 +22,62 @@ from bs4 import BeautifulSoup
 
 _log = __import__("scripts.logger", fromlist=["get_logger"]).get_logger("web_reader")
 
+
+# ── HANS_WIKI_TITLE_MATCH_V1 (17.7.) — title-similarity helpery ─────────────
+_TITLE_STOPWORDS = frozenset({
+    "a", "i", "o", "u", "v", "ve", "z", "ze", "k", "ke", "s", "se", "do",
+    "na", "po", "za", "od", "je", "jsou", "byl", "byla", "být", "pro", "si",
+    "the", "and", "of", "in", "on", "at", "to", "for", "by", "with", "an",
+})
+
+
+def _title_tokens(text: str) -> list:
+    """Rozseká text na obsahová slova (bez diakritiky, bez interpunkce, bez
+    stopwordů, min 3 znaky). Používá se pro title similarity match."""
+    import unicodedata
+    if not text:
+        return []
+    t = unicodedata.normalize("NFKD", text)
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = re.sub(r"[^\w\s]", " ", t.lower())
+    return [w for w in t.split()
+            if len(w) >= 3 and w not in _TITLE_STOPWORDS]
+
+
+def _token_match(a: str, b: str) -> bool:
+    """Fuzzy match dvou tokenů — přesná shoda nebo prefix ≥4 znaky (chytí
+    české skloňování: „architektonické" ↔ „architektura")."""
+    if a == b:
+        return True
+    n = min(len(a), len(b))
+    if n < 4:
+        return False
+    for k in range(n, 3, -1):
+        if a[:k] == b[:k]:
+            return True
+    return False
+
+
+def _title_similarity(query: str, title: str) -> float:
+    """Kolik query tokens má odpovídající token v titulu (0.0–1.0). Substring
+    match query v titulu = auto 1.0 (např. „Icon of the Seas" ↔ „Icon of the
+    Seas (loď)")."""
+    if not query or not title:
+        return 0.0
+    if query.strip().lower() in title.lower():
+        return 1.0
+    q = _title_tokens(query)
+    t = _title_tokens(title)
+    if not q:
+        return 0.0
+    matched = 0
+    for qt in q:
+        for tt in t:
+            if _token_match(qt, tt):
+                matched += 1
+                break
+    return matched / len(q)
+
 # HANS_STUDY_DEEP_V1 — generické odkazy bez studijní hodnoty (vynech z pododkazů)
 _LINK_NOISE = {
     "zeměpisné souřadnice", "geografické souřadnice", "souřadnicový systém",
@@ -163,19 +219,62 @@ class WebReader:
         )
 
     def _wikipedia_search(self, query: str, lang: str = "cs") -> Optional[str]:
-        """Vrátí název nejlepší stránky pro dotaz."""
+        """HANS_WIKI_TITLE_MATCH_V1 (17.7.) — vrátí NÁZEV STRÁNKY, která reálně
+        odpovídá tématu, ne první srsearch hit slepě.
+
+        Dřívější `srlimit=1` bralo top hit i když byl mimo („Kreativní coding a"
+        → JavaFX; „Architektonické vlivy" → Sursockovo muzeum). Study to zapsalo
+        jako platný material → konfabulace přes nesouvisející zdroj.
+
+        Nová strategie:
+          1. `prefixsearch` — striktní, chytí kanonický titul (WCAG → WCAG).
+          2. `srsearch` (top 5) + title-similarity gate (min score
+             `curiosity.wiki_title_min_score`, default 0.5). Bere hit s
+             nejvyšší shodou; pod threshold → None (raději žádný článek než
+             irrelevantní).
+        """
         api = f"https://{lang}.wikipedia.org/w/api.php"
+        # 1) prefixsearch — přesné začátky titulů
+        try:
+            r = self._sess.get(api, params={
+                "action": "query", "list": "prefixsearch",
+                "pssearch": query, "format": "json",
+                "pslimit": 3, "psnamespace": 0,
+            }, timeout=self._timeout)
+            pfx = r.json().get("query", {}).get("prefixsearch", [])
+            if pfx:
+                return pfx[0]["title"]
+        except Exception as e:
+            _log.debug("Wikipedia prefixsearch error: %s", e)
+        # 2) srsearch s title-similarity filtrem
         try:
             r = self._sess.get(api, params={
                 "action": "query", "list": "search",
                 "srsearch": query, "format": "json",
-                "srlimit": 1, "srnamespace": 0,
+                "srlimit": 5, "srnamespace": 0,
             }, timeout=self._timeout)
             hits = r.json().get("query", {}).get("search", [])
-            if hits:
-                return hits[0]["title"]
+            if not hits:
+                return None
+            # threshold 0.6 = min 60% query tokens musí být v titulu. Nastaveno
+            # po ostrém testu (0.5 pouštělo „Technologie 3D rekonstrukce" →
+            # „Pozemské technologie ve Hvězdné bráně" jen na shodu „technologie").
+            min_score = float((self.config.get("curiosity", {}) or {})
+                              .get("wiki_title_min_score", 0.6))
+            best_title = None
+            best_score = 0.0
+            for h in hits:
+                t = h.get("title") or ""
+                s = _title_similarity(query, t)
+                if s > best_score:
+                    best_score = s
+                    best_title = t
+            if best_title and best_score >= min_score:
+                return best_title
+            _log.debug("Wikipedia srsearch: best %r score=%.2f < %.2f — skip",
+                       best_title, best_score, min_score)
         except Exception as e:
-            _log.debug("Wikipedia search error: %s", e)
+            _log.debug("Wikipedia srsearch error: %s", e)
         return None
 
     # ── Wikipedia hloubkové čtení (HANS_STUDY_DEEP_V1) ──────────────────────────
