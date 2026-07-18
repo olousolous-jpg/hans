@@ -81,10 +81,29 @@ _OPERATIONAL = (
     "probouz", "vypínám", "hlídám",
 )
 
+# HANS_COMMIT_INFO_LOOKUP_V1 (18.7.) — info-dotazy které se řeší HNED z uložených
+# dat (ne v budoucnu). Doložený false-positive: „Zjistím, zda máte něco
+# naplánovaného v kalendáři." — Hans se podíval do kalendáře a odpověděl
+# okamžitě, žádný budoucí závazek. Filtr pokrývá lookup akce („zjistím zda /
+# v kalendáři / v deníku / v seznamu / v mých záznamech / podívám se / vyhledám").
+import re as _re
+# Sloveso info-lookup (zjistím, podívám se, vyhledám, zkontroluji, nahlédnu — CZ ohýbání)
+_LOOKUP_VERB = r"(zjist[íi]m?|pod[ií]v[áa]m\s+se|vyhled[áa]m?|zkontroluj[iíeu]|nahl[ée]dnu)"
+# Zdroj info (kalendář, deník, seznam, záznamy, databáze) — kdekoli za slovesem
+_LOOKUP_SOURCE = (r"kalend[áa][řr]|den[ií]k|seznam|z[áa]znam|datab[áa]z|"
+                  r"zda\s+m[áa](te|[šs]))")
+_INFO_LOOKUP_RE = _re.compile(
+    _LOOKUP_VERB + r".{0,60}?(" + _LOOKUP_SOURCE,
+    _re.I,
+)
+
 
 def _is_operational(promise: str) -> bool:
     pl = (promise or "").lower()
-    return any(k in pl for k in _OPERATIONAL)
+    if any(k in pl for k in _OPERATIONAL):
+        return True
+    # info-lookup akce = ne budoucí slib
+    return bool(_INFO_LOOKUP_RE.search(promise or ""))
 
 
 def _init(db) -> None:

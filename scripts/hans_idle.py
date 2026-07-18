@@ -770,12 +770,28 @@ class HansIdle:
         clip = av.get("tv_clip") or "data/avatar/clips/hans_talkloop_00001.mp4"
         return clip if os.path.exists(clip) else None
 
-    def _tv_face_image(self):  # AVATAR_KODI_IMAGE_V1
+    def _tv_face_image(self):  # AVATAR_KODI_IMAGE_V1 / HANS_TV_FACE_LATEST_V1 (17.7.)
         """Cesta k Hansově tváři (PNG) pro dialog na TV; None když chybí.
-        Obrázek z `hans_avatar.face_image` (default idle.png). Gate řeší volající."""
+        Když je `hans_avatar.face_image` v configu, použij ji. Jinak vezmi
+        NEJNOVĚJŠÍ `data/avatar/vN/idle.png` (analogicky `_av_static_idle` v
+        display_renderer). Dřív hard-coded na v1 → Kodi měl starou tvář, i
+        když paint_self vyrobil v2, v3, …"""
         import os
         av = self.config.get("hans_avatar", {}) or {}
-        img = av.get("face_image") or "data/avatar/v1/idle.png"
+        img = av.get("face_image")
+        if img:
+            return img if os.path.exists(img) else None
+        # dynamicky nejnovější verze avatara
+        import glob
+        vers = []
+        for d in glob.glob("data/avatar/v*"):
+            try:
+                vers.append((int(os.path.basename(d)[1:]), d))
+            except ValueError:
+                pass
+        if not vers:
+            return None
+        img = os.path.join(max(vers)[1], "idle.png")
         return img if os.path.exists(img) else None
 
     # FILM_PERSON_PREF_V1 — zájem (volný text) → filmový žánr (token dle

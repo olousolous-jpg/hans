@@ -1345,6 +1345,23 @@ class HansRoutine:
                 hans_schedule.mark('nightly_analytics')
             except Exception:
                 pass
+            # HANS_OFFLINE_WINDOWS_V1 (18.7.) — vyrobit scorable záznamy
+            # „byl jsem offline T1–T2" z brain_down/up eventů (pro budoucí
+            # sebe-odvození vzorců přes hans_self_insight). Idempotentní,
+            # deferral-safe (jen SQL, žádný LLM).
+            try:
+                from scripts.hans_offline_windows import populate_offline_windows
+                populate_offline_windows(self._diary_path)
+            except Exception as _owe:
+                _log.debug("offline_windows populate: %s", _owe)
+            # HANS_SELF_INSIGHT_V1 (18.7.) — weekly LLM analýza vlastních
+            # offline/game_mode dat. Deferral-safe, dedup přes evidence_hash,
+            # gate `self_insight.enabled` (default False, opatrně — reasoning tier).
+            try:
+                from scripts.hans_self_insight import maybe_run
+                maybe_run(self._diary_path, self.config)
+            except Exception as _sie:
+                _log.debug("self_insight maybe_run: %s", _sie)
             if self._night_summary_enabled and self._last_summary_date != today:
                 self._last_summary_date = today
                 self._write_night_summary()

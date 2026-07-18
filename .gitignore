@@ -54,3 +54,11 @@ tools/patch.py
 tools/patch_*.py
 tools/test_verdict_parse.py
 eye_calibration.json
+
+# Osobní Kodi addon (obsahuje reálnou IP NAS + mapu privátní struktury složek).
+# Držíme jen lokálně jako zálohu, ne v public repu.
+tools/kodi_addon_myiptv/
+
+# LivePortrait avatar animation setup (obsahuje IP PC + username + cesty).
+# Per-user tooling, ne obecně sdíletelné.
+tools/avatar_animate/

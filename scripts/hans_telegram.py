@@ -556,6 +556,8 @@ class TelegramBridge:
                       "Příkazy:\n"
                       "/kalendar — nadcházející události (z vašeho Proton kalendáře)\n"
                       "/rozvrh — můj rozvrh (autonomní rutiny — kdy naposled tikly)\n"
+                      "/vhledy — co jsem si všiml ve vlastních datech (/vhledy teď = spusť rozbor)\n"
+                      "/experiment [minut] — zapnu si herní mód na N minut, pak auto-resume\n"
                       "/seznam — můj seznam poznámek/úkolů (/seznam hotovo N, /seznam smaz N)\n"
                       "/obraz — pošlu poslední obraz (napiš „náhodný obraz\" pro náhodný)\n"
                       "/denik — výpis z mého deníku\n"
@@ -580,11 +582,11 @@ class TelegramBridge:
     _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika",
                                "nitky", "zajmy", "seznam", "kalendar",
                                "zdravi", "nastroj", "brief", "vytvor",
-                               "prohloubit", "rozvrh"})
+                               "prohloubit", "rozvrh", "vhledy"})
 
     # HANS_GUARD_TELEGRAM_V1 — příkazy, které MĚNÍ chování domu (ne read-only).
     # Smí je jen role 'full'; hlavní use-case = zapnout/vypnout hlídání z dovolené.
-    _MUTATING_CMDS = frozenset({"hlidej"})
+    _MUTATING_CMDS = frozenset({"hlidej", "experiment"})
 
     def _route_inspect_command(self, text: str, cmd: str, cid: str) -> bool:
         """Zkusí obsloužit inspekční slash příkaz přes chat_commands. True když ano."""

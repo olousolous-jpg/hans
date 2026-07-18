@@ -2521,3 +2521,102 @@ register(
     handler=_cmd_prohloubit,
     help_text="Návrh prohloubení studia: /prohloubit [schválit|ne|<vlastní kritika>]",
 )
+
+
+# ─── /vhledy — Hansovy sebe-vhledy (HANS_SELF_INSIGHT_V1) ────────────────────
+def _cmd_vhledy(handler, name, args) -> str:  # HANS_SELF_INSIGHT_V1
+    """/vhledy — co si Hans všiml ve vlastních datech (offline_windows,
+    game_mode). Podklady = nightly LLM analýza (deepseek-r1 → hans-czech).
+    /vhledy teď = spusť run hned (bez ohledu na kadenci)."""
+    try:
+        from scripts.hans_self_insight import latest_insights, run_analysis
+    except Exception as _e:
+        return "Sebe-vhledy nejsou dostupné, pane. (%s)" % _e
+    cfg = getattr(handler, "config", {}) or {}
+    dbp = (cfg.get("diary_db")
+           or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+           or "data/hans_diary.db")
+    args_s = (args or "").strip().lower()
+
+    if args_s in ("ted", "teď", "run", "nyní", "nyni"):
+        # Vyžádaný okamžitý run (mimo weekly kadenci). Blokuje ~1-2 min.
+        import threading as _th
+        def _bg():
+            try:
+                run_analysis(dbp, cfg, force=True)
+            except Exception:
+                pass
+        _th.Thread(target=_bg, daemon=True).start()
+        return ("Spouštím rozbor svých vlastních dat na pozadí, pane. "
+                "Za pár minut zkuste /vhledy znovu — objeví se v seznamu.")
+
+    ins = latest_insights(dbp, limit=int(args_s) if args_s.isdigit() else 3)
+    if not ins:
+        return ("Zatím jsem si o svých vlastních vzorcích nic nezapsal, pane. "
+                "Zkuste /vhledy teď — spustím rozbor.")
+    import datetime as _dt
+    lines = ["Co jsem si v poslední době všiml ve vlastních datech:"]
+    for i, r in enumerate(ins, 1):
+        when = _dt.datetime.fromtimestamp(r["ts"]).strftime("%d.%m. %H:%M")
+        lines.append("")
+        lines.append("── %s (%dd okno) ──" % (when, r["window_days"]))
+        lines.append(r["insight_cs"])
+    return "\n".join(lines)
+
+
+register(
+    "vhledy",
+    slash_aliases=["vhledy", "insights"],
+    nl_patterns=[
+        r"\bco\s+sis?\s+vši?ml?\s+(u\s+sebe|na\s+sob[ěe])",
+        r"\btv[ée]\s+vhledy?\b",
+        r"\bm[áa]š?\s+n[ěe]jak[éy]\s+vhled",
+    ],
+    handler=_cmd_vhledy,
+    help_text="Co si Hans všiml ve vlastních datech (offline/herní mód); /vhledy teď = spusť rozbor hned",
+)
+
+
+# ─── /experiment — footgun s auto-resume (HANS_FOOTGUN_V1) ───────────────────
+def _cmd_experiment(handler, name, args) -> str:
+    """/experiment [minut] — spusť experiment: Hans si zapne herní mód na
+    N minut (default 5), pak auto-resume. Neutrální deník záznam. Config
+    gate `hans_experiment.enabled`."""
+    try:
+        from scripts.hans_footgun import experiment_run, status, is_running
+    except Exception as _e:
+        return "Experiment modul nedostupný, pane. (%s)" % _e
+    cfg = getattr(handler, "config", {}) or {}
+    args_s = (args or "").strip().lower()
+    if args_s in ("stav", "status"):
+        s = status()
+        if s.get("active"):
+            return ("Experiment běží: %d minut, zbývá %d minut."
+                    % (s["duration_s"] // 60, s.get("remaining_s", 0) // 60))
+        return "Aktuálně žádný experiment neběží."
+    if is_running():
+        s = status()
+        return ("Experiment už běží — zbývá %d minut. Počkej na auto-resume."
+                % (s.get("remaining_s", 0) // 60))
+    # default 5 min
+    dur_min = 5
+    try:
+        if args_s and args_s.isdigit():
+            dur_min = int(args_s)
+    except Exception:
+        pass
+    r = experiment_run(cfg, duration_s=dur_min * 60)
+    if not r.get("ok"):
+        return "Experiment nespuštěn: %s" % r.get("message", "?")
+    return ("Spouštím experiment: zapínám si herní mód na %d minut. "
+            "Auto-resume je zajištěn — i kdybych se během toho nemohl "
+            "vyjádřit, systém mě vrátí." % dur_min)
+
+
+register(
+    "experiment",
+    slash_aliases=["experiment", "footgun"],
+    nl_patterns=[],
+    handler=_cmd_experiment,
+    help_text="Experiment: zapnu si herní mód na N minut (default 5), pak auto-resume",
+)

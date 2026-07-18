@@ -401,6 +401,17 @@ def render_descriptor(config: dict, descriptor: dict, diary_db_path: str) -> boo
     # rendered=1 JEN když projdou VŠECHNY výrazy+nálady (jinak retry příště — deferral)
     if n_ok == len(targets):
         _mark_rendered(diary_db_path, ver)
+        # HANS_AVATAR_ANIMATE_V1 (17.7.) — po úspěšném SDXL renderu regenerovat
+        # i animované LivePortrait klipy (mrkání/talk/idle/talkloop) z nové vN
+        # tváře. Async (thread), deferral-safe. Gate `hans_avatar.animate.enabled`.
+        try:
+            from scripts.hans_avatar_animate import (
+                enabled as _anim_enabled, regenerate_clips_async as _anim_go)
+            if _anim_enabled(config):
+                _anim_go(ver, config)
+                _log.info("avatar: HANS_AVATAR_ANIMATE_V1 spuštěn na pozadí pro v%d", ver)
+        except Exception as _ae:
+            _log.warning("avatar: animate hook selhal: %s", _ae)
         return True
     _log.warning("avatar: render NEÚPLNÝ (%d/%d) — rendered zůstává 0, dožene se příště",
                  n_ok, len(targets))

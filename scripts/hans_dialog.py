@@ -555,11 +555,12 @@ class HansDialog:
         gem = config.get("openrouter", {})
         self._api_key = gem.get("api_key", "")
         self._model   = gem.get("model", "openai/gpt-oss-20b:free")
-        self._enabled = bool(gem.get("enabled", True)) and bool(self._api_key)
-
-        if not self._enabled:
-            _log.warning("Gemini API not configured — dialog disabled")
-            return
+        # HANS_DIALOG_OLLAMA_ONLY_V1 (17.7.) — dialog jede přes LOKÁLNÍ Ollamu
+        # (dvě mysli / _call_ollama). openrouter je vyřazený fallback → jeho
+        # `enabled` flag NENÍ global gate na celý modul. Thread startuje vždy.
+        # (Dřív: self._enabled = openrouter.enabled AND api_key → při vyřazení
+        # openrouter jsem tím tiše zabil i Koláčův dialog.)
+        self._enabled = True
 
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
