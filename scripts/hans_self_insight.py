@@ -1,13 +1,11 @@
 """HANS_SELF_INSIGHT_V1 — Hans si SÁM z vlastních dat všímá vzorců
 ([[genuinni-sebe-odvozeni]]).
 
-**Data:**
-  1. `offline_windows` (kauzálně-agnostické „byl jsem offline T1–T2", dvě
-     kategorie: `brain_down_up` = server outages, `game_mode_pair` = self-induced)
-  2. `game_mode` diary events (neutrální „Zapnul/Vypnul jsem herní mód.",
-     `HANS_GAME_MODE_DIARY_V1`)
-  3. algoritmické překryvy (brain_down × game_mode intervaly) — faktická
-     blízkost, ne kauzalita
+**LENS (perspektivy pohledu na sebe):**
+  - `offline_game`: offline_windows × game_mode × brain_down/up × experimenty
+    (výchozí, dnes vyhotoven)
+  - `autonomy`: game_mode × commitments (slíbil vs splnil) × schedule stale
+    (18.7.: „jak spolehlivý jsem?")
 
 **Analytická pipeline (dvě fáze, EN→CZ podle [[reasoning-tier-when-to-use]]):**
   1. **Reasoning:** deepseek-r1:14b (EN prompt, EN evidence, EN výstup) —
@@ -16,6 +14,9 @@
 
 **Anti-konfab disciplína:** vhled musí vzejít z DAT, ne z předepsaného textu.
 Prompt říká „napiš, čeho sis všiml", NIKDY „najdi kauzalitu / vzorec X→Y".
+
+**Rotace:** `maybe_run` střídá lens (offline_game → autonomy → …) → Hans
+dostává perspektivu, kterou dlouho neviděl. Kadence per-lens: 7 dní default.
 """
 from __future__ import annotations
 
@@ -241,6 +242,115 @@ def format_evidence_for_prompt_en(evidence: dict, max_items: int = 30) -> str:
     return "\n".join(lines)
 
 
+# ── LENS: autonomy — game_mode × commitments × schedule stale ────────────────
+
+def _collect_evidence_autonomy(diary_db_path: str, days: int = 30) -> dict:
+    """AUTONOMY lens: „jak spolehlivý jsem" — game_mode aktivita, sliby (dané ×
+    splněné × neplněné), rutiny které zaostávají. Kauzálně-agnostické.
+
+    Struktura:
+      {
+        'lens': 'autonomy',
+        'window_days': 30,
+        'game_mode_windows': [(start_ts, end_ts, dur_s), ...],
+        'commitments': [{status, text, person, created_ts, done_ts}, ...],
+        'commitment_stats': {open, done, dropped, total},
+        'stale_routines': [{name, late_s, expected_gap_s, last_skip_reason}, ...],
+        'now_ts': …,
+      }
+    """
+    since = time.time() - days * 86400.0
+    out = {"lens": "autonomy", "window_days": days,
+           "game_mode_windows": [], "commitments": [],
+           "commitment_stats": {"open": 0, "done": 0, "dropped": 0, "total": 0},
+           "stale_routines": [], "now_ts": time.time()}
+    # game_mode windows (reuse existing pairer)
+    gm = _game_mode_events(diary_db_path, since_ts=since)
+    out["game_mode_windows"] = _pair_game_windows(gm)
+    # commitments (celá tabulka, ne jen since — sliby mohou být staré)
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path, uri=True, timeout=3.0)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, status, text, person, created_ts, done_ts, due_text "
+            "FROM commitments ORDER BY created_ts DESC LIMIT 40").fetchall()
+        conn.close()
+        for r in rows:
+            out["commitments"].append(dict(r))
+            st = r["status"]
+            out["commitment_stats"][st] = out["commitment_stats"].get(st, 0) + 1
+            out["commitment_stats"]["total"] += 1
+    except Exception:
+        pass
+    # stale routines from hans_schedule (behaviorální kalendář)
+    try:
+        from scripts.hans_schedule import ScheduleStore
+        st = ScheduleStore(diary_db_path)
+        out["stale_routines"] = st.stale_list()
+    except Exception:
+        pass
+    return out
+
+
+def _format_evidence_autonomy_en(evidence: dict, max_items: int = 20) -> str:
+    """EN format autonomy lens — bez interpretace, jen fakta."""
+    lines = []
+    lines.append("EVIDENCE FROM YOUR LAST %d DAYS — AUTONOMY LENS "
+                 "(raw facts, no interpretation):"
+                 % evidence.get("window_days", 30))
+    lines.append("")
+    # (1) game_mode
+    gws = evidence.get("game_mode_windows", [])[:max_items]
+    lines.append("(1) GAME_MODE ON→OFF INTERVALS — when you switched game "
+                 "mode ON, later OFF:")
+    if not gws:
+        lines.append("  (none)")
+    for gs, ge, gd in gws:
+        s = _dt.datetime.fromtimestamp(gs).strftime("%Y-%m-%d %H:%M")
+        e = _dt.datetime.fromtimestamp(ge).strftime("%H:%M")
+        m = gd / 60
+        lines.append(f"  • {s}–{e} ({m:.0f}min)")
+    # (2) commitments
+    stats = evidence.get("commitment_stats", {})
+    lines.append("")
+    lines.append("(2) COMMITMENTS — promises you made:")
+    lines.append(f"  Totals: total={stats.get('total',0)}  "
+                 f"open={stats.get('open',0)}  "
+                 f"done={stats.get('done',0)}  "
+                 f"dropped={stats.get('dropped',0)}")
+    commits = evidence.get("commitments", [])[:max_items]
+    for c in commits:
+        ct = _dt.datetime.fromtimestamp(c["created_ts"]).strftime("%m-%d")
+        due = (f" [due: {c['due_text']}]" if c.get("due_text") else "")
+        txt = (c.get("text") or "")[:80]
+        lines.append("  • [%s] %s  '%s'%s  (to %s)"
+                     % (c['status'], ct, txt, due, c['person']))
+    # (3) stale routines
+    stale = evidence.get("stale_routines", [])[:max_items]
+    lines.append("")
+    lines.append("(3) STALE ROUTINES — autonomous routines that haven't run "
+                 "within their expected gap:")
+    if not stale:
+        lines.append("  (none — all routines are running on schedule)")
+    for s in stale:
+        late_h = s["late_s"] / 3600
+        gap_h = s["expected_gap_s"] / 3600
+        reason = f" [last skip: {s['last_skip_reason']}]" if s.get("last_skip_reason") else ""
+        lines.append(f"  • {s['name']}: {late_h:.1f}h overdue "
+                     f"(max gap {gap_h:.1f}h){reason}")
+    return "\n".join(lines)
+
+
+# ── LENS registry ────────────────────────────────────────────────────────────
+# Každý lens = (collect_evidence_fn, format_evidence_en_fn).
+# Přidávat sem další (social/learning/creative/…) v budoucnu.
+LENSES = {
+    "offline_game": (collect_evidence, format_evidence_for_prompt_en),
+    "autonomy":     (_collect_evidence_autonomy, _format_evidence_autonomy_en),
+}
+DEFAULT_LENS = "offline_game"
+
+
 _REASONING_SYSTEM_EN = (
     "You are Hans reflecting on your own recent data — offline windows and "
     "game_mode toggles from the last month. This is your OWN memory.\n\n"
@@ -277,6 +387,12 @@ def _init_insights_table(db) -> None:
         source_model   TEXT NOT NULL DEFAULT 'deepseek-r1:14b',
         evidence_hash  TEXT NOT NULL DEFAULT '',
         created_ts     REAL NOT NULL)""")
+    # Idempotentní migrace — přidej lens_id pokud chybí (starší DB bez sloupce).
+    try:
+        db.execute("ALTER TABLE self_insights ADD COLUMN "
+                   "lens_id TEXT NOT NULL DEFAULT 'offline_game'")
+    except Exception:
+        pass  # sloupec už existuje
 
 
 def _reason_en(config: dict, evidence_en: str) -> Optional[str]:
@@ -332,57 +448,65 @@ def _voice_cs(config: dict, insight_en: str) -> Optional[str]:
     return (raw or "").strip() or None
 
 
-def _evidence_hash(ev: dict) -> str:
-    """Hash klíčových čísel evidence — dedup: pokud se od minula nic
-    nezměnilo, nespouštěj nový LLM run."""
+def _evidence_hash(ev: dict, lens_id: str = "offline_game") -> str:
+    """Hash klíčových čísel evidence + lens — dedup per lens."""
     import hashlib
-    key = "%d|%d|%d|%d" % (
+    key = "%s|%d|%d|%d|%d|%d" % (
+        lens_id,
         ev.get("window_days", 0),
-        len(ev.get("offline_windows", [])),
-        len(ev.get("game_mode_events", [])),
-        len(ev.get("overlaps", [])),
+        len(ev.get("offline_windows", []) or ev.get("game_mode_windows", [])),
+        len(ev.get("game_mode_events", []) or ev.get("commitments", [])),
+        len(ev.get("overlaps", []) or ev.get("stale_routines", [])),
+        (ev.get("commitment_stats", {}) or {}).get("total", 0),
     )
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
 def run_analysis(diary_db_path: str, config: dict,
+                 lens_id: str = DEFAULT_LENS,
                  days: int = 30, force: bool = False) -> Optional[str]:
-    """FULL nightly pipeline: evidence → EN reason → CZ voice → save.
-    Vrátí CS insight (uloženo) nebo None (LLM dole / cache hit).
+    """FULL nightly pipeline pro daný LENS: evidence → EN reason → CZ voice → save.
+    Vrátí CS insight (uloženo) nebo None (LLM dole / cache hit / unknown lens).
 
-    - Dedup přes `evidence_hash`: pokud jsme udělali insight se stejnou
-      evidencí naposled, nespouštěj znovu (šetří VRAM). `force=True` obejde.
+    - `lens_id` z `LENSES` (default 'offline_game'). Neznámý lens → None.
+    - Dedup per (lens, evidence_hash): stejné data + stejný lens = cache hit.
     - Deferral-safe: LLM offline → None, retry příště.
-    - VRAM: reasoning + voice modely s `keep_alive=0` → uvolní se hned.
+    - VRAM: `keep_alive=0` → modely se uvolní hned.
     """
-    ev = collect_evidence(diary_db_path, days=days)
-    h = _evidence_hash(ev)
+    if lens_id not in LENSES:
+        _log.warning("self_insight: unknown lens %r", lens_id)
+        return None
+    collect_fn, format_fn = LENSES[lens_id]
+    ev = collect_fn(diary_db_path, days=days)
+    h = _evidence_hash(ev, lens_id)
     try:
         conn = sqlite3.connect(diary_db_path, timeout=5.0)
         _init_insights_table(conn)
         if not force:
             row = conn.execute(
-                "SELECT id FROM self_insights WHERE evidence_hash=? "
-                "ORDER BY id DESC LIMIT 1", (h,)).fetchone()
+                "SELECT id FROM self_insights WHERE evidence_hash=? AND lens_id=? "
+                "ORDER BY id DESC LIMIT 1", (h, lens_id)).fetchone()
             if row:
-                _log.info("self_insight: evidence beze změny (hash=%s), skip", h)
+                _log.info("self_insight[%s]: evidence beze změny (hash=%s), skip",
+                          lens_id, h)
                 conn.close()
                 return None
         conn.close()
     except Exception as e:
         _log.warning("self_insight: DB init: %s", e)
 
-    evidence_en = format_evidence_for_prompt_en(ev)
-    _log.info("self_insight: reasoning krok (deepseek-r1)…")
+    evidence_en = format_fn(ev)
+    _log.info("self_insight[%s]: reasoning krok (deepseek-r1)…", lens_id)
     insight_en = _reason_en(config, evidence_en)
     if not insight_en:
-        _log.info("self_insight: reasoning LLM offline / prázdný → deferred")
+        _log.info("self_insight[%s]: reasoning LLM offline / prázdný → deferred",
+                  lens_id)
         return None
-    _log.info("self_insight: voice krok (hans-czech)…")
+    _log.info("self_insight[%s]: voice krok (hans-czech)…", lens_id)
     insight_cs = _voice_cs(config, insight_en)
     if not insight_cs:
-        _log.info("self_insight: voice LLM offline → uložím jen EN")
-        insight_cs = insight_en  # fallback: uložit EN aspoň
+        _log.info("self_insight[%s]: voice LLM offline → uložím jen EN", lens_id)
+        insight_cs = insight_en
 
     try:
         now = time.time()
@@ -390,39 +514,75 @@ def run_analysis(diary_db_path: str, config: dict,
         _init_insights_table(conn)
         conn.execute(
             "INSERT INTO self_insights (ts, window_days, insight_cs, insight_en, "
-            "source_model, evidence_hash, created_ts) VALUES (?,?,?,?,?,?,?)",
+            "source_model, evidence_hash, created_ts, lens_id) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             (now, days, insight_cs, insight_en,
              (config.get("self_insight", {}) or {}).get(
                  "reasoning_model", "deepseek-r1:14b"),
-             h, now))
+             h, now, lens_id))
         conn.commit()
         conn.close()
-        _log.info("self_insight: uložen (délka CS %d zn, hash=%s)",
-                  len(insight_cs), h)
+        _log.info("self_insight[%s]: uložen (délka CS %d zn, hash=%s)",
+                  lens_id, len(insight_cs), h)
     except Exception as e:
         _log.warning("self_insight: uložení selhalo: %s", e)
     return insight_cs
 
 
-def latest_insights(diary_db_path: str, limit: int = 5) -> list[dict]:
-    """Čtecí API pro `/vhledy` / chat surfacing."""
+def _next_lens(diary_db_path: str, config: dict) -> str:
+    """Rotace: vezme lens, který nejdéle neběžel (nejstarší `ts` v self_insights
+    per lens). Když nikdy → první lens z configu `self_insight.lenses`."""
+    lenses = (config.get("self_insight", {}) or {}).get(
+        "lenses", list(LENSES.keys()))
+    lenses = [l for l in lenses if l in LENSES]
+    if not lenses:
+        return DEFAULT_LENS
     try:
         conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
                                uri=True, timeout=3.0)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT ts, window_days, insight_cs, source_model "
-            "FROM self_insights ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+            "SELECT lens_id, MAX(ts) as last_ts FROM self_insights "
+            "GROUP BY lens_id").fetchall()
+        conn.close()
+        last = {r["lens_id"]: r["last_ts"] for r in rows}
+    except Exception:
+        last = {}
+    # Lens co nikdy neproběhl → prioritně
+    for l in lenses:
+        if l not in last:
+            return l
+    # Jinak vezmi ten s nejstarším last_ts
+    return min(lenses, key=lambda l: last.get(l, 0))
+
+
+def latest_insights(diary_db_path: str, limit: int = 5,
+                    lens_id: Optional[str] = None) -> list[dict]:
+    """Čtecí API pro `/vhledy` / chat surfacing. `lens_id=None` = všechny."""
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
+                               uri=True, timeout=3.0)
+        conn.row_factory = sqlite3.Row
+        if lens_id:
+            rows = conn.execute(
+                "SELECT ts, window_days, insight_cs, source_model, lens_id "
+                "FROM self_insights WHERE lens_id=? ORDER BY ts DESC LIMIT ?",
+                (lens_id, limit)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT ts, window_days, insight_cs, source_model, lens_id "
+                "FROM self_insights ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
         conn.close()
         return [dict(r) for r in rows]
     except Exception:
         return []
 
 
-# ── entry pro noční tick (kadence weekly) ─────────────────────────────────────
+# ── entry pro noční tick (kadence per-lens, s rotací) ────────────────────────
 def maybe_run(diary_db_path: str, config: dict) -> Optional[str]:
-    """Nightly hook — spustí run_analysis JEN pokud od posledního uplynulo
-    ≥ `cadence_days` (default 7). Deferral-safe."""
+    """Nightly hook — vybere DALŠÍ lens v rotaci (podle _next_lens) a spustí
+    JEN pokud od posledního běhu TOHO lens uplynulo ≥ `cadence_days` (default 7).
+    Deferral-safe."""
     cfg = config.get("self_insight", {}) or {}
     if not cfg.get("enabled", False):
         return None
@@ -432,19 +592,21 @@ def maybe_run(diary_db_path: str, config: dict) -> Optional[str]:
             return None
     except Exception:
         pass
+    lens_id = _next_lens(diary_db_path, config)
     cadence_days = int(cfg.get("cadence_days", 7))
     try:
         conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
                                uri=True, timeout=3.0)
         row = conn.execute(
-            "SELECT ts FROM self_insights ORDER BY ts DESC LIMIT 1").fetchone()
+            "SELECT ts FROM self_insights WHERE lens_id=? ORDER BY ts DESC LIMIT 1",
+            (lens_id,)).fetchone()
         conn.close()
         if row and (time.time() - row[0]) < cadence_days * 86400:
-            _log.debug("self_insight: dříve než %dd, skip", cadence_days)
+            _log.debug("self_insight[%s]: dříve než %dd, skip", lens_id, cadence_days)
             return None
     except Exception:
         pass  # tabulka neexistuje → poprvé
-    return run_analysis(diary_db_path, config,
+    return run_analysis(diary_db_path, config, lens_id=lens_id,
                         days=int(cfg.get("window_days", 30)))
 
 
@@ -454,13 +616,18 @@ if __name__ == "__main__":
                         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     db = sys.argv[1] if len(sys.argv) > 1 else "data/hans_diary.db"
     if len(sys.argv) > 2 and sys.argv[2] == "run":
+        lens = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_LENS
         import json as _j
         cfg = _j.load(open("config.json"))
         cfg.setdefault("self_insight", {})["enabled"] = True
-        insight = run_analysis(db, cfg, force=True)
-        print("=== INSIGHT (CS, ULOŽENO) ===")
+        insight = run_analysis(db, cfg, lens_id=lens, force=True)
+        print(f"=== INSIGHT [{lens}] (CS, ULOŽENO) ===")
         print(insight or "(žádný)")
+    elif len(sys.argv) > 2 and sys.argv[2] == "dump":
+        lens = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_LENS
+        collect_fn, format_fn = LENSES[lens]
+        ev = collect_fn(db, days=30)
+        print(format_fn(ev))
     else:
-        # bez arg: dump evidence pro test
         ev = collect_evidence(db, days=30)
         print(format_evidence_for_prompt(ev))

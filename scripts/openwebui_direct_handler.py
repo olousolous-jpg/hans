@@ -2125,6 +2125,31 @@ class OpenWebUIDirectHandler:
                         self.conv_store.add_exchange(name, user_message, _sa)
                     except Exception:
                         pass
+                    # HANS_SOURCE_QUERY_BYPASS_NOTE_V1 (18.7.) — zápis do
+                    # deníku: Hans si zápisem v night_summary / evening_reflection
+                    # všimne, že odpověď šla deterministickou cestou (mimo LLM).
+                    # Bez toho persona finetune nezná svá vlastní „mimotělní"
+                    # sdělení → cognitivní dissonance („nevím proč jsem to řekl").
+                    try:
+                        import sqlite3 as _sq, time as _tm
+                        _snippet = (_sa[:140] + "…") if len(_sa) > 140 else _sa
+                        _note = ("Odpověděl jsem přes deterministickou cestu "
+                                 "(bypass mimo mou obvyklou personu — přímý "
+                                 "výpis z paměti). Nešlo o vlastní úvahu, ale "
+                                 "o vyzvednutí uloženého faktu. Odpověď: „%s\""
+                                 % _snippet)
+                        _c = _sq.connect(_dbp_sa, timeout=5.0)
+                        # importance=7 → projde filtrem `>=6` v night_reflection
+                        # `moments`, takže Hans v ranní reflexi zápis uvidí.
+                        _c.execute(
+                            "INSERT INTO diary (ts, event_type, title, note, importance) "
+                            "VALUES (?,?,?,?,?)",
+                            (_tm.time(), "bypass_note",
+                             "Bypass odpověď (source query)", _note, 7))
+                        _c.commit(); _c.close()
+                    except Exception as _bne:
+                        logging.getLogger(__name__).debug(
+                            'bypass_note write: %s', _bne)
                     return _sa
         except Exception as _sae:
             print(f"[Chat] source query answer error: {_sae}")

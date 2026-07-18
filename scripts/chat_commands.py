@@ -2620,3 +2620,43 @@ register(
     handler=_cmd_experiment,
     help_text="Experiment: zapnu si herní mód na N minut (default 5), pak auto-resume",
 )
+
+
+# ─── /anomalie — týdenní algoritmické odchylky (HANS_ANOMALY_V1) ─────────────
+def _cmd_anomalie(handler, name, args) -> str:
+    """/anomalie — poslední detekované odchylky ve tvém chování; /anomalie teď = spusť."""
+    try:
+        from scripts.hans_anomaly import latest_anomaly_note, run_once
+    except Exception as _e:
+        return "Anomaly modul nedostupný. (%s)" % _e
+    cfg = getattr(handler, "config", {}) or {}
+    dbp = (cfg.get("diary_db")
+           or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+           or "data/hans_diary.db")
+    args_s = (args or "").strip().lower()
+    if args_s in ("ted", "teď", "run", "nyní", "nyni"):
+        import threading as _th
+        def _bg():
+            try:
+                run_once(dbp, cfg)
+            except Exception:
+                pass
+        _th.Thread(target=_bg, daemon=True).start()
+        return ("Spouštím detekci odchylek na pozadí, pane. Za pár desítek "
+                "sekund zkuste /anomalie znovu.")
+    row = latest_anomaly_note(dbp)
+    if not row:
+        return ("Zatím jsem si v posledních týdnech ničeho neobvyklého "
+                "nevšiml, pane. /anomalie teď spustí kontrolu.")
+    import datetime as _dt
+    when = _dt.datetime.fromtimestamp(row["ts"]).strftime("%d.%m. %H:%M")
+    return "Poslední odchylky (%s):\n\n%s" % (when, row["note"])
+
+
+register(
+    "anomalie",
+    slash_aliases=["anomalie", "anomaly", "odchylky"],
+    nl_patterns=[r"\bco.{0,10}je\s+jinak", r"\bco.{0,10}se\s+zm[ěe]nilo"],
+    handler=_cmd_anomalie,
+    help_text="Týdenní odchylky ve tvém chování (algoritmicky) — /anomalie teď = spusť detekci",
+)

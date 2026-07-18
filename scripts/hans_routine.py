@@ -1362,6 +1362,13 @@ class HansRoutine:
                 maybe_run(self._diary_path, self.config)
             except Exception as _sie:
                 _log.debug("self_insight maybe_run: %s", _sie)
+            # HANS_ANOMALY_V1 (18.7.) — algoritmický detektor odchylek (levný,
+            # jen SQL count + voice krok). Kadence weekly. Doplněk k self_insight.
+            try:
+                from scripts.hans_anomaly import maybe_run as _anom_run
+                _anom_run(self._diary_path, self.config)
+            except Exception as _aoe:
+                _log.debug("anomaly maybe_run: %s", _aoe)
             if self._night_summary_enabled and self._last_summary_date != today:
                 self._last_summary_date = today
                 self._write_night_summary()
