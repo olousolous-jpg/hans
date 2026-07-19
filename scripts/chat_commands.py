@@ -21,6 +21,18 @@ from typing import Callable, Optional
 
 _log = logging.getLogger("chat_commands")
 
+
+def _current_channel() -> Optional[str]:
+    """HANS_CHAT_CHANNEL_AWARE_V1 — čte aktuální kanál (web/telegram/voice/
+    popup) nastavený send_chat_message v thread-local. None = mimo chat
+    vlákno (dispatch → celá historie, zpětná kompat)."""
+    try:
+        from scripts.openwebui_direct_handler import get_current_channel
+        return get_current_channel()
+    except Exception:
+        return None
+
+
 # CHAT_COMMANDS_MARKER
 
 # ── Registr commands ───────────────────────────────────────────────────
@@ -152,7 +164,10 @@ def _cmd_verify(handler, name, args) -> str:
     text = (args or "").strip()
     if not text:
         try:
-            hist = handler.conv_store.get_history(name) or []
+            # HANS_CHAT_CHANNEL_AWARE_V1 — poslední odpověď JEN v tomto kanálu
+            _ch = _current_channel()
+            hist = ((handler.conv_store.get_history_scoped(name, _ch)
+                     if _ch else handler.conv_store.get_history(name)) or [])
             for msg in reversed(hist):
                 if msg.get("role") == "assistant" and msg.get("content"):
                     text = msg["content"].strip()
@@ -1145,7 +1160,12 @@ def _cmd_namaluj(handler, name, args) -> str:
     # odkaz na rozhovor → sestav téma z posledních uživatelských zpráv
     if not subj or _re.search(r"(?i)bavili|mluvili|povídali|rozhovor|o\s+čem", subj):
         try:
-            hist = handler.conv_store.get_history(name) or []
+            # HANS_CHAT_CHANNEL_AWARE_V1 — paint kontext JEN z tohoto kanálu.
+            # Bug 3 (18.7.): „zkus to znova" ve web chatu vzalo Rimmera z
+            # Telegram konverzace 7 min zpět. Cross-channel history je leak.
+            _ch = _current_channel()
+            hist = (handler.conv_store.get_history_scoped(name, _ch)
+                    if _ch else handler.conv_store.get_history(name)) or []
             ux = [m["content"] for m in hist if m.get("role") == "user"][-4:]
             ux = [u for u in ux if not u.strip().lower().startswith(
                 ("namaluj", "nakresli", "vytvoř"))]
@@ -1201,7 +1221,14 @@ def _distill_paint_subject(config, name, handler, subj: str) -> str:
         return subj
     try:
         conv = getattr(handler, "conv_store", None)
-        hist = conv.get_history(name) if conv else []
+        # HANS_CHAT_CHANNEL_AWARE_V1 — destilaci krmi JEN tímto kanálem
+        _ch = _current_channel()
+        if conv is None:
+            hist = []
+        elif _ch:
+            hist = conv.get_history_scoped(name, _ch)
+        else:
+            hist = conv.get_history(name)
         ctx = "\n".join(
             "%s: %s" % ("Uživatel" if m.get("role") == "user" else "Hans",
                         (m.get("content") or "")[:150])

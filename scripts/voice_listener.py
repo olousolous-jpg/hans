@@ -425,7 +425,10 @@ class VoiceListener:
                 if tts and getattr(tts, "enabled", False) and s and s.strip():
                     tts.speak(s, priority=not _spoke["any"])
                     _spoke["any"] = True
-            response = ch.send_chat_message(name, text, on_sentence=_on_sentence)
+            # HANS_CHAT_CHANNEL_AWARE_V1 — hlasový vstup tag
+            response = ch.send_chat_message(name, text,
+                                            on_sentence=_on_sentence,
+                                            channel="voice")
             if not response:
                 return
             log.info(f"[Voice] ← {response[:80]}")

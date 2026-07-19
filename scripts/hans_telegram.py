@@ -456,7 +456,9 @@ class TelegramBridge:
         try:
             if self._handler is not None and hasattr(self._handler,
                                                      "send_chat_message"):
-                reply = self._handler.send_chat_message(_person, text)
+                # HANS_CHAT_CHANNEL_AWARE_V1 — Telegram tag pro conv_store
+                reply = self._handler.send_chat_message(_person, text,
+                                                       channel="telegram")
         except Exception as e:
             _log.warning("telegram → chat selhal: %s", e)
             reply = None

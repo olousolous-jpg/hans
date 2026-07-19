@@ -171,8 +171,9 @@ class SimplePopupChat:
             for attempt in range(2):
                 try:
                     if hasattr(self.chat_handler, 'send_chat_message'):
+                        # HANS_CHAT_CHANNEL_AWARE_V1 — desktop popup tag
                         response = self.chat_handler.send_chat_message(
-                            self.person_name, message)
+                            self.person_name, message, channel="popup")
                     elif hasattr(self.chat_handler, '_send_ollama_message'):
                         prompt = self._build_prompt(message)
                         response = self.chat_handler._send_ollama_message(prompt)

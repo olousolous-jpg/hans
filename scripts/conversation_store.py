@@ -62,20 +62,44 @@ class ConversationStore:
         self._max_turns = int(conv_cfg.get("max_turns", 20))
         self._dir.mkdir(parents=True, exist_ok=True)
 
-    def get_history(self, name: str) -> list:
+    def get_history(self, name: str, channel: str = None) -> list:
+        """HANS_CHAT_CHANNEL_AWARE_V1 — channel=None vrací vše (zpětná
+        kompatibilita, default). channel='web'/'telegram'/'voice'/'popup' vrací
+        JEN zprávy s tímto kanálem NEBO bez kanálu (starý netaggovaný data).
+        Prevence cross-channel leaku: „zkus to znova" ve web chatu nesmí vidět
+        historii z Telegramu."""
+        data = self._load(name)
+        msgs = data.get("messages", [])
+        if channel is not None:
+            msgs = [m for m in msgs if m.get("ch") in (None, channel)]
+        return [{"role": m["role"],
+                 "content": (dedup_address_g4d(m["content"])
+                             if m["role"] == "assistant" else m["content"])}
+                for m in msgs]
+
+    def get_history_scoped(self, name: str, channel: str) -> list:
+        """PŘÍSNÝ režim: vrátí JEN zprávy s daným kanálem (netaggované zprávy
+        NEZAHRNUJE). Pro paint destilaci — kde cross-channel leak = bug."""
         data = self._load(name)
         return [{"role": m["role"],
                  "content": (dedup_address_g4d(m["content"])
                              if m["role"] == "assistant" else m["content"])}
-                for m in data.get("messages", [])]
+                for m in data.get("messages", []) if m.get("ch") == channel]
 
-    def add_exchange(self, name: str, user_msg: str, assistant_msg: str):
+    def add_exchange(self, name: str, user_msg: str, assistant_msg: str,
+                     channel: str = None):
         data = self._load(name)
         msgs = data.get("messages", [])
         now  = time.time()
-        msgs.append({"role": "user",      "content": user_msg,      "ts": now})
+        _u = {"role": "user", "content": user_msg, "ts": now}
+        if channel:
+            _u["ch"] = channel
+        msgs.append(_u)
         assistant_msg = dedup_address_g4d(assistant_msg)  # G4D_DEDUP_ADDRESS_V1
-        msgs.append({"role": "assistant", "content": assistant_msg, "ts": now})
+        _a = {"role": "assistant", "content": assistant_msg, "ts": now}
+        if channel:
+            _a["ch"] = channel
+        msgs.append(_a)
         max_msgs = self._max_turns * 2
         if len(msgs) > max_msgs:
             msgs = msgs[-max_msgs:]
@@ -83,11 +107,13 @@ class ConversationStore:
         data["updated"]  = datetime.now().isoformat(timespec="seconds")
         self._save(name, data)
 
-    def add_greeting(self, name: str, greeting_text: str):
+    def add_greeting(self, name: str, greeting_text: str, channel: str = None):
         data = self._load(name)
         msgs = data.get("messages", [])
-        msgs.append({"role": "assistant", "content": greeting_text,
-                     "ts": time.time()})
+        _g = {"role": "assistant", "content": greeting_text, "ts": time.time()}
+        if channel:
+            _g["ch"] = channel
+        msgs.append(_g)
         max_msgs = self._max_turns * 2
         if len(msgs) > max_msgs:
             msgs = msgs[-max_msgs:]

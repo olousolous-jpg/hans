@@ -24,6 +24,16 @@ from scripts.conversation_store import ConversationStore
 from scripts.debug_log import dbg as _dbg
 # endregion
 
+# HANS_CHAT_CHANNEL_AWARE_V1 — thread-local aktuální kanál (web/telegram/
+# voice/popup). Nastaví ho send_chat_message, čte chat_commands / hans_agent
+# přes get_current_channel(). Cross-channel leak conv_store (Telegram →
+# web chat „zkus to znova") se tím filtruje na místech, kde by ublížil.
+_channel_local = threading.local()
+
+def get_current_channel():
+    """HANS_CHAT_CHANNEL_AWARE_V1 — aktuální kanál (nebo None mimo chat vlákno)."""
+    return getattr(_channel_local, "channel", None)
+
 
 # ── G3B_ANTIKONFAB_FIX_V1 — anti-konfabulační prompt (modul-level) ──
 # Vstříkne se PŘED fakta v _build_grounding. Drží hans-czech u záznamů.
@@ -235,7 +245,8 @@ class OpenWebUIDirectHandler:
         # Web chat: vezmi CELOU odpověď (bez stream-TTS), vyčisti opakované
         # pozdravy, AŽ POTOM vyslov — opraví zobrazené i mluvené najednou.
         try:
-            resp = self.send_chat_message(person, message)
+            # HANS_CHAT_CHANNEL_AWARE_V1 — tag zprávy channelem 'web'
+            resp = self.send_chat_message(person, message, channel="web")
         except Exception as e:
             resp = f"(chyba: {e})"
         resp = self._collapse_repeated_greetings(resp or "")
@@ -678,7 +689,9 @@ class OpenWebUIDirectHandler:
                     _hist = []
                     if name:
                         try:
-                            _hist = self.conv_store.get_history(name) or []
+                            # HANS_CHAT_CHANNEL_AWARE_V1 — měkký filtr
+                            _ch = get_current_channel()
+                            _hist = self.conv_store.get_history(name, channel=_ch) or []
                         except Exception:
                             _hist = []
                     _rw = _f1_rewrite(self.config, str(_text),
@@ -1803,7 +1816,12 @@ class OpenWebUIDirectHandler:
         if system:
             msgs.append({"role": "system", "content": system})
         if name:
-            history = self.conv_store.get_history(name)
+            # HANS_CHAT_CHANNEL_AWARE_V1 — LLM vidí historii tohoto kanálu +
+            # staré netaggované zprávy (kontinuita). Zprávy z JINÝCH kanálů
+            # se filtrují (Bug 3: Rimmer z Telegramu ovlivnil web chat).
+            # get_history(channel=X) = ch IN (None, X) — měkký filtr.
+            _ch = get_current_channel()
+            history = self.conv_store.get_history(name, channel=_ch)
             history = [m for m in history if isinstance(m, dict)]
             # Limit history — kompletní historie přeplňuje context window.
             # 8K context + RAG retrieval + system prompt nechá málo místa,
@@ -2140,11 +2158,21 @@ class OpenWebUIDirectHandler:
                 "human_chat diary write (early-return): %s", _e)
 
     def send_chat_message(self, name: str, user_message: str,
-                          on_sentence=None) -> str | None:
+                          on_sentence=None, channel: str = None) -> str | None:
         """
         Pošle zprávu s historií, uloží exchange.
         Speciální příkaz: /note <text> → uloží do known_persons[name].notes
+
+        HANS_CHAT_CHANNEL_AWARE_V1 — channel: 'web' / 'telegram' / 'voice' /
+        'popup' identifikuje původ zprávy. Ukládá se do conv_store jako
+        `ch` tag → cross-channel leak (Telegram → web chat „zkus to znova")
+        se filtruje. `channel=None` = zpětná kompat.
         """
+        # HANS_CHAT_CHANNEL_AWARE_V1 — thread-local pro dispatch/chat_commands.
+        try:
+            _channel_local.channel = channel
+        except Exception:
+            pass
         # ── /note příkaz ──────────────────────────────────────────────────
         stripped = user_message.strip()
         if stripped.lower().startswith("/read "):
@@ -2194,7 +2222,7 @@ class OpenWebUIDirectHandler:
                 _reply = dispatch(_cmd, self, name=name)
                 # Ulož do historie + diary jako normální exchange
                 try:
-                    self.conv_store.add_exchange(name, user_message, _reply)
+                    self.conv_store.add_exchange(name, user_message, _reply, channel=channel)
                 except Exception:
                     pass
                 self._log_human_chat_to_diary(name, user_message, _reply)
@@ -2215,7 +2243,7 @@ class OpenWebUIDirectHandler:
             if _kb:
                 print("[Chat] HANS_KNOWLEDGE_CHECK_V1 → deterministic bypass")
                 try:
-                    self.conv_store.add_exchange(name, user_message, _kb)
+                    self.conv_store.add_exchange(name, user_message, _kb, channel=channel)
                 except Exception:
                     pass
                 self._log_human_chat_to_diary(name, user_message, _kb)
@@ -2237,7 +2265,7 @@ class OpenWebUIDirectHandler:
                 if _sa:
                     print("[Chat] HANS_SOURCE_QUERY_V1 → deterministic bypass")
                     try:
-                        self.conv_store.add_exchange(name, user_message, _sa)
+                        self.conv_store.add_exchange(name, user_message, _sa, channel=channel)
                     except Exception:
                         pass
                     # HANS_SOURCE_QUERY_BYPASS_NOTE_V1 (18.7.) — zápis do
@@ -2277,7 +2305,7 @@ class OpenWebUIDirectHandler:
             _dr = self._maybe_deepen_response(name, user_message)
             if _dr:
                 try:
-                    self.conv_store.add_exchange(name, user_message, _dr)
+                    self.conv_store.add_exchange(name, user_message, _dr, channel=channel)
                 except Exception:
                     pass
                 self._log_human_chat_to_diary(name, user_message, _dr)
@@ -2296,7 +2324,7 @@ class OpenWebUIDirectHandler:
                 _conf = _agent.check_confirmation(self, name, user_message)
                 if _conf is not None:
                     try:
-                        self.conv_store.add_exchange(name, user_message, _conf)
+                        self.conv_store.add_exchange(name, user_message, _conf, channel=channel)
                     except Exception:
                         pass
                     self._log_human_chat_to_diary(name, user_message, _conf)
@@ -2304,7 +2332,7 @@ class OpenWebUIDirectHandler:
                 _prop = _agent.propose(self, name, user_message)
                 if _prop:
                     try:
-                        self.conv_store.add_exchange(name, user_message, _prop)
+                        self.conv_store.add_exchange(name, user_message, _prop, channel=channel)
                     except Exception:
                         pass
                     if on_sentence:
@@ -2383,7 +2411,7 @@ class OpenWebUIDirectHandler:
             except Exception:
                 pass
         if response:
-            self.conv_store.add_exchange(name, _raw_message, response)
+            self.conv_store.add_exchange(name, _raw_message, response, channel=channel)
             # # HUMAN_CHAT_VIA_LOG_ENTRY
             # Vztahové karty + paměť — zaloguj exchange do deníku jako
             # human_chat. Přes _log_entry → spustí synthesis_hooks

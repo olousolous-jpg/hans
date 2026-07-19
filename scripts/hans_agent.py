@@ -876,7 +876,14 @@ class AgentRouter:
             pass
         # posledních N výměn
         try:
-            hist = handler.conv_store.get_history(name) or []
+            # HANS_CHAT_CHANNEL_AWARE_V1 — agent kontext JEN z tohoto kanálu
+            try:
+                from scripts.openwebui_direct_handler import get_current_channel
+                _ch = get_current_channel()
+            except Exception:
+                _ch = None
+            hist = ((handler.conv_store.get_history_scoped(name, _ch)
+                     if _ch else handler.conv_store.get_history(name)) or [])
             for msg in hist[-self.context_msgs:]:
                 role = msg.get("role")
                 c = (msg.get("content") or "")[:200]
