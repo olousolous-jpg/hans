@@ -1200,3 +1200,205 @@ if __name__ == "__main__":
 
     print("\n=== last_seen_answer ===")
     print(last_seen_answer(db, cfg, "kdy jsi mě naposledy viděl?", "standa"))
+
+
+# ── HANS_RECENT_ACTIVITY_V1 (18.7.) — „co jsi se dnes dozvěděl / co sis zapsal"
+
+_RECENT_QUERY_RE = re.compile(
+    r"(co\s+(?:jsi\s+se\s+)?(?:dnes|za\s+dnesek|te[dď])\s+"
+    r"(?:dozv[ěe]d[eě]l|nau[čc]il|zjistil|na[čc]etl|[čc]etl|napadlo)|"
+    r"n[ěe]jak[ée]\s+(?:zajímavosti|zaj[ií]mavosti|z[áa]zna?my?)\s+(?:dnes|dneska)?|"
+    r"co\s+sis?\s+dnes\s+zapsal|"
+    r"co\s+jsi\s+dnes\s+d[ěe]lal|"
+    r"jak\s+jsi\s+d[ne]s\s+str[áa]vil)",
+    re.I,
+)
+
+
+def is_recent_activity_query(text: str) -> bool:
+    """Ptá se uživatel „co jsi se dnes dozvěděl / co sis zapsal / jaké
+    zajímavosti dnes / co jsi dnes dělal"? Deterministický gate."""
+    return bool(_RECENT_QUERY_RE.search(_fold(text or "")))
+
+
+def recent_activity_answer(db_path: str, days: int = 1,
+                           max_items_per_type: int = 3) -> Optional[str]:
+    """HANS_RECENT_ACTIVITY_V1 — deterministický recall Hansovy vlastní
+    aktivity za posledních N dní (default 1 = dnešek). Vrátí grounded blok
+    z deníku (study_note, book_reflection, reading_takeaway, web_read,
+    movie_opinion, introspection, spontaneous, art_generated) — Hans z toho
+    LLM vytvoří lidskou odpověď, ale je grounded ve faktech.
+
+    Účel: opravit false-negative anti-konfab („nemám záznam") na dotaz na
+    dnešní aktivitu, když Hans REÁLNĚ dnes něco dělal a to je v deníku.
+    """
+    since = time.time() - days * 86400.0
+    # kategorie k výpisu (label → event_type, kolik z každého)
+    cats = [
+        ("Studoval jsem", "study_note", max_items_per_type),
+        ("Četl jsem", "web_read", max_items_per_type),
+        ("Zaujalo mě ze čtení", "reading_takeaway", max_items_per_type),
+        ("Zapsal jsem k filmu/pořadu", "movie_opinion", max_items_per_type),
+        ("Zapsal jsem ke knize", "book_reflection", max_items_per_type),
+        ("Mě napadlo (spontaneous)", "spontaneous", max_items_per_type),
+        ("Uvažoval jsem (introspection)", "introspection", max_items_per_type),
+    ]
+    lines = []
+    total = 0
+    conn = None
+    try:
+        conn = _ro(db_path)
+        conn.row_factory = sqlite3.Row
+        for label, etype, lim in cats:
+            rows = conn.execute(
+                "SELECT ts, title, note, data FROM diary "
+                "WHERE event_type=? AND ts >= ? "
+                "AND coalesce(note, data, '') != '' "
+                "ORDER BY ts DESC LIMIT ?",
+                (etype, since, lim)).fetchall()
+            if not rows:
+                continue
+            lines.append(f"{label}:")
+            for r in rows:
+                _content = (r["note"] or r["data"] or "").strip()
+                _title = (r["title"] or "").strip()
+                _snip = (_content[:180] + ("…" if len(_content) > 180 else ""))
+                if _title:
+                    lines.append(f"  • [{_title}] {_snip}")
+                else:
+                    lines.append(f"  • {_snip}")
+                total += 1
+    except Exception as e:
+        _log.warning("recent_activity_answer: %s", e)
+        return None
+    finally:
+        if conn:
+            conn.close()
+    if total == 0:
+        return None  # Hans dnes reálně nic nedělal → pusť anti-konfab
+    return ("SKUTEČNÉ zápisky z tvého deníku za dnešek (odpověz JEN z nich; "
+            "shrň lidsky, nevymýšlej nic, co v nich není):\n\n"
+            + "\n".join(lines))
+
+
+# ── HANS_KNOWLEDGE_CHECK_V1 (18.7.) — „znáš X?" když X NENÍ v paměti ────────
+# Doložený bug (18.7. 21:15): user „Znáš Červený trpaslík?" → hans-czech
+# halucinoval „Ano, mám v paměti záznamy" (LEŽ, RAG žádný match). Prompt
+# klauzule V2 nezakázala + persona finetune ji ignoruje. Fix: grounding blok
+# s explicit markerem PŘED user query (G4B_GROUNDING_POSITION_V1 = poslední
+# slovo). Když detekt „znáš X?" a X není v deníku/entities → grounding říká
+# „PAMĚŤ NEOBSAHUJE X, můžeš odpovědět obecnou znalostí, ale NIKDY 'mám záznam'".
+
+_KNOWLEDGE_CHECK_RE = re.compile(
+    r"\b(?:zn[áa][sš]|zn[áa]te|sly[šs]el(?:a)?\s+jsi\s+o|"
+    r"co\s+v[íi][šs]\s+o|"
+    r"m[áa][šs]\s+z[áa]zna?m\s+o|"
+    r"nev[íi][šs]\s+co\s+je|nev[íi][šs]\s+kdo\s+je)"
+    r"\s+([\w\s\d\.\-']+?)"
+    r"[?.,;\n]",
+    re.I,
+)
+
+
+def is_knowledge_check_query(text: str) -> bool:
+    """Ptá se uživatel „znáš X?" / „co víš o X?" / „máš záznam o X?"? Levný gate.
+    Regex je unicode-safe → volám na ORIGINÁLU (bez _fold), ať `_extract_topic`
+    dostane originální text s diakritikou."""
+    return bool(_KNOWLEDGE_CHECK_RE.search(text or ""))
+
+
+def _extract_knowledge_topic(text: str) -> Optional[str]:
+    """Vytáhne X z „znáš X?" — capture group regexu. Očištěno o pomocná slova."""
+    m = _KNOWLEDGE_CHECK_RE.search(text or "")
+    if not m:
+        return None
+    x = m.group(1).strip(" .,?!;:'\"")
+    # Odstranit prefix „ten/tu/to/ta/serial/film/kniha" (pomocná slova bez informace)
+    x = re.sub(r"^(?:seri[áa]l|film|knih(?:u|a|y)|posta?vu?|typa?)\s+",
+               "", x, flags=re.I)
+    return x.strip() or None
+
+
+def _topic_in_memory(db_path: str, topic: str) -> bool:
+    """True když topic MÁ nějaký záznam v deníku / entities (case-insensitive
+    substring). Levný check — vyhne se draze RAG dotaz."""
+    if not topic or len(topic) < 3:
+        return False
+    conn = None
+    try:
+        conn = _ro(db_path)
+        # entities.name (Wikipedia lookup uložený)
+        r = conn.execute(
+            "SELECT 1 FROM entities WHERE lower(name) LIKE ? LIMIT 1",
+            ("%" + topic.lower() + "%",)).fetchone()
+        if r:
+            return True
+        # diary.title / note — nejrelevantnější kolekce
+        r = conn.execute(
+            "SELECT 1 FROM diary WHERE (lower(title) LIKE ? OR lower(note) LIKE ?) "
+            "AND event_type IN ('web_read','study_note','book_read','book_reflection',"
+            "'movie_opinion','kodi_playing','reading_takeaway') LIMIT 1",
+            ("%" + topic.lower() + "%", "%" + topic.lower() + "%")).fetchone()
+        return bool(r)
+    except Exception:
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+
+def knowledge_check_answer(db_path: str, user_text: str) -> Optional[str]:
+    """HANS_KNOWLEDGE_CHECK_V1 — grounding blok „PAMĚŤ NEOBSAHUJE X" pro
+    dotaz „znáš X?". None = X JE v paměti (nech normální recall/RAG cestu)
+    nebo detektor selhal (dotaz není typu 'znáš X?').
+
+    Anti-konfab silnější než system prompt klauzule (G4B position: grounding
+    sedí těsně před user query, přebíjí conversation history i persona)."""
+    topic = _extract_knowledge_topic(user_text)
+    if not topic:
+        return None
+    if _topic_in_memory(db_path, topic):
+        # X JE v paměti — nech film_knowledge_answer / recall / RAG odpovědět
+        return None
+    return (
+        "\n\nDŮLEŽITÉ FAKTUM O TVÉ PAMĚTI: v tvých vlastních záznamech "
+        "(deník, entity, čtená paměť) NENÍ žádný záznam o \"%s\". Nic "
+        "konkrétního jsi si o tom nezapsal ani nepamatuješ z vlastní "
+        "zkušenosti.\n\n"
+        "PRAVIDLA PRO ODPOVĚĎ:\n"
+        "1. NIKDY neříkej „mám v paměti záznamy o %s\" ani „nedávno "
+        "jsem si to pročetl\" — byla by to lež (PAMĚŤ NEOBSAHUJE).\n"
+        "2. Pokud tě to napadá z obecné znalosti (z tréninku): odpověz "
+        "poctivě „V paměti to nemám zapsané, ale obecně vím, že %s "
+        "je...\" — jasně rozliš OBECNOU ZNALOST od PAMĚTI.\n"
+        "3. Když nevíš ani obecně: „O tomto pojmu nic konkrétního nevím, "
+        "pane.\"\n\n"
+        "Klíč: rozlišuj OBECNÁ ZNALOST (z tréninku) vs. PAMĚŤ (co jsi "
+        "sám prožil/četl/zapsal). Nesměšuj je." % (topic, topic, topic))
+
+
+def knowledge_check_bypass(db_path: str, user_text: str,
+                           asker: Optional[str] = None) -> Optional[str]:
+    """HANS_KNOWLEDGE_CHECK_V1 BYPASS (18.7.) — deterministická odpověď na
+    „znáš X?" když X NENÍ v Hansově paměti. Analogicky `sources_answer`
+    (bypass mimo LLM), protože grounding block nezabral — hans-czech persona
+    finetune si vždy vyfabuluje „mám v paměti záznamy".
+
+    Vrátí string nebo None. None = X JE v paměti nebo dotaz není typu 'znáš X?'
+    → nech normální recall/RAG cestu.
+
+    Text šetří obecnou znalost (bypass nemá LLM) — přiznává „nemám v paměti"
+    a nabízí uživateli, že se to může Hans naučit (studium, čtení, atd.).
+    """
+    topic = _extract_knowledge_topic(user_text)
+    if not topic:
+        return None
+    if _topic_in_memory(db_path, topic):
+        return None  # nech normální cestu, X JE v paměti
+    oslov = ("%s" % asker.capitalize()) if asker else "pane"
+    # Kompaktní honestní odpověď + nabídka pokud chce ať Hans si to zapíše
+    return ("V paměti nemám žádné vlastní záznamy o '%s', %s. "
+            "Nic jsem si o tom nezapsal ani nečetl (obecně to znám možná "
+            "z tréninku, ale nechci to vydávat za vlastní paměť). "
+            "Kdybyste chtěl, mohu si to zařadit do studia — stačí říct "
+            "'nastuduj %s'." % (topic, oslov, topic))

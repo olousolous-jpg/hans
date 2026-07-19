@@ -526,6 +526,47 @@ class OpenWebUIDirectHandler:
         # volajícího (A1 short-circuit běží jen u 'factual_nofacts').
         self._grounding_outcome = 'skip'
 
+        # HANS_KNOWLEDGE_CHECK_V1 (18.7.) — „znáš X?" / „co víš o X?" když X
+        # NENÍ v paměti (deník/entities). Bez tohoto hans-czech halucinuje
+        # „mám v paměti záznamy" i pro věci, o kterých nikdy neslyšel (doložený
+        # Červený trpaslík chat 21:15). System prompt klauzule V2 nezakázala;
+        # grounding blok (G4B_POSITION_V1) má silnější slovo — sedí těsně před
+        # user query, přebíjí persona finetune.
+        try:
+            from scripts.hans_recall import (
+                is_knowledge_check_query, knowledge_check_answer)
+            if is_knowledge_check_query(str(_text)):
+                _dbp_kc = (self.config.get("diary_db")
+                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                           or "data/hans_diary.db")
+                _kc = knowledge_check_answer(_dbp_kc, str(_text))
+                if _kc:
+                    self._grounding_outcome = 'grounded'
+                    return _kc
+                # None = topic JE v paměti → nech normální recall/RAG cestu
+        except Exception:
+            pass
+
+        # HANS_RECENT_ACTIVITY_V1 (18.7.) — „co jsi se dnes dozvěděl / co sis
+        # zapsal / co jsi dnes dělal"? Deterministický recall Hansovy vlastní
+        # aktivity za posledních N dní (default 1). Opravuje false-negative
+        # anti-konfab „nemám záznam" (doloženo chat 20:44/20:45 — Hans DNES
+        # studoval, četl, maloval; ale intent 'udalost' + RAG žádný match →
+        # G3C brzda). Deterministické fakta z deníku obchází.
+        try:
+            from scripts.hans_recall import (
+                is_recent_activity_query, recent_activity_answer)
+            if is_recent_activity_query(str(_text)):
+                _dbp_ra = (self.config.get("diary_db")
+                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                           or "data/hans_diary.db")
+                _ra = recent_activity_answer(_dbp_ra, days=1)
+                if _ra:
+                    self._grounding_outcome = 'grounded'
+                    return _ra
+        except Exception:
+            pass
+
         # HANS_SOURCE_QUERY_V1 — „odkud to víš / kde jsi to četl / máš zdroj"?
         # MUSÍ BÝT PRVNÍ (dřív než _intent/_knowledge gate) — dotaz na
         # provenienci NEpotřebuje intent/RAG infrastrukturu; přebije obecnou
@@ -1506,6 +1547,30 @@ class OpenWebUIDirectHandler:
                     " pokud v promptu URL je, mas ji. Pokud opravdu v promptu"
                     " nic neni, priznaj to a rekni: 'to je z me obecne znalosti,"
                     " konkretni clanek v pameti nemam'.")
+                # HANS_MEMORY_VS_KNOWLEDGE_V1 (18.7.) — rozlišuj OBECNOU ZNALOST
+                # (co víš z trénování) od PAMĚŤOVÉHO ZÁZNAMU (co je výše v
+                # kontextu / RAG groundingu / deníku). Doložený případ Červený
+                # trpaslík (18.7. 21:15): user „Znáš X?", RAG žádný match, Hans
+                # halucinoval „Ano, mám v paměti záznamy a nedávno jsem si jej
+                # pročetl" — LEŽ. Následně „zajímavosti Rimmera?" → „nemám
+                # záznam" = viditelný ROZPOR.
+                system_msg += (
+                    "\n\nPAMĚŤ vs OBECNÁ ZNALOST — KLÍČOVÉ ROZLIŠENÍ:\n"
+                    "Když se tě někdo zeptá 'znáš X?' nebo 'co víš o X?',"
+                    " nejdřív se podívej ZDA je X výše v kontextu / v tvé paměti"
+                    " (grounding blok, historie). Podle toho odpověz JEDNÍM"
+                    " ze tří způsobů:\n"
+                    "  (a) V PAMĚTI — kontext / grounding X obsahuje: 'Ano,"
+                    " mám o X záznamy...' a řekni CO PŘESNĚ máš.\n"
+                    "  (b) OBECNÁ ZNALOST — kontext X neobsahuje, ale ty ho"
+                    " z obecné znalosti znáš: 'V paměti to nemám, ale obecně"
+                    " vím, že X je Y...' a klidně to obecně shrň. NEROZUMĚJ"
+                    " 'obecná znalost' jako 'mám záznam' — jsou to jiné věci.\n"
+                    "  (c) NEZNÁŠ — kontext X neobsahuje a ani obecně nevíš:"
+                    " 'O X nemám znalost, pane.' Krátce, bez vymýšlení.\n"
+                    "NIKDY nesměšuj: nesmíš říct 'mám v paměti záznamy' u něčeho,"
+                    " co je JEN tvá obecná znalost. Rozpor 'mám záznamy' vs"
+                    " 'nemám záznamy' v jedné konverzaci = ztráta důvěry.")
                 # HANS_PROVENANCE_V1 — source-monitoring: rozlišuj vzpomínku
                 # od představy/úvahy (řádky kontextu nesou značku původu).
                 try:
@@ -2046,6 +2111,34 @@ class OpenWebUIDirectHandler:
         return ("Schváleno, pane. Prohloubím studium „%s“ a příště z něj vytvořím "
                 "lepší dílo." % p0["topic"])
 
+    def _log_human_chat_to_diary(self, name: str, user_message: str,
+                                 response: str) -> None:
+        """HANS_CHAT_DIARY_ALL_PATHS_V1 (18.7.) — early-return cesty (slash cmd,
+        agent akce, source bypass, deepen…) obchází standardní diary write na
+        konci `send_chat_message` → chat se do `human_chat` nezapíše →
+        reflexe/self_insight/audit ho neuvidí (viz Telegram Rimmer-paint 21:16).
+        Extract do helper, volat u KAŽDÉ early-return cesty."""
+        if not response:
+            return
+        try:
+            _note = f"{name}: {user_message}\nHans: {response}"
+            _hi = getattr(self, "_hans_idle", None)
+            if _hi and hasattr(_hi, "_log_entry"):
+                _hi._log_entry("human_chat", name, note=_note)
+                return
+            # fallback: přímý SQL
+            import sqlite3 as _sql, time as _t
+            _diary = (self.config.get("diary_db", "data/hans_diary.db")
+                      if hasattr(self, "config") else "data/hans_diary.db")
+            with _sql.connect(_diary) as _db:
+                _db.execute(
+                    "INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
+                    (_t.time(), "human_chat", name, _note))
+                _db.commit()
+        except Exception as _e:
+            logging.getLogger(__name__).debug(
+                "human_chat diary write (early-return): %s", _e)
+
     def send_chat_message(self, name: str, user_message: str,
                           on_sentence=None) -> str | None:
         """
@@ -2104,9 +2197,31 @@ class OpenWebUIDirectHandler:
                     self.conv_store.add_exchange(name, user_message, _reply)
                 except Exception:
                     pass
+                self._log_human_chat_to_diary(name, user_message, _reply)
                 return _reply
         except Exception as _ce:
             print(f"[Chat] command dispatch error: {_ce}")
+
+        # HANS_KNOWLEDGE_CHECK_V1 BYPASS (18.7. → 19.7.) — hans-czech persona
+        # halucinuje „mám v paměti záznamy" i pro věci, které nikdy neviděl
+        # (doložený Červený trpaslík). Grounding block s explicit „PAMĚŤ
+        # NEOBSAHUJE X" NEZABRAL (persona > grounding). Bypass jako sources_answer.
+        try:
+            from scripts.hans_recall import knowledge_check_bypass
+            _dbp_kb = (self.config.get("diary_db")
+                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                       or "data/hans_diary.db")
+            _kb = knowledge_check_bypass(_dbp_kb, user_message, asker=name)
+            if _kb:
+                print("[Chat] HANS_KNOWLEDGE_CHECK_V1 → deterministic bypass")
+                try:
+                    self.conv_store.add_exchange(name, user_message, _kb)
+                except Exception:
+                    pass
+                self._log_human_chat_to_diary(name, user_message, _kb)
+                return _kb
+        except Exception as _kce:
+            print(f"[Chat] knowledge check bypass error: {_kce}")
 
         # HANS_SOURCE_QUERY_V1 — bypass LLM (17.7.). hans-czech persona
         # odmítá sdílet URL i s explicitním groundingem — persona finetune
@@ -2150,6 +2265,7 @@ class OpenWebUIDirectHandler:
                     except Exception as _bne:
                         logging.getLogger(__name__).debug(
                             'bypass_note write: %s', _bne)
+                    self._log_human_chat_to_diary(name, user_message, _sa)
                     return _sa
         except Exception as _sae:
             print(f"[Chat] source query answer error: {_sae}")
@@ -2164,6 +2280,7 @@ class OpenWebUIDirectHandler:
                     self.conv_store.add_exchange(name, user_message, _dr)
                 except Exception:
                     pass
+                self._log_human_chat_to_diary(name, user_message, _dr)
                 return _dr
         except Exception as _de:
             print(f"[Chat] deepen response error: {_de}")
@@ -2182,6 +2299,7 @@ class OpenWebUIDirectHandler:
                         self.conv_store.add_exchange(name, user_message, _conf)
                     except Exception:
                         pass
+                    self._log_human_chat_to_diary(name, user_message, _conf)
                     return _conf
                 _prop = _agent.propose(self, name, user_message)
                 if _prop:
@@ -2194,6 +2312,7 @@ class OpenWebUIDirectHandler:
                             on_sentence(_prop)
                         except Exception:
                             pass
+                    self._log_human_chat_to_diary(name, user_message, _prop)
                     return _prop
         except Exception as _ae:
             print(f"[Chat] agent layer error: {_ae}")
