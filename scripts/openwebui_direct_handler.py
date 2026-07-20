@@ -1215,6 +1215,24 @@ class OpenWebUIDirectHandler:
             try:
                 # Zjisti aktualne viditelne osoby
                 _vis = getattr(self, "_visible_persons", [])
+                # HANS_CHAT_HIDE_3RD_PARTY_V1 (20.7.) — v CHAT módu (name je
+                # aktuální mluvčí) neposkytovat modelu info o 3. stranách
+                # v místnosti. Doloženo 15.7.: jedna osoba byla vidět, jiná
+                # chatovala → model fabrikoval „paní X se ptala, jestli bych jí
+                # nabídnout čaj a sušenky" (paralelní narativ z presence +
+                # curiosity zájmů). Chat partner sám vidí kdo je doma;
+                # když se zeptá „kdo je doma?", odpoví na to agent action
+                # report_who_is_home z živých dat, ne model z presence hintu.
+                # V pozdravu (for_greeting=True) nefiltrujeme — greeting
+                # legitimně zmíní kdo je v pokoji.
+                if name and not for_greeting and _vis:
+                    if name in _vis:
+                        _vis = [name]   # ponech jen partnera
+                    else:
+                        # partner (např. Telegram) není fyzicky přítomen —
+                        # NEuvádět modelu 3. strany ani „nikdo" (klam);
+                        # None → surroundings_db větu úplně vynechá.
+                        _vis = None
                 _pan = getattr(self, "_pan_angle", None)
                 _wx = getattr(self, '_weather', None)
                 _wx_str = _wx.get_context_string() if _wx else None
@@ -2130,32 +2148,82 @@ class OpenWebUIDirectHandler:
                 "lepší dílo." % p0["topic"])
 
     def _log_human_chat_to_diary(self, name: str, user_message: str,
-                                 response: str) -> None:
+                                 response: str,
+                                 bypass_kind: str = None) -> None:
         """HANS_CHAT_DIARY_ALL_PATHS_V1 (18.7.) — early-return cesty (slash cmd,
         agent akce, source bypass, deepen…) obchází standardní diary write na
         konci `send_chat_message` → chat se do `human_chat` nezapíše →
         reflexe/self_insight/audit ho neuvidí (viz Telegram Rimmer-paint 21:16).
-        Extract do helper, volat u KAŽDÉ early-return cesty."""
+        Extract do helper, volat u KAŽDÉ early-return cesty.
+
+        HANS_BYPASS_TRACE_V1 (19.7.) — `bypass_kind` (např. 'sources',
+        'knowledge_check') označí, že odpověď NEPROŠLA persona finetunem —
+        šla deterministickou šablonou mimo LLM. Zápis do `data` sloupce
+        (JSON) + samostatný `bypass_note` s importance=7 (surfacing v
+        night_reflection / self_insight). Bez toho persona finetune svá
+        vlastní „mimotělní" sdělení nezná → kognitivní dissonance při
+        čtení vlastního deníku ([[bypass-self-reflection]])."""
         if not response:
             return
         try:
             _note = f"{name}: {user_message}\nHans: {response}"
+            _data = None
+            if bypass_kind:
+                import json as _json
+                _data = _json.dumps({"bypass": 1, "kind": bypass_kind},
+                                    ensure_ascii=False)
             _hi = getattr(self, "_hans_idle", None)
             if _hi and hasattr(_hi, "_log_entry"):
-                _hi._log_entry("human_chat", name, note=_note)
-                return
-            # fallback: přímý SQL
-            import sqlite3 as _sql, time as _t
-            _diary = (self.config.get("diary_db", "data/hans_diary.db")
-                      if hasattr(self, "config") else "data/hans_diary.db")
-            with _sql.connect(_diary) as _db:
-                _db.execute(
-                    "INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
-                    (_t.time(), "human_chat", name, _note))
-                _db.commit()
+                _hi._log_entry("human_chat", name, note=_note,
+                               data=(_data or ""))
+            else:
+                # fallback: přímý SQL
+                import sqlite3 as _sql, time as _t
+                _diary = (self.config.get("diary_db", "data/hans_diary.db")
+                          if hasattr(self, "config") else "data/hans_diary.db")
+                with _sql.connect(_diary) as _db:
+                    _db.execute(
+                        "INSERT INTO diary (ts, event_type, title, note, data) "
+                        "VALUES (?,?,?,?,?)",
+                        (_t.time(), "human_chat", name, _note, _data))
+                    _db.commit()
+            # bypass_note (surfaced) — samostatný event pro noční reflexi.
+            if bypass_kind:
+                self._write_bypass_note(bypass_kind, response)
         except Exception as _e:
             logging.getLogger(__name__).debug(
                 "human_chat diary write (early-return): %s", _e)
+
+    def _write_bypass_note(self, kind: str, response: str) -> None:
+        """HANS_BYPASS_TRACE_V1 — samostatný diary event (importance=7) o
+        deterministické odpovědi. Vzor pro všechny bypass cesty (dřív inline
+        v sources_answer bloku, teď sdíleno). Hans si to přečte v ranní
+        reflexi / self_insight → má šanci si všimnout, že odpověď šla mimo
+        jeho obvyklou úvahu."""
+        try:
+            import sqlite3 as _sq, time as _tm, json as _json
+            _diary = (self.config.get("diary_db", "data/hans_diary.db")
+                      if hasattr(self, "config") else "data/hans_diary.db")
+            _snippet = (response[:140] + "…") if len(response) > 140 else response
+            _kind_label = {
+                "sources":         "source query",
+                "knowledge_check": "knowledge check",
+            }.get(kind, kind)
+            _note = ("Odpověděl jsem přes deterministickou cestu (bypass mimo "
+                     "mou obvyklou personu — přímý výpis z paměti). Nešlo o "
+                     "vlastní úvahu, ale o vyzvednutí uloženého faktu. "
+                     "Odpověď: „%s\"" % _snippet)
+            _data = _json.dumps({"kind": kind}, ensure_ascii=False)
+            _c = _sq.connect(_diary, timeout=5.0)
+            _c.execute(
+                "INSERT INTO diary (ts, event_type, title, note, data, importance) "
+                "VALUES (?,?,?,?,?,?)",
+                (_tm.time(), "bypass_note",
+                 "Bypass odpověď (%s)" % _kind_label, _note, _data, 7))
+            _c.commit(); _c.close()
+        except Exception as _bne:
+            logging.getLogger(__name__).debug(
+                'bypass_note write: %s', _bne)
 
     def send_chat_message(self, name: str, user_message: str,
                           on_sentence=None, channel: str = None) -> str | None:
@@ -2246,7 +2314,9 @@ class OpenWebUIDirectHandler:
                     self.conv_store.add_exchange(name, user_message, _kb, channel=channel)
                 except Exception:
                     pass
-                self._log_human_chat_to_diary(name, user_message, _kb)
+                # HANS_BYPASS_TRACE_V1 — označ deterministickou cestu
+                self._log_human_chat_to_diary(name, user_message, _kb,
+                                              bypass_kind="knowledge_check")
                 return _kb
         except Exception as _kce:
             print(f"[Chat] knowledge check bypass error: {_kce}")
@@ -2268,32 +2338,12 @@ class OpenWebUIDirectHandler:
                         self.conv_store.add_exchange(name, user_message, _sa, channel=channel)
                     except Exception:
                         pass
-                    # HANS_SOURCE_QUERY_BYPASS_NOTE_V1 (18.7.) — zápis do
-                    # deníku: Hans si zápisem v night_summary / evening_reflection
-                    # všimne, že odpověď šla deterministickou cestou (mimo LLM).
-                    # Bez toho persona finetune nezná svá vlastní „mimotělní"
-                    # sdělení → cognitivní dissonance („nevím proč jsem to řekl").
-                    try:
-                        import sqlite3 as _sq, time as _tm
-                        _snippet = (_sa[:140] + "…") if len(_sa) > 140 else _sa
-                        _note = ("Odpověděl jsem přes deterministickou cestu "
-                                 "(bypass mimo mou obvyklou personu — přímý "
-                                 "výpis z paměti). Nešlo o vlastní úvahu, ale "
-                                 "o vyzvednutí uloženého faktu. Odpověď: „%s\""
-                                 % _snippet)
-                        _c = _sq.connect(_dbp_sa, timeout=5.0)
-                        # importance=7 → projde filtrem `>=6` v night_reflection
-                        # `moments`, takže Hans v ranní reflexi zápis uvidí.
-                        _c.execute(
-                            "INSERT INTO diary (ts, event_type, title, note, importance) "
-                            "VALUES (?,?,?,?,?)",
-                            (_tm.time(), "bypass_note",
-                             "Bypass odpověď (source query)", _note, 7))
-                        _c.commit(); _c.close()
-                    except Exception as _bne:
-                        logging.getLogger(__name__).debug(
-                            'bypass_note write: %s', _bne)
-                    self._log_human_chat_to_diary(name, user_message, _sa)
+                    # HANS_BYPASS_TRACE_V1 (19.7.) — sdílený bypass_note přes
+                    # _log_human_chat_to_diary(bypass_kind=…). Dřív inline
+                    # (HANS_SOURCE_QUERY_BYPASS_NOTE_V1 18.7.), teď 1 cesta
+                    # pro všechny bypass kinds.
+                    self._log_human_chat_to_diary(name, user_message, _sa,
+                                                  bypass_kind="sources")
                     return _sa
         except Exception as _sae:
             print(f"[Chat] source query answer error: {_sae}")

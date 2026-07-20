@@ -929,7 +929,11 @@
   },
   "curiosity": {
     "read_max_chars": 6000,
-    "read_num_ctx": 8192
+    "read_num_ctx": 8192,
+    "read_summary_sentences": 5,
+    "_read_summary_sentences_note": "HANS_WEBREAD_DEEPER_V1: kolik vet max u hlubokeho cteni (wikipedia_read). 5 = identita + 2-3 konkretni zajimavosti. Lehke cteni (lead/fetch_url) zustava 2.",
+    "read_summary_num_predict": 260,
+    "_read_summary_num_predict_note": "Token budget pro hluboke shrnuti (drive 100). ~260 = 3-5 vet s rezervou."
   },
   "downtime": {
     "enabled": true,

@@ -1181,6 +1181,14 @@ def _cmd_namaluj(handler, name, args) -> str:
     # čistý námět přes LLM + kontext historie (řeší reference, ořeže instrukce).
     subj = _distill_paint_subject(cfg, name, handler, subj)
 
+    # HANS_ART_DISTILL_REJECT_INSTRUCTION_V1 (20.7.) — destilace vrátila None
+    # = ani po LLM není konkrétní námět (např. „to znova prosim" v prázdném
+    # kanálu). Radši poprosit než malovat nesmysl.
+    if not subj:
+        return ("Nedokázal jsem z Vašeho požadavku určit, co mám namalovat, "
+                "pane. Prosím upřesněte téma — třeba „namaluj kočku na zdi\" "
+                "nebo „namaluj japonskou zahradu\".")
+
     if not hans_art.comfy_available(cfg):
         return ("Rád bych, pane — ale má výtvarná dílna (ComfyUI na PC) teď neběží. "
                 "Až bude PC vzhůru, obraz namaluji.")
@@ -1197,11 +1205,55 @@ def _cmd_namaluj(handler, name, args) -> str:
             % (subj[:70], _st))
 
 
-def _distill_paint_subject(config, name, handler, subj: str) -> str:
+_INSTR_TOKENS = {
+    # instrukční slovesa/příslovce, které samy o sobě NENESOU námět
+    "zkus", "zkusme", "zkusit", "jeste", "ještě", "znovu", "znova",
+    "vypad", "vypada", "vypadá", "nedokon", "nedokoncena", "nedokončená",
+    "myslel", "prosim", "prosím", "jinak", "lepe", "lépe", "hur", "hůř",
+    "dalsi", "další", "opakuj", "opakovat", "jednou", "jeste",
+    # meta slova o obrazu (neurčují námět)
+    "obraz", "obrazek", "obrázek", "obrazku", "malba", "kresba",
+    # imperativy tvorby
+    "namaluj", "nakresli", "vytvor", "vytvoř", "prekresli", "překresli",
+    "premaluj", "přemaluj", "udelej", "udělej", "kresba", "malovat",
+    # obecné meta výrazy o tématu
+    "tema", "téma", "temat", "témat", "veci", "věci", "vec", "věc",
+}
+
+
+def _is_instruction_only(s: str, ref_pronouns: set) -> bool:
+    """HANS_ART_DISTILL_REJECT_INSTRUCTION_V1 (20.7.) — True když v textu
+    po odstranění pronoun + instrukčních slov nezbývá ŽÁDNÝ obsahový token
+    (žádné podstatné jméno, žádný konkrétní subjekt).
+
+    Vzor: „to znova prosim" → toks {to, znova, prosim} → všechny v ref+INSTR
+    → True. „kočka na zdi" → {kočka, na, zdi} → „kočka" a „zdi" mimo → False.
+
+    Krátká spojka („na/v/u/s/a/i") se počítá jako neobsahová — nezachrání
+    „to na X" pokud X samo v INSTR/ref.
+    """
+    import re as _re
+    _STOP = {"na", "v", "u", "s", "z", "o", "a", "i", "k", "do", "od",
+             "pro", "ze", "za", "před", "po", "při", "kde"}
+    toks = _re.findall(r"\w+", (s or "").lower())
+    for t in toks:
+        if t in ref_pronouns or t in _INSTR_TOKENS or t in _STOP:
+            continue
+        # zbývá aspoň jeden obsahový token — subject má co malovat
+        return False
+    return True
+
+
+def _distill_paint_subject(config, name, handler, subj: str):
     """HANS_ART_SUBJECT_DISTILL_V1 — z messy požadavku + kontextu rozhovoru
     destiluj JEDEN výtvarný námět (2-6 slov, česky). Řeší odkazy („tu kočku"
     → kočka, „o čem jsme se bavili" → téma), ořeže instrukce („zkus znovu",
-    „vypadá nedokončeně"). Fallback = původní subj (LLM dole/podezřelý výstup)."""
+    „vypadá nedokončeně"). Fallback = původní subj (LLM dole/podezřelý výstup).
+
+    HANS_ART_DISTILL_REJECT_INSTRUCTION_V1 (20.7.) — když ani po destilaci
+    není konkrétní námět (jen pronoun/instrukce zůstalo), vrátí **None** →
+    caller místo poslání do SDXL poprosí uživatele o upřesnění.
+    """
     import re as _re2
     toks = set(_re2.findall(r"\w+", subj.lower()))
     _ref = {"to", "ho", "ji", "tu", "ten", "tenhle", "tohle", "toho",
@@ -1218,6 +1270,12 @@ def _distill_paint_subject(config, name, handler, subj: str) -> str:
                  "zkus", "jeste", "ještě", "znovu", "vypad", "nedokon",
                  "myslel jsem", "o mně", "o mne")))
     if not messy:
+        # HANS_ART_DISTILL_REJECT_INSTRUCTION_V1 — messy check nemusel chytit
+        # (např. „obraz znova" — bez „znovu"/pronoun v setu), ale sám subj
+        # je jen instrukce → radši refuse než rovnou do SDXL beze změny.
+        if _is_instruction_only(subj, _ref):
+            _log.info("art subject: subj instruction-only bez messy %r → refuse", subj[:60])
+            return None
         return subj
     try:
         conv = getattr(handler, "conv_store", None)
@@ -1258,16 +1316,30 @@ def _distill_paint_subject(config, name, handler, subj: str) -> str:
                               timeout=25, keep_alive=-1,
                               options={"temperature": 0.1, "num_predict": 30})
         if not raw:
+            # HANS_ART_DISTILL_REJECT_INSTRUCTION_V1 — LLM mlčí + subj sám
+            # je jen instrukce („to znova prosim") → nepropouštět jako námět.
+            if _is_instruction_only(subj, _ref):
+                _log.info("art subject: LLM mlčí + subj instruction-only %r → refuse", subj[:60])
+                return None
             return subj
         out = raw.strip().splitlines()[0]
         out = _re2.sub(r"(?i)^\s*n[áa]m[ěe]t\s*:?\s*", "", out)
         out = out.strip(" \"'„“”?.!:•-")
         if out and 1 <= len(out.split()) <= 8 and 2 <= len(out) <= 60 \
                 and not out.lower().startswith(("nevím", "nemám", "promiň")):
+            # HANS_ART_DISTILL_REJECT_INSTRUCTION_V1 — LLM vrátil „To téma
+            # znova" / „obraz znova" (guard by ho pustil) — pořád jen
+            # instrukce, žádný obsahový námět → refuse.
+            if _is_instruction_only(out, _ref):
+                _log.info("art subject: destilace vrátila jen instrukci %r → refuse", out)
+                return None
             _log.info("art subject destilován: %r → %r", subj[:50], out)
             return out
     except Exception as _e:
         _log.debug("distill subject: %s", _e)
+    # Fallback: pokud subj sám je jen instrukce, radši odmítni než malovat nesmysl.
+    if _is_instruction_only(subj, _ref):
+        return None
     return subj
 
 
@@ -2567,15 +2639,29 @@ def _cmd_vhledy(handler, name, args) -> str:  # HANS_SELF_INSIGHT_V1
 
     if args_s in ("ted", "teď", "run", "nyní", "nyni"):
         # Vyžádaný okamžitý run (mimo weekly kadenci). Blokuje ~1-2 min.
+        # HANS_SELF_INSIGHT_ROTATE_MANUAL_V1 (20.7.) — dřív běžel VŽDY
+        # DEFAULT_LENS (offline_game) → nové lens (social/learning/creative/
+        # physical) byly ručně nedosažitelné. Teď vybere DALŠÍ v rotaci
+        # (nejdéle neběžel jde první) → opakované /vhledy teď procyklí všechny.
         import threading as _th
-        def _bg():
+        try:
+            from scripts.hans_self_insight import _next_lens
+            _lens = _next_lens(dbp, cfg)
+        except Exception:
+            _lens = None
+        def _bg(_l=_lens):
             try:
-                run_analysis(dbp, cfg, force=True)
+                if _l:
+                    run_analysis(dbp, cfg, lens_id=_l, force=True)
+                else:
+                    run_analysis(dbp, cfg, force=True)
             except Exception:
                 pass
         _th.Thread(target=_bg, daemon=True).start()
-        return ("Spouštím rozbor svých vlastních dat na pozadí, pane. "
-                "Za pár minut zkuste /vhledy znovu — objeví se v seznamu.")
+        _lbl = (" (perspektiva: %s)" % _lens) if _lens else ""
+        return ("Spouštím rozbor svých vlastních dat na pozadí, pane%s. "
+                "Za pár minut zkuste /vhledy znovu — objeví se v seznamu."
+                % _lbl)
 
     ins = latest_insights(dbp, limit=int(args_s) if args_s.isdigit() else 3)
     if not ins:

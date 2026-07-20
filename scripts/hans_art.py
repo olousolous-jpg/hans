@@ -266,6 +266,24 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     # „(styl: X)" i instrukčních sloves leakoval do SDXL). LLM tu není (proto
     # fallback) → český námět nepřeložím, ale aspoň bez interiéru a instrukcí.
     _fsubj = title
+    # HANS_ART_FALLBACK_GROUNDED_V1 (20.7.) — když LLM scene-prompter selže,
+    # fallback dřív vzal syrový český `title` (např. „Arnolda Rimmera" v gen.).
+    # SDXL neví, kdo to je → hádá pohlaví ze zvuku (Rimmer → žena, doloženo).
+    # `reflection` je grounded text („Arnold Rimmer: Arnold Jidáš Rimmer,…") —
+    # resolvený kanonický titul (Wiki lookup v `_ground_subject`). Vezmi z něj
+    # canonical name pro fallback, ať SDXL dostane rozpoznatelný pojem.
+    if reflection and ":" in reflection:
+        _canon = reflection.split(":", 1)[0].strip()
+        # grounded formát bývá „Name (English name to use in the image prompt: XXX)"
+        _mp = re.search(r"English name to use in the image prompt:\s*([^)]+)",
+                        _canon, re.I)
+        if _mp:
+            _canon = _mp.group(1).strip()
+        else:
+            _canon = re.sub(r"\s*\([^)]*\)\s*$", "", _canon).strip()
+        if (_canon and _canon.lower() != _fsubj.lower()
+                and 1 <= len(_canon.split()) <= 6):
+            _fsubj = _canon
     _fstyle = ""
     _sm = re.search(r"\(styl:\s*([^)]+)\)", _fsubj)
     if _sm:                       # odděl „(styl: art nouveau)" → stylové klíč. slovo
@@ -1275,6 +1293,14 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
     if (_acfg(config).get("person_likeness", {}) or {}).get("enabled", True):
         try:
             _ent = _resolve_entity(config, diary_db_path, subject)
+            # HANS_ENTITY_POSTAVA_V1 (20.7.) — ZKUŠENO+ZAMÍTNUTO: rozšíření gate
+            # na etype=='postava' (fiktivní postavy → img2img z Wiki obrázku)
+            # dopadlo špatně — Wiki obrázek postavy je FOTKA HERCE (Rimmer→Chris
+            # Barrie), ne postavy → podoba nesedí; Kryten (těžká maska) render
+            # nedoběhl. Text-grounded je pro fikci lepší (aspoň doběhne).
+            # Ponecháno jen `etype=='osoba'` (reálné osoby: Matka Tereza, kde
+            # Wiki obrázek = ta osoba). etype='postava' klasifikace zůstává
+            # (neškodná metadata), jen NEROUTUJE na img2img.
             if _ent and _ent.get("etype") == "osoba":
                 _ref = _fetch_person_ref(config, _ent)
                 if _ref:

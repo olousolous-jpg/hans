@@ -767,12 +767,19 @@ class HansCuriosity:
             query = d.get("query") or ""
             if not raw:
                 continue
+            # HANS_WEBREAD_DEEPER_V1 (20.7.): catchup dožití MUSÍ být stejně
+            # hluboké jako živé čtení (wikipedia_read), jinak by odložené
+            # (pending) poznatky zůstaly mělké 2-větné. Stejný styl+parametry.
+            _cur = (self.config.get("curiosity", {}) or {})
             summary = self._reader._summarize(
                 text=raw, query=query,
                 style=("Nejdřív JEDNOU větou stručně uveď, KDO nebo CO to je. "
-                       "Pak JEDNOU větou napiš, co tě nejvíc zaujalo. Drž se "
-                       "faktů z textu, nic si nepřidávej."),
+                       "Pak ve 2 až 4 větách napiš KONKRÉTNÍ věci, které tě "
+                       "z textu nejvíc zaujaly — fakta, souvislosti, detaily, "
+                       "ne obecné dojmy. Drž se faktů z textu, nic si nepřidávej."),
                 max_text=len(raw) or 6000,
+                max_sentences=int(_cur.get("read_summary_sentences", 5)),
+                num_predict=int(_cur.get("read_summary_num_predict", 260)),
             )
             if not summary:
                 # mozek stále mlčí → nech pending, přeruš (další stejně selžou)

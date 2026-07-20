@@ -14,6 +14,9 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
+from scripts.cz_names import came as _cz_came, left as _cz_left, \
+    display_name as _cz_display  # HANS_NAME_INFLECTION_V1
+
 _log = logging.getLogger("kodi_monitor")
 
 
@@ -326,8 +329,8 @@ class KodiMonitor:
         lines = []
         for name, event, ts in rows:
             dt  = datetime.fromtimestamp(ts).strftime("%H:%M")
-            verb = "přišel/a" if event == "arrived" else "odešel/a"
-            lines.append(f"- {name} {verb} v {dt}")
+            verb = _cz_came(name) if event == "arrived" else _cz_left(name)
+            lines.append(f"- {_cz_display(name)} {verb} v {dt}")
         return "Dnešní pohyb v místnosti:\n" + "\n".join(lines)
 
     def stop(self):

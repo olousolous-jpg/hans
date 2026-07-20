@@ -24,6 +24,8 @@ import time
 from datetime import datetime
 from typing import Optional
 
+from scripts.cz_names import address as _cz_address  # HANS_NAME_INFLECTION_V1
+
 _log = logging.getLogger(__name__)
 
 _DNY = ("pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota", "neděle")
@@ -761,7 +763,7 @@ def sources_answer(db_path: str, user_text: str,
             if hit:
                 break
 
-    oslov = ("%s" % asker.capitalize()) if asker else "pane"
+    oslov = _cz_address(asker) if asker else "pane"  # HANS_NAME_INFLECTION_V1
     if hit:
         name, url = hit
         return ("Ano, %s. O tématu '%s' jsem se dočetl na Wikipedii. "
@@ -1395,7 +1397,7 @@ def knowledge_check_bypass(db_path: str, user_text: str,
         return None
     if _topic_in_memory(db_path, topic):
         return None  # nech normální cestu, X JE v paměti
-    oslov = ("%s" % asker.capitalize()) if asker else "pane"
+    oslov = _cz_address(asker) if asker else "pane"  # HANS_NAME_INFLECTION_V1
     # Kompaktní honestní odpověď + nabídka pokud chce ať Hans si to zapíše
     return ("V paměti nemám žádné vlastní záznamy o '%s', %s. "
             "Nic jsem si o tom nezapsal ani nečetl (obecně to znám možná "

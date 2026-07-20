@@ -23,6 +23,9 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 
+from scripts.cz_names import came as _cz_came, left as _cz_left, \
+    display_name as _cz_display  # HANS_NAME_INFLECTION_V1
+
 _log = logging.getLogger("hans_mood")
 
 # Váhy pro výpočet nálady (0-1, vyšší = silnější vliv)
@@ -80,7 +83,7 @@ MOOD_PROMPTS = {
 MOOD_OBSERVATIONS = {
     "lonely": [
         "Ticho v domě je dnes obzvláště výmluvné.",
-        "Pan {last_person} ještě nepřišel. Doufám, že je vše v pořádku.",
+        "{title} {last_person} ještě {neprisel}. Doufám, že je vše v pořádku.",
         "Prázdná místnost má svůj zvláštní klid. Nebo tíhu.",
         "V době nepřítomnosti obyvatel jsem přemýšlel o {movie_title}.",
         "Hodiny tikají. V prázdném domě to člověk vnímá jinak.",
@@ -225,9 +228,17 @@ class HansMood:
         if not templates:
             return None
         tmpl = random.choice(templates)
+        # HANS_NAME_INFLECTION_V1: title (Pan/Paní) + sloveso podle rodu
+        from scripts.cz_names import (person_gender, past_verb,
+                                       display_name as _disp)
+        who = self._state.last_person
+        g = person_gender(who, self.config) if who else None
+        title = "Paní" if g == "žena" else "Pan"
         # Nahraď proměnné
         text = tmpl.format(
-            last_person=self._state.last_person or "nikdo",
+            last_person=_disp(who) if who else "nikdo",
+            title=title,
+            neprisel=past_verb("nepřišel", g),
             movie_title=self._kodi_title or "film",
             object=self._last_objects[0] if self._last_objects else "předmět",
         )
@@ -240,12 +251,14 @@ class HansMood:
     def person_arrived(self, name: str):
         self._state.last_person = name
         self._state.alone_since = time.time()   # reset — někdo je doma
-        self._shift("engaged", 0.8, f"{name} přišel/a")
+        self._shift("engaged", 0.8,
+                    f"{_cz_display(name)} {_cz_came(name, self.config)}")
 
     def person_left(self, name: str):
         self._state.last_person = name
         self._state.alone_since = time.time()
-        self._shift("content", 0.4, f"{name} odešel/a")
+        self._shift("content", 0.4,
+                    f"{_cz_display(name)} {_cz_left(name, self.config)}")
 
     def nobody_home(self, alone_hours: float):
         """Volej periodicky — alone_hours = jak dlouho nikdo není doma."""
@@ -263,19 +276,32 @@ class HansMood:
                 target, intensity = "lonely", 0.9
         self._shift(target, intensity, f"sám {alone_hours:.1f}h")
 
+    # HANS_MOOD_OBJECT_HYGIENE_V1 (20.7.) — pseudo-labely, které NEJSOU
+    # zobrazitelné objekty (jsou to detekční signály). Nesmí prosáknout do
+    # `_last_objects` → jinak je „curious" šablona vypíše jako „V místnosti je
+    # unknown_person. Zajímavý předmět — má svou historii." (osoba = předmět).
+    _NON_OBJECT_LABELS = {"unknown_person", "person", "unknown", "?", "..."}
+
     def update_objects(self, objects: list[str]):
-        """Aktualizuj seznam viděných objektů — může změnit náladu."""
+        """Aktualizuj seznam viděných objektů — může změnit náladu.
+
+        `unknown_person` slouží jako signál pro worried trigger, ale NENÍ to
+        objekt k vypsání → filtruje se z `_last_objects` (viz object hygiene)."""
+        # Neznámý člověk (Unknown) v objektech? → worried (PŘED filtrem, ať se
+        # signál neztratí). Detekční značka, ne zobrazitelný objekt.
+        if "unknown_person" in objects:
+            self._shift("worried", 0.7, "neznámá tvář")
+        # Zobrazitelné objekty = bez pseudo-labelů (osoba ≠ předmět).
+        display_objects = [o for o in objects
+                           if o not in self._NON_OBJECT_LABELS]
         prev = set(self._last_objects)
-        curr = set(objects)
+        curr = set(display_objects)
         new_objects = curr - prev
         if new_objects:
             # Nový objekt → curiosity spike
             if self._state.mood not in ("engaged", "worried"):
                 self._shift("curious", 0.6, f"nový objekt: {list(new_objects)[0]}")
-        # Neznámý člověk (Unknown) v objektech?
-        if "unknown_person" in objects:
-            self._shift("worried", 0.7, "neznámá tvář")
-        self._last_objects = list(objects)
+        self._last_objects = display_objects
 
     def update_kodi(self, title: str):
         if title != self._kodi_title:

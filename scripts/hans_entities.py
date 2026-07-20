@@ -79,15 +79,41 @@ _PAREN = re.compile(r"\s*\([^)]*\)\s*$")
 
 def _first_sentence(text: str, max_chars: int = 320) -> str:
     """První definiční věta z úvodu článku (verbatim). Ošetří běžné zkratky
-    (č., tzv., mj., např., n. l., stol.), aby se věta neuťala předčasně."""
+    (č., tzv., mj., např., n. l., stol., akademické tituly), aby se věta
+    neuťala předčasně.
+
+    HANS_FIRST_SENT_TITLES_V1 (20.7.): akademické/profesní tituly „BDP.",
+    „Ph.D.", „M.D.", „BSc.", „Ing." atd. dřív tříštily větu → Rimmerova
+    definiční věta („Arnold Jidáš Rimmer, BDP. SDP. … je fiktivní postava…")
+    se ořízla na „Arnold Jidáš Rimmer, BDP." bez slovesa → guard v
+    capture_from_reading odmítl (chybí „je/byl") → prázdná gloss v entity
+    store → paint_subject nevěděl že jde o postavu. Generický pattern:
+    2-5 VELKÝCH PÍSMEN s tečkou (BDP, SDP, MSc, PhDr, Bc), případně řetězec
+    přerušený tečkami (Ph.D., M.Sc., n. l.)."""
     t = re.sub(r"\s+", " ", (text or "").strip())
     if not t:
         return ""
     # ochrana zkratek — dočasně nahradíme tečku
+    # HANS_FIRST_SENT_TITLES_V1 (20.7.): přidány akademické/profesní tituly
+    # (Ph.D., MUDr., BSc., BDP.) — bez toho se věta „Rimmer, BDP. SDP. … je
+    # fiktivní postava" ořezala na „Rimmer, BDP." (bez slovesa) → guard v
+    # capture_from_reading odmítl → prázdná gloss → paint neuměl.
     _ABBR = ("č.", "tzv.", "mj.", "např.", "tj.", "n. l.", "př. n. l.",
-             "st.", "stol.", "roz.", "cca.", "resp.", "atd.", "apod.")
+             "st.", "stol.", "roz.", "cca.", "resp.", "atd.", "apod.",
+             "nar.", "zem.", "vl. jm.", "vl.",  # biografická data
+             # akademické/profesní tituly (CS + EN — Wiki cituje obojí)
+             "Ph.D.", "M.D.", "M.Sc.", "M.A.", "Sc.D.", "B.Sc.", "B.A.",
+             "MUDr.", "PhDr.", "RNDr.", "JUDr.", "PaedDr.", "MVDr.",
+             "Ing.", "Mgr.", "Bc.", "MBA.", "DiS.", "BSc.", "MSc.",
+             # kněžské/šlechtické (Wiki hojně)
+             "sv.", "sv ", "prof.", "doc.", "gen.", "kpt.", "npor.")
     for a in _ABBR:
         t = t.replace(a, a.replace(".", "\x00"))
+    # Fiktivní / méně obvyklé zkratky velkými písmeny (BDP., SDP., BSc., PhD.,
+    # atd. — cokoli 2-4 kapitálek + tečka). Chráníme VŽDY: Wiki definiční věty
+    # obvykle končí malým slovem („detektiv.", „postava.") ne kapitálkovou
+    # zkratkou → riziko splísknutí legitimního konce věty minimální.
+    t = re.sub(r"\b([A-Z]{2,4})\.", lambda m: m.group(1) + "\x00", t)
     # ochrana pořadových čísel/letopočtů „1.", „18.", „2016." → nesplítat
     t = re.sub(r"(\d)\.", lambda m: m.group(1) + "\x00", t)
     m = re.search(r"[.!?](?:\s|$)", t)
@@ -102,6 +128,16 @@ _PERSON = re.compile(
     r"spisovatel|skladatel|malíř|politik|král|císař|faraon|herec|herečka|"
     r"vědec|fyzik|filozof|hudebník|zpěvák|generál|vojevůdce|panovník|"
     r"režisér|architekt|básník|autor|matematik|objevitel|vynálezce)",
+    re.IGNORECASE)
+# HANS_ENTITY_POSTAVA_V1 (20.7.) — fiktivní / literární / filmová postava.
+# Kritérium pro dopadu: paint_subject volá img2img z Wiki portrétu (viz gate
+# etype in ('osoba','postava')). Wiki článek fiktivní postavy má obvykle
+# obrázek herce/ilustrace (Rimmer→Chris Barrie, Sherlock→Paget kresba).
+_POSTAVA = re.compile(
+    r"\bje\b.{0,40}\b(fiktivní\s+postav|literární\s+postav|filmov[áa]\s+postav|"
+    r"seri[áa]lov[áa]\s+postav|animovan[áa]\s+postav|hlavní\s+postav|"
+    r"vedlejší\s+postav|hrdin[aoyi]|postav[ay]\s+seriálu|postav[ay]\s+filmu|"
+    r"postav[ay]\s+románu|postav[ay]\s+knihy)",
     re.IGNORECASE)
 _PLACE = re.compile(
     r"\bje\b.{0,40}\b(město|hrad|zámek|hora|řeka|jezero|stát|země|obec|"
@@ -123,6 +159,10 @@ _EVENT = re.compile(
 
 def _classify(gloss: str) -> str:
     g = gloss or ""
+    # POSTAVA první (silnější signál než _PERSON „byl" — fiktivní postava
+    # může mít i „byl vytvořen…" což by shodl _PERSON, ale fikce má přednost).
+    if _POSTAVA.search(g):
+        return "postava"
     if _PERSON.search(g):
         return "osoba"
     if _PLACE.search(g):

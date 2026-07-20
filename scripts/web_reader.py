@@ -199,14 +199,24 @@ class WebReader:
         # (z úvodu článku), pak teprve detail. Bez identity-kotvy zůstal v RAG
         # jen náhodný detail → na pozdější „co je X?“ Hans konfabuloval (fantom
         # „AJ II × protein“). Předáváme VYŘEŠENÝ titul článku, ne surový dotaz.
+        # HANS_WEBREAD_DEEPER_V1 (20.7.): hluboké čtení = hlubší poznatek.
+        # Dřív 2 věty (identita + 1 detail) z 6k zn článku → recall mělký.
+        # Teď 3-5 vět: identita + 2-3 konkrétní zajímavosti. Config
+        # `curiosity.read_summary_sentences` (default 5) laditelné.
+        _sent = int(self.config.get("curiosity", {}).get(
+            "read_summary_sentences", 5))
         summary = self._summarize(
             text  = text,
             query = art["title"],
             style = ("Nejdřív JEDNOU větou stručně uveď, KDO nebo CO to je "
-                     "(podle úvodu článku, např. „… je/byl …“). Pak JEDNOU "
-                     "větou napiš, co tě z článku nejvíc zaujalo. Drž se faktů "
-                     "z textu, nic si nepřidávej."),
+                     "(podle úvodu článku, např. „… je/byl …“). Pak ve "
+                     "2 až 4 větách napiš KONKRÉTNÍ věci, které tě z článku "
+                     "nejvíc zaujaly — fakta, souvislosti, detaily, ne obecné "
+                     "dojmy. Drž se faktů z textu, nic si nepřidávej."),
             max_text = max_chars,
+            max_sentences = _sent,
+            num_predict = int(self.config.get("curiosity", {}).get(
+                "read_summary_num_predict", 260)),
         )
         return ReadResult(
             source   = "wikipedia",
@@ -497,7 +507,8 @@ class WebReader:
     # ── Sumarizace přes Ollama ────────────────────────────────────────────────
 
     def _summarize(self, text: str, query: str, style: str,
-                   max_text: int = 1500) -> Optional[str]:
+                   max_text: int = 1500, max_sentences: int = 2,
+                   num_predict: int = 100) -> Optional[str]:
         """
         Pošle text na Ollama a vrátí sumarizaci v Hansově stylu.
         HANS_DEFERRED_SUMMARY_V1 — když mozek NEODPOVÍ, vrátí None
@@ -506,15 +517,21 @@ class WebReader:
         `pending` a doplní v catchup). NIKDY nefabrikovat shrnutí z raw textu.
         max_text = kolik znaků textu se pošle modelu (CURIOSITY_DEEP_V1 —
         u hloubkového čtení 6k+, jinak výchozí 1500 = jen úvod).
+
+        HANS_WEBREAD_DEEPER_V1 (20.7.): délka výstupu je parametrická
+        (max_sentences/num_predict). Hluboké čtení (`wikipedia_read`, 6k zn
+        vstupu) dřív zaškrceno na 2 věty / num_predict 100 → mělký poznatek,
+        z něhož pak čerpá recall/RAG. Deep read teď 3-5 vět; lehké čtení
+        (lead, fetch_url) zůstává 2 věty.
         """
         user_prompt = (
             f"Přečetl sis text o tématu '{query}'.\n"
             f"{style}\n"
-            f"Odpovídej česky, max 2 věty, bez uvozovek.\n\n"
+            f"Odpovídej česky, max {max_sentences} věty, bez uvozovek.\n\n"
             f"Text:\n{text[:max_text]}"
         )
         # OLLAMA_CLIENT_PATCH_WEBREADER
-        options = {"num_predict": 100}
+        options = {"num_predict": num_predict}
         if max_text > 2000:  # CURIOSITY_DEEP_V1 — větší vstup potřebuje širší ctx
             options["num_ctx"] = int(
                 self.config.get("curiosity", {}).get("read_num_ctx", 8192))

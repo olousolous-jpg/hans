@@ -15,6 +15,9 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
+from scripts.cz_names import was as _cz_was, saw as _cz_saw, \
+    display_name as _cz_display  # HANS_NAME_INFLECTION_V1
+
 _log = logging.getLogger("hans_idle")
 
 
@@ -1609,16 +1612,19 @@ class HansIdle:
             doba = '%d dny' % d_int
         else:
             doba = '%d dnů' % d_int
-        # Šablona — 5 variant Hansova hlasu (komorník)
+        # HANS_NAME_INFLECTION_V1: sloveso podle rodu osoby
+        nebyl = _cz_was(name, self.config, negate=True)   # nebyl / nebyla
+        byl   = _cz_was(name, self.config)                # byl / byla
+        disp  = _cz_display(name)
+        # Šablona — 5 variant Hansova hlasu (komorník). Hans („neviděl") je m.
         templates = [
-            '%s jsem neviděl už %s. Doufám, že je v pořádku.',
-            '%s tu nebyl/a %s — přemýšlím, kde se asi nachází.',
-            'Vzpomněl jsem si na to, že %s tu nebyl/a %s.',
-            '%s mi schází — naposled tu byl/a před %s.',
-            'Uvažoval jsem o tom, že %s tu nebyl/a %s.',
+            f'{disp} jsem neviděl už {doba}. Doufám, že je v pořádku.',
+            f'{disp} tu {nebyl} {doba} — přemýšlím, kde se asi nachází.',
+            f'Vzpomněl jsem si na to, že {disp} tu {nebyl} {doba}.',
+            f'{disp} mi schází — naposled tu {byl} před {doba}.',
+            f'Uvažoval jsem o tom, že {disp} tu {nebyl} {doba}.',
         ]
-        tpl = _r.choice(templates)
-        note = tpl % (name, doba)
+        note = _r.choice(templates)
         if chrz:
             # Lehce přidat kontext z characterization (jen krátký zlomek)
             note += ' (' + chrz[:120].strip() + ')'

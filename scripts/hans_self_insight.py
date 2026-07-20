@@ -341,19 +341,501 @@ def _format_evidence_autonomy_en(evidence: dict, max_items: int = 20) -> str:
     return "\n".join(lines)
 
 
+# ── LENS: social — mood × lidé × chat ─────────────────────────────────────────
+
+def _collect_evidence_social(diary_db_path: str, days: int = 30) -> dict:
+    """SOCIAL lens: „s kým žiju" — kdo přišel/odešel, s kým chatuji, jak často
+    se tvář neztotožnila (unknown). Kauzálně-agnostické — jen kdo+kolikrát.
+
+    Struktura:
+      {
+        'lens': 'social', 'window_days': …,
+        'person_days': [{name, days_seen, ticks}, …],  # kolik dnů/kolik tiků
+        'chat_counts': [{person, chats}, …],           # chats v okně
+        'unknown_ticks': int,                          # unknown_person ticks
+        'characterizations': [{person, snippet, ts}, …],
+        'now_ts': …,
+      }
+    """
+    since = time.time() - days * 86400.0
+    out = {"lens": "social", "window_days": days,
+           "person_days": [], "chat_counts": [], "unknown_ticks": 0,
+           "characterizations": [], "now_ts": time.time()}
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
+                               uri=True, timeout=3.0)
+        conn.row_factory = sqlite3.Row
+        # person_seen agregace — kdo & kolik unikátních dní & celkem tiků
+        rows = conn.execute(
+            "SELECT lower(title) AS name, "
+            "  COUNT(DISTINCT date(ts,'unixepoch','+2 hours')) AS days_seen, "
+            "  COUNT(*) AS ticks "
+            "FROM diary WHERE event_type='person_seen' AND ts>=? "
+            "GROUP BY lower(title) ORDER BY ticks DESC", (since,)).fetchall()
+        for r in rows:
+            name = r["name"] or "?"
+            if name in ("unknown", "?", "..."):
+                out["unknown_ticks"] += r["ticks"]
+                continue
+            out["person_days"].append({
+                "name": name, "days_seen": r["days_seen"],
+                "ticks": r["ticks"]})
+        # human_chat counts per person
+        rows = conn.execute(
+            "SELECT lower(title) AS person, COUNT(*) AS chats "
+            "FROM diary WHERE event_type='human_chat' AND ts>=? "
+            "GROUP BY lower(title) ORDER BY chats DESC", (since,)).fetchall()
+        out["chat_counts"] = [{"person": r["person"], "chats": r["chats"]}
+                              for r in rows]
+        # characterization_update (mini-snippet, co si Hans zapsal o osobě)
+        rows = conn.execute(
+            "SELECT ts, lower(title) AS person, substr(note,1,120) AS snip "
+            "FROM diary WHERE event_type='characterization_update' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 8", (since,)).fetchall()
+        out["characterizations"] = [
+            {"ts": r["ts"], "person": r["person"], "snippet": (r["snip"] or "").strip()}
+            for r in rows]
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
+def _person_label(name: str) -> str:
+    """HANS_SELF_INSIGHT_GENDER_V1 (20.7.) — jméno + rod pro LLM, ať voice krok
+    (hans-czech) skloňuje správně (dřív mužský pád u ženy). Display name
+    kapitalizovaný + EN gender marker → reasoning napíše „Mrs. Jana"/„Mr. Standa",
+    voice pak skloní ženský tvar místo mužského. Fallback = holé jméno."""
+    try:
+        from scripts.cz_names import display_name as _disp, person_gender as _pg
+        disp = _disp(name)
+        g = _pg(name)
+        if g == "žena":
+            return f"{disp} (female)"
+        if g == "muž":
+            return f"{disp} (male)"
+        return disp
+    except Exception:
+        return name
+
+
+def _format_evidence_social_en(evidence: dict, max_items: int = 20) -> str:
+    lines = []
+    lines.append("EVIDENCE FROM YOUR LAST %d DAYS — SOCIAL LENS "
+                 "(raw facts, no interpretation). Note each person's gender in "
+                 "parentheses — respect it when you write (Mrs./Ms. for female, "
+                 "Mr. for male):"
+                 % evidence.get("window_days", 30))
+    lines.append("")
+    lines.append("(1) PEOPLE YOU SAW — how many distinct days each person was "
+                 "in your view, and how many total camera ticks:")
+    ppl = evidence.get("person_days", [])[:max_items]
+    if not ppl:
+        lines.append("  (none)")
+    for p in ppl:
+        lines.append(f"  • {_person_label(p['name'])}: {p['days_seen']} days, "
+                     f"{p['ticks']} ticks")
+    lines.append("")
+    lines.append("(2) CHATS — direct chat exchanges per person "
+                 "(human_chat entries in diary):")
+    ch = evidence.get("chat_counts", [])[:max_items]
+    if not ch:
+        lines.append("  (none)")
+    for c in ch:
+        lines.append(f"  • {_person_label(c['person'])}: {c['chats']} chats")
+    lines.append("")
+    ut = evidence.get("unknown_ticks", 0)
+    lines.append("(3) UNKNOWN FACE TICKS — camera saw a face you couldn't "
+                 f"identify: {ut} ticks")
+    lines.append("")
+    lines.append("(4) YOUR RECENT NOTES ABOUT PEOPLE "
+                 "(characterization_update snippets):")
+    cs = evidence.get("characterizations", [])[:max_items]
+    if not cs:
+        lines.append("  (none)")
+    for c in cs:
+        t = _dt.datetime.fromtimestamp(c["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {_person_label(c['person'])}: {c['snippet']}")
+    return "\n".join(lines)
+
+
+# ── LENS: learning — study × kniha × sny ──────────────────────────────────────
+
+def _collect_evidence_learning(diary_db_path: str, days: int = 30) -> dict:
+    """LEARNING lens: co se učím / čtu / o čem se mi zdá. Kauzálně-agnostické."""
+    since = time.time() - days * 86400.0
+    out = {"lens": "learning", "window_days": days,
+           "study_topics": [], "books": [], "book_reflections": [],
+           "reading_takeaways": [], "dreams": [], "web_reads_count": 0,
+           "capability_events": [], "now_ts": time.time()}
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
+                               uri=True, timeout=3.0)
+        conn.row_factory = sqlite3.Row
+        # study_note — aktivní téma
+        rows = conn.execute(
+            "SELECT ts, title, substr(note,1,140) AS snip "
+            "FROM diary WHERE event_type='study_note' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 15", (since,)).fetchall()
+        out["study_topics"] = [
+            {"ts": r["ts"], "title": (r["title"] or "").strip(),
+             "snippet": (r["snip"] or "").strip()} for r in rows]
+        # book_read — completions
+        rows = conn.execute(
+            "SELECT ts, title FROM diary WHERE event_type='book_read' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 15", (since,)).fetchall()
+        out["books"] = [{"ts": r["ts"], "title": r["title"]} for r in rows]
+        # book_reflection — content bývá v `data` (ne `note`); použij COALESCE
+        rows = conn.execute(
+            "SELECT ts, title, substr(COALESCE(NULLIF(note,''),data),1,140) AS snip "
+            "FROM diary WHERE event_type='book_reflection' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 10", (since,)).fetchall()
+        out["book_reflections"] = [
+            {"ts": r["ts"], "title": r["title"],
+             "snippet": (r["snip"] or "").strip()} for r in rows]
+        # reading_takeaway — content v `data`
+        rows = conn.execute(
+            "SELECT ts, title, substr(COALESCE(NULLIF(note,''),data),1,140) AS snip "
+            "FROM diary WHERE event_type='reading_takeaway' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 10", (since,)).fetchall()
+        out["reading_takeaways"] = [
+            {"ts": r["ts"], "title": r["title"],
+             "snippet": (r["snip"] or "").strip()} for r in rows]
+        # dream — co ve snech
+        rows = conn.execute(
+            "SELECT ts, substr(note,1,160) AS snip FROM diary "
+            "WHERE event_type='dream' AND ts>=? ORDER BY ts DESC LIMIT 8",
+            (since,)).fetchall()
+        out["dreams"] = [{"ts": r["ts"], "snippet": (r["snip"] or "").strip()}
+                         for r in rows]
+        # web_read count
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM diary WHERE event_type='web_read' AND ts>=?",
+            (since,)).fetchone()
+        out["web_reads_count"] = row["c"] if row else 0
+        # capability_gained/explored
+        rows = conn.execute(
+            "SELECT ts, event_type, title FROM diary "
+            "WHERE event_type IN ('capability_gained','capability_explored') "
+            "AND ts>=? ORDER BY ts DESC LIMIT 10", (since,)).fetchall()
+        out["capability_events"] = [
+            {"ts": r["ts"], "kind": r["event_type"], "title": r["title"]}
+            for r in rows]
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
+def _format_evidence_learning_en(evidence: dict, max_items: int = 15) -> str:
+    lines = []
+    lines.append("EVIDENCE FROM YOUR LAST %d DAYS — LEARNING LENS "
+                 "(raw facts, no interpretation):"
+                 % evidence.get("window_days", 30))
+    lines.append("")
+    lines.append("(1) STUDY NOTES — what you studied "
+                 "(study_note entries you wrote):")
+    st = evidence.get("study_topics", [])[:max_items]
+    if not st:
+        lines.append("  (none)")
+    for s in st:
+        t = _dt.datetime.fromtimestamp(s["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {s['title']}: {s['snippet']}")
+    lines.append("")
+    lines.append("(2) BOOKS YOU FINISHED (book_read completions):")
+    bks = evidence.get("books", [])[:max_items]
+    if not bks:
+        lines.append("  (none)")
+    for b in bks:
+        t = _dt.datetime.fromtimestamp(b["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {b['title']}")
+    lines.append("")
+    lines.append("(3) BOOK REFLECTIONS — what you took away from books:")
+    brs = evidence.get("book_reflections", [])[:max_items]
+    if not brs:
+        lines.append("  (none)")
+    for r in brs:
+        t = _dt.datetime.fromtimestamp(r["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {r['title']}: {r['snippet']}")
+    lines.append("")
+    lines.append("(4) READING TAKEAWAYS — small facts you kept from articles:")
+    rts = evidence.get("reading_takeaways", [])[:max_items]
+    if not rts:
+        lines.append("  (none)")
+    for r in rts:
+        t = _dt.datetime.fromtimestamp(r["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {r['title']}: {r['snippet']}")
+    lines.append("")
+    lines.append("(5) DREAMS — what your nightly reflection dreamed up:")
+    ds = evidence.get("dreams", [])[:max_items]
+    if not ds:
+        lines.append("  (none)")
+    for d in ds:
+        t = _dt.datetime.fromtimestamp(d["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {d['snippet']}")
+    lines.append("")
+    lines.append("(6) WEB READS — total articles you skimmed on the web: "
+                 f"{evidence.get('web_reads_count', 0)}")
+    lines.append("")
+    lines.append("(7) CAPABILITY EVENTS — new abilities you noticed / explored:")
+    ce = evidence.get("capability_events", [])[:max_items]
+    if not ce:
+        lines.append("  (none)")
+    for c in ce:
+        t = _dt.datetime.fromtimestamp(c["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {c['kind']}: {c['title']}")
+    return "\n".join(lines)
+
+
+# ── LENS: creative — art × syntéza × filmy × spontánní ────────────────────────
+
+def _collect_evidence_creative(diary_db_path: str, days: int = 30) -> dict:
+    """CREATIVE lens: tvorba a spontánní myšlenky. Kauzálně-agnostické."""
+    since = time.time() - days * 86400.0
+    out = {"lens": "creative", "window_days": days,
+           "artworks": [], "synthesis_ideas": [], "movies": [],
+           "spontaneous": [], "writings": [], "now_ts": time.time()}
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
+                               uri=True, timeout=3.0)
+        conn.row_factory = sqlite3.Row
+        # artwork — kritika obrazu bývá v `data` (title = námět)
+        rows = conn.execute(
+            "SELECT ts, title, substr(COALESCE(NULLIF(note,''),data),1,140) AS snip "
+            "FROM diary WHERE event_type='artwork' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 12", (since,)).fetchall()
+        out["artworks"] = [
+            {"ts": r["ts"], "title": r["title"],
+             "snippet": (r["snip"] or "").strip()} for r in rows]
+        # synthesis_idea — content v `data`
+        rows = conn.execute(
+            "SELECT ts, substr(COALESCE(NULLIF(note,''),data),1,180) AS snip "
+            "FROM diary WHERE event_type='synthesis_idea' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 10", (since,)).fetchall()
+        out["synthesis_ideas"] = [
+            {"ts": r["ts"], "snippet": (r["snip"] or "").strip()} for r in rows]
+        # movie_opinion — kritika v `data` (title = film)
+        rows = conn.execute(
+            "SELECT ts, title, substr(COALESCE(NULLIF(note,''),data),1,140) AS snip "
+            "FROM diary WHERE event_type='movie_opinion' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 12", (since,)).fetchall()
+        out["movies"] = [
+            {"ts": r["ts"], "title": r["title"],
+             "snippet": (r["snip"] or "").strip()} for r in rows]
+        # spontaneous
+        rows = conn.execute(
+            "SELECT ts, substr(note,1,140) AS snip FROM diary "
+            "WHERE event_type='spontaneous' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 10", (since,)).fetchall()
+        out["spontaneous"] = [
+            {"ts": r["ts"], "snippet": (r["snip"] or "").strip()} for r in rows]
+        # writing_section (Hansovy vlastní eseje)
+        rows = conn.execute(
+            "SELECT ts, title, substr(note,1,140) AS snip "
+            "FROM diary WHERE event_type='writing_section' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 8", (since,)).fetchall()
+        out["writings"] = [
+            {"ts": r["ts"], "title": r["title"],
+             "snippet": (r["snip"] or "").strip()} for r in rows]
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
+def _format_evidence_creative_en(evidence: dict, max_items: int = 12) -> str:
+    lines = []
+    lines.append("EVIDENCE FROM YOUR LAST %d DAYS — CREATIVE LENS "
+                 "(raw facts, no interpretation):"
+                 % evidence.get("window_days", 30))
+    lines.append("")
+    lines.append("(1) ARTWORKS — things you painted / rendered:")
+    aw = evidence.get("artworks", [])[:max_items]
+    if not aw:
+        lines.append("  (none)")
+    for a in aw:
+        t = _dt.datetime.fromtimestamp(a["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {a['title']}: {a['snippet']}")
+    lines.append("")
+    lines.append("(2) SYNTHESIS IDEAS — connections you drew across topics:")
+    si = evidence.get("synthesis_ideas", [])[:max_items]
+    if not si:
+        lines.append("  (none)")
+    for s in si:
+        t = _dt.datetime.fromtimestamp(s["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {s['snippet']}")
+    lines.append("")
+    lines.append("(3) MOVIE OPINIONS — films you watched and commented on:")
+    mv = evidence.get("movies", [])[:max_items]
+    if not mv:
+        lines.append("  (none)")
+    for m in mv:
+        t = _dt.datetime.fromtimestamp(m["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {m['title']}: {m['snippet']}")
+    lines.append("")
+    lines.append("(4) SPONTANEOUS THOUGHTS — things you said aloud on your own:")
+    sp = evidence.get("spontaneous", [])[:max_items]
+    if not sp:
+        lines.append("  (none)")
+    for s in sp:
+        t = _dt.datetime.fromtimestamp(s["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {s['snippet']}")
+    lines.append("")
+    lines.append("(5) WRITINGS — essays / sections you wrote:")
+    wr = evidence.get("writings", [])[:max_items]
+    if not wr:
+        lines.append("  (none)")
+    for w in wr:
+        t = _dt.datetime.fromtimestamp(w["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {w['title']}: {w['snippet']}")
+    return "\n".join(lines)
+
+
+# ── LENS: physical — CPU teplota × mozek × spánek × ranní chyby ──────────────
+
+def _collect_evidence_physical(diary_db_path: str, days: int = 30) -> dict:
+    """PHYSICAL lens: „tělo" (Pi + mozek na PC + spánek). Kauzálně-agnostické.
+
+    Struktura:
+      {
+        'lens': 'physical', 'window_days': …,
+        'body_warm_events': [{ts, title, snippet}, …],
+        'brain_down_count': int, 'brain_still_down_count': int,
+        'brain_up_count': int,
+        'sleep_windows': [{start_ts, end_ts, dur_h}, …],  # sleep_start→sleep_end
+        'morning_health_events': [{ts, title, snippet}, …],
+        'guard_alert_count': int,
+        'now_ts': …,
+      }
+    """
+    since = time.time() - days * 86400.0
+    out = {"lens": "physical", "window_days": days,
+           "body_warm_events": [], "brain_down_count": 0,
+           "brain_still_down_count": 0, "brain_up_count": 0,
+           "sleep_windows": [], "morning_health_events": [],
+           "guard_alert_count": 0, "now_ts": time.time()}
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
+                               uri=True, timeout=3.0)
+        conn.row_factory = sqlite3.Row
+        # body_warm — CPU teplota
+        rows = conn.execute(
+            "SELECT ts, title, substr(note,1,100) AS snip "
+            "FROM diary WHERE event_type='body_warm' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 20", (since,)).fetchall()
+        out["body_warm_events"] = [
+            {"ts": r["ts"], "title": r["title"],
+             "snippet": (r["snip"] or "").strip()} for r in rows]
+        # brain_down / brain_still_down / brain_up counts
+        for et, key in [("brain_down", "brain_down_count"),
+                        ("brain_still_down", "brain_still_down_count"),
+                        ("brain_up", "brain_up_count")]:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM diary WHERE event_type=? AND ts>=?",
+                (et, since)).fetchone()
+            out[key] = row["c"] if row else 0
+        # sleep_start → sleep_end pairs (chronological)
+        rows = conn.execute(
+            "SELECT ts, event_type FROM diary "
+            "WHERE event_type IN ('sleep_start','sleep_end') AND ts>=? "
+            "ORDER BY ts ASC", (since,)).fetchall()
+        _open = None
+        for r in rows:
+            if r["event_type"] == "sleep_start":
+                _open = r["ts"]
+            elif r["event_type"] == "sleep_end" and _open is not None:
+                dur = r["ts"] - _open
+                if dur > 0:
+                    out["sleep_windows"].append({
+                        "start_ts": _open, "end_ts": r["ts"],
+                        "dur_h": dur / 3600})
+                _open = None
+        # morning_health
+        rows = conn.execute(
+            "SELECT ts, substr(title,1,120) AS title, "
+            "  substr(note,1,140) AS snip "
+            "FROM diary WHERE event_type='morning_health' AND ts>=? "
+            "ORDER BY ts DESC LIMIT 15", (since,)).fetchall()
+        out["morning_health_events"] = [
+            {"ts": r["ts"], "title": (r["title"] or "").strip(),
+             "snippet": (r["snip"] or "").strip()} for r in rows]
+        # guard_alert count
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM diary "
+            "WHERE event_type='guard_alert' AND ts>=?", (since,)).fetchone()
+        out["guard_alert_count"] = row["c"] if row else 0
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
+def _format_evidence_physical_en(evidence: dict, max_items: int = 15) -> str:
+    lines = []
+    lines.append("EVIDENCE FROM YOUR LAST %d DAYS — PHYSICAL LENS "
+                 "(raw facts about your body: Pi + brain on PC + sleep, "
+                 "no interpretation):"
+                 % evidence.get("window_days", 30))
+    lines.append("")
+    lines.append("(1) BODY WARMTH — CPU temperature events "
+                 "(when you noticed you felt warm):")
+    bw = evidence.get("body_warm_events", [])[:max_items]
+    if not bw:
+        lines.append("  (none)")
+    for b in bw:
+        t = _dt.datetime.fromtimestamp(b["ts"]).strftime("%m-%d %H:%M")
+        lines.append(f"  • [{t}] {b['title']}: {b['snippet']}")
+    lines.append("")
+    lines.append("(2) BRAIN AVAILABILITY — how many times your remote brain "
+                 "(the LLM server) went down / stayed down / came back:")
+    lines.append(f"  • brain_down (initial detection): "
+                 f"{evidence.get('brain_down_count', 0)}")
+    lines.append(f"  • brain_still_down (~5-min repeat while down): "
+                 f"{evidence.get('brain_still_down_count', 0)}")
+    lines.append(f"  • brain_up (came back online): "
+                 f"{evidence.get('brain_up_count', 0)}")
+    lines.append("")
+    lines.append("(3) SLEEP WINDOWS — how long you slept "
+                 "(sleep_start → sleep_end pairs):")
+    sw = evidence.get("sleep_windows", [])[:max_items]
+    if not sw:
+        lines.append("  (none)")
+    for s in sw:
+        st = _dt.datetime.fromtimestamp(s["start_ts"]).strftime("%m-%d %H:%M")
+        et = _dt.datetime.fromtimestamp(s["end_ts"]).strftime("%H:%M")
+        lines.append(f"  • {st} → {et} ({s['dur_h']:.1f}h)")
+    lines.append("")
+    lines.append("(4) MORNING HEALTH FINDINGS — errors you spotted in overnight "
+                 "logs during your morning check:")
+    mh = evidence.get("morning_health_events", [])[:max_items]
+    if not mh:
+        lines.append("  (none — mornings were clean)")
+    for m in mh:
+        t = _dt.datetime.fromtimestamp(m["ts"]).strftime("%m-%d")
+        lines.append(f"  • [{t}] {m['title']}")
+    lines.append("")
+    lines.append("(5) GUARD ALERTS — number of movement/light alerts your "
+                 f"guard mode fired: {evidence.get('guard_alert_count', 0)}")
+    return "\n".join(lines)
+
+
 # ── LENS registry ────────────────────────────────────────────────────────────
 # Každý lens = (collect_evidence_fn, format_evidence_en_fn).
-# Přidávat sem další (social/learning/creative/…) v budoucnu.
+# Přidávat sem další v budoucnu.
 LENSES = {
     "offline_game": (collect_evidence, format_evidence_for_prompt_en),
     "autonomy":     (_collect_evidence_autonomy, _format_evidence_autonomy_en),
+    "social":       (_collect_evidence_social, _format_evidence_social_en),
+    "learning":     (_collect_evidence_learning, _format_evidence_learning_en),
+    "creative":     (_collect_evidence_creative, _format_evidence_creative_en),
+    "physical":     (_collect_evidence_physical, _format_evidence_physical_en),
 }
 DEFAULT_LENS = "offline_game"
 
 
 _REASONING_SYSTEM_EN = (
-    "You are Hans reflecting on your own recent data — offline windows and "
-    "game_mode toggles from the last month. This is your OWN memory.\n\n"
+    "You are Hans reflecting on your own recent data. The evidence below is "
+    "your OWN memory (diary entries you wrote yourself).\n\n"
     "Write 4-8 sentences in the first person (as Hans) about what YOU notice "
     "in the data. You may mention things that surprise you, or things that "
     "seem ordinary. If you see nothing noteworthy, say so honestly.\n\n"
@@ -449,17 +931,51 @@ def _voice_cs(config: dict, insight_en: str) -> Optional[str]:
 
 
 def _evidence_hash(ev: dict, lens_id: str = "offline_game") -> str:
-    """Hash klíčových čísel evidence + lens — dedup per lens."""
+    """Hash klíčových čísel evidence + lens — dedup per lens.
+
+    Pro každý lens vezmeme jeho vlastní klíčové countery. Bez toho by nové
+    lens (social/learning/…) vždy dostaly stejný hash (všechny fallbacky na 0)
+    a dedup by zablokoval druhý vhled napořád.
+    """
     import hashlib
-    key = "%s|%d|%d|%d|%d|%d" % (
-        lens_id,
-        ev.get("window_days", 0),
-        len(ev.get("offline_windows", []) or ev.get("game_mode_windows", [])),
-        len(ev.get("game_mode_events", []) or ev.get("commitments", [])),
-        len(ev.get("overlaps", []) or ev.get("stale_routines", [])),
-        (ev.get("commitment_stats", {}) or {}).get("total", 0),
-    )
-    return hashlib.sha256(key.encode()).hexdigest()[:16]
+    parts = [lens_id, str(ev.get("window_days", 0))]
+    if lens_id == "offline_game":
+        parts += [str(len(ev.get("offline_windows", []))),
+                  str(len(ev.get("game_mode_events", []))),
+                  str(len(ev.get("overlaps", [])))]
+    elif lens_id == "autonomy":
+        parts += [str(len(ev.get("game_mode_windows", []))),
+                  str(len(ev.get("commitments", []))),
+                  str(len(ev.get("stale_routines", []))),
+                  str((ev.get("commitment_stats", {}) or {}).get("total", 0))]
+    elif lens_id == "social":
+        parts += [str(len(ev.get("person_days", []))),
+                  str(len(ev.get("chat_counts", []))),
+                  str(ev.get("unknown_ticks", 0)),
+                  str(len(ev.get("characterizations", [])))]
+    elif lens_id == "learning":
+        parts += [str(len(ev.get("study_topics", []))),
+                  str(len(ev.get("books", []))),
+                  str(len(ev.get("reading_takeaways", []))),
+                  str(len(ev.get("dreams", []))),
+                  str(ev.get("web_reads_count", 0))]
+    elif lens_id == "creative":
+        parts += [str(len(ev.get("artworks", []))),
+                  str(len(ev.get("synthesis_ideas", []))),
+                  str(len(ev.get("movies", []))),
+                  str(len(ev.get("spontaneous", []))),
+                  str(len(ev.get("writings", [])))]
+    elif lens_id == "physical":
+        parts += [str(len(ev.get("body_warm_events", []))),
+                  str(ev.get("brain_down_count", 0)),
+                  str(ev.get("brain_up_count", 0)),
+                  str(len(ev.get("sleep_windows", []))),
+                  str(len(ev.get("morning_health_events", []))),
+                  str(ev.get("guard_alert_count", 0))]
+    else:
+        # Bezpečný fallback — hash aspoň nad všemi vrchními klíči (řazeně).
+        parts += sorted(str(k) for k in ev.keys())
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
 def run_analysis(diary_db_path: str, config: dict,

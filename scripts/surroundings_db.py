@@ -364,7 +364,12 @@ class SurroundingsDB:
         lines.append(f"Cas: {_time_str} ({_tod}).")
 
         # Aktualne viditelne osoby
-        if visible_persons:
+        # HANS_CHAT_HIDE_3RD_PARTY_V1 (20.7.): volající předá None místo []
+        # = celou větu úplně vynech (chat módu, kde 3. strany dráždí model);
+        # [] = „nikdo neni" (dnešní explicit signal); non-empty = normální list.
+        if visible_persons is None:
+            pass  # skip line entirely
+        elif visible_persons:
             known_vis = [n for n in visible_persons
                          if n not in ("Unknown", "...", "?", "")]
             unknown_cnt = sum(1 for n in visible_persons
