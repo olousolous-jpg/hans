@@ -131,6 +131,25 @@ DEFAULT_TIMEOUT = 120          # sekundy
 DEFAULT_KEEP_ALIVE = -1         # drž model v VRAM napořád  # KEEPALIVE_FIX_V2
 MAX_RETRIES     = 1            # 1 retry při timeout (celkem 2 pokusy)
 
+# HANS_WARMUP_PAUSE_V1 — VRAM handoff: uspat keepalive warmup, dokud noční
+# base-model analytika drží VRAM. Bez toho 4min pin hans-czech (8GB) evictuje
+# base OpenEuroLLM (8GB) uprostřed generování (8+8 > 16GB VRAM) → 300s timeouty.
+_warmup_pause_until = 0.0
+
+def pause_warmup(seconds: float) -> None:
+    """Uspi keepalive warmup na `seconds` (auto-expiry = cap, kdyby dávka
+    spadla bez resume). Idempotentní: okno jen prodlouží, nezkrátí."""
+    global _warmup_pause_until
+    _warmup_pause_until = max(_warmup_pause_until, time.time() + float(seconds))
+
+def resume_warmup() -> None:
+    """Zruš pauzu warmupu (konec analytické dávky)."""
+    global _warmup_pause_until
+    _warmup_pause_until = 0.0
+
+def warmup_paused() -> bool:
+    return time.time() < _warmup_pause_until
+
 # OLLAMA_CLIENT_MARKER (idempotence)
 
 
@@ -215,6 +234,9 @@ def ollama_warmup(
 ) -> bool:
     """Pošle prázdný request aby se model nahrál do VRAM. Vrátí True při úspěchu."""
     if game_mode_on():   # OLLAMA_GAME_MODE_V1 — nepřihřívej, ať VRAM zůstane volná
+        return False
+    if warmup_paused():  # HANS_WARMUP_PAUSE_V1 — base analytika drží VRAM
+        _log.debug("Warmup: přeskočeno (%s) — noční analytika drží VRAM", model)
         return False
     url = _resolve_url(ollama_url, config)
     br = _breaker_for(url)  # LOG_CIRCUIT_V1

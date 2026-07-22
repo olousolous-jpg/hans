@@ -170,6 +170,16 @@ class HansEveningReflection:
         except Exception as _te:
             _log.warning("tendency snapshot selhal (reflexe OK): %s", _te)
 
+        # HANS_WARMUP_PAUSE_V1 — od teď běží base-model analytika (importance,
+        # lessons, commitments, book_mentions) na OpenEuroLLM (8GB). Uspi
+        # keepalive warmup hans-czech (jinak ho evictuje uprostřed → 300s
+        # timeouty). Auto-expiry 30 min kdyby dávka spadla; resume v finally níž.
+        try:
+            from scripts.ollama_client import pause_warmup as _pause_warmup
+            _pause_warmup(1800)
+        except Exception as _pwe:
+            _log.debug("pause_warmup nedostupné: %s", _pwe)
+
         # AUTOBIOGRAPHICAL_IMPORTANCE_V1 — oskóruj neoskórované epizody dne
         # (base model, WHERE importance IS NULL = self-healing catch-up).
         try:
@@ -233,6 +243,17 @@ class HansEveningReflection:
         except Exception as _cme:
             _log.warning("extract_commitments selhal (reflexe OK): %s", _cme)
 
+        # HANS_COMMIT_FULFILL_V1 — uzavři research sliby: dohledej topic na webu
+        # → grounded result + done. Deferral-safe (mozek dole → nech, zkusí
+        # příště). Ráno je Hans na usazení řekne (openwebui/idle report).
+        try:
+            from scripts.hans_commitments import fulfill_commitments as _xfulfil
+            _nf = _xfulfil(self._config, self._diary_path)
+            if _nf:
+                _log.info("commit fulfill: uzavřeno %d research slibů", _nf)
+        except Exception as _fce:
+            _log.warning("fulfill_commitments selhal (reflexe OK): %s", _fce)
+
         # HANS_PERSON_INTERESTS_WIRING_V1 — per-osoba zájmy (přiživeno na
         # průchod nitek, sdílí _gather_dialogs). base model keep_alive=0.
         try:
@@ -264,6 +285,13 @@ class HansEveningReflection:
             _RS(self._config, self._diary_path).rebuild()
         except Exception as _re:
             _log.warning("routine_patterns rebuild selhal (reflexe OK): %s", _re)
+
+        # HANS_WARMUP_PAUSE_V1 — base-dávka hotová, vrať keepalive warmup.
+        try:
+            from scripts.ollama_client import resume_warmup as _resume_warmup
+            _resume_warmup()
+        except Exception as _rwe:
+            _log.debug("resume_warmup nedostupné: %s", _rwe)
 
         return text
 

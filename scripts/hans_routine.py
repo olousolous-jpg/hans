@@ -1715,6 +1715,14 @@ class HansRoutine:
                     and self._chat_quiet_ok()):
                 _creative_busy = True
                 try:
+                    # HANS_WARMUP_PAUSE_V1 — immune běží na base OpenEuroLLM
+                    # (VRAM). Uspi keepalive warmup hans-czech na dobu kontroly,
+                    # ať ho neevictuje (8+8 > 16GB). Auto-expiry 10 min.
+                    try:
+                        from scripts.ollama_client import pause_warmup as _pw
+                        _pw(600)
+                    except Exception:
+                        pass
                     from scripts.hans_immune import run_immune_check
                     _icode = run_immune_check(self.config, self._diary_path)
                     if _icode != "deferred":
@@ -1723,6 +1731,12 @@ class HansRoutine:
                     _log.info("Imunitní kontrola: %s", _icode)
                 except Exception as _iue:
                     _log.warning("Imunitní kontrola selhala: %s", _iue)
+                finally:
+                    try:
+                        from scripts.ollama_client import resume_warmup as _rw
+                        _rw()
+                    except Exception:
+                        pass
 
             # HANS_DASHBOARD_PROPOSAL_V1 (Tier 1) — JEDNORÁZOVĚ po dostudování
             # Designu: Hans napíše designovou kritiku + návrh vlastní nástěnky
