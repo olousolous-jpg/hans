@@ -746,12 +746,49 @@ class PicamDisplayController:
         self._eye_focus_ts = since
         return by_name[cur]
 
+    def _drive_eyes_only(self, boxes, identities, eyes):
+        """EYE_SERVO_NOCAM_V1 — kamerové servo je vypnuté (servo_controller=None),
+        takže odpadá celá 'kamera dohání' hystereze. Animatronické oči (P2/P3)
+        prostě sledují bbox osoby každý snímek; bez osoby se vrátí na střed."""
+        if not boxes:
+            eyes.center()
+            self._cam_recenter = False
+            return
+
+        def cx(b): return (b[0] + b[2]) / 2
+        def cy(b): return (b[1] + b[3]) / 2
+        def area(b): return (b[2]-b[0]) * (b[3]-b[1])
+
+        _unk = ("Unknown", "...", "?", "")
+        known   = [(b, i) for b, i in zip(boxes, identities) if i[0] not in _unk]
+        unknown = [(b, i) for b, i in zip(boxes, identities) if i[0] in _unk]
+
+        fx = fy = None
+        if known:
+            b = self._pick_eye_focus(known, area)
+            fx, fy = cx(b), cy(b)
+        elif unknown:
+            b, _ = max(unknown, key=lambda x: area(x[0])); fx, fy = cx(b), cy(b)
+            self._eye_focus_name = None
+
+        if fx is None:
+            eyes.center()
+            return
+        self._last_box_ts = time.time()
+        eyes.look_at_frac(fx, fy)
+
     def _update_servo(self, boxes, identities):
         """EYE_SERVO_V1 — oči (P2/P3) VEDOU (sledují bbox osoby každý snímek),
         kamera (P0/P1) jen DOHÁNÍ: hne se, až je osoba na kraji rámu, vycentruje
         ji, a oči se tím samy vrátí na střed. Bez eye_servo = původní chování
         (kamera trackuje spojitě)."""
         if not self.servo_controller:
+            # EYE_SERVO_NOCAM_V1 — kamerové servo (P0/P1) vypnuté (krátký CSI
+            # kabel), ALE animatronické oči (P2/P3) jsou samostatná serva a musí
+            # fungovat i bez kamerového serva. Řídíme jen oči, kamera odpadá.
+            eyes = self._get_eye_servo() if self._eyes_on() else None
+            if eyes is not None and getattr(eyes, "available", False):
+                self._drive_eyes_only(boxes, identities, eyes)
             return
         if getattr(self.servo_controller, 'calibrating', False):
             return  # SERVO_MANUAL_CALIB_V1 — wizard owns the servo
