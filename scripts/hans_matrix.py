@@ -26,6 +26,7 @@ import json
 import logging
 import mimetypes
 import os
+import sqlite3
 import threading
 import time
 
@@ -498,7 +499,9 @@ class MatrixBridge:
 
     def _maybe_deliver_requested_art(self):
         """Doruč obraz jen když si o něj uživatel řekl přes Matrix („namaluj…").
-        Autonomní malování (sny/den) se NEposílá. Čeká max 6 min na render."""
+        Autonomní malování (sny/den) se NEposílá. Doručí HNED po domalování
+        (poll á 15 s); `art_wait_minutes` (default 20) je jen deadline pro vzdání,
+        když render nikdy nedoběhne."""
         paint = self._cmd_state.get("paint") or {}
         if not paint.get("pending"):
             return
