@@ -751,8 +751,14 @@ class PicamDisplayController:
         takže odpadá celá 'kamera dohání' hystereze. Animatronické oči (P2/P3)
         prostě sledují bbox osoby každý snímek; bez osoby se vrátí na střed."""
         if not boxes:
-            eyes.center()
-            self._cam_recenter = False
+            # EYE_SERVO_HOLD_V1 — vzdálená tvář v detekci BLIKÁ (snímek je/není).
+            # Nevracej oči na střed hned po prvním prázdném snímku — podrž poslední
+            # pohled po no_person_hold_s, ať oči neposkakují střed↔osoba dokola.
+            ecfg = self.config.get("eye_servo", {}) or {}
+            hold = float(ecfg.get("no_person_hold_s", 1.5))
+            if (time.time() - getattr(self, "_last_box_ts", 0.0)) > hold:
+                eyes.center()
+                self._cam_recenter = False
             return
 
         def cx(b): return (b[0] + b[2]) / 2
@@ -764,11 +770,12 @@ class PicamDisplayController:
         unknown = [(b, i) for b, i in zip(boxes, identities) if i[0] in _unk]
 
         fx = fy = None
-        if known:
-            b = self._pick_eye_focus(known, area)
-            fx, fy = cx(b), cy(b)
-        elif unknown:
-            b, _ = max(unknown, key=lambda x: area(x[0])); fx, fy = cx(b), cy(b)
+        # EYE_SERVO_LARGEST_V1 — sleduj JEN největší (=nejbližší) bbox, žádný
+        # round-robin mezi osobami (dřív _pick_eye_focus/multi_dwell_s → oči
+        # poskakovaly z jedné osoby na druhou). Známé mají přednost před neznámými.
+        pool = known or unknown
+        if pool:
+            b, _ = max(pool, key=lambda x: area(x[0])); fx, fy = cx(b), cy(b)
             self._eye_focus_name = None
 
         if fx is None:

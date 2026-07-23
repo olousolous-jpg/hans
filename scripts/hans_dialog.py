@@ -900,6 +900,9 @@ class HansDialog:
             if _two:
                 dialog = self._generate_two_minds(topic, _context_str, history_block)
             if not dialog:
+                # KOLAC_STANCE_CHALLENGE_V1 — two_minds selhal → dialog bez injektáže
+                # postoje → žádný soud (jinak by soudil cizí text).
+                self._challenged_stance = None
                 dialog = self._call_gemini(user_prompt)
             if not dialog:
                 return
@@ -907,6 +910,15 @@ class HansDialog:
             self._last_dialog = time.time()
             _log.info("Dialog (turn %s, téma '%s'):\n%s",
                       topic.turn_label(), topic.subject, dialog)
+
+            # KOLAC_STANCE_CHALLENGE_V1 (část B) — zpochybnil-li Koláč konkrétní
+            # postoj a Hans poctivě ustoupil, oslab ten postoj.
+            _st = getattr(self, "_challenged_stance", None)
+            if _st:
+                try:
+                    self._maybe_weaken_stance(dialog, _st)
+                except Exception as _we:
+                    _log.debug("stance weaken: %s", _we)
 
             # Pokrok tématu + uchovat repliky pro continuity
             # Přidej stopu do Kolačova případu (z dialogu)
@@ -1128,10 +1140,12 @@ class HansDialog:
         if full_context:
             scene += ("\nKonkrétní kontext (vyjdi z těchto detailů, nevymýšlej "
                       "si nic navíc):\n" + full_context + "\n")
+        self._challenged_stance = None  # KOLAC_STANCE_CHALLENGE_V1
         if getattr(topic, "is_debate", False):
             scene += ("\nTOHLE JE VĚCNÝ SPOR: drž svůj názor a oponuj druhé "
                       "straně konkrétním protiargumentem — s respektem a vtipem, "
                       "ne hádka.\n")
+            scene += self._stance_challenge_block(name)  # KOLAC_STANCE_CHALLENGE_V1
         # continuity seed (navázání na předchozí repliky, drží-li téma)
         convo_seed = []
         if (history_block and getattr(topic, "turns_so_far", 0) > 0
@@ -1161,6 +1175,118 @@ class HansDialog:
                 break
             convo.append(f"{label}: {line}")
         return "\n".join(convo) if convo else None
+
+    # ── KOLAC_STANCE_CHALLENGE_V1 — Koláč tlačí Hanse k pochybám ────────────
+    def _load_challengeable_stances(self):
+        """Hansovy zažité (vysoce jisté) postoje, na které Kolač smí zaútočit.
+        Cíl = ty „neprůstřelné", ať identita může reálně dýchat. Read-only → []."""
+        if not self._diary_path:
+            return []
+        dc = self.config.get("hans_dialog", {}) or {}
+        min_conf = float(dc.get("stance_challenge_min_conf", 0.7))
+        try:
+            from scripts.hans_stances import StanceStore
+            store = StanceStore(self.config, self._diary_path)
+            return [s for s in store.top_stances(limit=8, min_confidence=min_conf)
+                    if getattr(s, "evidence_count", 0) >= 3 and (s.claim or "").strip()]
+        except Exception as e:
+            _log.debug("challengeable stances: %s", e)
+            return []
+
+    def _stance_challenge_block(self, name: str) -> str:
+        """Část A — s pravděpodobností stance_challenge_prob nechá Kolače zaútočit
+        na JEDEN Hansův zažitý postoj (ne jen na téma) a stashne ho pro pozdější
+        soud. Cooldown na postoj brání mlácení téhož názoru dokola. Vrací text do
+        scene, nebo '' (žádná výzva)."""
+        dc = self.config.get("hans_dialog", {}) or {}
+        import random as _rnd
+        if _rnd.random() >= float(dc.get("stance_challenge_prob", 0.6)):
+            return ""
+        stances = self._load_challengeable_stances()
+        if not stances:
+            return ""
+        cd = float(dc.get("stance_challenge_cooldown_s", 21600))
+        now = time.time()
+        cool = getattr(self, "_stance_cd", None)
+        if cool is None:
+            cool = self._stance_cd = {}
+        # top_stances je řazený confidence DESC → preferuj „neprůstřelné" mimo cooldown
+        avail = [s for s in stances
+                 if (now - cool.get((s.claim or "").strip().lower(), 0.0)) > cd]
+        if not avail:
+            return ""
+        chosen = _rnd.choice(avail[:4])
+        cool[(chosen.claim or "").strip().lower()] = now
+        self._challenged_stance = {"claim": chosen.claim,
+                                   "conf": float(getattr(chosen, "confidence", 0.0))}
+        return (
+            "\nKONKRÉTNÍ VÝZVA — Kolač dnes zpochybní JEDEN Hansův zažitý postoj:\n"
+            f"  „{chosen.claim}“\n"
+            f"Kolač na něj zaútočí věcně a nenechá se odbýt. {name} ho bere vážně a "
+            f"POCTIVĚ zváží — a má-li Kolač dobrý důvod, {name} smí svůj postoj "
+            f"změkčit nebo přiznat pochybnost (ne jen zdvořile „máte bod“ a "
+            f"trvat na svém). Jde o skutečné přehodnocení, ne obhajobu za každou cenu.\n")
+
+    def _maybe_weaken_stance(self, dialog: str, st: dict):
+        """Část B — když Hans v dialogu POCTIVĚ ustoupil ze zpochybněného postoje,
+        oslab ho (contradict → conf*0.85). Jinak nech být (postoj obstál). Mozek
+        dolů/hra → tiše odlož (žádné oslabení bez soudu). Jeden krok = 15 % → eroze
+        je postupná, ne překlopení z jedné hlášky (anti-konfab pojistka)."""
+        claim = (st or {}).get("claim", "").strip()
+        if not claim or not dialog:
+            return
+        from scripts.hans_persona import persona_name
+        name = persona_name(self.config)
+        hans_lines = []
+        for l in dialog.split("\n"):
+            l = l.strip()
+            if ":" not in l:
+                continue
+            spk, rest = l.split(":", 1)
+            if spk.strip().lower() == name.lower():
+                hans_lines.append(rest.strip())
+        if not hans_lines:
+            return
+        if not self._ollama_available():
+            _log.debug("stance challenge: mozek dolů → soud odložen")
+            return
+        from scripts.ollama_client import ollama_chat
+        dc = self.config.get("hans_dialog", {}) or {}
+        base = self.config.get("openwebui_chat", {}).get(
+            "base_url", "http://127.0.0.1:11434")
+        model = (self.config.get("models", {}).get("dialog")
+                 or dc.get("ollama_model")
+                 or self.config.get("openwebui_chat", {}).get(
+                     "model_name", "jobautomation/OpenEuroLLM-Czech:latest"))
+        sysp = (
+            "Jsi striktní posuzovatel. Rozhodni, zda mluvčí ve svých replikách "
+            "SKUTEČNĚ ustoupil ze svého postoje — tj. připustil pochybnost, změkčil "
+            "ho, nebo uznal, že protistrana má ve věci pravdu. Pouhá zdvořilost "
+            "(„máte bod, ale trvám na svém“) NENÍ ustoupení. Odpověz jediným "
+            "slovem: ANO nebo NE.")
+        user = ("POSTOJ: " + claim + "\n\nREPLIKY MLUVČÍHO:\n- "
+                + "\n- ".join(hans_lines) + "\n\nUstoupil ze svého postoje? (ANO/NE)")
+        try:
+            verdict = ollama_chat(
+                model, [{"role": "system", "content": sysp},
+                        {"role": "user", "content": user}],
+                ollama_url=base, options={"num_predict": 6, "temperature": 0.0})
+        except Exception as e:
+            _log.debug("stance challenge soud selhal: %s", e)
+            return
+        if verdict is None:
+            _log.debug("stance challenge: soud None (mozek/hra) → odloženo")
+            return
+        if not verdict.strip().upper().startswith("ANO"):
+            _log.info("stance challenge: postoj obstál — %.60s", claim)
+            return
+        from scripts.hans_stances import StanceStore
+        store = StanceStore(self.config, self._diary_path)
+        sid = store.contradict(claim, counter_claim=hans_lines[-1][:200],
+                               source="kolac_debate")
+        if sid:
+            _log.info("KOLAC_STANCE_CHALLENGE: Hans ustoupil → oslabuji postoj "
+                      "[%s] %.60s", sid, claim)
 
     def _call_gemini(self, user_prompt: str) -> str | None:
         """HANS_DIALOG_OLLAMA_ONLY_V1 — jen lokální Ollama (Hansův mozek).

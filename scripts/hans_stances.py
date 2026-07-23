@@ -122,12 +122,64 @@ class StanceStore:
                 db.execute("ALTER TABLE stances ADD COLUMN counterargs TEXT")
             except sqlite3.OperationalError:
                 pass  # sloupec už existuje
+            # STANCE_HISTORY_V1 — časová stopa confidence (graf vývoje postoje).
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS stance_history (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stance_id  INTEGER NOT NULL,
+                    ts         REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    event      TEXT
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_stancehist_sid "
+                       "ON stance_history(stance_id, ts)")
+            # Seed: jednorázově aktuální hodnota jako první bod pro postoje bez
+            # historie (minulost je přepsaná → tohle je kotva „od teď").
+            db.execute(
+                "INSERT INTO stance_history (stance_id, ts, confidence, event) "
+                "SELECT id, last_seen, confidence, 'seed' FROM stances s "
+                "WHERE NOT EXISTS (SELECT 1 FROM stance_history h "
+                "                  WHERE h.stance_id = s.id)")
             db.commit()
 
     def _connect(self):
         conn = sqlite3.connect(self._diary_path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @staticmethod
+    def _hist(conn, stance_id, ts, confidence, event):
+        """STANCE_HISTORY_V1 — zapiš jeden bod vývoje confidence (append-only,
+        v téže transakci co změna). Selhání nesmí shodit uložení postoje."""
+        try:
+            conn.execute(
+                "INSERT INTO stance_history (stance_id, ts, confidence, event) "
+                "VALUES (?,?,?,?)", (stance_id, ts, float(confidence), event))
+        except Exception:
+            pass
+
+    def history(self, stance_id: int = None, limit: int = 2000):
+        """READ-ONLY časová stopa confidence (pro graf). stance_id=None → vše,
+        vzestupně dle času. Vrací [{stance_id, ts, confidence, event}]."""
+        try:
+            conn = self._connect()
+            try:
+                if stance_id is None:
+                    rows = conn.execute(
+                        "SELECT stance_id, ts, confidence, event FROM stance_history "
+                        "ORDER BY ts ASC LIMIT ?", (limit,)).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT stance_id, ts, confidence, event FROM stance_history "
+                        "WHERE stance_id=? ORDER BY ts ASC LIMIT ?",
+                        (stance_id, limit)).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("StanceStore.history failed: %s", e)
+            return []
 
     def add_or_reinforce(self, claim: str, confidence: float = 0.5,
                          source: str = "evening_reflection",
@@ -155,6 +207,7 @@ class StanceStore:
                         "VALUES (?,?,?,1,?,?,?,'active',?)",
                         (claim.strip(), norm, _clamp(confidence), now, now,
                          source, _cargs))
+                    self._hist(conn, cur.lastrowid, now, _clamp(confidence), "new")
                     conn.commit()
                     _log.info("stance NEW [%s] conf=%.2f: %.60s",
                               cur.lastrowid, _clamp(confidence), claim)
@@ -173,6 +226,7 @@ class StanceStore:
                         "UPDATE stances SET confidence=?, "
                         "evidence_count=evidence_count+1, last_seen=? WHERE id=?",
                         (new_conf, now, sid))
+                self._hist(conn, sid, now, new_conf, "reinforce")
                 conn.commit()
                 _log.info("stance REINFORCE [%s] conf %.2f->%.2f: %.60s",
                           sid, conf, new_conf, claim)
@@ -208,6 +262,7 @@ class StanceStore:
                     "UPDATE stances SET confidence=?, last_seen=?, counterargs=? "
                     "WHERE id=?",
                     (new_conf, now, json.dumps(merged), sid))
+                self._hist(conn, sid, now, new_conf, "contradict")
                 conn.commit()
                 _log.info("stance WEAKEN [%s] conf %.2f->%.2f (+counterarg): %.60s",
                           sid, conf, new_conf, target_claim)

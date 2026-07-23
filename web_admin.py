@@ -453,6 +453,68 @@ async def get_diary_types():
         return {"error": str(e)}
 
 
+@app.get("/api/stances/history")
+async def get_stances_history(limit_stances: int = 6):
+    """STANCE_CHART_V1 — časové série confidence postojů (graf vývoje identity).
+    Řadí: nejdřív ty co se HÝBALY (víc bodů), pak nejjistější („neprůstřelné")."""
+    if not DIARY_PATH.exists():
+        return {"stances": []}
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % DIARY_PATH, uri=True)
+        has = conn.execute("SELECT name FROM sqlite_master WHERE type='table' "
+                           "AND name='stance_history'").fetchone()
+        if not has:
+            conn.close(); return {"stances": []}
+        rows = conn.execute(
+            "SELECT s.id, s.claim, s.confidence, "
+            "  (SELECT COUNT(*) FROM stance_history h WHERE h.stance_id=s.id) AS npts "
+            "FROM stances s WHERE s.status='active' "
+            "ORDER BY npts DESC, s.confidence DESC LIMIT ?", (limit_stances,)).fetchall()
+        out = []
+        for sid, claim, conf, _npts in rows:
+            pts = conn.execute(
+                "SELECT ts, confidence, event FROM stance_history "
+                "WHERE stance_id=? ORDER BY ts ASC", (sid,)).fetchall()
+            out.append({"id": sid, "claim": claim or "", "conf": conf,
+                        "points": [{"ts": p[0], "confidence": p[1], "event": p[2]}
+                                   for p in pts]})
+        conn.close()
+        return {"stances": out}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/trends")
+async def get_trends(limit_hobbies: int = 6):
+    """TRENDS_CHART_V1 — časové série nálady (intenzita) a růstu koníčků."""
+    out = {"mood": [], "hobbies": []}
+    if not DIARY_PATH.exists():
+        return out
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % DIARY_PATH, uri=True)
+        def _has(t):
+            return conn.execute("SELECT name FROM sqlite_master WHERE type='table' "
+                                "AND name=?", (t,)).fetchone()
+        if _has("mood_history"):
+            rows = conn.execute("SELECT ts, mood, intensity FROM mood_history "
+                                "ORDER BY ts ASC LIMIT 3000").fetchall()
+            out["mood"] = [{"ts": r[0], "mood": r[1], "intensity": r[2]} for r in rows]
+        if _has("hobby_history"):
+            hrows = conn.execute(
+                "SELECT id, name FROM hobbies WHERE status='active' "
+                "ORDER BY evidence_count DESC LIMIT ?", (limit_hobbies,)).fetchall()
+            for hid, hname in hrows:
+                pts = conn.execute(
+                    "SELECT ts, evidence_count FROM hobby_history WHERE hobby_id=? "
+                    "ORDER BY ts ASC", (hid,)).fetchall()
+                out["hobbies"].append({"id": hid, "name": hname or "",
+                                       "points": [{"ts": p[0], "count": p[1]} for p in pts]})
+        conn.close()
+        return out
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/api/faces")
 async def get_faces():
     result = []

@@ -146,6 +146,11 @@ class HansMood:
         self.config     = config
         self._diary_db  = diary_db   # sqlite3 connection nebo None
         self._state     = MoodState()
+        # TRENDS_HISTORY_V1 — časová stopa intenzity nálady (graf)
+        self._diary_path = ((config or {}).get("diary_db")
+                            or (config or {}).get("hans_idle", {}).get("diary_db")
+                            or "data/hans_diary.db")
+        self._init_mood_history()
         self._last_objects: list[str] = []
         self._kodi_title: str = ""
         self._weather_code: int = 0
@@ -331,6 +336,47 @@ class HansMood:
 
     # ── Interní ───────────────────────────────────────────────────────────────
 
+    def _init_mood_history(self):
+        """TRENDS_HISTORY_V1 — tabulka časové stopy nálady (idempotentní)."""
+        import sqlite3
+        try:
+            with sqlite3.connect(self._diary_path) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS mood_history ("
+                           "id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, "
+                           "mood TEXT, intensity REAL NOT NULL)")
+                db.execute("CREATE INDEX IF NOT EXISTS idx_moodhist_ts "
+                           "ON mood_history(ts)")
+                # Seed: jeden bod hned, když je tabulka prázdná (jinak graf visí
+                # prázdný do první změny nálady). Idempotentní přes NOT EXISTS.
+                db.execute("INSERT INTO mood_history (ts, mood, intensity) "
+                           "SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM mood_history)",
+                           (time.time(), self._state.mood, float(self._state.intensity)))
+                db.commit()
+        except Exception as e:
+            _log.debug("mood_history init: %s", e)
+
+    def _record_mood_history(self):
+        """Zapiš bod intenzity — jen při změně nálady, nebo Δintenzita>=0.05 a
+        >=120 s od minula (přepočet je častý → throttle proti zaplavení DB)."""
+        import sqlite3
+        now = time.time()
+        m, it = self._state.mood, self._state.intensity
+        lt = getattr(self, "_mh_last_ts", 0.0)
+        li = getattr(self, "_mh_last_int", -1.0)
+        lm = getattr(self, "_mh_last_mood", None)
+        if m == lm and ((now - lt) < 120 or abs(it - li) < 0.05):
+            return
+        if not getattr(self, "_diary_path", None):
+            return
+        try:
+            conn = sqlite3.connect(self._diary_path, timeout=5.0)
+            conn.execute("INSERT INTO mood_history (ts, mood, intensity) VALUES (?,?,?)",
+                         (now, m, float(it)))
+            conn.commit(); conn.close()
+            self._mh_last_ts, self._mh_last_int, self._mh_last_mood = now, it, m
+        except Exception as e:
+            _log.debug("mood_history rec: %s", e)
+
     def _shift(self, new_mood: str, intensity: float, reason: str):
         """Přidá hlas pro novou náladu. Skutečný přepis udělá _recompute_mood()."""
         now = time.time()
@@ -373,6 +419,7 @@ class HansMood:
         if top_mood == self._state.mood:
             # Aktualizuj jen intenzitu (plynule)
             self._state.intensity = min(1.0, max(0.1, top_score / 2.0))
+            self._record_mood_history()  # TRENDS_HISTORY_V1
             return
 
         # Cooldown — nepřepínej dřív než MOOD_MIN_HOLD_S
@@ -393,6 +440,7 @@ class HansMood:
         _log.info("Mood: %s → %s (%.2f, score=%.2f) — %s",
                   old, top_mood, self._state.intensity,
                   top_score, self._state.shift_reason)
+        self._record_mood_history()  # TRENDS_HISTORY_V1
 
     def _log_to_diary(self, old: str, new: str, reason: str):
         # Mood shifty se do deníku nezapisují — jen logujeme

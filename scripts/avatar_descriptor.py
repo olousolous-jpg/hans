@@ -275,6 +275,14 @@ def generate_descriptor(config: dict, diary_db_path: str,
         model, user, system=_SYSTEM, config=config, timeout=timeout,
         keep_alive=0,  # MODEL_KEEPALIVE_TIERS_V1 — descriptor model on-demand
         options={"temperature": temp})
+    if raw is None:
+        # HANS_AVATAR_DEFERRED_V1 — ollama_generate vrací None při výpadku mozku
+        # i herním módu → to NENÍ vadný výstup, ale nedostupný mozek. Odlož tiše
+        # (žádná fabrikace); descriptor se odvozuje z charakteru pokaždé znovu,
+        # takže stačí zkusit příští noc — nic se neztrácí. DEBUG = mimo system.log,
+        # žádný spam (dřív 63× WARN/noc při nočním výpadku PC).
+        _log.debug("avatar: descriptor odložen — mozek nedostupný (zkusím příště)")
+        return None
     d = _parse_descriptor(raw)
     if not d:
         _log.warning("avatar: LLM nevrátil parsovatelný descriptor")

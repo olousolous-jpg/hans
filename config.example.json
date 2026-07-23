@@ -499,6 +499,10 @@
     "hans_interests": "Zajímá ho správná etiketa, anglická literatura, péče o domácnost a přesný chod domácnosti. Zajima se take o filmy a geologii sopek, hlavne tech nejvetsich.",
     "kolac_interests": "Zajímají ho detektivní případy, stopy a indicie, logické hádanky a záhady v domácnosti.",
     "ollama_model": "hans-czech:latest",
+    "stance_challenge_prob": 0.6,
+    "stance_challenge_min_conf": 0.7,
+    "stance_challenge_cooldown_s": 21600,
+    "stance_challenge_note": "KOLAC_STANCE_CHALLENGE_V1: v debatě Kolač s touto pravděpodobností zaútočí na Hansův konkrétní zažitý postoj (conf>=min_conf); když Hans poctivě ustoupí, postoj se oslabí (contradict, -15%). cooldown_s = jak dlouho nemlátit tentýž postoj. 0 prob = vypnuto (zpět na obecnou debatu).",
     "topic_min_turns": 3,
     "topic_max_turns": 6,
     "recent_replies_max": 40,
@@ -915,7 +919,9 @@
     "idle_release_s": 0.5,
     "multi_dwell_s": 10.0,
     "camera_follow": false,
-    "reacquire_gap_s": 20.0
+    "reacquire_gap_s": 20.0,
+    "no_person_hold_s": 15,
+    "no_person_hold_s_note": "Cesta 'jen oči': jak dlouho podržet oči na poslední pozici detekované osoby (známé i neznámé) po jejím zmizení, než se vrátí na střed. Pokud se mezitím objeví jiná osoba, jdou oči za ní. Tlumí i poskakování u vzdálených tváří, které v detekci blikají."
   },
   "memory_hygiene": {
     "enabled": true,

@@ -97,12 +97,60 @@ class HobbyStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_hobbies_norm ON hobbies(name_norm)")
+            # TRENDS_HISTORY_V1 — časová stopa evidence_count (graf růstu zájmu).
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS hobby_history (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hobby_id       INTEGER NOT NULL,
+                    ts             REAL NOT NULL,
+                    evidence_count INTEGER NOT NULL,
+                    event          TEXT
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_hobbyhist_hid "
+                       "ON hobby_history(hobby_id, ts)")
+            db.execute(
+                "INSERT INTO hobby_history (hobby_id, ts, evidence_count, event) "
+                "SELECT id, last_seen, evidence_count, 'seed' FROM hobbies h "
+                "WHERE NOT EXISTS (SELECT 1 FROM hobby_history hh "
+                "                  WHERE hh.hobby_id = h.id)")
             db.commit()
 
     def _connect(self):
         conn = sqlite3.connect(self._diary_path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @staticmethod
+    def _hist(conn, hobby_id, ts, count, event):
+        """TRENDS_HISTORY_V1 — jeden bod růstu zájmu (append-only)."""
+        try:
+            conn.execute(
+                "INSERT INTO hobby_history (hobby_id, ts, evidence_count, event) "
+                "VALUES (?,?,?,?)", (hobby_id, ts, int(count), event))
+        except Exception:
+            pass
+
+    def history(self, hobby_id: int = None, limit: int = 2000):
+        """READ-ONLY časová stopa evidence_count (pro graf)."""
+        try:
+            conn = self._connect()
+            try:
+                if hobby_id is None:
+                    rows = conn.execute(
+                        "SELECT hobby_id, ts, evidence_count, event FROM hobby_history "
+                        "ORDER BY ts ASC LIMIT ?", (limit,)).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT hobby_id, ts, evidence_count, event FROM hobby_history "
+                        "WHERE hobby_id=? ORDER BY ts ASC LIMIT ?",
+                        (hobby_id, limit)).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("HobbyStore.history failed: %s", e)
+            return []
 
     def add_or_reinforce(self, name: str, examples: list = None) -> Optional[int]:
         norm = _norm(name)
@@ -125,6 +173,7 @@ class HobbyStore:
                          json.dumps(examples, ensure_ascii=False)))
                     conn.commit()
                     rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    self._hist(conn, rid, now, 1, "new"); conn.commit()
                     _log.info("hobby NEW [%s]: %.50s", rid, name)
                     return rid
                 rid = row["id"]
@@ -137,6 +186,9 @@ class HobbyStore:
                     "UPDATE hobbies SET evidence_count=evidence_count+1, last_seen=?, "
                     "examples=? WHERE id=?",
                     (now, json.dumps(merged[:20], ensure_ascii=False), rid))
+                _newc = conn.execute("SELECT evidence_count FROM hobbies WHERE id=?",
+                                     (rid,)).fetchone()[0]
+                self._hist(conn, rid, now, _newc, "reinforce")
                 conn.commit()
                 _log.info("hobby REINFORCE [%s] (n+1): %.50s", rid, name)
                 return rid

@@ -108,6 +108,15 @@ class HansIdle:
 
         from scripts.hans_mood import HansMood
         self._mood = HansMood(config, diary_db=self._db)
+        # TRENDS_HISTORY_V1 — vytvoř hobby_history + seed hned při startu (jinak
+        # tabulka vznikne až lazy v noci a dashboard graf nemá co číst).
+        try:
+            from scripts.hans_hobbies import HobbyStore
+            HobbyStore(config, (config.get("diary_db")
+                                or config.get("hans_idle", {}).get("diary_db")
+                                or "data/hans_diary.db"))
+        except Exception:
+            pass
         # HANS_MORNING_HEALTH_V1 — ranní sebe-kontrola zdraví
         self._morning_health = None          # nález pro greeting/chat surfacing
         self._prev_routine_sleeping = None   # edge-detekce probuzení
