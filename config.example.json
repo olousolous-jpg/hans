@@ -343,6 +343,32 @@
     ],
     "question_interval_h": 6
   },
+  "matrix": {
+    "_note": "HANS_MATRIX_V1 — E2E šifrovaný most (matrix.org). Alternativa k Telegramu, kde poskytovatel NEvidí obsah. Vyžaduje apt: python3-matrix-nio python3-olm.",
+    "enabled": false,
+    "homeserver": "https://matrix.org",
+    "user_id": "@hansbot:matrix.org",
+    "password": "",
+    "_password_note": "Jen pro PRVNÍ přihlášení; pak se uloží token do store_path/credentials.json a heslo lze z configu smazat.",
+    "room_id": "!abcdef123:matrix.org",
+    "_room_id_note": "ID šifrované místnosti (Element → nastavení místnosti → Rozšířené → interní ID). NE alias #...",
+    "as_person": "standa",
+    "device_name": "hans",
+    "store_path": "data/matrix_store",
+    "announce_online": false,
+    "quiet_start_hour": 22,
+    "quiet_end_hour": 9,
+    "question_interval_h": 6,
+    "art_wait_minutes": 20,
+    "_art_wait_note": "Kolik minut cekat na dokresleni vyzadaneho obrazu (namaluj...) nez to vzdam. SDXL render + fronta muze byt vic nez 6 min.",
+    "users": [
+      {
+        "user_id": "@alice:matrix.org",
+        "as_person": "alice",
+        "role": "full"
+      }
+    ]
+  },
   "kodi": {
     "enabled": true,
     "host": "192.168.1.20",

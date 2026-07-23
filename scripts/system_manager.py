@@ -234,19 +234,39 @@ class FaceRecognitionSystem:
                     print(f"[Chat] Preload selhal: {e}")
             threading.Thread(target=_preload, daemon=True).start()
 
-        # HANS_TELEGRAM_V1 — most na telefon (push + obousměrný chat)
+        # HANS_NOTIFIER_V1 — notifikační mosty (Telegram + Matrix E2E) přes
+        # fan-out Notifier. Volající (hans_idle, display) drží .telegram; backend
+        # je swappable configem. Cíl (23.7.): až Matrix ověřen naživo →
+        # telegram.enabled=false → provozně jen Matrix; pak Telegram kód smazat.
         self.telegram = None
         try:
-            from scripts.hans_telegram import TelegramBridge
-            _tg = TelegramBridge(self.config, self.openwebui_chat)
-            if _tg.enabled:
-                _tg.start()
-                self.telegram = _tg
+            from scripts.hans_notifier import Notifier
+            _bridges = []
+            try:
+                from scripts.hans_telegram import TelegramBridge
+                _tg = TelegramBridge(self.config, self.openwebui_chat)
+                if _tg.enabled:
+                    _bridges.append(_tg)
+                    print("[Telegram] most zapnut")
+            except Exception as _te:
+                print(f"[Telegram] init selhal: {_te}")
+            try:
+                from scripts.hans_matrix import MatrixBridge
+                _mx = MatrixBridge(self.config, self.openwebui_chat)
+                if _mx.enabled:
+                    _bridges.append(_mx)
+                    print("[Matrix] most zapnut (E2E)")
+            except Exception as _me:
+                print(f"[Matrix] init selhal: {_me}")
+            if _bridges:
+                _notif = Notifier(_bridges)
+                _notif.start()
+                self.telegram = _notif
                 if self.openwebui_chat is not None:
-                    self.openwebui_chat.telegram = _tg
-                print("[Telegram] most aktivní")
-        except Exception as _te:
-            print(f"[Telegram] init selhal: {_te}")
+                    self.openwebui_chat.telegram = _notif
+                print(f"[Notifier] aktivní ({len(_bridges)} most/y)")
+        except Exception as _ne:
+            print(f"[Notifier] init selhal: {_ne}")
 
     def show_system_status(self):
         print("\nSystem Configuration:")
