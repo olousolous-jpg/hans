@@ -161,3 +161,18 @@ class EyeServoController:
         if not self.available:
             return
         self.look_at_frac(0.5, 0.5)
+
+    def recenter(self):
+        """EYE_SERVO_RECENTER_V1 — vynuceně na kalibrovaný střed + reset EMA/last.
+        Volá se při RE-aktivaci očí (po vypnutí). Bez tohohle cached controller
+        drží poslední (často off-center) pozici z okamžiku vypnutí a EMA/deadband
+        ji berou jako výchozí → oči „koukají" mimo. Reset EMA=None → _send pošle
+        přímo cílový střed (bez vyhlazení ze staré pozice)."""
+        if not self.available:
+            return
+        self._pan_ema = None
+        self._tilt_ema = None
+        self._last_pan = None
+        self._last_tilt = None
+        self._released = False
+        self.center()

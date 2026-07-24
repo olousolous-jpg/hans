@@ -2156,18 +2156,39 @@ class PicamDisplayController:
         self._preview_on = not self._preview_on
         return self._preview_on
 
+    def _eyes_state_path(self):
+        return "data/.eyes_enabled"
+
+    def _save_eyes_state(self):
+        """EYE_SERVO_STATE_PERSIST_V1 — ulož on/off stav, ať přežije restart."""
+        try:
+            with open(self._eyes_state_path(), "w", encoding="utf-8") as f:
+                f.write("1" if self._eyes_enabled else "0")
+        except OSError as _e:
+            import logging
+            logging.getLogger(__name__).debug("eyes state save selhal: %s", _e)
+
     def _eyes_on(self):
-        """Runtime stav animatronických očí (default z configu eye_servo.enabled)."""
+        """Runtime stav animatronických očí. EYE_SERVO_STATE_PERSIST_V1 —
+        persistováno do data/.eyes_enabled (přežije restart; dřív se bral vždy
+        config default → ručně vypnuté oči se po restartu samy zapnuly). Config
+        eye_servo.enabled je jen výchozí, když soubor stavu ještě neexistuje.
+        Čte se jen 1× (pak cache v _eyes_enabled) → žádné per-frame I/O."""
         v = getattr(self, "_eyes_enabled", None)
         if v is None:
-            v = bool((self.config.get("eye_servo", {}) or {}).get("enabled", False))
+            try:
+                with open(self._eyes_state_path(), encoding="utf-8") as f:
+                    v = f.read().strip() == "1"
+            except OSError:
+                v = bool((self.config.get("eye_servo", {}) or {}).get("enabled", False))
             self._eyes_enabled = v
         return v
 
     def menu_toggle_eyes(self):
         """Přepne sledování animatronickýma očima. Vypnuto → oči se uvolní
         (limp, ticho) a kamera se vrátí k PŮVODNÍMU spojitému trackingu
-        (jako před instalací očí)."""
+        (jako před instalací očí). Zapnuto → vynuť recenter (ať se off-center
+        pozice z okamžiku vypnutí nebere jako střed). Stav se persistuje."""
         self._eyes_enabled = not self._eyes_on()
         if not self._eyes_enabled:
             eyes = getattr(self, "_eye_servo", None)
@@ -2177,6 +2198,15 @@ class PicamDisplayController:
                 except Exception:
                     pass
             self._cam_recenter = False
+        else:
+            # EYE_SERVO_RECENTER_V1 — reaktivace → vynuceně na střed + reset EMA
+            eyes = self._get_eye_servo()
+            if eyes not in (None, "unset"):
+                try:
+                    eyes.recenter()
+                except Exception:
+                    pass
+        self._save_eyes_state()  # EYE_SERVO_STATE_PERSIST_V1
         return self._eyes_enabled
 
     def menu_current_person(self):
