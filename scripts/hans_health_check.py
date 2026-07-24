@@ -37,6 +37,11 @@ _BENIGN = (
     "ollama connection error",
     "llm nedostupn",          # deferral-safe hlášky (data se neztratí)
     "ollama timeout",
+    # PC v noci spí / ráno bootuje → i tyto jsou noční blip, ne skutečná porucha
+    "ollama request error",   # 500/HTTP chyba z Ollamy při bootu PC (WOL)
+    "internal server error",  # 500 tělo (Ollama startuje, model ještě nenačten)
+    "remotedisconnected",     # spojení upadlo při usínání/probouzení PC
+    "connection aborted",
 )
 
 # REÁLNOU chybu spustí Traceback marker (i víceřádkový) nebo [ERROR]/[CRITICAL].

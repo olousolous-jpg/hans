@@ -156,6 +156,10 @@ class HansRoutine:
         self._last_immune_date = ""      # HANS_IMMUNE_A2_V1 (noční fact-check tvrzení)
         self._last_hygiene_date = ""     # HANS_MEMORY_HYGIENE_V1 (prořez firehose 1×/noc)
         self._last_pc_shutdown_date = ""  # HANS_PC_NIGHT_SHUTDOWN (vypni PC po analytice 1×/noc)
+        # HANS_HEALTH_NIGHT_AWARE_V1 — timestampy cyklu PC pro rozlišení
+        # ZÁMĚRNÉHO výpadku (noční shutdown / ranní boot) od skutečné poruchy.
+        self._pc_shutdown_ts = 0.0
+        self._wol_online_ts = 0.0
         self._last_analytics_wake_date = ""  # HANS_PC_NIGHT_ANALYTICS_WAKE (probuď PC pro analytiku 1×/noc)
         self._analytics_wake_ts = 0.0
         self._identity = None            # HANS_IDENTITY_V1 (verzování CORE)
@@ -785,6 +789,7 @@ class HansRoutine:
                 _t.sleep(15)
                 if self._ping_host(ip):
                     _log.info('WOL: %s ONLINE %ds po packetu — probuzeno', ip, (_i + 1) * 15)
+                    self._wol_online_ts = _t.time()  # HANS_HEALTH_NIGHT_AWARE_V1
                     break
             else:
                 _log.warning('WOL: %s pořád offline 120s po packetu — probuzení se nezdařilo?', ip)
@@ -1131,6 +1136,24 @@ class HansRoutine:
         except Exception:
             pass
 
+    def _pc_planned_unavailable(self) -> bool:
+        """HANS_HEALTH_NIGHT_AWARE_V1 — je PC ZÁMĚRNĚ dole (noční shutdown) nebo
+        se právě probouzí (WOL boot grace)? Pak výpadek Ollamy/PC je OČEKÁVANÝ,
+        ne porucha → nehlásit „mozek se zasekl", nehealit, warning→debug. Váže se
+        na skutečný cyklus (shutdown↔WOL), NE na hodiny (ranní WOL je po
+        morning_hour). Pozn.: timestampy nejsou persistované → po restartu Hanse
+        uprostřed noci se suppression ztratí (jen víc log-šumu, ne falešná
+        hláška — DOWN≠WEDGED, notify nefíruje)."""
+        import time as _t
+        now = _t.time()
+        sd = getattr(self, '_pc_shutdown_ts', 0.0)
+        wo = getattr(self, '_wol_online_ts', 0.0)
+        if sd and sd > wo:
+            return True  # naposledy jsme PC vypnuli, WOL ho ještě nevrátil → dole
+        if wo and (now - wo) < getattr(self, '_wol_startup_grace_s', 300):
+            return True  # čerstvě probuzeno → Ollama bootuje
+        return False
+
     def _health_watcher_loop(self):
         """HANS_HEALTH_V1 — periodická probe závislostí + self-heal zaseklé
         Ollamy. Vlastní vlákno (nezávislé na tick). Self-heal AŽ po N po sobě
@@ -1151,7 +1174,13 @@ class HansRoutine:
                     need = int((self.config.get('health', {}) or {}).get(
                         'wedge_strikes', 2))
                     if self._health_wedge_strikes >= need:
-                        if hans_health.heal_ollama(self.config):
+                        # HANS_HEALTH_NIGHT_AWARE_V1 — ráno po WOL Ollama BOOTUJE
+                        # (server běží, negeneruje = „WEDGED"), ale mozek nebyl
+                        # zaseklý. NErestartuj (prodloužilo by boot) a NEhlaš
+                        # „zasekl se, restartoval jsem ho" — nech doběhnout.
+                        if self._pc_planned_unavailable():
+                            self._health_wedge_strikes = 0
+                        elif hans_health.heal_ollama(self.config):
                             healed.append('ollama')
                             self._health_wedge_strikes = 0
                             if self._notifier:
@@ -1165,8 +1194,13 @@ class HansRoutine:
                 hans_health._write_state(health, healed)
                 bad = hans_health.degraded_services(health)
                 if bad:
-                    _log.warning('health: degradováno %s (healed=%s, strikes=%d)',
-                                 bad, healed, self._health_wedge_strikes)
+                    # záměrný noční shutdown / ranní boot → očekávané, ne porucha
+                    if self._pc_planned_unavailable():
+                        _log.debug('health: degradováno %s (PC záměrně dole/boot)',
+                                   bad)
+                    else:
+                        _log.warning('health: degradováno %s (healed=%s, strikes=%d)',
+                                     bad, healed, self._health_wedge_strikes)
             except Exception as _e:
                 _log.debug('health watcher: %s', _e)
             if self._stop.wait(self._health_interval):
@@ -1312,6 +1346,8 @@ class HansRoutine:
             # vypni
             pc_remote.run(self.config, "sudo -n systemctl poweroff", timeout=10)
             self._last_pc_shutdown_date = today
+            import time as _t
+            self._pc_shutdown_ts = _t.time()  # HANS_HEALTH_NIGHT_AWARE_V1
             self._save_routine_state()
             _log.info("PC night shutdown: analytika hotová → PC vypnut "
                       "(ranní WOL probudí)")
