@@ -957,8 +957,11 @@ class HansDialog:
                 line = line.strip()
                 if line and ":" in line:
                     self._recent_replies.append(line)
+            # KOLAC_DIALOG_COHERENCE_V1 — drž víc historie (16, ne 8), ať vlákno
+            # tématu přežije napříč víc exchangi (history_in_prompt=16 jinak
+            # nemá z čeho brát → dialog působí „rozsekaně").
             _max_repl = int(self.config.get('hans_dialog', {}).get(
-                'recent_replies_max', 8))
+                'recent_replies_max', 16))
             self._recent_replies = self._recent_replies[-_max_repl:]
 
             # # TEDDY_DIALOG_VIA_LOG_ENTRY
@@ -1137,9 +1140,18 @@ class HansDialog:
         n_lines = int(dc.get("lines_per_dialog", 4))
         scene = (f"Téma hovoru: {getattr(topic, 'subject', '')}\n"
                  f"Úhel: {getattr(topic, 'angle', '')}\n")
-        if full_context:
+        # KOLAC_DIALOG_COHERENCE_V1 — na POKRAČUJÍCÍCH turnech NEcpát grab-bag
+        # kontext (počasí/četba/filmy…) do scény → to je zdroj odbíhání (Su-57
+        # z četby, Fogg z filmu se pletly do debaty o Sherlockovi). Držet jen
+        # téma + dosavadní rozhovor; grab-bag jen na 1. turnu (zasadí otevření).
+        _continuing = bool(getattr(topic, "turns_so_far", 0) > 0
+                           and self._recent_replies)
+        if full_context and not _continuing:
             scene += ("\nKonkrétní kontext (vyjdi z těchto detailů, nevymýšlej "
                       "si nic navíc):\n" + full_context + "\n")
+        elif _continuing:
+            scene += ("\nDrž se TÉMATU výše a navazuj na dosavadní rozhovor. "
+                      "NEODbíhej k jiným událostem ani tématům.\n")
         self._challenged_stance = None  # KOLAC_STANCE_CHALLENGE_V1
         if getattr(topic, "is_debate", False):
             scene += ("\nTOHLE JE VĚCNÝ SPOR: drž svůj názor a oponuj druhé "
@@ -1165,11 +1177,14 @@ class HansDialog:
             if is_hans:
                 sysp, model = hans_sys, hans_model
             else:
-                sysp = (km.build_system(getattr(topic, "subject", ""), full_context)
+                sysp = (km.build_system(getattr(topic, "subject", ""),
+                                        "" if _continuing else full_context)
                         if km else _build_system_prompt(self.config))
                 model = kolac_model
             user = (scene + "\nDOSAVADNÍ ROZHOVOR:\n" + convo_txt
-                    + f"\n\nTeď řekni JEDNU repliku jako {label}.")
+                    + f"\n\nTeď řekni JEDNU repliku jako {label}. Reaguj PŘÍMO "
+                      f"na to, co právě řekl druhý — přijmi nebo zpochybni jeho "
+                      f"KONKRÉTNÍ bod, neodbíhej k jinému tématu.")
             line = self._one_line(model, sysp, user, base)
             if not line:
                 break
