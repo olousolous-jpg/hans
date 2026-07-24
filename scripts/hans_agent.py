@@ -212,6 +212,37 @@ def _run_now_playing(handler, args) -> str:
     return "Na TV teď nic nehraje, pane."
 
 
+def _run_kolac_status(handler, args) -> str:
+    """KOLAC_STATUS_V1 — „co dělá Koláč?" z REÁLNÉHO stavu (poslední dialog),
+    ne z domýšlení. Koláč = Hansův animatronický společník, NE osoba v domě
+    (jinak router odpovídal home_status: „na TV hraje…, vidím henku")."""
+    from scripts.hans_kolac import kolac_name
+    kn = kolac_name(getattr(handler, "config", {}) or {})
+    ts = note = None
+    try:
+        import sqlite3
+        db = sqlite3.connect(_diary_path(handler))
+        r = db.execute("SELECT ts, note FROM diary WHERE "
+                       "event_type='teddy_dialog' ORDER BY ts DESC LIMIT 1").fetchone()
+        db.close()
+        if r:
+            ts, note = r
+    except Exception:
+        pass
+    topic = ""
+    if note:
+        m = re.search(r"Téma:\s*(.+)", note)
+        if m:
+            topic = m.group(1).strip().splitlines()[0][:80]
+    if topic:
+        ago = time.time() - (ts or 0)
+        if ago < 3600:
+            return f"{kn} a já jsme se před chvílí bavili o „{topic}“, pane."
+        return (f"{kn} zrovna tiše přemítá po mém boku; naposledy jsme rozprávěli "
+                f"o „{topic}“.")
+    return f"{kn} zrovna nic neprovádí, pane — tiše přemítá po mém boku."
+
+
 def _run_home_status(handler, args) -> str:
     """HANS_AGENT_HOME_STATUS_V1 — kompozitní odpověď na VÁGNÍ „děje se něco
     doma?“. Agreguje ŽIVÁ deterministická data (co hraje + kdo je doma), NIKDY
@@ -456,6 +487,17 @@ ACTIONS: dict[str, Action] = {
                "jak to doma", "co je doma nového", "něco nového doma"],
         args=[], run=_run_home_status, grounding=None,
         needs_confirm=False, cooldown_s=10),
+    "report_kolac_status": Action(
+        "report_kolac_status",
+        "Odpovědět na dotaz o KOLÁČOVI (Hansův animatronický společník/"
+        "topinkovač, se kterým Hans rozmlouvá) — „co dělá Koláč?“, „co Koláč?“, "
+        "„jak se má Koláč?“, „co říká Koláč?“, „nezlobí Koláč?“. Odpověď = co "
+        "Koláč teď dělá (z posledního dialogu). Koláč NENÍ osoba v domě ani "
+        "„dění doma“ — u dotazu o Koláčovi NIKDY nevybírej report_who_is_home "
+        "ani report_home_status.",
+        hints=["kolac", "kolač", "koláč", "co dela kolac", "nezlobi kolac"],
+        args=[], run=_run_kolac_status, grounding=None,
+        needs_confirm=False, cooldown_s=10),
 
     # ── Ovládání médií (confirm) ────────────────────────────────────────────
     "kodi_pause": Action(
@@ -601,6 +643,22 @@ class AgentRouter:
         return self._hint_match(text) or self._looks_like_request(text)
 
     # ── confirm smyčka ──────────────────────────────────────────────────────
+    def _mentions_kolac(self, message: str) -> bool:
+        """KOLAC_STATUS_GUARD_V1 — zmiňuje zpráva Koláče (jméno z configu,
+        bez diakritiky)? Použito k přesměrování domácích akcí na kolac_status."""
+        import unicodedata
+
+        def _fold(s):
+            return "".join(c for c in unicodedata.normalize("NFKD", (s or "").lower())
+                           if not unicodedata.combining(c))
+        try:
+            from scripts.hans_kolac import kolac_name
+            kn = _fold(kolac_name(self.config))
+        except Exception:
+            kn = "kolac"
+        fm = _fold(message)
+        return (kn and kn in fm) or "kolac" in fm
+
     def check_confirmation(self, handler, name: str,
                            message: str) -> Optional[str]:
         """Má osoba čekající návrh a odpovídá ano/ne? → proveď/zruš, vrať text.
@@ -654,6 +712,12 @@ class AgentRouter:
             if not decision:
                 return None
             aid = decision.get("action")
+            # KOLAC_STATUS_GUARD_V1 — deterministická pojistka: dotaz o Koláčovi
+            # (společník) se NESMÍ zrouteovat na domácí/přítomnostní akce (router
+            # občas zvolí home_status → „na TV hraje…, vidím henku"). Přesměruj.
+            if aid in ("report_home_status", "report_who_is_home",
+                       "report_now_playing") and self._mentions_kolac(message):
+                aid = "report_kolac_status"
             action = ACTIONS.get(aid)
             if not action:
                 return None
