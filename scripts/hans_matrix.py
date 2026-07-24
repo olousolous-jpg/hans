@@ -493,7 +493,7 @@ class MatrixBridge:
             self._maybe_calendar_reminders()
             self._maybe_push_questions()
         except Exception as e:
-            _log.debug("matrix proactive: %s", e)
+            _log.warning("matrix proaktivní tick selhal: %s", e)
         finally:
             self._proactive_running = False
 
@@ -532,7 +532,7 @@ class MatrixBridge:
                 "ORDER BY rowid ASC LIMIT 3", (self._last_art_id,)).fetchall()
             con.close()
         except Exception as e:
-            _log.debug("matrix art deliver query: %s", e)
+            _log.warning("matrix art deliver query selhal: %s", e)
             return
         if not rows:
             return
@@ -595,7 +595,7 @@ class MatrixBridge:
                                         ev["start_ts"])
                     _log.info("matrix: připomínka → %.50s", text)
         except Exception as e:
-            _log.debug("matrix calendar reminders: %s", e)
+            _log.warning("matrix calendar reminders selhal: %s", e)
 
     def _maybe_push_questions(self):
         """Hans pošle svou otázku majiteli místnosti. Reuse „telegram" fáze
@@ -614,7 +614,7 @@ class MatrixBridge:
             q = qs.next_for_channel(self.as_person, "telegram",
                                     only_undelivered=True)
         except Exception as e:
-            _log.debug("matrix next_for_channel: %s", e)
+            _log.warning("matrix next_for_channel selhal: %s", e)
             return
         if not q or not (q.question or "").strip():
             return
@@ -622,7 +622,7 @@ class MatrixBridge:
             try:
                 qs.mark_channel_delivered(q.id)
             except Exception as e:
-                _log.debug("matrix mark_channel_delivered: %s", e)
+                _log.warning("matrix mark_channel_delivered selhal: %s", e)
             _log.info("matrix: otázka → %s: %.60s", self.as_person, q.question)
 
 
