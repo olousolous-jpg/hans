@@ -12,6 +12,7 @@ Výstup jde do Hansova deníku jako "přečtená věc".
 """
 
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -432,60 +433,89 @@ class WebReader:
             _log.warning("RSS fetch error (%s): %s", feed_key, e)
             return []
 
+    def _pick_news(self, items: list[dict]) -> dict:
+        """Vyber JEDNU zprávu (LLM podle zajímavosti, fallback náhoda mezi těmi
+        s odkazem). Vrací položku {title, description, link}."""
+        numbered = "\n".join(f"{i+1}. {it['title']}" for i, it in enumerate(items))
+        pick = self._summarize(
+            text = numbered, query = "výběr zprávy", num_predict = 5,
+            style = ("Vyber JEDNU zprávu, která by tě jako vzdělaného majordoma "
+                     "nejvíc zaujala. Odpověz POUZE jejím číslem."))
+        if pick:
+            m = re.search(r"\d+", pick)
+            if m:
+                n = int(m.group()) - 1
+                if 0 <= n < len(items):
+                    return items[n]
+        linked = [it for it in items if it.get("link")] or items
+        return random.choice(linked)
+
     def rss_summary(self, feed_key: str = "zpravy") -> Optional[ReadResult]:
-        """
-        Stáhne RSS, vybere nejzajímavější položku a sumarizuje.
-        """
-        items = self.rss_headlines(feed_key, max_items=8)
+        """HANS_NEWS_FETCH_V1 — vybere jednu zprávu, STÁHNE SKUTEČNÝ ČLÁNEK
+        (ne jen titulek z feedu) a shrne jeho OBSAH → Hans umí zprávu
+        převyprávět, ne jen říct „zaujalo mě to". Ukládá skutečný titulek
+        článku + jeho URL (dřív generické „Zprávy: zpravy" + URL feedu)."""
+        items = [it for it in self.rss_headlines(feed_key, max_items=8)
+                 if it.get("title")]
         if not items:
             return None
+        chosen = self._pick_news(items)
+        art_title = chosen["title"]
+        art_url = chosen.get("link", "") or RSS_FEEDS.get(feed_key, "")
 
-        # Poskládej text pro LLM
-        headlines = "\n".join(f"- {it['title']}: {it['description'][:120]}"
-                              for it in items if it["title"])
+        # Stáhni SKUTEČNÝ obsah článku; fallback na popis z feedu.
+        text = ""
+        if chosen.get("link"):
+            try:
+                _pt, text = self._extract_article_text(chosen["link"])
+            except Exception as e:
+                _log.debug("news article fetch (%s): %s", chosen["link"], e)
+        if not text:
+            text = chosen.get("description", "") or art_title
+
         summary = self._summarize(
-            text  = headlines,
-            query = f"zprávy ({feed_key})",
-            style = (
-                "Vybral sis jednu zprávu která tě jako formálního anglického majordomuse "
-                "zaujala. Napiš jednu větu co to bylo a proč."
-            )
-        )
+            text = text, query = art_title, max_text = 3000,
+            max_sentences = 4, num_predict = 220,
+            style = ("Shrň tuto zprávu VLASTNÍMI SLOVY — hlavně CO se stalo "
+                     "(konkrétní fakta: kdo, co, kde, případně kdy), 2-3 věty. "
+                     "Smíš přidat krátký vlastní postřeh, ale těžiště je OBSAH "
+                     "zprávy, ne to, že tě zaujala."))
         return ReadResult(
             source   = "rss",
-            title    = f"Zprávy: {feed_key}",
-            url      = RSS_FEEDS.get(feed_key, ""),
-            raw_text = headlines,
-            summary  = summary or "",       # HANS_DEFERRED_SUMMARY_V1
+            title    = art_title,               # skutečný titulek článku
+            url      = art_url,                 # odkaz na článek (ne feed)
+            raw_text = text,
+            summary  = summary or "",           # HANS_DEFERRED_SUMMARY_V1
             pending  = summary is None,
             topic    = "news",
         )
 
     # ── Přímá URL ─────────────────────────────────────────────────────────────
 
+    def _extract_article_text(self, url: str) -> tuple[str, str]:
+        """Stáhne URL a vrátí (title, body_text) BEZ sumarizace. Sdíleno
+        fetch_url a rss_summary (HANS_NEWS_FETCH_V1 — RSS teď čte skutečný
+        článek, ne jen titulek z feedu)."""
+        r = self._sess.get(url, timeout=self._timeout)
+        soup = BeautifulSoup(r.content, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+        paragraphs = [p.get_text(" ", strip=True)
+                      for p in soup.find_all("p")
+                      if len(p.get_text(strip=True)) > 60]
+        text = "\n".join(paragraphs[:20])
+        if not text:
+            text = soup.get_text(" ", strip=True)[:3000]
+        title = (soup.find("title").text.strip()
+                 if soup.find("title") else url)
+        return title, text
+
     def fetch_url(self, url: str, topic: str = "url") -> Optional[ReadResult]:
         """
         Stáhne libovolnou URL, extrahuje čitelný text, sumarizuje.
         """
         try:
-            r = self._sess.get(url, timeout=self._timeout)
-            soup = BeautifulSoup(r.content, "html.parser")
-
-            # Odstraň skripty, styly, nav
-            for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-                tag.decompose()
-
-            # Extrahuj odstavce
-            paragraphs = [p.get_text(" ", strip=True)
-                          for p in soup.find_all("p")
-                          if len(p.get_text(strip=True)) > 60]
-            text = "\n".join(paragraphs[:20])
-            if not text:
-                text = soup.get_text(" ", strip=True)[:3000]
-
-            title = (soup.find("title").text.strip()
-                     if soup.find("title") else url)
-
+            title, text = self._extract_article_text(url)
             summary = self._summarize(
                 text  = text[:2500],
                 query = url,
