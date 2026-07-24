@@ -759,6 +759,7 @@ class PicamDisplayController:
             if (time.time() - getattr(self, "_last_box_ts", 0.0)) > hold:
                 eyes.center()
                 self._cam_recenter = False
+                self._eye_focus_xy = None  # EYE_SERVO_FOCUS_STICK_V1 — čerstvý lock
             return
 
         def cx(b): return (b[0] + b[2]) / 2
@@ -775,7 +776,24 @@ class PicamDisplayController:
         # poskakovaly z jedné osoby na druhou). Známé mají přednost před neznámými.
         pool = known or unknown
         if pool:
-            b, _ = max(pool, key=lambda x: area(x[0])); fx, fy = cx(b), cy(b)
+            # EYE_SERVO_FOCUS_STICK_V1 — anti-flicker: dvě podobně velké tváře
+            # (i falešná, např. zmačkané triko) → 'největší' se mění frame-to-
+            # frame kvůli jitteru plochy → oči poskakují mezi nimi. Drž se
+            # PŘEDCHOZÍHO cíle (bbox nejblíž poslednímu pohledu), dokud není jiný
+            # VÝRAZNĚ větší (focus_stick_ratio, default 0.7 = přepni až challenger
+            # >~1.4× větší). Reset _eye_focus_xy při ztrátě boxů → nový lock.
+            big, _ = max(pool, key=lambda x: area(x[0]))
+            target = big
+            prev = getattr(self, "_eye_focus_xy", None)
+            if prev is not None:
+                near = min((b for b, _ in pool),
+                           key=lambda bb: (cx(bb)-prev[0])**2 + (cy(bb)-prev[1])**2)
+                stick = float((self.config.get("eye_servo", {}) or {}).get(
+                    "focus_stick_ratio", 0.7))
+                if area(near) >= area(big) * stick:
+                    target = near
+            fx, fy = cx(target), cy(target)
+            self._eye_focus_xy = (fx, fy)
             self._eye_focus_name = None
 
         if fx is None:

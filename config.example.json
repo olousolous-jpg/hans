@@ -947,7 +947,8 @@
     "camera_follow": false,
     "reacquire_gap_s": 20.0,
     "no_person_hold_s": 15,
-    "no_person_hold_s_note": "Cesta 'jen oči': jak dlouho podržet oči na poslední pozici detekované osoby (známé i neznámé) po jejím zmizení, než se vrátí na střed. Pokud se mezitím objeví jiná osoba, jdou oči za ní. Tlumí i poskakování u vzdálených tváří, které v detekci blikají."
+    "no_person_hold_s_note": "Cesta 'jen oči': jak dlouho podržet oči na poslední pozici detekované osoby (známé i neznámé) po jejím zmizení, než se vrátí na střed. Pokud se mezitím objeví jiná osoba, jdou oči za ní. Tlumí i poskakování u vzdálených tváří, které v detekci blikají.",
+    "focus_stick_ratio": 0.7
   },
   "memory_hygiene": {
     "enabled": true,
