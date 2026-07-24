@@ -59,7 +59,10 @@ class EyeServoController:
         self._last_move_ts = 0.0
         self._released = False
 
-        self.calib = self._load_calib(cfg.get("calib_file", "eye_calibration.json"))
+        self._calib_path = cfg.get("calib_file", "eye_calibration.json")
+        self.calib = self._load_calib(self._calib_path)
+        self._calib_mtime = self._file_mtime(self._calib_path)
+        self._calib_check_ts = 0.0
         self._pan_ch  = self.calib["channels"].get("pan", "P2")
         self._tilt_ch = self.calib["channels"].get("tilt", "P3")
 
@@ -147,10 +150,34 @@ class EyeServoController:
         self._released = True
 
     # ── veřejné API ─────────────────────────────────────────────────────
+    @staticmethod
+    def _file_mtime(path: str) -> float:
+        try:
+            return Path(path).stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _maybe_reload_calib(self):
+        """EYE_SERVO_CALIB_RELOAD_V1 — hot-reload kalibrace při změně souboru
+        (throttle 1 s), aby se pan/tilt center dal ladit bez restartu Hanse.
+        Kanály (serva) se nemění, jen center/min/max."""
+        now = time.time()
+        if now - self._calib_check_ts < 1.0:
+            return
+        self._calib_check_ts = now
+        mt = self._file_mtime(self._calib_path)
+        if mt and mt != self._calib_mtime:
+            self._calib_mtime = mt
+            self.calib = self._load_calib(self._calib_path)
+            _log.info("eye_servo: kalibrace přenačtena (pan center=%.1f "
+                      "tilt center=%.1f)", self.calib["pan"]["center"],
+                      self.calib["tilt"]["center"])
+
     def look_at_frac(self, cx: float, cy: float):
         """cx, cy ∈ 0..1 = střed bboxu osoby v rámu. Pohne očima tam."""
         if not self.available:
             return
+        self._maybe_reload_calib()
         pan  = self._map_axis(cx, "pan",  self._pan_invert)
         tilt = self._map_axis(cy, "tilt", self._tilt_invert)
         self._send(self._pan_s,  pan,  "_pan_ema",  "_last_pan")
