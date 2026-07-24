@@ -760,6 +760,7 @@ class PicamDisplayController:
                 eyes.center()
                 self._cam_recenter = False
                 self._eye_focus_xy = None  # EYE_SERVO_FOCUS_STICK_V1 — čerstvý lock
+                self._eye_focus_lost_ts = 0.0
             return
 
         def cx(b): return (b[0] + b[2]) / 2
@@ -776,25 +777,46 @@ class PicamDisplayController:
         # poskakovaly z jedné osoby na druhou). Známé mají přednost před neznámými.
         pool = known or unknown
         if pool:
-            # EYE_SERVO_FOCUS_STICK_V1 — anti-flicker: dvě podobně velké tváře
-            # (i falešná, např. zmačkané triko) → 'největší' se mění frame-to-
-            # frame kvůli jitteru plochy → oči poskakují mezi nimi. Drž se
-            # PŘEDCHOZÍHO cíle (bbox nejblíž poslednímu pohledu), dokud není jiný
-            # VÝRAZNĚ větší (focus_stick_ratio, default 0.7 = přepni až challenger
-            # >~1.4× větší). Reset _eye_focus_xy při ztrátě boxů → nový lock.
-            big, _ = max(pool, key=lambda x: area(x[0]))
-            target = big
+            # EYE_SERVO_FOCUS_STICK_V1 — anti-flicker s ČASOVOU hysterezí. Dvě
+            # unknown tváře (jedna falešná, např. zmačkané triko) se v detekci
+            # STŘÍDAVĚ BLIKAJÍ (každý snímek jen jedna) → oči skákaly za tou, co
+            # je zrovna vidět. Řešení: zamkni pohled na cíl a přepni na jiný AŽ
+            # když je stávající pryč focus_switch_s (krátký blik ho neztratí).
+            ecfg = self.config.get("eye_servo", {}) or {}
+            now = time.time()
+            same_r2 = float(ecfg.get("focus_same_frac", 0.18)) ** 2
+            switch_s = float(ecfg.get("focus_switch_s", 1.2))
             prev = getattr(self, "_eye_focus_xy", None)
-            if prev is not None:
-                near = min((b for b, _ in pool),
-                           key=lambda bb: (cx(bb)-prev[0])**2 + (cy(bb)-prev[1])**2)
-                stick = float((self.config.get("eye_servo", {}) or {}).get(
-                    "focus_stick_ratio", 0.7))
-                if area(near) >= area(big) * stick:
-                    target = near
-            fx, fy = cx(target), cy(target)
-            self._eye_focus_xy = (fx, fy)
+            cents = [(cx(b), cy(b), area(b)) for b, _ in pool]
+            switched = False
+            if prev is None:
+                px, py, _ = max(cents, key=lambda c: c[2])   # nový lock = největší
+                self._eye_focus_xy = (px, py)
+                self._eye_focus_lost_ts = 0.0
+                switched = True
+            else:
+                near = min(cents, key=lambda c: (c[0]-prev[0])**2 + (c[1]-prev[1])**2)
+                if (near[0]-prev[0])**2 + (near[1]-prev[1])**2 <= same_r2:
+                    self._eye_focus_xy = (near[0], near[1])  # cíl tu je → sleduj
+                    self._eye_focus_lost_ts = 0.0
+                else:
+                    # stávající cíl NENÍ v záběru (blik/odešel) → NEskákej hned;
+                    # drž pohled a přepni na největší až po focus_switch_s absence
+                    lost = getattr(self, "_eye_focus_lost_ts", 0.0) or now
+                    self._eye_focus_lost_ts = lost
+                    if now - lost >= switch_s:
+                        px, py, _ = max(cents, key=lambda c: c[2])
+                        self._eye_focus_xy = (px, py)
+                        self._eye_focus_lost_ts = 0.0
+                        switched = True
+                    # jinak: nech _eye_focus_xy beze změny (drž pohled)
+            fx, fy = self._eye_focus_xy
             self._eye_focus_name = None
+            if switched:
+                import logging
+                logging.getLogger(__name__).info(
+                    "eye focus PŘEPNUT → (%.2f,%.2f) [%d tváří v záběru]",
+                    fx, fy, len(pool))
 
         if fx is None:
             eyes.center()
