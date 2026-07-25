@@ -1193,14 +1193,25 @@ class HansRoutine:
                     self._health_wedge_strikes = 0
                 hans_health._write_state(health, healed)
                 bad = hans_health.degraded_services(health)
+                # HANS_HEALTH_LOG_CIRCUIT_V1 — hlas jen na HRANĚ stavu: WARNING
+                # jednou při zhoršení, pak ticho (DEBUG) dokud se stav nezmění,
+                # a jedno INFO při obnově. Bez toho health mlel WARNING à 10 min
+                # celou noc, když byl PC dole z důvodu, který Hans nezpůsobil
+                # (uživatel/spánek/pád → _pc_shutdown_ts se nenastaví).
+                bad_key = tuple(sorted(bad))
+                prev_bad = getattr(self, '_health_last_bad', ())
                 if bad:
-                    # záměrný noční shutdown / ranní boot → očekávané, ne porucha
                     if self._pc_planned_unavailable():
                         _log.debug('health: degradováno %s (PC záměrně dole/boot)',
                                    bad)
+                    elif bad_key == prev_bad and not healed:
+                        _log.debug('health: stále degradováno %s', bad)
                     else:
                         _log.warning('health: degradováno %s (healed=%s, strikes=%d)',
                                      bad, healed, self._health_wedge_strikes)
+                elif prev_bad:
+                    _log.info('health: obnoveno — vše OK (bylo %s)', list(prev_bad))
+                self._health_last_bad = bad_key
             except Exception as _e:
                 _log.debug('health watcher: %s', _e)
             if self._stop.wait(self._health_interval):

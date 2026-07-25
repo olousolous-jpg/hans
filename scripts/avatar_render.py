@@ -193,6 +193,85 @@ def _comfy_workflow(ckpt: str, prompt: str, seed: int, w: int, h: int,
     }
 
 
+# HANS_ART_FLUX_V1 — FLUX.1-dev (all-in-one fp8) txt2img graf. All-in-one
+# checkpoint nese model+CLIP+VAE → CheckpointLoaderSimple jako u SDXL. Rozdíly
+# proti SDXL: (a) FluxGuidance node místo CFG (FLUX jede CFG=1, negativ ignoruje);
+# (b) EmptySD3LatentImage (16kanálový FLUX latent, NE 4kanálový EmptyLatentImage);
+# (c) euler/simple sampler. Node "7" (prázdný negativ) ponechán, ať
+# HANS_ART_LESSON_V1 injektáž negativu nespadne (u CFG=1 je stejně neúčinná).
+def _comfy_workflow_flux(ckpt: str, prompt: str, seed: int, w: int, h: int,
+                         steps: int, guidance: float) -> dict:
+    """Minimální FLUX.1-dev txt2img graf (ComfyUI API format)."""
+    return {
+        "4": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": ckpt}},
+        "5": {"class_type": "EmptySD3LatentImage",
+              "inputs": {"width": w, "height": h, "batch_size": 1}},
+        "6": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": prompt, "clip": ["4", 1]}},
+        "7": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": "", "clip": ["4", 1]}},
+        "10": {"class_type": "FluxGuidance",
+               "inputs": {"conditioning": ["6", 0], "guidance": guidance}},
+        "3": {"class_type": "KSampler",
+              "inputs": {"seed": seed, "steps": steps, "cfg": 1.0,
+                         "sampler_name": "euler", "scheduler": "simple",
+                         "denoise": 1.0, "model": ["4", 0],
+                         "positive": ["10", 0], "negative": ["7", 0],
+                         "latent_image": ["5", 0]}},
+        "8": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9": {"class_type": "PreviewImage",
+              "inputs": {"images": ["8", 0]}},
+    }
+
+
+# HANS_ART_PULID_V1 — FLUX.1-dev + PuLID: zachovej PODOBU osoby z referenčního
+# fota (ref_image v ComfyUI input/) a slož NOVOU scénu z promptu (osoba na
+# motorce ap.). Řeší, že img2img drží kompozici → scénu nešlo přidat. Vyžaduje
+# custom node ComfyUI_PuLID_Flux_ll + modely pulid_flux/EVA-CLIP/antelopev2.
+# provider=CPU (onnxruntime tu nemá ROCm provider; face detekce na CPU stačí).
+def _comfy_workflow_flux_pulid(ckpt: str, prompt: str, seed: int, w: int, h: int,
+                               steps: int, guidance: float, ref_image: str,
+                               pulid_weight: float = 0.9,
+                               pulid_model: str = "pulid_flux_v0.9.1.safetensors",
+                               provider: str = "CPU") -> dict:
+    """FLUX+PuLID txt2img: podoba z ref_image, scéna z promptu."""
+    return {
+        "4":  {"class_type": "CheckpointLoaderSimple",
+               "inputs": {"ckpt_name": ckpt}},
+        "20": {"class_type": "PulidFluxModelLoader",
+               "inputs": {"pulid_file": pulid_model}},
+        "21": {"class_type": "PulidFluxEvaClipLoader", "inputs": {}},
+        "22": {"class_type": "PulidFluxInsightFaceLoader",
+               "inputs": {"provider": provider}},
+        "23": {"class_type": "LoadImage", "inputs": {"image": ref_image}},
+        "24": {"class_type": "ApplyPulidFlux",
+               "inputs": {"model": ["4", 0], "pulid_flux": ["20", 0],
+                          "eva_clip": ["21", 0], "face_analysis": ["22", 0],
+                          "image": ["23", 0], "weight": float(pulid_weight),
+                          "start_at": 0.0, "end_at": 1.0}},
+        "6":  {"class_type": "CLIPTextEncode",
+               "inputs": {"text": prompt, "clip": ["4", 1]}},
+        "10": {"class_type": "FluxGuidance",
+               "inputs": {"conditioning": ["6", 0], "guidance": guidance}},
+        "7":  {"class_type": "CLIPTextEncode",
+               "inputs": {"text": "", "clip": ["4", 1]}},
+        "5":  {"class_type": "EmptySD3LatentImage",
+               "inputs": {"width": w, "height": h, "batch_size": 1}},
+        "3":  {"class_type": "KSampler",
+               "inputs": {"seed": seed, "steps": steps, "cfg": 1.0,
+                          "sampler_name": "euler", "scheduler": "simple",
+                          "denoise": 1.0, "model": ["24", 0],
+                          "positive": ["10", 0], "negative": ["7", 0],
+                          "latent_image": ["5", 0]}},
+        "8":  {"class_type": "VAEDecode",
+               "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9":  {"class_type": "PreviewImage",
+               "inputs": {"images": ["8", 0]}},
+    }
+
+
 # AVATAR_TEMPLATE_IMG2IMG_V1 — odvozuj nálady/výrazy/aktivity ze ŠABLONY (jedna
 # kanonická tvář) přes img2img → stejný Hans + styl, mění se jen výraz/póza.
 def _comfy_upload_image(base: str, local_path: str) -> Optional[str]:

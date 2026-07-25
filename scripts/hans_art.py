@@ -26,7 +26,8 @@ import uuid
 from typing import Optional
 
 from scripts.avatar_render import (
-    _comfy_url, _comfy_workflow, _comfy_submit, _comfy_wait,
+    _comfy_url, _comfy_workflow, _comfy_workflow_flux, _comfy_workflow_flux_pulid,
+    _comfy_submit, _comfy_wait,
     _first_image, _comfy_fetch_image,
     _ollama_loaded, _ollama_unload, _comfy_free, _ollama_warm,
     _comfy_upload_image, _comfy_workflow_img2img, _comfy_workflow_ipadapter,
@@ -621,7 +622,12 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
             return None
     except Exception:
         pass
-    ckpt = _ckpt(config)
+    # HANS_ART_FLUX_V1 — obecné malování přes FLUX.1-dev (celé postavy/zvířata),
+    # když `art.use_flux`. paint_self (autoportrét) zůstává na SDXL+IP-Adapteru
+    # (podobu drží IP-Adapter, ten je SDXL-only). Default False = beze změny SDXL.
+    _use_flux = bool(_acfg(config).get("use_flux", False))
+    ckpt = (_acfg(config).get("flux_ckpt", "flux1-dev-fp8.safetensors")
+            if _use_flux else _ckpt(config))
     if not ckpt:
         _log.warning("art: image_model nenastaven (hans_art/hans_avatar) — skip")
         return None
@@ -650,14 +656,21 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
     ok = False
     vision_desc = ""
     try:
-        wf = _comfy_workflow(ckpt, prompt, seed, w, h, steps, cfg_s)
+        if _use_flux:
+            wf = _comfy_workflow_flux(ckpt, prompt, seed, w, h,
+                                      int(acfg.get("flux_steps", 20)),
+                                      float(acfg.get("flux_guidance", 3.5)))
+        else:
+            wf = _comfy_workflow(ckpt, prompt, seed, w, h, steps, cfg_s)
         # HANS_ART_LESSON_V1 — dolň negativní prompt podle ponaučení z minulých obrazů
         extra_neg = _lesson_negatives(_recent_lessons(db_path))
         if extra_neg and isinstance(wf.get("7"), dict):
             wf["7"]["inputs"]["text"] = wf["7"]["inputs"]["text"] + ", " + extra_neg
             _log.info("art: negativ dolněn ponaučením: %s", extra_neg)
         _log.info("art: render start (%s, %dx%d, %d steps, timeout %ds) — prompt: %.120s",
-                  ckpt, w, h, steps, rtimeout, prompt)
+                  ckpt, w, h,
+                  int(acfg.get("flux_steps", 20)) if _use_flux else steps,
+                  rtimeout, prompt)
         pid = _comfy_submit(base, wf, client_id)
         if not pid:
             _log.warning("art: ComfyUI submit selhal (pid None)")
@@ -876,6 +889,21 @@ def _ground_via_wikipedia(config: dict, db_path: str, subject: str) -> str:
     return ""
 
 
+# HANS_ART_SCENE_NO_GROUND_V1 — pozná KOMPOZIČNÍ scénu (víc prvků, „v pozadí",
+# koordinace „a"), kterou NELZE scvrknout na jednu entitu. Doložený případ:
+# „alej sakur a v pozadí japonskou svatyni" → loose match překlepu „svatini" na
+# entitu „Svatba" přebil celý prompt → svatba místo sakur. Scéna jde RAW do
+# scene-prompt LLM (ten víceprvkový popis zvládne). Diakritika volitelná.
+def _looks_like_scene(s: str) -> bool:
+    sl = " " + (s or "").lower() + " "
+    if "pozad" in sl or "popred" in sl or "popřed" in sl:  # v pozadí / v popředí
+        return True
+    content = [w for w in sl.split() if len(w) >= 4]
+    if " a " in sl and len(content) >= 3:                   # koordinace ≥3 prvků
+        return True
+    return False
+
+
 def _ground_subject(config: dict, db_path: str, subject: str) -> str:
     """HANS_ART_SUBJECT_GROUNDING_V1/V2 — zjisti, KOHO/CO malovat.
     Kaskáda: (1) C1 entity store (Hansovo čtení) → (2) Wikipedia fallback
@@ -884,6 +912,9 @@ def _ground_subject(config: dict, db_path: str, subject: str) -> str:
     Bez shody vrací syrový námět."""
     s = (subject or "").strip()
     if not s:
+        return s
+    # HANS_ART_SCENE_NO_GROUND_V1 — víceprvkovou scénu NEscvrkávej na entitu
+    if _looks_like_scene(s):
         return s
     s_clean = _HONORIFIC.sub("", s).strip() or s
     try:
@@ -1100,16 +1131,32 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
         return None
 
     nm = person_name or subject
-    style_kw = (", in the style of %s" % style) if style else ""
-    prompt = ("expressive painterly portrait of %s%s, oil painting, artistic "
-              "brushwork, rich detail, atmospheric lighting, masterful" %
-              (nm, style_kw))
     acfg = _acfg(config)
     pcfg = (acfg.get("person_likeness", {}) or {})
-    dn = float(pcfg.get("denoise", 0.5))
-    steps = int(acfg.get("steps", 28)); cfg_s = float(acfg.get("cfg", 6.5))
     seed = uuid.uuid4().int % (2**31)
     client_id = uuid.uuid4().hex
+    # HANS_ART_PULID_V1 — když je FLUX+PuLID zapnutý, zachovej PODOBU z ref fota a
+    # slož NOVOU scénu z celého námětu (osoba NA MOTORCE ap.). Jinak legacy
+    # img2img (drží kompozici → jen portrét, akce/scéna se ztratí).
+    _use_pulid = (bool(pcfg.get("use_pulid", False))
+                  and bool(acfg.get("use_flux", False)))
+    if _use_pulid:
+        _flux_ckpt = acfg.get("flux_ckpt", "flux1-dev-fp8.safetensors")
+        _intro = ("Subject to depict (described in Czech): %s\n\n"
+                  "Write ONE vivid English image prompt of THIS scene. Name the "
+                  "person and describe era-appropriate clothing, the action and "
+                  "the setting. The exact face is supplied separately, so focus on "
+                  "scene, pose, attire and atmosphere.\n\n" % subject)
+        prompt = _scene_prompt(config, subject, "", diary_db_path,
+                               system=_SUBJECT_SCENE_SYSTEM, source_intro=_intro)
+        w = int(acfg.get("width", 896)); h = int(acfg.get("height", 1152))
+    else:
+        style_kw = (", in the style of %s" % style) if style else ""
+        prompt = ("expressive painterly portrait of %s%s, oil painting, artistic "
+                  "brushwork, rich detail, atmospheric lighting, masterful" %
+                  (nm, style_kw))
+    dn = float(pcfg.get("denoise", 0.5))
+    steps = int(acfg.get("steps", 28)); cfg_s = float(acfg.get("cfg", 6.5))
     os.makedirs(ART_DIR, exist_ok=True)
     fname = "%d_%s_podoba.png" % (int(time.time()), _slug(subject))
     dest = os.path.join(ART_DIR, fname)
@@ -1120,9 +1167,17 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
     ok = False
     vision_desc = ""
     try:
-        wf = _comfy_workflow_img2img(ckpt, prompt, seed, img_name, dn, steps,
-                                     cfg_s)
-        _log.info("art: podoba osoby img2img start (%s, denoise %.2f)", nm, dn)
+        if _use_pulid:
+            wf = _comfy_workflow_flux_pulid(
+                _flux_ckpt, prompt, seed, w, h,
+                int(acfg.get("flux_steps", 20)),
+                float(acfg.get("flux_guidance", 3.5)), img_name,
+                float(pcfg.get("pulid_weight", 0.9)))
+            _log.info("art: podoba osoby FLUX+PuLID start (%s) — %.90s", nm, prompt)
+        else:
+            wf = _comfy_workflow_img2img(ckpt, prompt, seed, img_name, dn, steps,
+                                         cfg_s)
+            _log.info("art: podoba osoby img2img start (%s, denoise %.2f)", nm, dn)
         pid = _comfy_submit(base, wf, client_id)
         if pid:
             hist = _comfy_wait(base, pid, timeout=rtimeout)
@@ -1292,7 +1347,18 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
     # z reálného portrétu (drží podobu). Miss / bez fotky → text-grounded malba.
     if (_acfg(config).get("person_likeness", {}) or {}).get("enabled", True):
         try:
-            _ent = _resolve_entity(config, diary_db_path, subject)
+            # HANS_ART_PULID_V1 — nejdřív hledej ZNÁMOU OSOBU v námětu (i když jsou
+            # tam další entity, např. 'Harley-Davidson', které by jinak přebily);
+            # osoba má přednost → PuLID zachová podobu + složí scénu z celého námětu.
+            _ent = None
+            try:
+                from scripts.hans_entities import EntityStore
+                _ent = EntityStore(config, diary_db_path).resolve(
+                    subject, loose=True, etype="osoba")
+            except Exception:
+                _ent = None
+            if not _ent:
+                _ent = _resolve_entity(config, diary_db_path, subject)
             # HANS_ENTITY_POSTAVA_V1 (20.7.) — ZKUŠENO+ZAMÍTNUTO: rozšíření gate
             # na etype=='postava' (fiktivní postavy → img2img z Wiki obrázku)
             # dopadlo špatně — Wiki obrázek postavy je FOTKA HERCE (Rimmer→Chris

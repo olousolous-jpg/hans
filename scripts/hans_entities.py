@@ -304,7 +304,8 @@ class EntityStore:
         except Exception:
             return None
 
-    def resolve(self, query: str, loose: bool = False):
+    def resolve(self, query: str, loose: bool = False,
+                etype: Optional[str] = None):
         """Najdi ZNÁMOU entitu zmíněnou v dotazu. Vrátí dict entity nebo None.
         Token-prefix matching (české skloňování mění koncovky, drží prefixy):
         klíč se trefí, když KAŽDÝ jeho obsahový token (≥4 znaky) má v dotazu
@@ -343,13 +344,17 @@ class EntityStore:
                     for qt in q_content)
                 surname = (loose and len(kt) >= 2 and kt[-1] in matched
                            and q_all_matched)
+                # etype filtr (HANS_ART_PULID_V1): omez na daný druh (např.
+                # 'osoba' → v „osoba + objekt" najdi osobu, ne přebíjející objekt)
+                _ok_etype = (etype is None
+                             or (self.get(_id) or {}).get("etype") == etype)
                 if full or ends:
                     score = sum(len(t) for t in matched)
-                    if score > best_score:
+                    if score > best_score and _ok_etype:
                         best_id, best_score = _id, score
                 elif surname:
                     score = len(kt[-1])   # slabší priorita než plná/koncová
-                    if score > best_score:
+                    if score > best_score and _ok_etype:
                         best_id, best_score = _id, score
         if best_id is None:
             return None

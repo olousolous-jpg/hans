@@ -894,8 +894,8 @@ def _reason_en(config: dict, evidence_en: str) -> Optional[str]:
             {"role": "user", "content": evidence_en},
         ],
         ollama_url=url,
-        options={"num_ctx": 8192, "temperature": 0.3,
-                 "num_predict": 3000, "keep_alive": 0},
+        options={"num_ctx": 12288, "temperature": 0.3,
+                 "num_predict": 6144, "keep_alive": 0},  # qwen3 thinking je ukecaný
     )
     if not raw:
         return None
