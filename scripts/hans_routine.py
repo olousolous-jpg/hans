@@ -1248,6 +1248,13 @@ class HansRoutine:
         "writing_section", "work_completion_reflection", "lesson_learned",
         "book_completion_reflection", "musing", "introspection")
 
+    # HANS_PC_NIGHT_ANALYTICS_WAKE_V2 (26.7.) — TĚŽKÁ reasoning-tier analytika
+    # (qwen3: syntéza/sebekritika), která běží AŽ v analytics_hour. Wake PC se
+    # rozhoduje podle NÍ, NE podle celého _NIGHT_ANALYTICS_EVENTS: night_summary
+    # + dream v 00:00 (běží s mozkem ještě nahoře) jinak zablokovaly probuzení
+    # PC na reasoning tier ve 3:00 → qwen3 analytika se nikdy nespustila.
+    _HEAVY_ANALYTICS_EVENTS = ("synthesis_idea", "self_critique")
+
     def _pc_up(self):
         """Rychlá kontrola, jestli PC běží (ping, ~2s)."""
         try:
@@ -1276,10 +1283,12 @@ class HansRoutine:
             # analytika dnes v noci/večer už proběhla? → netřeba budit
             conn = _sql.connect("file:%s?mode=ro" % self._diary_path,
                                 uri=True, timeout=3.0)
-            ph = ",".join("?" * len(self._NIGHT_ANALYTICS_EVENTS))
+            # HANS_PC_NIGHT_ANALYTICS_WAKE_V2 — jen TĚŽKÁ reasoning analytika
+            # (ne night_summary/dream z 00:00) rozhoduje „už proběhlo → nebudit"
+            ph = ",".join("?" * len(self._HEAVY_ANALYTICS_EVENTS))
             ra = conn.execute(
                 "SELECT MAX(ts) FROM diary WHERE event_type IN (%s) AND ts >= ?"
-                % ph, (*self._NIGHT_ANALYTICS_EVENTS, nowts - 16 * 3600)
+                % ph, (*self._HEAVY_ANALYTICS_EVENTS, nowts - 16 * 3600)
             ).fetchone()
             conn.close()
             self._last_analytics_wake_date = today
