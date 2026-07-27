@@ -67,6 +67,18 @@ def _args_hash(action: str, args: dict) -> str:
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
 
+# HANS_CHAT_STUDY_BRIDGE_GUARD — recall-fráze ("řekni mi TEĎ, co víš"), které
+# NIKDY nejsou pokyn ke studiu (i když router splete "víc" a "si"). Chrání
+# odpovědní/film-recall cestu před únosem do add_study_topic.
+_RECALL_PAT = re.compile(
+    r"zjisti[t]?\s+v[ií]c|co\s+v[ií][šs]|[řr]ekni\s+mi\s+o|"
+    r"zn[áa][šs]\b|pamatuje[šs]", re.IGNORECASE)
+
+
+def _looks_like_recall(message: str) -> bool:
+    return bool(_RECALL_PAT.search(message or ""))
+
+
 # ── Registr akcí (whitelist) ─────────────────────────────────────────────────
 # Každá akce: hints (pre-gate slova), args (co router vyplní), needs_confirm,
 # cooldown_s, grounding(handler,args)->(ok,resolved_args,msg), run(handler,args)
@@ -520,8 +532,11 @@ ACTIONS: dict[str, Action] = {
         "add_study_topic",
         "Zařadit téma ke studiu do hloubky. Argument 'tema' = co si uživatel "
         "přeje aby Hans nastudoval / prostudoval / naučil se.",
+        # HANS_CHAT_STUDY_BRIDGE_V1 — „zjisti víc o" ZÁMĚRNĚ NENÍ hint
+        # (patří k null/recall); studijní request = „zjisti si / podívej se".
         hints=["nastuduj", "prostuduj", "studuj", "nauč se", "nauc se",
-               "zaměř se na", "zamer se na", "zjisti víc o", "prozkoumej téma"],
+               "zaměř se na", "zamer se na", "prozkoumej", "zjisti si",
+               "zjistit si", "podívej se na", "podivej se na", "mrkni na"],
         args=["tema"], run=_run_add_study, grounding=_ground_study,
         needs_confirm=True, cooldown_s=30),
 
@@ -718,6 +733,11 @@ class AgentRouter:
             if aid in ("report_home_status", "report_who_is_home",
                        "report_now_playing") and self._mentions_kolac(message):
                 aid = "report_kolac_status"
+            # HANS_CHAT_STUDY_BRIDGE_GUARD — recall („zjisti víc o / co víš o
+            # X") se NESMÍ zrouteovat na studium (malý model občas splete „víc"
+            # a „si") → nech odpovědní/film-recall cestu (action=null).
+            if aid == "add_study_topic" and _looks_like_recall(message):
+                return None
             action = ACTIONS.get(aid)
             if not action:
                 return None
@@ -885,10 +905,16 @@ class AgentRouter:
             "otázkou>\"}\n"
             "Pravidla: Když si uživatel žádnou akci ze seznamu nepřeje "
             "(běžná otázka, povídání), vrať action=null a confidence 0. "
-            "DŮLEŽITÉ: dotaz na INFORMACE/ZNALOST o něčem („co víš o X“, "
-            "„zjisti/zjistit víc o X“, „řekni mi o X“, „znáš X?“, „pamatuješ "
-            "na X“) NENÍ akce — uživatel chce, abys mu o tom POVĚDĚL, ne abys "
-            "něco spustil (NEpouštěj film, NEpřidávej na seznam) → action=null. "
+            "DŮLEŽITÉ — ROZLIŠ DVA PODOBNÉ PŘÍPADY (HANS_CHAT_STUDY_BRIDGE_V1): "
+            "(a) uživatel chce, abys mu TEĎ POVĚDĚL, co už víš („co víš o X“, "
+            "„zjisti víc o X“, „řekni mi o X“, „znáš X?“, „pamatuješ na X“) → "
+            "action=null (jen odpovíš; NEpouštěj film, NEpřidávej na seznam). "
+            "(b) uživatel chce, abys šel něco NASTUDOVAT a ZAPAMATOVAL si to "
+            "napříště („nastuduj X“, „nauč se o X“, „zjisti si o X“, „podívej "
+            "se na X“, „mrkni na X“, „prozkoumej X“, „nechceš si zjistit o X“) → "
+            "action=add_study_topic, args tema=X. Klíč: „zjisti SI / nauč se / "
+            "nastuduj / podívej se na“ = BUDOUCÍ studium; „zjisti VÍC / co víš / "
+            "řekni mi“ = odpověz teď. "
             "Akci (pustit/přidat/…) zvol JEN u jasného POKYNU něco UDĚLAT. "
             "Nikdy nevymýšlej akci mimo seznam. args vyplň jen když je znáš "
             "z textu (titul filmu/knihy). Buď konzervativní — při pochybnosti "
