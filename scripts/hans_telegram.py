@@ -891,6 +891,19 @@ class TelegramBridge:
                                            if game_mode_on() else "vypnut"))
         except Exception:
             pass
+        try:  # HANS_GUARD_STATUS_V2 — stav hlídacího přepínače (/hlidej)
+            from scripts import hans_guard as _g
+            _gs = _g.state()
+            if _gs.get("armed"):
+                import time as _t
+                _since = _gs.get("since") or 0
+                _od = _t.strftime("%H:%M", _t.localtime(_since)) if _since else "?"
+                lines.append("Hlídání: ZAPNUTO (od %s, dnes %d snímků)"
+                             % (_od, int(_gs.get("sent_today", 0))))
+            else:
+                lines.append("Hlídání: vypnuto")
+        except Exception:
+            pass
         try:
             url = ((self.config.get("openwebui_chat", {}) or {}).get("base_url", "")
                    or "").rstrip("/")
