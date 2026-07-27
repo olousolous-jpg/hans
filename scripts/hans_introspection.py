@@ -100,6 +100,11 @@ class HansIntrospection:
 
     def _think(self, reason: str = ""):
         """Generuj vnitřní monolog pomocí LLM."""
+        # HANS_BRAIN_GATE_V1 — mozek dole / herní mód → přeskoč (žádný planý
+        # LLM pokus ani "Introspecting..." log v noci, kdy PC spí).
+        from scripts.ollama_client import brain_available
+        if not brain_available(self.config):
+            return
         with self._lock:
             pass  # jen jeden najednou — lock jen pro log
 

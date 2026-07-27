@@ -716,6 +716,17 @@ def add_pending_topic(diary_db_path: str, topic: str) -> str:
         return "error"
 
 
+def _brain_available(config: dict) -> bool:
+    """HANS_STUDY_BRAIN_GATE_V1 — je jazykové centrum (Ollama) dostupné?
+    Krátká sonda /api/tags. Když je mozek dole (noční PC shutdown) NEBO herní
+    mód, nemá smysl tahat materiál (OpenAlex/Wiki) — poznámku stejně
+    nevygenerujeme → jen bychom v ~1×/min retry smyčce mlátili OpenAlex (429
+    storm, nález 27.7.). Vrať False = study_next odloží (deferred), catchup
+    dožene po brain_up. Nezáleží na latenci: study_next běží zřídka."""
+    from scripts.ollama_client import brain_available  # HANS_BRAIN_GATE_V1
+    return brain_available(config)
+
+
 class StudyStore:
     def __init__(self, config: dict, diary_db_path: str):
         self.config = config
@@ -969,6 +980,11 @@ class StudyStore:
         """Nastuduj DALŠÍ pod-téma aktivního programu. Vrací dict s výsledkem
         ('studied'/'completed') nebo None (transientní selhání — retry).
         """
+        # HANS_STUDY_BRAIN_GATE_V1 — mozek dole / herní mód → deferred,
+        # netahej materiál (jinak noční OpenAlex 429 storm).
+        if not _brain_available(config):
+            _log.debug("study_next: mozek dole/herní mód — odloženo")
+            return None
         prog = self.ensure_program(config)
         if not prog:
             return None

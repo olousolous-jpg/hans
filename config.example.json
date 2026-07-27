@@ -812,7 +812,7 @@
       "results": 3,
       "max_chars": 4000,
       "timeout": 20,
-      "mailto": "hans@local",
+      "mailto": "you@example.com",
       "_sources_v2_note": "HANS_STUDY_SOURCES_V2 — deep tier navíc: Wikisource (primární texty, cs→en, action=parse) + Internet Archive (fulltext PD knih 1500-1929, djvu.txt; lending 401 → skip). Dedup přes study_seen_works (ws_/ia_ prefixy).",
       "wikisource_enabled": true,
       "wikisource_max_chars": 3000,

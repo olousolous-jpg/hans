@@ -163,6 +163,24 @@ def _resolve_url(ollama_url: str | None, config: dict | None) -> str:
     return DEFAULT_URL
 
 
+def brain_available(config: dict | None = None, ollama_url: str | None = None,
+                    timeout: float = 2.0) -> bool:
+    """HANS_BRAIN_GATE_V1 — je jazykové centrum (Ollama) dostupné? Sonda
+    /api/tags + herní mód. Autonomní rutiny (studium, introspekce, completion
+    reflexe) tím poznají, jestli má smysl dělat drahou přípravu / LLM pokus,
+    nebo rovnou odložit (deferred) — jinak v noci (PC shutdown) točí naprázdno
+    / plýtvají síťovými dotazy (viz OpenAlex 429 storm, nález 27.7.). Vrací
+    False při herním módu i nedostupnosti."""
+    if game_mode_on():
+        return False
+    try:
+        import requests as _r
+        url = _resolve_url(ollama_url, config)
+        return _r.get(f"{url}/api/tags", timeout=timeout).status_code == 200
+    except Exception:
+        return False
+
+
 def ollama_chat(
     model: str,
     messages: list[dict],

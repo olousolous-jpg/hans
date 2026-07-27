@@ -303,6 +303,11 @@ class HansEveningReflection:
         reakcí). Syntéza ohlédnutí → deník + RAG + _extract_stances."""
         if not self._synthesis or not (book_title or "").strip():
             return None
+        # HANS_BRAIN_GATE_V1 — mozek dole → nech pending, retry příště (žádný
+        # planý local gather + LLM pokus + WARNING).
+        from scripts.ollama_client import brain_available
+        if not brain_available(self._config):
+            return None
         date_str = date_str or datetime.now().strftime("%Y-%m-%d")
         # HANS_BOOK_COMPLETION_V3 — materiál: předané souhrny, jinak Hansovy
         # VLASTNÍ per-kapitola reflexe (book_reflection.DATA — hook píše text do
@@ -370,6 +375,10 @@ class HansEveningReflection:
         hluboká reflexe. Vlastní vytrvalá práce = legitimní kanál tvorby postojů
         (jako dočtená kniha). Syntéza ohlédnutí -> deník + RAG + _extract_stances."""
         if not self._synthesis or not (topic or "").strip():
+            return None
+        # HANS_BRAIN_GATE_V1 — mozek dole → odlož (žádný planý LLM pokus).
+        from scripts.ollama_client import brain_available
+        if not brain_available(self._config):
             return None
         essay_text = (essay_text or "").strip()
         if not essay_text:
