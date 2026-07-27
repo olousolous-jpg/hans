@@ -78,22 +78,32 @@ def search_library(query: str, limit: int = 12,
     if not html:
         return []
     out = []
-    for card in re.split(r"x-test-search-response-title", html)[1:limit + 1]:
-        nm = re.search(r">\s*([^<]+?)\s*</span>", card)
+    seen = set()
+    # HANS_TOOLSCOUT_PARSE_V2 (25.7.) — ollama.com zrušil x-test-* atributy;
+    # karty se teď dělí podle odkazu /library/<name>. Velikosti = spany „7b/0.5b",
+    # capabilities = indigo spany (tools/vision/thinking…), pulls = číslo s K/M/B.
+    for part in re.split(r'href="/library/', html)[1:]:
+        nm = re.match(r"([a-z0-9._-]+)\"", part)
         if not nm:
             continue
-        name = nm.group(1).strip()
-        sizes = re.findall(r"x-test-size[^>]*>([^<]+)<", card)
-        pulls = re.search(r"x-test-pull-count[^>]*>([^<]+)<", card)
-        caps = re.findall(r"x-test-capability[^>]*>([^<]+)<", card)
+        name = nm.group(1)
+        if name in seen:
+            continue
+        seen.add(name)
+        card = part.split('href="/library/')[0]   # jen tato karta
+        sizes = re.findall(r">\s*(\d+(?:\.\d+)?b)\s*<", card, re.IGNORECASE)
+        caps = re.findall(r"text-indigo-600[^>]*>\s*([A-Za-z]+)\s*<", card)
+        pm = re.search(r"([\d.]+[KMB])\b", card)   # 1. číslo K/M/B = pulls
         out.append({
             "name": name,
             "sizes": sizes,
             "sizes_b": [_param_to_b(s) for s in sizes],
-            "pulls": pulls.group(1).strip() if pulls else "?",
+            "pulls": pm.group(1) if pm else "?",
             "capabilities": [c.strip() for c in caps],
             "url": _MODEL_URL % name,
         })
+        if len(out) >= limit:
+            break
     return out
 
 

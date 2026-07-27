@@ -2402,15 +2402,19 @@ def _cmd_nastroj(handler, name, args) -> str:  # HANS_TOOLSCOUT_V1
         if m.group(1).startswith(("zam", "odm")):
             store.set_status(pid, "rejected")
             return "Zamítnuto, pane. %s nebudu stahovat." % p["tool_name"]
-        # schválit → pull na PC
+        # schválit → pull na PC. HANS_TOOLSCOUT_PULL_TAG_V1: stáhni s KONKRÉTNÍ
+        # velikostí (tool_name:size_tag), jinak `ollama pull qwen2.5-coder` vezme
+        # default (7b) místo navržených 14b.
         store.set_status(pid, "approved")
-        res = ts.pull_model(cfg, p["tool_name"])
+        _pull = p["tool_name"] + (":" + p["size_tag"]
+                                  if p.get("size_tag") else "")
+        res = ts.pull_model(cfg, _pull)
         if res.get("ok"):
             store.set_status(pid, "installed")
             return ("Schváleno, pane. Stahuji %s na počítač — %s. Až doběhne, "
-                    "budu ho moci použít pro dílo." % (p["tool_name"], res["detail"]))
+                    "budu ho moci použít pro dílo." % (_pull, res["detail"]))
         return ("Schválil jsem %s, ale stažení jsem nespustil: %s"
-                % (p["tool_name"], res.get("detail", "")))
+                % (_pull, res.get("detail", "")))
 
     # stav / výpis
     if not a or low in ("stav", "status", "seznam"):
