@@ -1294,10 +1294,12 @@ def recent_activity_answer(db_path: str, days: int = 1,
 _KNOWLEDGE_CHECK_RE = re.compile(
     r"\b(?:zn[áa][sš]|zn[áa]te|sly[šs]el(?:a)?\s+jsi\s+o|"
     r"co\s+v[íi][šs]\s+o|"
+    r"zjisti[t]?\s+v[íi]ce?\s+o|"          # HANS_KNOWLEDGE_CHECK_V2
+    r"[řr]ekni\s+mi\s+o|pov[ěe]z\s+mi\s+o|"  # HANS_KNOWLEDGE_CHECK_V2
     r"m[áa][šs]\s+z[áa]zna?m\s+o|"
     r"nev[íi][šs]\s+co\s+je|nev[íi][šs]\s+kdo\s+je)"
     r"\s+([\w\s\d\.\-']+?)"
-    r"[?.,;\n]",
+    r"(?:[?.,;\n]|$)",                     # HANS_KNOWLEDGE_CHECK_V2 — i konec řetězce
     re.I,
 )
 
@@ -1316,7 +1318,10 @@ def _extract_knowledge_topic(text: str) -> Optional[str]:
         return None
     x = m.group(1).strip(" .,?!;:'\"")
     # Odstranit prefix „ten/tu/to/ta/serial/film/kniha" (pomocná slova bez informace)
-    x = re.sub(r"^(?:seri[áa]l|film|knih(?:u|a|y)|posta?vu?|typa?)\s+",
+    # HANS_KNOWLEDGE_CHECK_V2 — skloněné tvary media-typu („o filmU/seriálU/
+    # knizE X"), jinak „filmu Proud krve" nesedne na paměť → falešná nabídka
+    # studia u filmu, který Hans zná.
+    x = re.sub(r"^(?:seri[áa]l\w*|film\w*|kn[ií]\w+|posta?v\w*|typ\w*)\s+",
                "", x, flags=re.I)
     return x.strip() or None
 
