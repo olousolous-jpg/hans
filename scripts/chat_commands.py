@@ -1624,13 +1624,31 @@ def _cmd_studium(handler, name, args) -> str:
         out.append("   %s %s" % (mark, s))
     out.append("")
     out.append("Sessions: %d  |  ručně: /studium teď" % ap["sessions_done"])
+    # HANS_STUDY_RECALL_V1 — fronta pending (aby bylo jasné, co JEŠTĚ NENÍ
+    # nastudováno; jinak by se dalo splést zařazené s hotovým).
+    try:
+        pend = [p for p in store.all_programs() if p.get("status") == "pending"]
+        if pend:
+            out.append("Ve frontě ke studiu (zatím nenastudováno): %s"
+                       % ", ".join(p["topic"] for p in pend))
+    except Exception:
+        pass
     return NL_RUNTIME.join(out)
 
 
 register(
     "studium",
     slash_aliases=["studium", "study", "učení", "uceni"],
-    nl_patterns=[],
+    # HANS_STUDY_RECALL_V1 — recall otázky na studium jdou na grounded /studium
+    # (jinak je zodpoví LLM konfabulací; doloženo „copak jsi studoval" → vymyšlený
+    # report o Českém ráji, který nebyl nastudovaný).
+    nl_patterns=[
+        r"co(?:pak)?\s+(?:jsi|jsi|si)\s+(?:na)?studoval",
+        r"co\s+(?:(?:te[dď]|pr[aá]v[eě])\s+)?studuje[sš]",
+        r"co\s+ses\s+(?:na)?u[cč]il",
+        r"jak\s+.{0,12}(?:tv[eé]\s+)?studium",
+        r"na\s+[cč]em\s+.{0,6}studuje[sš]",
+    ],
     handler=_cmd_studium,
     help_text="Studijní program: /studium [programy|teď]",
 )
