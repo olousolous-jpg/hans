@@ -20,7 +20,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 # ── Vokativ ──────────────────────────────────────────────────────────────
 
-def vocative(name: str, gender: Optional[str] = None) -> str:
+def vocative(name: str, gender: Optional[str] = None,
+             config: Optional[dict] = None) -> str:
     """Vokativ (5. pád) pro oslovení.
 
     Pravidla (běžná CZ jména končící -a):
@@ -33,9 +34,36 @@ def vocative(name: str, gender: Optional[str] = None) -> str:
     """
     if not name:
         return name
+    over = _person_form(name, "voc", config)   # HANS_NAME_INFLECTION_V2
+    if over:
+        return over
     base = _title(name)
     if base.lower().endswith("a"):
         return base[:-1] + "o"
+    return base
+
+
+# ── Akuzativ (4. pád) — „Viděl jsem Šárku / Oldu / Petra“ ────────
+
+def accusative(name: str, gender: Optional[str] = None,
+               config: Optional[dict] = None) -> str:
+    """Akuzativ (4. pád) jména. Config override known_persons[name].acc má
+    přednost; jinak algoritmus:
+      končí -a → -u (Šárka→Šárku, Olda→Oldu; muž i žena stejně)
+      muž + souhláska → +a (Petr→Petra)
+      jinak → beze změny (nic nerozbit).
+    """
+    if not name:
+        return name
+    over = _person_form(name, "acc", config)   # HANS_NAME_INFLECTION_V2
+    if over:
+        return over
+    base = _title(name)
+    low = base.lower()
+    if low.endswith("a"):
+        return base[:-1] + "u"
+    if gender in ("muž", "m", "male") and low[-1:] not in "aeiouyáéíóúůě":
+        return base + "a"
     return base
 
 
@@ -98,9 +126,27 @@ def person_gender(name: str, config: Optional[dict] = None) -> Optional[str]:
     return rec.get("gender")
 
 
-def display_name(name: str) -> str:
-    """'jana' → 'Jana'. Pro deník/log/hlášky (žádné rozbití diakritiky)."""
-    return _title(name) if name else name
+def _person_form(name: str, key: str,
+                 config: Optional[dict] = None) -> Optional[str]:
+    """Explicitní pádový tvar z known_persons[name][key] (nom/acc/voc).
+    None = nezadáno → algoritmický fallback. HANS_NAME_INFLECTION_V2."""
+    if not name:
+        return None
+    cfg = config if config is not None else _load_config()
+    rec = (cfg.get("known_persons") or {}).get(name.lower())
+    if not rec:
+        return None
+    v = rec.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def display_name(name: str, config: Optional[dict] = None) -> str:
+    """'jana' → 'Jana'; známá osoba → config nom ('sarka' → 'Šárka').
+    HANS_NAME_INFLECTION_V2 — nom z known_persons opraví i ASCII klíč."""
+    if not name:
+        return name
+    nom = _person_form(name, "nom", config)
+    return nom if nom else _title(name)
 
 
 def _title(name: str) -> str:
@@ -113,7 +159,7 @@ def _title(name: str) -> str:
 
 def address(name: str, config: Optional[dict] = None) -> str:
     """Vokativ podle registrace v known_persons — jednořádkový shortcut."""
-    return vocative(name, person_gender(name, config))
+    return vocative(name, person_gender(name, config), config)
 
 
 def came(name: str, config: Optional[dict] = None) -> str:
@@ -134,6 +180,11 @@ def was(name: str, config: Optional[dict] = None, negate: bool = False) -> str:
 def saw(name: str, config: Optional[dict] = None, negate: bool = False) -> str:
     """'viděl' / 'viděla' (nebo 'neviděl' / 'neviděla')."""
     return past_verb("neviděl" if negate else "viděl", person_gender(name, config))
+
+
+def acc(name: str, config: Optional[dict] = None) -> str:
+    """Akuzativ jména podle known_persons — shortcut ('Šárku')."""
+    return accusative(name, person_gender(name, config), config)
 
 
 # ── Smoke (python3 -m scripts.cz_names) ──────────────────────────────────

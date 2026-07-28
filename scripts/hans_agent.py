@@ -203,7 +203,8 @@ def _run_who_home(handler, args) -> str:
             (time.time() - 900,)).fetchone()
         db.close()
         if r and r[0]:
-            return f"Naposledy jsem tu zahlédl {r[0]}, teď tu ale nikoho nevidím."
+            from scripts.cz_names import acc as _cz_acc  # HANS_NAME_INFLECTION_V2
+            return f"Naposledy jsem tu zahlédl {_cz_acc(r[0])}, teď tu ale nikoho nevidím."
     except Exception:
         pass
     return "Teď tu nikoho nevidím, pane."

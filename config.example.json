@@ -282,7 +282,10 @@
     "dir": "data/conversations",
     "max_turns": 50
   },
-  "known_persons": {},
+  "known_persons": {
+    "standa": {"gender": "muž", "notes": "pan domu", "nom": "Standa", "acc": "Standu", "voc": "Stando"},
+    "jana": {"gender": "žena", "notes": "pani domu", "nom": "Jana", "acc": "Janu", "voc": "Jano"}
+  },
   "fisheye": {
     "enabled": false,
     "fov_degrees": 140,

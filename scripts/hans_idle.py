@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime
 
 from scripts.cz_names import was as _cz_was, saw as _cz_saw, \
-    display_name as _cz_display  # HANS_NAME_INFLECTION_V1
+    display_name as _cz_display, acc as _cz_acc  # HANS_NAME_INFLECTION_V1
 
 _log = logging.getLogger("hans_idle")
 
@@ -1949,9 +1949,10 @@ class HansIdle:
         nebyl = _cz_was(name, self.config, negate=True)   # nebyl / nebyla
         byl   = _cz_was(name, self.config)                # byl / byla
         disp  = _cz_display(name)
+        akuz  = _cz_acc(name, self.config)                # HANS_NAME_INFLECTION_V2: akuzativ „Šárku"
         # Šablona — 5 variant Hansova hlasu (komorník). Hans („neviděl") je m.
         templates = [
-            f'{disp} jsem neviděl už {doba}. Doufám, že je v pořádku.',
+            f'{akuz} jsem neviděl už {doba}. Doufám, že je v pořádku.',
             f'{disp} tu {nebyl} {doba} — přemýšlím, kde se asi nachází.',
             f'Vzpomněl jsem si na to, že {disp} tu {nebyl} {doba}.',
             f'{disp} mi schází — naposled tu {byl} před {doba}.',
