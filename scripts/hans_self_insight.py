@@ -407,7 +407,8 @@ def _person_label(name: str) -> str:
     kapitalizovaný + EN gender marker → reasoning napíše „Mrs. Jana"/„Mr. Standa",
     voice pak skloní ženský tvar místo mužského. Fallback = holé jméno."""
     try:
-        from scripts.cz_names import display_name as _disp, person_gender as _pg
+        # HANS_NAME_RESTORE_V1 — v úvahách formální plné jméno (Jana→Johana)
+        from scripts.cz_names import formal_name as _disp, person_gender as _pg
         disp = _disp(name)
         g = _pg(name)
         if g == "žena":
@@ -1023,6 +1024,13 @@ def run_analysis(diary_db_path: str, config: dict,
     if not insight_cs:
         _log.info("self_insight[%s]: voice LLM offline → uložím jen EN", lens_id)
         insight_cs = insight_en
+    # HANS_NAME_RESTORE_V1 — voice model občas zmrší jméno (Jana→Janika);
+    # obnov kanonická jména známých osob (EN reasoning je má správně).
+    try:
+        from scripts.cz_names import restore_person_names
+        insight_cs = restore_person_names(insight_cs, config)
+    except Exception as _nre:
+        _log.debug("restore_person_names: %s", _nre)
 
     try:
         now = time.time()

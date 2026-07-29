@@ -284,7 +284,7 @@
   },
   "known_persons": {
     "standa": {"gender": "muž", "notes": "pan domu", "nom": "Standa", "acc": "Standu", "voc": "Stando"},
-    "jana": {"gender": "žena", "notes": "pani domu", "nom": "Jana", "acc": "Janu", "voc": "Jano"}
+    "jana": {"gender": "žena", "notes": "pani domu", "nom": "Jana", "acc": "Janu", "voc": "Jano", "full": "Johana"}
   },
   "fisheye": {
     "enabled": false,
