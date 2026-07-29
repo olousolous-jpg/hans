@@ -1309,6 +1309,25 @@ class HansRoutine:
         except Exception as _e:
             _log.warning("pc_night_wake: %s", _e)
 
+    def _render_pending_art_before_shutdown(self):
+        """HANS_ART_NIGHT_RENDER_V1 — dorenderuj pending art, dokud je PC vzhůru
+        (analytický wake, VRAM volná po doběhnuté analytice), NEŽ ho vypneme.
+        Jinak art nemá PC-up okno: PC je přes noc dole a ranní WOL je až za
+        night window. Book art přednost, jinak sen. Blokující (poweroff počká).
+        Nikdy nevyhodí — selhání = jen retry příští noc (deferral)."""
+        painted = False
+        try:
+            from scripts.hans_art import generate_pending_artwork
+            painted = generate_pending_artwork(self.config, self._diary_path)
+        except Exception as _e:
+            _log.warning("pre-shutdown art (kniha): %s", _e)
+        if not painted:
+            try:
+                from scripts.hans_art import paint_dream
+                paint_dream(self.config, self._diary_path)
+            except Exception as _e:
+                _log.warning("pre-shutdown art (sen): %s", _e)
+
     def _maybe_shutdown_pc(self):
         """HANS_PC_NIGHT_SHUTDOWN — po dokončení noční analytiky vypni PC.
         S3 suspend je na téhle desce rozbitý (reboot); čistý poweroff + ranní
@@ -1352,6 +1371,15 @@ class HansRoutine:
             conn.close()
             if ra and ra[0] and nowts - ra[0] < settle:
                 return  # analytika ještě běží
+            # HANS_NIGHT_DRAIN_V1 — po analytickém wake drž PC nahoře aspoň
+            # wake_drain_minutes, ať tick dojede ODLOŽENÝ backlog (catchup,
+            # studium, self_insight) + art. Jinak vypne po ~2 min a zbytek se
+            # odloží na ráno = škoda probuzení/proudu. Jen když jsme DNES budili.
+            drain_s = int(c.get("wake_drain_minutes", 15)) * 60
+            if (drain_s > 0 and self._last_analytics_wake_date == today
+                    and self._analytics_wake_ts
+                    and nowts - self._analytics_wake_ts < drain_s):
+                return  # ještě dojíždíme deferred backlog
             # NEvypni PŘED analytikou: povol shutdown jen když analytika DNES
             # proběhla, NEBO jsme kvůli ní budili a dali jí čas (settle) doběhnout.
             had_today = bool(ra and ra[0] and nowts - ra[0] < 16 * 3600)
@@ -1363,6 +1391,12 @@ class HansRoutine:
             # PC vzhůru? (rychlý ping — když dole, není co vypínat; guard NEnastavuj)
             if not self._pc_up():
                 return
+            # HANS_ART_NIGHT_RENDER_V1 — poslední spolehlivé PC-up okno v noci:
+            # dorenderuj pending art PŘED vypnutím (jinak 3 noci sucho).
+            try:
+                self._render_pending_art_before_shutdown()
+            except Exception as _ae:
+                _log.warning("PC night shutdown: art render selhal: %s", _ae)
             # vypni
             pc_remote.run(self.config, "sudo -n systemctl poweroff", timeout=10)
             self._last_pc_shutdown_date = today
@@ -1497,6 +1531,10 @@ class HansRoutine:
             # retry příští noc). In-memory cooldown 30 min proti hammeru. Nikdy
             # neshodí tick. Běží každou noc (gen vrátí brzo, když nic k malování).
             if (self._in_night_window() and self._chat_quiet_ok()
+                    # HANS_ART_NIGHT_AWARE_V1 — nepokoušej render, když je PC
+                    # záměrně dole (night shutdown); jinak ~68 WARN/noc
+                    # „ComfyUI nedostupný". Render uspěje jen s PC nahoře.
+                    and not self._pc_planned_unavailable()
                     and (time.time() - getattr(self, "_last_art_attempt", 0.0)) > 1800):
                 self._last_art_attempt = time.time()
                 _painted = False

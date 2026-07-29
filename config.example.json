@@ -1069,6 +1069,8 @@
     "night_end_hour": 6,
     "settle_minutes": 20,
     "chat_quiet_minutes": 30,
+    "wake_drain_minutes": 15,
+    "_wake_drain_note": "HANS_NIGHT_DRAIN_V1: po analytickem wake drz PC nahore aspon tolik minut, at tick dojede odlozeny backlog (catchup, studium, self_insight) + art, nez PC vypne. 0 = vypnuto.",
     "_note": "HANS_PC_NIGHT_SHUTDOWN: po dokonceni nocni analytiky vypni PC (S3 suspend na teto desce rebootuje). Guardy: okno night_start..night_end, analytika usazena (zadny nocni event settle_minutes), zadny recent chat, PC vzhuru, 1x/noc. Rano ho probudi WOL. Vyzaduje NOPASSWD sudo poweroff na PC."
   },
   "health": {
