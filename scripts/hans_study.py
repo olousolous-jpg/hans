@@ -101,8 +101,29 @@ _CURRICULUM_SYSTEM = (
     "studovat jedno po druhém po týdnech. Každé pod-téma musí být konkrétní, "
     "samostatně dohledatelné (vhodné jako dotaz do encyklopedie) a v ČEŠTINĚ. "
     "Žádné obecné fráze typu 'úvod' nebo 'historie' bez upřesnění; nevymýšlej si "
-    "nesmysly. Vrať VÝHRADNĚ JSON pole {n} řetězců (názvy pod-témat), nic víc."
+    "nesmysly.\n\n"
+    "PRAVIDLA PRO NÁZVY POD-TÉMAT (jinak encyklopedie nenajde článek):\n"
+    "  1. MAX 5 slov (kratší lepší)\n"
+    "  2. ŽÁDNÉ dvojtečky, středníky ani závorky s vysvětlením/'(např. …)'\n"
+    "  3. Kanonický pojem, ne popisná věta\n"
+    "  ŠPATNĚ: 'Gotická architektura: charakteristika a příklady (např. …)'\n"
+    "  SPRÁVNĚ: 'Gotická architektura'\n\n"
+    "Vrať VÝHRADNĚ JSON pole {n} řetězců (názvy pod-témat), nic víc."
 )
+
+
+def _normalize_subtopic(s: str) -> str:
+    """HANS_STUDY_CANON_TITLE_V1 — srazí popisnou větu na kanonický pojem, aby
+    ji encyklopedie našla (malý model prompt ignoruje → dorovnat kódem).
+    Useknout za dvojtečkou/pomlčkou, pryč '(…)' vysvětlení, ≤6 slov."""
+    s = (s or "").strip()
+    s = re.split(r"[:–—]", s, 1)[0]                # useknout ": popis" / " – popis"
+    s = re.sub(r"\s*\([^)]*\)", "", s)           # pryč "(např. …)"
+    s = re.sub(r"\s+", " ", s).strip(" .,;–-")
+    w = s.split()
+    if len(w) > 6:
+        s = " ".join(w[:6])
+    return s.strip()
 
 
 def _generate_curriculum(config: dict, topic: str, examples: list) -> list:
@@ -134,6 +155,7 @@ def _generate_curriculum(config: dict, topic: str, examples: list) -> list:
     seen = set()
     for it in items:
         s = str(it).strip().lstrip("0123456789.) -").strip()
+        s = _normalize_subtopic(s)  # HANS_STUDY_CANON_TITLE_V1
         if len(s) >= 3 and _norm(s) not in seen:
             out.append(s)
             seen.add(_norm(s))
@@ -1165,8 +1187,9 @@ class StudyStore:
             m = re.search(r"\{.*\}", raw, re.S)
             if m:
                 d = json.loads(m.group(0))
-                subs = [str(x).strip() for x in (d.get("subtopics") or [])
-                        if str(x).strip()][:max_new]
+                subs = [_normalize_subtopic(str(x))  # HANS_STUDY_CANON_TITLE_V1
+                        for x in (d.get("subtopics") or []) if str(x).strip()]
+                subs = [x for x in subs if len(x) >= 3][:max_new]
                 if subs:
                     return {"critique": str(d.get("critique", "")).strip(),
                             "subtopics": subs}
