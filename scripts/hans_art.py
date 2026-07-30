@@ -251,8 +251,42 @@ def _pick_medium() -> str:
     return m
 
 
+_CZ_COMMON = {
+    "domov", "dum", "byt", "pokoj", "kuchyne", "loznice", "obyvak", "okno",
+    "dvere", "zahrada", "dvur", "ulice", "mesto", "vesnice", "namesti", "hrad",
+    "zamek", "kostel", "kaple", "most", "reka", "potok", "jezero", "rybnik",
+    "les", "louka", "pole", "hora", "kopec", "strom", "kvetina", "kytka", "pes",
+    "kocka", "kun", "ptak", "auto", "vlak", "lod", "mesic", "slunce", "hvezda",
+    "obloha", "mrak", "voda", "ohen", "snih", "dest", "cesta", "park", "kavarna",
+    "hospoda", "stul", "zidle", "postel", "obraz", "socha", "pohled", "misto",
+    "muj", "moje", "svuj", "nas", "noc", "den", "rano", "vecer", "svetlo",
+    "stin", "krajina", "scena", "zima", "jaro", "leto", "podzim", "kraj",
+    "sen", "muz", "zena", "dite", "clovek", "tvar", "kvet", "vez",
+}
+
+
+def _ascii_fold(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", s or "")
+                   if not unicodedata.combining(c))
+
+
+def _looks_english(s: str) -> bool:
+    """HANS_ART_SAFE_FALLBACK_V1 — je NÁMĚT bezpečně anglicky pro FLUX? False při
+    české diakustice (ě š č ř ž ů ň ď ť) NEBO běžném českém slově (i bez
+    diakritiky: „domov"/„les"). Konzervativní: při pochybnosti False (radši
+    odlož než malovat garbage)."""
+    if not s:
+        return False
+    if re.search(r"[ěščřžůňďťýáíéóúĚŠČŘŽŮŇĎŤÝÁÍÉÓÚ]", s):
+        return False
+    toks = re.findall(r"[a-z]+", _ascii_fold(s).lower())
+    return not any(t in _CZ_COMMON for t in toks)
+
+
 def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
-                  system: str = None, source_intro: str = None) -> str:
+                  system: str = None, source_intro: str = None,
+                  en_fallback: str = None) -> Optional[str]:
     """LLM (levný, keep_alive=0) → anglický SDXL scene prompt. Fallback šablona.
     HANS_ART_LESSON_V1: když db_path, vloží do promptu ponaučení z minulých obrazů.
     HANS_DREAMS_V1: system+source_intro lze přepsat (snová varianta místo knižní)."""
@@ -305,10 +339,18 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     except Exception:
         pass
     fallback = ", ".join(x for x in (_fsubj, _fstyle, _tail) if x)
+    # HANS_ART_SAFE_FALLBACK_V1 — fallback (LLM dole) smí do FLUXu jen s
+    # anglickým námětem; český → en_fallback od volajícího, jinak None = odlož.
+    def _fb():
+        if _looks_english(_fsubj):
+            return fallback
+        if en_fallback:
+            return ", ".join(x for x in (en_fallback, _tail) if x)
+        return None
     try:
         from scripts.ollama_client import ollama_generate
     except Exception:
-        return fallback
+        return _fb()
     acfg = _acfg(config)
     model = str(acfg.get("prompt_model", "qwen2.5:7b"))
     user = (source_intro if source_intro is not None
@@ -331,16 +373,16 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
             timeout=int(acfg.get("llm_timeout", 90)), keep_alive=0)
     except Exception as e:
         _log.warning("art: scene prompt LLM failed: %s", e)
-        return fallback
+        return _fb()
     if not raw or not raw.strip():
-        return fallback
+        return _fb()
     p = raw.strip().strip('"').replace("\n", " ")
     # qwen2.5 občas ujede do CJK (čínština/japonština) → SDXL to nepochopí a
     # stočí styl jinam. Odstraň CJK; když po očištění zbyde málo, použij fallback.
     p2 = _strip_cjk(p)
     if len(p2) < 0.6 * len(p):
         _log.warning("art: scene prompt ujel do CJK (%d→%d zn) — fallback", len(p), len(p2))
-        return fallback
+        return _fb()
     return p2[:600]
 
 
@@ -606,6 +648,7 @@ def _slug(title: str) -> str:
 
 # ── Render core (sdílené noční i ruční cestou) ──────────────────────────────
 def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
+                  en_fallback: str = None,
                   scene_system: str = None, scene_intro: str = None):
     """Vyrenderuje 1 obraz přes ComfyUI/SDXL. Vrací (rel_path, prompt, vision_desc)
     nebo None. VRAM orchestrace uvnitř (unload LLM → render → _comfy_free →
@@ -639,7 +682,15 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
         return None
 
     prompt = _scene_prompt(config, title, reflection, db_path,
-                           system=scene_system, source_intro=scene_intro)
+                           system=scene_system, source_intro=scene_intro,
+                           en_fallback=en_fallback)
+    # HANS_ART_SAFE_FALLBACK_V1 — _scene_prompt vrátí None, když LLM selhal a
+    # není bezpečný anglický námět → ODLOŽ render (radši žádný obraz než garbage
+    # z nepřeloženého českého námětu, doloženo 30.7. „domov" → muž na ulici).
+    if not prompt:
+        _log.warning("art: scene prompt nešel bezpečně sestavit (LLM dole, "
+                     "český námět) — render odložen, retry příště")
+        return None
     acfg = _acfg(config)
     w = int(acfg.get("width", 1024)); h = int(acfg.get("height", 768))
     steps = int(acfg.get("steps", 28)); cfg_s = float(acfg.get("cfg", 6.5))
@@ -1506,6 +1557,8 @@ def paint_home(config: dict, diary_db_path: str) -> Optional[tuple]:
     title = "Můj domov"
     scene_intro = "%s\n\n" % text
     res = _render_image(config, title, text, diary_db_path,
+                        en_fallback="a quiet home interior seen from within a "
+                        "room, view from where one stands, soft natural light",
                         scene_system=_HOME_SCENE_SYSTEM, scene_intro=scene_intro)
     if not res:
         _log.warning("art: domov se nevyrenderoval — retry příště")
@@ -1780,6 +1833,7 @@ def paint_dream(config: dict, diary_db_path: str) -> bool:
     title = "Sen"
     scene_intro = "A dream (described in Czech):\n%s\n\n" % text
     res = _render_image(config, title, text, diary_db_path,
+                        en_fallback="a surreal, dreamlike scene, soft and atmospheric",
                         scene_system=_DREAM_SCENE_SYSTEM, scene_intro=scene_intro)
     if not res:
         _log.warning("art: sen se nevyrenderoval — retry příště")
@@ -1927,6 +1981,7 @@ def paint_day(config: dict, diary_db_path: str) -> bool:
     source = mood_block + "Today's moments (secondary motifs):\n" + frags
     scene_intro = "A person's day and mood:\n%s\n\n" % source
     res = _render_image(config, title, source, diary_db_path,
+                        en_fallback="a quiet everyday scene from domestic life",
                         scene_system=_DAY_SCENE_SYSTEM, scene_intro=scene_intro)
     if not res:
         _log.warning("art: obraz dne se nevyrenderoval — retry příště")
