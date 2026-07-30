@@ -282,6 +282,21 @@ class WebReader:
                     best_title = t
             if best_title and best_score >= min_score:
                 return best_title
+            # HANS_STUDY_WIKI_RELAX_V1 — dobré parafráze („Románské stavebnictví"
+            # → „Románská architektura") skórují 0.5 STEJNĚ jako garbage, ALE
+            # garbage je DLOUHÝ tangenciální titul („Pozemské technologie ve
+            # Hvězdné bráně" = 4 slova). Relaxovaný stupeň: sim >= relax_score
+            # A KRÁTKÝ fokusovaný titul (<= relax_max_tokens) = kanonický článek,
+            # ne odbočka. Řeší LLM-parafráze v kurikulu, které přísný gate mazal.
+            relax = float((self.config.get("curiosity", {}) or {})
+                          .get("wiki_title_relax_score", 0.45))
+            relax_tok = int((self.config.get("curiosity", {}) or {})
+                            .get("wiki_title_relax_max_tokens", 3))
+            if (best_title and best_score >= relax
+                    and len(_title_tokens(best_title)) <= relax_tok):
+                _log.debug("Wikipedia srsearch RELAX: %r score=%.2f, krátký titul "
+                           "→ přijato", best_title, best_score)
+                return best_title
             _log.debug("Wikipedia srsearch: best %r score=%.2f < %.2f — skip",
                        best_title, best_score, min_score)
         except Exception as e:
