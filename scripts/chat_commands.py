@@ -1136,6 +1136,23 @@ def _cmd_namaluj(handler, name, args) -> str:
         return ("V tuto chvíli na televizi nic nehraje, pane — nemám co "
                 "namalovat z obrazovky.")
 
+    # HANS_ART_HOME_ROUTE_V1 — „namaluj (svůj/můj/náš) domov / dům / byt / kde
+    # bydlím" = Hans maluje SVŮJ obývák z modelu místa (place_facts, pohled z
+    # jeho vantage pointu) přes paint_home, NE generický paint_subject — ten
+    # „domov" mis-groundne na entitu „Kde domov můj?" (hymna) a maluje osobu
+    # (smyšlenou osobu), navíc person-render timeoutuje (doloženo 30.7.).
+    if _re.search(r"\b(sv[ůu]j|m[ůu]j|n[áa][šs])\s+(domov|d[ůu]m|byt)\b"
+                  r"|\bdomov\b|\bkde\s+(bydl|[žz]ij)", _raw):
+        def _home_render():
+            try:
+                r = hans_art.paint_home(cfg, db)
+                _log.info("namaluj DOMOV → %s", "ok" if r else "nevyšlo/odloženo")
+            except Exception as _e:
+                _log.warning("paint_home: %s", _e)
+        _t.Thread(target=_home_render, daemon=True).start()
+        return ("Namaluji svůj domov, pane — obývák z místa, kde stojím. Chvíli "
+                "to potrvá, pak se podívej do galerie.")
+
     # vytáhni téma z požadavku (odřízni sloveso a spojky)
     subj = (args or "").strip()
     # \w* za kmenem slovesa pokryje ČASOVANÉ tvary: „namaluješ/namaluje/namaloval
