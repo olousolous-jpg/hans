@@ -955,6 +955,38 @@ def _looks_like_scene(s: str) -> bool:
     return False
 
 
+# HANS_ART_CHAR_APPEARANCE_V1 — detekce fiktivní postavy + extrakce vzhledu z Wiki
+_IS_CHARACTER = re.compile(
+    r"poh[áa]dkov[áéíou]+\s+postav|fiktivn[íi]|je\s+postav|postav[au]\s+z\b"
+    r"|ve[čc]ern[íi][čc]|kreslen|animovan|hrdin[au]|loupe[žz]n", re.I)
+_APPEAR_KW = re.compile(
+    r"vous|klobouk|[čc]epic|nos[íi]\b|o[šs]acen|oble[čc]|obuv|botk|vlas|sukn"
+    r"|halenk|[šs]aty|kab[áa]t|pl[áa][šs][ťt]|br[ýy]l|vzhled|vypad|m[áa]\s+na\s+sob",
+    re.I)
+
+
+def _wiki_character_appearance(config: dict, name: str) -> str:
+    """Vytáhne z Wiki článku VĚTY o vzhledu postavy (oblečení, vlasy, rysy).
+    Fiktivní postavy bez vlastního článku (Manka→Rumcajs) sdílí pasáž, která
+    obvykle popisuje víc postav — vezmi ji, scene-LLM zdůrazní zadanou."""
+    try:
+        from scripts.web_reader import WebReader
+        a = WebReader(config).wikipedia_article(name)
+        if not a or not a.get("text"):
+            return ""
+        sents = re.split(r"(?<=[.!?])\s+", a["text"])
+        # appearance věty PŘEDNOST (vzhled), doplň větami se jménem subjektu
+        # (role/kontext — pomůže sub-postavám bez vlastního vzhledu: Cipísek).
+        appear = [s.strip() for s in sents if _APPEAR_KW.search(s)]
+        named = [s.strip() for s in sents
+                 if re.search(re.escape(name), s, re.I) and s.strip() not in appear]
+        out = appear[:4] + named[:2]
+        return " ".join(out)[:700]
+    except Exception as e:
+        _log.debug("art: _wiki_character_appearance: %s", e)
+        return ""
+
+
 def _ground_subject(config: dict, db_path: str, subject: str) -> str:
     """HANS_ART_SUBJECT_GROUNDING_V1/V2 — zjisti, KOHO/CO malovat.
     Kaskáda: (1) C1 entity store (Hansovo čtení) → (2) Wikipedia fallback
@@ -981,7 +1013,18 @@ def _ground_subject(config: dict, db_path: str, subject: str) -> str:
                 name = "%s (English name to use in the image prompt: %s)" % (name, _en)
             _log.info("art: namet '%s' ukotven na entitu '%s'%s", s,
                       ent.get("name", s_clean), f" [EN: {_en}]" if _en else "")
-            return "%s: %s" % (name, gloss.strip())
+            _base = "%s: %s" % (name, gloss.strip())
+            # HANS_ART_CHAR_APPEARANCE_V1 — fiktivní postava (Rumcajs…), kterou
+            # FLUX nezná: gloss je definice bez vzhledu → vytáhni z Wiki článku
+            # VZHLED (červený klobouk, vousy…), ať má FLUX co malovat.
+            if _IS_CHARACTER.search(gloss):
+                _app = _wiki_character_appearance(config, ent.get("name", s_clean))
+                if _app:
+                    _log.info("art: postava '%s' — vzhled z Wiki (%d zn)",
+                              s_clean, len(_app))
+                    _base = ("Vzhled postavy %s (ZDŮRAZNI ho v obraze): %s\n%s"
+                             % (name, _app, _base))
+            return _base
         # C1 miss → Wikipedia fallback (dohledej + ulož do store)
         enriched = _ground_via_wikipedia(config, db_path, s_clean)
         if enriched:
