@@ -234,22 +234,13 @@ class FaceRecognitionSystem:
                     print(f"[Chat] Preload selhal: {e}")
             threading.Thread(target=_preload, daemon=True).start()
 
-        # HANS_NOTIFIER_V1 — notifikační mosty (Telegram + Matrix E2E) přes
-        # fan-out Notifier. Volající (hans_idle, display) drží .telegram; backend
-        # je swappable configem. Cíl (23.7.): až Matrix ověřen naživo →
-        # telegram.enabled=false → provozně jen Matrix; pak Telegram kód smazat.
+        # HANS_NOTIFIER_V1 — notifikační most Matrix (E2E) přes fan-out Notifier.
+        # Volající (hans_idle, display) drží .telegram (historický název atributu,
+        # dnes ukazuje na Notifier/Matrix); backend je swappable configem.
         self.telegram = None
         try:
             from scripts.hans_notifier import Notifier
             _bridges = []
-            try:
-                from scripts.hans_telegram import TelegramBridge
-                _tg = TelegramBridge(self.config, self.openwebui_chat)
-                if _tg.enabled:
-                    _bridges.append(_tg)
-                    print("[Telegram] most zapnut")
-            except Exception as _te:
-                print(f"[Telegram] init selhal: {_te}")
             try:
                 from scripts.hans_matrix import MatrixBridge
                 _mx = MatrixBridge(self.config, self.openwebui_chat)

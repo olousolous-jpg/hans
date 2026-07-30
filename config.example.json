@@ -316,36 +316,6 @@
     "thumbs_up_hold_s": 1.5,
     "fist_hold_s": 0.5
   },
-  "telegram": {
-    "enabled": false,
-    "bot_token": "",
-    "chat_id": "",
-    "as_person": "standa",
-    "announce_online": false,
-    "quiet_start_hour": 22,
-    "quiet_end_hour": 9,
-    "users": [
-      {
-        "chat_id": "",
-        "as_person": "alice",
-        "role": "full",
-        "push_questions": false
-      },
-      {
-        "chat_id": "",
-        "as_person": "bob",
-        "role": "chat",
-        "push_questions": true
-      },
-      {
-        "chat_id": "",
-        "as_person": "carol",
-        "role": "chat",
-        "push_questions": true
-      }
-    ],
-    "question_interval_h": 6
-  },
   "matrix": {
     "_note": "HANS_MATRIX_V1 — E2E šifrovaný most (matrix.org). Alternativa k Telegramu, kde poskytovatel NEvidí obsah. Vyžaduje apt: python3-matrix-nio python3-olm.",
     "enabled": false,

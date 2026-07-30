@@ -466,23 +466,6 @@ GROUPS = [
         ],
     },
     {
-        "id": "telegram",
-        "title": "Chat / Telegram",
-        "icon": "📱",
-        "intro": ("Most na Telegram (chat + příkazy + Hansovy otázky). Token a chat_id se "
-                  "spravují přímo v config.json (tajné), tady jen chování."),
-        "fields": [
-            {"path": "telegram.enabled", "label": "Telegram aktivní", "type": "bool"},
-            {"path": "telegram.quiet_start_hour", "label": "Tiché okno — začátek (h)", "type": "int", "min": 0, "max": 23,
-             "tip": "Od této hodiny se proaktivní zprávy odkládají (odpovědi na tvé zprávy jdou vždy hned)."},
-            {"path": "telegram.quiet_end_hour", "label": "Tiché okno — konec (h)", "type": "int", "min": 0, "max": 23,
-             "tip": "Do této hodiny ráno se odložené proaktivní zprávy doručí až po ní."},
-            {"path": "telegram.question_interval_h", "label": "Min. interval otázek (h)", "type": "int", "min": 1, "max": 48,
-             "tip": "Jak často smí Hans posílat svou otázku přes Telegram."},
-            {"path": "telegram.announce_online", "label": "Hlásit, že je online", "type": "bool", "tier": "expert"},
-        ],
-    },
-    {
         "id": "night_routines",
         "title": "Hans / Noční rutiny",
         "icon": "🌙",
@@ -817,7 +800,7 @@ CATEGORY_OF = {
     "hans_activity": "Chování", "room_observer": "Chování", "relationships": "Chování",
     "hans_library": "Chování", "hans_questions": "Chování", "kolac_cases": "Chování",
     "films_tv": "Chování", "night_routines": "Chování",
-    "chat_direct": "Chat", "chat_openwebui": "Chat", "chat_cloud": "Chat", "telegram": "Chat",
+    "chat_direct": "Chat", "chat_openwebui": "Chat", "chat_cloud": "Chat",
     "tts": "Hlas", "voice": "Hlas",
     "recognition": "Rozpoznávání", "face_preprocess": "Rozpoznávání",
     "face_quality": "Rozpoznávání", "unknown_enrollment": "Rozpoznávání",

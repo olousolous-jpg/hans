@@ -50,7 +50,7 @@ _CAPABILITIES = [
      "/stav"),
     ("game_mode", "Umím uvolnit grafiku pro HRU (herní mód) a ukázat telemetrii "
      "na displejích", "/herni"),
-    ("telegram", "Komunikuji přes TELEGRAM (odpovídám i sám píšu)", "Telegram most"),
+    ("matrix", "Komunikuji přes MATRIX (E2E šifrovaně na telefon — odpovídám i sám píšu)", "Matrix most"),
     ("avatar", "Vytvářím si vizuální PODOBU (avatar), která se vyvíjí s povahou",
      "/avatar"),
     ("place", "Mám smysl pro MÍSTO — model domova, vím kde jsem a co je za oknem",
