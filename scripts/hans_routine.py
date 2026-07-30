@@ -1324,9 +1324,15 @@ class HansRoutine:
         if not painted:
             try:
                 from scripts.hans_art import paint_dream
-                paint_dream(self.config, self._diary_path)
+                painted = paint_dream(self.config, self._diary_path)
             except Exception as _e:
                 _log.warning("pre-shutdown art (sen): %s", _e)
+        if not painted:  # HANS_ART_AFTER_DRAIN_V1 — plná sekvence jako night-tick
+            try:
+                from scripts.hans_creations import creative_impulse
+                creative_impulse(self.config, self._diary_path)
+            except Exception as _e:
+                _log.warning("pre-shutdown art (tvůrčí impuls): %s", _e)
 
     def _maybe_shutdown_pc(self):
         """HANS_PC_NIGHT_SHUTDOWN — po dokončení noční analytiky vypni PC.
@@ -1530,7 +1536,15 @@ class HansRoutine:
             # uvnitř (unload LLM → render → warm). Deferral-safe (ComfyUI dole →
             # retry příští noc). In-memory cooldown 30 min proti hammeru. Nikdy
             # neshodí tick. Běží každou noc (gen vrátí brzo, když nic k malování).
+            # HANS_ART_AFTER_DRAIN_V1 — na dnech s analytickým wake NErenderuj art
+            # v night-ticku: kolidoval by s LLM drainem (catchup/study/voice na
+            # GPU; FLUX vyhodí hans-czech → thrash, timeouty). Art jde přes
+            # pre-shutdown render (PO drainu). Night-tick art zůstává jen pro dny
+            # BEZ wake. _last_analytics_wake_date se nastaví ve 03:00 před vším.
+            _woke_today = (self._last_analytics_wake_date == today
+                           and bool(getattr(self, "_analytics_wake_ts", 0)))
             if (self._in_night_window() and self._chat_quiet_ok()
+                    and not _woke_today
                     and (time.time() - getattr(self, "_last_art_attempt", 0.0)) > 1800):
                 self._last_art_attempt = time.time()   # cooldown: 1 pokus / 30 min
                 # HANS_ART_NIGHT_AWARE_V2 — art potřebuje ComfyUI na PC → gate na
