@@ -1531,34 +1531,35 @@ class HansRoutine:
             # retry příští noc). In-memory cooldown 30 min proti hammeru. Nikdy
             # neshodí tick. Běží každou noc (gen vrátí brzo, když nic k malování).
             if (self._in_night_window() and self._chat_quiet_ok()
-                    # HANS_ART_NIGHT_AWARE_V1 — nepokoušej render, když je PC
-                    # záměrně dole (night shutdown); jinak ~68 WARN/noc
-                    # „ComfyUI nedostupný". Render uspěje jen s PC nahoře.
-                    and not self._pc_planned_unavailable()
                     and (time.time() - getattr(self, "_last_art_attempt", 0.0)) > 1800):
-                self._last_art_attempt = time.time()
+                self._last_art_attempt = time.time()   # cooldown: 1 pokus / 30 min
+                # HANS_ART_NIGHT_AWARE_V2 — art potřebuje ComfyUI na PC → gate na
+                # REÁLNOU dostupnost (_pc_up ping), NE stavový _pc_planned_unavailable
+                # (po restartu Hanse = 0 → warningy celou noc). PC dole → tiše skip.
+                # _pc_up() až ZDE (po cooldownu) = ping max 1×/30 min.
                 _painted = False
-                try:
-                    from scripts.hans_art import generate_pending_artwork
-                    _painted = generate_pending_artwork(self.config, self._diary_path)
-                except Exception as _arte:
-                    _log.warning("hans_art: noční render selhal: %s", _arte)
-                # HANS_DREAMS_PER_DREAM_V1 — sen se maluje za KAŽDÝ nový sen (priorita,
-                # mimo 2denní throttle; idempotence dle dream_ts + krátký odstup uvnitř).
-                if not _painted:
+                if self._pc_up():
                     try:
-                        from scripts.hans_art import paint_dream
-                        _painted = paint_dream(self.config, self._diary_path)
-                    except Exception as _de:
-                        _log.warning("hans_art: malování snu selhalo: %s", _de)
-                # HANS_CREATIONS_V1 (Fáze 2) — když nebyl ani sen, Hans SÁM zváží den/úvahu
-                # (2denní throttle + variace uvnitř creative_impulse).
-                if not _painted:
-                    try:
-                        from scripts.hans_creations import creative_impulse
-                        creative_impulse(self.config, self._diary_path)
-                    except Exception as _de:
-                        _log.warning("hans_creations: tvůrčí impuls selhal: %s", _de)
+                        from scripts.hans_art import generate_pending_artwork
+                        _painted = generate_pending_artwork(self.config, self._diary_path)
+                    except Exception as _arte:
+                        _log.warning("hans_art: noční render selhal: %s", _arte)
+                    # HANS_DREAMS_PER_DREAM_V1 — sen za KAŽDÝ nový sen (priorita, mimo
+                    # 2denní throttle; idempotence dle dream_ts + krátký odstup uvnitř).
+                    if not _painted:
+                        try:
+                            from scripts.hans_art import paint_dream
+                            _painted = paint_dream(self.config, self._diary_path)
+                        except Exception as _de:
+                            _log.warning("hans_art: malování snu selhalo: %s", _de)
+                    # HANS_CREATIONS_V1 (Fáze 2) — když nebyl ani sen, Hans SÁM zváží
+                    # den/úvahu (2denní throttle + variace uvnitř creative_impulse).
+                    if not _painted:
+                        try:
+                            from scripts.hans_creations import creative_impulse
+                            creative_impulse(self.config, self._diary_path)
+                        except Exception as _de:
+                            _log.warning("hans_creations: tvůrčí impuls selhal: %s", _de)
 
             # HANS_SEVERKA_V1 (3c) — týdenní check identity. Gate uvnitř
             # evaluate() drží, že navrhne jen při trvalé tendenci.
@@ -1644,7 +1645,11 @@ class HansRoutine:
                     if _scode != "deferred":
                         self._last_study_date = today
                         self._save_routine_state()
-                    _log.info("Studijní session: %s", _scode)
+                        _log.info("Studijní session: %s", _scode)
+                    else:
+                        # HANS_STUDY_DEFER_LOG_V1 — brain dole → deferred každý
+                        # tick (~70s): DEBUG, ne INFO (dřív ~600 řádků/noc spamu).
+                        _log.debug("Studijní session: deferred")
                 except Exception as _stue:
                     _log.warning("Studijní session selhala: %s", _stue)
 
