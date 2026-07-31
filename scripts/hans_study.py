@@ -1499,6 +1499,41 @@ def run_study_session(config: dict, diary_db_path: str, knowledge=None,
     Routine si podle kódu řídí denní guard (deferred = retry, jinak set date)."""
     if not _cfg(config).get("enabled", True):
         return "idle"
+    # HANS_STUDY_VRAM_HANDOFF_V1 — studium běží na base OpenEuroLLM (8GB), ale
+    # hans-czech (8GB) je rezidentní a 8+8 > 16GB VRAM. Kroky:
+    #  1) pause_warmup → oba keepalive (ping_model + ollama_warmup) přestanou
+    #     re-pinovat hans-czech po dobu dávky.
+    #  2) ollama_unload_all → AKTIVNĚ uvolni hans-czech HNED. Samotná pauza
+    #     nestačí: hans-czech je nahraný s keep_alive=-1, který sám nevyprší,
+    #     a Ollama ho neevictuje ani pro nový request → base model se nevejde
+    #     → 300s timeout → deferred (přesně tenhle býval symptom). V noci to
+    #     „projde" jen náhodou (hans-czech vyprší při klidu), ve dne/ránu ne.
+    # Po session resume_warmup re-povolí keepalive → hans-czech se dotáhne.
+    # Auto-expiry pauzy 20 min = cap, kdyby impl spadl bez resume.
+    try:
+        from scripts.ollama_client import (pause_warmup as _pw,
+                                           ollama_unload_all as _ua)
+        _pw(1200)
+        _ua(config=config)
+    except Exception:
+        pass
+    try:
+        from scripts.ollama_client import resume_warmup as _rw
+    except Exception:
+        _rw = None
+    try:
+        return _run_study_session_impl(config, diary_db_path, knowledge,
+                                       diary_writer)
+    finally:
+        if _rw is not None:
+            try:
+                _rw()
+            except Exception:
+                pass
+
+
+def _run_study_session_impl(config: dict, diary_db_path: str, knowledge=None,
+                            diary_writer=None) -> str:
     try:
         store = StudyStore(config, diary_db_path)
     except Exception as e:

@@ -709,6 +709,38 @@ class HansRoutine:
         import threading
         threading.Thread(target=self._wol_presence_flow, daemon=True).start()
 
+    def study_catchup_async(self):
+        """HANS_STUDY_BRAIN_UP_CATCHUP_V1 — studium běží jen v nočním okně
+        (2-6) a potřebuje mozek, jenže PC se v tom okně často neprobudí
+        (3:00 analytický wake je nespolehlivý) → session se odloží
+        (deferred) a okno mezitím zavře, takže studium tiše stojí i dny.
+        Na naběhnutí mozku (ranní WOL) proto dojeď 1 session, když dnes
+        ještě neproběhla a je klid od chatu. Decoupluje studium od
+        křehkého nočního wake. Neblokující (daemon thread)."""
+        import threading
+        threading.Thread(target=self._study_catchup, daemon=True).start()
+
+    def _study_catchup(self):
+        try:
+            if not (self.config.get("study", {}) or {}).get("enabled", True):
+                return
+            today = datetime.now().strftime("%Y-%m-%d")
+            if self._last_study_date == today:
+                return  # dnes už proběhla (noční tick nebo dřívější catchup)
+            if not self._chat_quiet_ok():
+                return  # neruš aktivní chat těžkou base-LLM session
+            from scripts.hans_study import run_study_session
+            _scode = run_study_session(
+                self.config, self._diary_path, knowledge=self._knowledge)
+            if _scode != "deferred":
+                self._last_study_date = today
+                self._save_routine_state()
+                _log.info("Studijní session (brain_up catchup): %s", _scode)
+            else:
+                _log.debug("Studijní session (brain_up catchup): deferred")
+        except Exception as _e:
+            _log.warning("Studijní catchup (brain_up) selhal: %s", _e)
+
     def _wol_presence_flow(self):
         """Ping PC; offline → packet + verify. Daemon thread."""
         import time as _t
@@ -1277,37 +1309,64 @@ class HansRoutine:
                 return
             if now.hour != int(c.get("analytics_hour", 3)):
                 return
-            import sqlite3 as _sql
             import time as _t
             nowts = _t.time()
-            # analytika dnes v noci/večer už proběhla? → netřeba budit
+            # HANS_NIGHT_WAKE_GATE_V2 — buď JEN když v okně 2-6 zbývá práce
+            # potřebující mozek (těžká analytika NEBO studium), ne jen podle
+            # „analytika za 6h". Dřív: večerní syntéza (běží s mozkem nahoře,
+            # ~22-01) byla ve 3:00 stará <6h → gate usoudil „hotovo, nebudit"
+            # → PC se neprobudil a studium/drain ve 2-6 hladověly.
+            pending = self._night_work_pending(nowts)
+            self._last_analytics_wake_date = today
+            self._analytics_wake_ts = nowts
+            self._save_routine_state()
+            if not pending:
+                return  # noční mozková práce hotová → nebuď (šetři proud)
+            if self._pc_up():
+                return  # PC běží → práce proběhne sama
+            _log.info("PC night wake: budím PC pro noční práci (analytika/studium)")
+            self._send_wol_packet(self._wol_pc_mac)
+            for _ in range(9):  # čekej na náběh z S5 (~40-90s)
+                _t.sleep(10)
+                if self._pc_up():
+                    _log.info("PC night wake: PC naběhl → noční práce poběží")
+                    return
+            _log.warning("PC night wake: PC nenaběhl do 90s")
+        except Exception as _e:
+            _log.warning("pc_night_wake: %s", _e)
+
+    def _night_work_pending(self, nowts) -> bool:
+        """HANS_NIGHT_WAKE_GATE_V2 — zbývá v nočním okně (2-6) práce, co
+        potřebuje mozek? True když (a) těžká analytika (synthesis/self_critique)
+        neproběhla za 6h, NEBO (b) studium dnes neproběhlo a je aktivní program.
+        Řídí buzení ve 3:00 (dřív gate jen na analytiku → večerní syntéza si
+        sama zablokovala buzení). Chyba čtení = fail-open (radši vzbudit)."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        # (a) těžká reasoning analytika
+        try:
+            import sqlite3 as _sql
             conn = _sql.connect("file:%s?mode=ro" % self._diary_path,
                                 uri=True, timeout=3.0)
-            # HANS_PC_NIGHT_ANALYTICS_WAKE_V2 — jen TĚŽKÁ reasoning analytika
-            # (ne night_summary/dream z 00:00) rozhoduje „už proběhlo → nebudit"
             ph = ",".join("?" * len(self._HEAVY_ANALYTICS_EVENTS))
             ra = conn.execute(
                 "SELECT MAX(ts) FROM diary WHERE event_type IN (%s) AND ts >= ?"
                 % ph, (*self._HEAVY_ANALYTICS_EVENTS, nowts - 16 * 3600)
             ).fetchone()
             conn.close()
-            self._last_analytics_wake_date = today
-            self._analytics_wake_ts = nowts
-            self._save_routine_state()
-            if ra and ra[0] and nowts - ra[0] < 6 * 3600:
-                return  # analytika už dnes běžela
-            if self._pc_up():
-                return  # PC běží → analytika proběhne sama
-            _log.info("PC night wake: budím PC pro noční analytiku")
-            self._send_wol_packet(self._wol_pc_mac)
-            for _ in range(9):  # čekej na náběh z S5 (~40-90s)
-                _t.sleep(10)
-                if self._pc_up():
-                    _log.info("PC night wake: PC naběhl → analytika poběží")
-                    return
-            _log.warning("PC night wake: PC nenaběhl do 90s")
-        except Exception as _e:
-            _log.warning("pc_night_wake: %s", _e)
+            if not (ra and ra[0] and nowts - ra[0] < 6 * 3600):
+                return True  # analytika ještě nebyla → je co dělat
+        except Exception:
+            return True  # radši vzbudit než tiše vynechat
+        # (b) studium — dnes neproběhlo a je co studovat
+        try:
+            if (self._last_study_date != today
+                    and (self.config.get("study", {}) or {}).get("enabled", True)):
+                from scripts.hans_study import StudyStore
+                if StudyStore(self.config, self._diary_path).get_active_program():
+                    return True
+        except Exception:
+            pass
+        return False
 
     def _render_pending_art_before_shutdown(self):
         """HANS_ART_NIGHT_RENDER_V1 — dorenderuj pending art, dokud je PC vzhůru

@@ -89,6 +89,16 @@ class HansIdle:
                     self._curiosity.catchup_drain_async()
             except Exception as _e:
                 _log.debug("brain_up catchup_drain: %s", _e)
+            # HANS_STUDY_BRAIN_UP_CATCHUP_V1 — studium se v noci často odloží
+            # (mozek dole v okně 2-6, PC se budí až ranním WOL po zavření
+            # okna) → na naběhnutí mozku dojeď 1 studijní session, když dnes
+            # ještě neproběhla. Gate (dnes/klid) je uvnitř study_catchup.
+            try:
+                _rt = getattr(self, '_routine', None)
+                if _rt is not None and hasattr(_rt, 'study_catchup_async'):
+                    _rt.study_catchup_async()
+            except Exception as _e:
+                _log.debug("brain_up study_catchup: %s", _e)
             # HANS_TELEGRAM_BRAIN_NOTIFY_V1 — mozek online: dej vědět na
             # Telegram, když uživatel nedávno psal (pending), ať ví, že
             # může psát naplno. BEZ WOL.

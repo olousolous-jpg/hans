@@ -2570,8 +2570,15 @@ class OpenWebUIDirectHandler:
     def ping_model(self):
         """Keepalive — udrzi model v VRAM pres Ollama /api/generate."""
         try:
-            from scripts.ollama_client import game_mode_on
+            from scripts.ollama_client import game_mode_on, warmup_paused
             if game_mode_on():   # OLLAMA_GAME_MODE_V1 — nepřipínej, VRAM volná pro hru
+                return
+            # HANS_STUDY_VRAM_HANDOFF_V1 — během base-model dávky (studium/
+            # analytika/immune volá pause_warmup) NEpřipínej hans-czech, jinak
+            # 4min ping re-pinuje 8GB model a evictuje base OpenEuroLLM uprostřed
+            # dlouhého generování (8+8 > 16GB) → 300s timeout. Stejný princip
+            # jako herní mód. hans-czech se dotáhne on-demand při reálném chatu.
+            if warmup_paused():
                 return
         except Exception:
             pass
