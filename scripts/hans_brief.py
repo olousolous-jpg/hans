@@ -32,11 +32,18 @@ _log = get_logger("hans_brief")
 _TARGETS = {
     "coder": {
         "lang": "ENGLISH",
-        "desc": "a code-generation model that will build a real artifact "
-                "(e.g. a web page / dashboard / UI applying the design)",
-        "shape": "GOAL, APPLIED PRINCIPLES (bullet list — each MUST come from "
-                 "the notes), REQUIREMENTS, CONSTRAINTS, suggested tech "
-                 "(HTML/CSS unless notes imply otherwise)",
+        "desc": "a code-generation model that will build a SUBSTANTIAL, complete "
+                "multi-section web page that visibly DEMONSTRATES the studied "
+                "material in a realistic layout — NOT a single trivial widget "
+                "(never a lone button/card/form field)",
+        "shape": "GOAL (must be a FULL multi-section page — e.g. hero + several "
+                 "content sections + gallery + footer — that showcases EVERY "
+                 "listed principle in a realistic context; never a single "
+                 "isolated element and never 'keep it simple'), APPLIED "
+                 "PRINCIPLES (bullet list — each MUST come from the notes and "
+                 "each MUST be VISIBLY applied in the page), REQUIREMENTS, "
+                 "CONSTRAINTS, suggested tech (HTML/CSS unless notes imply "
+                 "otherwise)",
     },
     "image": {
         "lang": "ENGLISH",

@@ -182,8 +182,290 @@ def _generate_images(config: dict, html: str, dest_dir: Path) -> str:
     for desc in uniq:
         target = mapping.get(desc) or _placeholder_svg(desc)
         html = html.replace("GEN:" + desc, target)
-    _log.info("maker: obrázky %d/%d vyrenderováno", len(mapping), len(uniq))
+    if uniq and len(mapping) < len(uniq):
+        # HANS_MAKER_IMG_SURFACE_V1 — tiché selhání renderu (ComfyUI dole/VRAM)
+        # dřív spadlo na placeholder bez stopy → dílo „bez grafiky". Zviditelnit.
+        _log.warning("maker: obrázky JEN %d/%d vyrenderováno — zbytek placeholder "
+                     "(ComfyUI dole nebo render selhal)", len(mapping), len(uniq))
+    else:
+        _log.info("maker: obrázky %d/%d vyrenderováno", len(mapping), len(uniq))
     return html
+
+
+# ── HANS_MAKER_MULTIPAGE_V1 — vícestránkové dílo (landing + podstránky) ──────
+
+_LANDING_SYSTEM = (
+    "Jsi senior front-end vývojář. Vytvoř STYLOVOU rozcestníkovou (landing) "
+    "stránku index.html — self-contained, VEŠKERÉ CSS v jednom <style>. "
+    "APLIKUJ nastudované design principy z briefu (kompozice, vizuální "
+    "hierarchie, barevné harmonie, typografie) tak, aby byly VIDĚT. STRUKTURA: "
+    "působivý <header>/hero s <img src=\"GEN:<krátký ANGLICKÝ popis scény>\"> a "
+    "výrazným nadpisem, poutavý úvodní odstavec k tématu (2-3 věty), pak SEKCE "
+    "pro přehled kapitol, a nakonec patička. "
+    "⚠️ KARTY KAPITOL NEPIŠ SÁM a NEVYMÝŠLEJ odkazy na podstránky — na místo, "
+    "kam patří mřížka karet, vlož PŘESNĚ tento komentář na samostatný řádek: "
+    "<!--HANS_CARDS--> (nic jiného tam nedávej; karty s odkazy doplní systém). "
+    "Ve <style> ale POČÍTEJ s mřížkou karet: nastyluj .site-cards (responzivní "
+    "grid) a .site-cards .card (hezká karta s hover) v duchu nastudovaných "
+    "principů. Vrať POUZE kód index.html, nic dalšího."
+)
+
+# garantované CSS karet — použije se VŽDY (i když coder .site-cards nenastyloval)
+_CARD_CSS = (
+    "<style>.site-cards{display:grid;grid-template-columns:"
+    "repeat(auto-fill,minmax(260px,1fr));gap:1.1rem;max-width:1100px;"
+    "margin:2rem auto;padding:0 1rem}.site-cards .card{display:block;"
+    "text-decoration:none;color:inherit;background:#fff;border:1px solid "
+    "#e6e3dd;border-radius:12px;padding:1.1rem 1.25rem;box-shadow:0 2px 8px "
+    "rgba(0,0,0,.05);transition:transform .15s ease,box-shadow .15s ease}"
+    ".site-cards .card:hover{transform:translateY(-3px);box-shadow:0 10px 24px "
+    "rgba(0,0,0,.12)}.site-cards .card h2{margin:.1rem 0 .5rem;font-size:1.12rem;"
+    "line-height:1.3}.site-cards .card p{margin:0;font-size:.9rem;color:#5f5f5f;"
+    "line-height:1.5}</style>"
+)
+
+
+def _landing_cards(subs: list, notes: list) -> str:
+    """Deterministická STYLOVANÁ mřížka karet pro VŠECHNA pod-témata (title +
+    lákadlo z první věty poznámky + správný odkaz). Nahrazuje nespolehlivé
+    karty od codera i dřívější plain-ul fallback."""
+    import html as _h
+    txt_by = {n["sub"]: (n.get("text") or "") for n in notes}
+    items = []
+    for slug, sub in subs:
+        first = re.split(r"(?<=[.!?])\s+", txt_by.get(sub, "").strip())[0:1]
+        teaser = (first[0] if first else "")[:150]
+        items.append(
+            "<a class=\"card\" href=\"detail-%s.html\"><h2>%s</h2><p>%s</p></a>"
+            % (slug, _h.escape(sub), _h.escape(teaser)))
+    return "<section class=\"site-cards\">" + "".join(items) + "</section>"
+
+_SUBPAGE_CSS_FALLBACK = (
+    "<style>body{font-family:Georgia,serif;line-height:1.7;color:#222;"
+    "background:#faf9f7;margin:0}.article{max-width:760px;margin:0 auto;"
+    "padding:2.5rem 1.2rem}.article h1{font-size:2rem;line-height:1.2}"
+    ".article img{max-width:100%;border-radius:10px;margin:1.2rem 0}"
+    ".back a{color:#7a5;text-decoration:none;font-family:sans-serif}"
+    ".article p{margin:1rem 0}</style>"
+)
+
+
+def _extract_style(html: str) -> str:
+    m = re.search(r"<style[^>]*>.*?</style>", html or "", re.S | re.I)
+    return m.group(0) if m else _SUBPAGE_CSS_FALLBACK
+
+
+def _paragraphize(text: str) -> str:
+    """Souvislý text poznámky → odstavce (po ~3 větách) pro čitelnost."""
+    import html as _h
+    text = (text or "").strip()
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
+    if len(blocks) <= 1:
+        sents = re.split(r"(?<=[.!?])\s+", text)
+        blocks = []
+        for i in range(0, len(sents), 3):
+            chunk = " ".join(sents[i:i + 3]).strip()
+            if chunk:
+                blocks.append(chunk)
+    return "\n".join("<p>%s</p>" % _h.escape(b) for b in blocks) or "<p></p>"
+
+
+def _subpage_html(style: str, topic: str, sub: str, text: str,
+                  img_desc: str, home: str = "index.html") -> str:
+    import html as _h
+    img_desc = (img_desc or "").replace("\"", " ").replace("'", " ").strip()
+    return (
+        "<!DOCTYPE html>\n<html lang=\"cs\">\n<head>\n<meta charset=\"UTF-8\">\n"
+        "<meta name=\"viewport\" content=\"width=device-width, "
+        "initial-scale=1.0\">\n<title>%s — %s</title>\n%s\n</head>\n<body>\n"
+        "<article class=\"article detail\">\n"
+        "<p class=\"back\"><a href=\"%s\">← zpět na přehled</a></p>\n"
+        "<h1>%s</h1>\n"
+        "<img class=\"detail-img\" src=\"GEN:%s\" alt=\"%s\">\n"
+        "%s\n"
+        "<p class=\"back\"><a href=\"%s\">← zpět na přehled</a></p>\n"
+        "</article>\n</body>\n</html>"
+        % (_h.escape(sub), _h.escape(topic), style, home, _h.escape(sub),
+           img_desc, _h.escape(sub), _paragraphize(text), home)
+    )
+
+
+def _image_prompts_for(config: dict, subs: list) -> dict:
+    """Jeden LLM call → ANGLICKÝ image prompt pro každé CZ pod-téma (pořadím).
+    {sub: en_prompt}; fallback {} → generický prompt."""
+    out = {}
+    if not subs:
+        return out
+    try:
+        from scripts.ollama_client import ollama_generate
+        lst = "\n".join("%d. %s" % (i + 1, s) for i, s in enumerate(subs))
+        raw = ollama_generate(
+            _coder_model(config),
+            "Below are %d Czech topics. For EACH output ONE short English "
+            "image-generation prompt (a concrete visual scene, 6-12 words). "
+            "Output EXACTLY %d numbered lines '1.'..'%d.' and nothing else:\n%s"
+            % (len(subs), len(subs), len(subs), lst),
+            system="You output only the numbered list of English image prompts.",
+            config=config, timeout=int(_cfg(config).get("llm_timeout", 600)),
+            keep_alive=0, options={"temperature": 0.4, "num_predict": 1000,
+                                   "num_gpu": int(_cfg(config).get("num_gpu", 99))})
+        lines = [re.sub(r"^\s*\d+[.)]\s*", "", l).strip()
+                 for l in (raw or "").splitlines() if l.strip()]
+        if len(lines) >= len(subs):
+            for s, p in zip(subs, lines[:len(subs)]):
+                out[s] = p
+    except Exception as e:
+        _log.debug("maker image prompts: %s", e)
+    return out
+
+
+def _render_site_images(config: dict, pages: dict, dest_dir: Path, cap: int):
+    """VŠECHNY GEN: napříč stránkami v JEDNOM průchodu (jeden VRAM handoff,
+    globálně unikátní názvy), dosad zpět. Vrací (pages_out, n, total)."""
+    if not _cfg(config).get("gen_images", True):
+        return pages, 0, 0
+    import uuid
+    all_gens = []
+    for html in pages.values():
+        for g in re.findall(r"GEN:([^\"')]+)", html):
+            if g not in all_gens:
+                all_gens.append(g)
+    all_gens = all_gens[:cap]
+    mapping = {}
+    if all_gens:
+        try:
+            from scripts.hans_art import _ckpt
+            from scripts.avatar_render import (
+                _comfy_url, _comfy_workflow, _comfy_workflow_flux,
+                _comfy_submit, _comfy_wait,
+                _first_image, _comfy_fetch_image, _comfy_free,
+                _ollama_loaded, _ollama_unload)
+            # HANS_MAKER_FLUX_V1 — web obrázky STEJNÝM modelem jako sny/malování
+            # (FLUX, když hans_art.use_flux), ne slabší SDXL. Dřív maker jel na
+            # SDXL → viditelně horší liga než Hansovy ostatní obrazy.
+            acfg = (config.get("hans_art", {}) or {})
+            use_flux = bool(acfg.get("use_flux", False))
+            ckpt = (acfg.get("flux_ckpt", "flux1-dev-fp8.safetensors")
+                    if use_flux else _ckpt(config))
+            if ckpt:
+                base = _comfy_url(config)
+                img_dir = dest_dir / "images"
+                img_dir.mkdir(parents=True, exist_ok=True)
+                _ollama_unload(config, _ollama_loaded(config))
+                try:
+                    for i, desc in enumerate(all_gens):
+                        prompt = desc.strip() + ", high quality, sharp, detailed"
+                        fn = "img%d.png" % (i + 1)
+                        seed = uuid.uuid4().int % (2 ** 31)
+                        if use_flux:
+                            wf = _comfy_workflow_flux(
+                                ckpt, prompt, seed, 1024, 640,
+                                int(acfg.get("flux_steps", 20)),
+                                float(acfg.get("flux_guidance", 3.5)))
+                        else:
+                            wf = _comfy_workflow(ckpt, prompt, seed,
+                                                 1024, 640, 26, 6.0)
+                        pid = _comfy_submit(base, wf, uuid.uuid4().hex)
+                        hist = _comfy_wait(base, pid, 300) if pid else None
+                        img = _first_image(hist) if hist else None
+                        if img and _comfy_fetch_image(base, img,
+                                                      str(img_dir / fn)):
+                            mapping[desc] = "images/" + fn
+                            _log.info("maker site: obrázek %d/%d '%s'",
+                                      i + 1, len(all_gens), desc[:40])
+                finally:
+                    _comfy_free(config)
+        except Exception as e:
+            _log.warning("maker site gen images: %s", e)
+    out = {}
+    for name, html in pages.items():
+        for desc in set(re.findall(r"GEN:([^\"')]+)", html)):
+            tgt = mapping.get(desc) or _placeholder_svg(desc)
+            html = html.replace("GEN:" + desc, tgt)
+        out[name] = html
+    if all_gens and len(mapping) < len(all_gens):
+        _log.warning("maker site: obrázky JEN %d/%d — zbytek placeholder",
+                     len(mapping), len(all_gens))
+    else:
+        _log.info("maker site: obrázky %d/%d vyrenderováno",
+                  len(mapping), len(all_gens))
+    return out, len(mapping), len(all_gens)
+
+
+def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
+                    deepen_round: int = 0) -> dict:
+    """HANS_MAKER_MULTIPAGE_V1 — vícestránkové dílo: coder udělá stylovou
+    landing (rozcestník s kartami), každé pod-téma dostane PODSTRÁNKU s PLNÝM
+    textem studijní poznámky (grounded, ne LLM) + obrázkem. Vrací {status,...}."""
+    import html as _h
+    from scripts import hans_brief
+    mat = hans_brief.gather_study_material(
+        db_path, topic, int(_cfg(config).get("site_max_chars", 40000)))
+    notes = mat.get("notes") or []
+    if not notes:
+        return {"status": "idle", "reason": "žádné studijní poznámky"}
+    subs = [(_slug(n["sub"]), n["sub"]) for n in notes]
+    dest_dir = _ART_DIR / _slug(topic) / ("v%d" % int(deepen_round))
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    model = _coder_model(config)
+    result = {"status": "deferred", "reason": "LLM nedostupný"}
+    try:
+        from scripts.ollama_client import ollama_generate
+        cards = "\n".join("- %s  →  detail-%s.html" % (sub, slug)
+                          for slug, sub in subs)
+        raw = ollama_generate(
+            model, "Téma: %s\n\nDESIGN BRIEF:\n%s\n\nPOD-TÉMATA (název → soubor "
+            "podstránky):\n%s\n\nVrať index.html:" % (topic, brief, cards),
+            system=_LANDING_SYSTEM, config=config,
+            timeout=int(_cfg(config).get("llm_timeout", 600)), keep_alive=0,
+            options={"temperature": float(_cfg(config).get("temperature", 0.3)),
+                     "num_ctx": int(_cfg(config).get("num_ctx", 8192)),
+                     "num_predict": int(_cfg(config).get("num_predict", 4096)),
+                     "num_gpu": int(_cfg(config).get("num_gpu", 99))})
+        landing = _extract_html(raw) if (raw and raw.strip()) else ""
+        if not landing or len(landing) < 120:
+            return {"status": "deferred", "reason": "landing prázdný"}
+        img_prompts = _image_prompts_for(config, [sub for _, sub in subs])
+        style = _extract_style(landing)
+        pages = {"index.html": landing}
+        for (slug, sub), n in zip(subs, notes):
+            desc = img_prompts.get(sub) or ("historical illustration, %s" % sub)
+            pages["detail-%s.html" % slug] = _subpage_html(
+                style, topic, sub, n["text"], desc)
+        # KARTY — deterministicky, STYLOVANĚ, VŽDY všechna pod-témata. Coder
+        # nechává <!--HANS_CARDS-->; když ho vynechá, doplň stylované karty pro
+        # NElinkovaná témata (dřív = ošklivý plain-ul seznam → „jen odkazy").
+        if "<!--HANS_CARDS-->" in landing:
+            landing = landing.replace("<!--HANS_CARDS-->",
+                                      _landing_cards(subs, notes), 1)
+        else:
+            miss = [(s, u) for s, u in subs
+                    if ("detail-%s.html" % s) not in landing]
+            if miss:
+                add = _landing_cards(miss, notes)
+                landing = (landing.replace("</body>", add + "</body>", 1)
+                           if "</body>" in landing else landing + add)
+                _log.info("maker site: doplněno %d stylovaných karet "
+                          "(coder vynechal marker)", len(miss))
+        # garantované CSS karet (i když coder .site-cards nenastyloval)
+        landing = (landing.replace("</head>", _CARD_CSS + "</head>", 1)
+                   if "</head>" in landing else _CARD_CSS + landing)
+        pages["index.html"] = landing
+        cap = int(_cfg(config).get("site_max_images", len(subs) + 2))
+        pages, rendered, total = _render_site_images(config, pages, dest_dir, cap)
+        for name, html in pages.items():
+            (dest_dir / name).write_text(html, encoding="utf-8")
+        tbytes = sum(len(h) for h in pages.values())
+        _log.info("maker site '%s' kolo %d: %d stránek, %d/%d obrázků, %d B (%s)",
+                  topic, deepen_round, len(pages), rendered, total, tbytes, model)
+        result = {"status": "made",
+                  "path": str((dest_dir / "index.html").relative_to(_ROOT)),
+                  "model": model, "bytes": tbytes, "pages": len(pages)}
+    except Exception as e:
+        _log.warning("maker site: %s", e)
+    finally:
+        _warm_chat(config)
+    return result
 
 
 def make_coder_artifact(config: dict, topic: str, brief: str,
@@ -195,10 +477,13 @@ def make_coder_artifact(config: dict, topic: str, brief: str,
         "Jsi senior front-end vývojář. Dostáváš DESIGN BRIEF (v angličtině) "
         "sestavený z toho, co si autor nastudoval. Implementuj ho jako JEDEN "
         "samostatný soubor index.html s veškerým CSS vloženým v <style>. "
+        "Vytvoř BOHATOU, VÍCESEKČNÍ stránku (hero + několik obsahových sekcí + "
+        "patička) — NIKDY ne jediný izolovaný prvek (samotné tlačítko/kartu) "
+        "ani prázdnou 'jednoduchou' ukázku. "
         "APLIKUJ VŠECHNY principy z briefu (kompozice, hierarchie, barevné "
-        "harmonie, typografie…) — ty znáš jejich konkrétní realizaci (hodnoty, "
-        "vzorce, CSS techniky), i když je brief neuvádí. Použij smysluplný "
-        "ukázkový obsah.\n"
+        "harmonie, typografie…) tak, aby byly v layoutu VIDĚT — ty znáš jejich "
+        "konkrétní realizaci (hodnoty, vzorce, CSS techniky), i když je brief "
+        "neuvádí. Použij bohatý, smysluplný ukázkový obsah.\n"
         "OBRÁZKY: kde má být obrázek, použij <img src=\"GEN:<stručný ANGLICKÝ "
         "popis toho, co má obrázek zobrazovat>\" alt=\"…\"> — NEPOUŽÍVEJ externí "
         "URL ani placeholder služby; ty popisy se později vyrenderují. Použij "
@@ -267,49 +552,70 @@ def make_from_study(config: dict, db_path: str, topic: str,
     ulož artefakt + deník. Vrací {status, ...}. Deferral-safe."""
     if not enabled(config):
         return {"status": "idle", "reason": "vypnuto"}
-    from scripts import hans_brief
-    # 1) brief — reuse jen pro kolo 0; po prohloubení (round>0) přibyly hlubší
-    # poznámky → postav brief ZNOVU, ať je nese.
-    store = hans_brief.BriefStore(db_path)
-    last = store.latest(topic)
-    reuse = bool(last and last.get("target") == target and deepen_round == 0)
-    brief = last.get("brief") if reuse else None
-    if not brief:
-        b = hans_brief.build_brief(config, db_path, topic, target)
-        if b.get("status") != "built":
-            return {"status": "deferred" if b.get("status") == "deferred"
-                    else "idle", "reason": "brief: %s" % b.get("reason",
-                                                              b.get("status"))}
-        brief = b["brief"]
-    # 2) exekuce dle cíle
-    if target == "coder":
-        res = make_coder_artifact(config, topic, brief, deepen_round)
-    elif target == "image":
-        res = _make_image_artifact(config, db_path, topic, brief)
-    else:
-        return {"status": "idle", "reason": "cíl '%s' zatím nemá executor" % target}
-    # 3) deník + Hans si zapíše novou schopnost (co se naučil + jak použít)
-    if res.get("status") == "made":
+    # HANS_STUDY_VRAM_HANDOFF_V1 (rozšíření na maker) — brief+coder běží na base
+    # modelu (8GB); hans-czech (8GB) je rezidentní, 8+8 > 16GB VRAM. Uvolni ho
+    # AKTIVNĚ (pause_warmup samo nestačí — keep_alive=-1 nevyprší), jinak coder
+    # call ve dne 300s timeoutuje (v noci projde jen náhodou). Resume+warm finally.
+    try:
+        from scripts.ollama_client import (pause_warmup as _pw,
+                                           ollama_unload_all as _ua)
+        _pw(1800)
+        _ua(config=config)
+    except Exception:
+        pass
+    try:
+        from scripts import hans_brief
+        # 1) brief — reuse jen pro kolo 0; po prohloubení (round>0) přibyly hlubší
+        # poznámky → postav brief ZNOVU, ať je nese.
+        store = hans_brief.BriefStore(db_path)
+        last = store.latest(topic)
+        reuse = bool(last and last.get("target") == target and deepen_round == 0)
+        brief = last.get("brief") if reuse else None
+        if not brief:
+            b = hans_brief.build_brief(config, db_path, topic, target)
+            if b.get("status") != "built":
+                return {"status": "deferred" if b.get("status") == "deferred"
+                        else "idle", "reason": "brief: %s" % b.get("reason",
+                                                                  b.get("status"))}
+            brief = b["brief"]
+        # 2) exekuce dle cíle
+        if target == "coder":
+            res = make_coder_site(config, db_path, topic, brief, deepen_round)
+        elif target == "image":
+            res = _make_image_artifact(config, db_path, topic, brief)
+        else:
+            return {"status": "idle",
+                    "reason": "cíl '%s' zatím nemá executor" % target}
+        # 3) deník + Hans si zapíše novou schopnost (co se naučil + jak použít)
+        if res.get("status") == "made":
+            try:
+                _log_artifact(db_path, topic, target, res, deepen_round)
+            except Exception as e:
+                _log.debug("maker diary: %s", e)
+            try:
+                # HANS_LEARNED_CAPABILITIES_V1 — po prvním díle z domény si Hans
+                # SÁM zapíše, co se naučil a jak to použít (idempotentní dle id).
+                from scripts.hans_capabilities import (add_learned_capability,
+                                                        detect_new_capabilities)
+                if add_learned_capability(
+                        "learned_" + _slug(topic),
+                        "Nastudoval jsem téma „%s“ a umím z toho vytvořit reálné "
+                        "dílo (stránku aplikující, co jsem se naučil)" % topic,
+                        "/vytvor %s" % topic):
+                    detect_new_capabilities(db_path)
+            except Exception as e:
+                _log.debug("maker learned cap: %s", e)
+        return {**res, "topic": topic, "target": target, "round": deepen_round}
+    finally:
         try:
-            _log_artifact(db_path, topic, target, res, deepen_round)
-        except Exception as e:
-            _log.debug("maker diary: %s", e)
+            from scripts.ollama_client import resume_warmup as _rw
+            _rw()
+        except Exception:
+            pass
         try:
-            # HANS_LEARNED_CAPABILITIES_V1 — po prvním díle z domény si Hans SÁM
-            # zapíše, co se naučil a jak to použít (idempotentní dle id).
-            from scripts.hans_capabilities import (add_learned_capability,
-                                                    detect_new_capabilities)
-            if add_learned_capability(
-                    "learned_" + _slug(topic),
-                    "Nastudoval jsem téma „%s“ a umím z toho vytvořit reálné dílo "
-                    "(stránku/artefakt aplikující, co jsem se naučil)" % topic,
-                    "/vytvor %s" % topic):
-                # okamžitá self-detekce (Hans si nové schopnosti všimne hned,
-                # nečeká na periodickou kontrolu ani na restart)
-                detect_new_capabilities(db_path)
-        except Exception as e:
-            _log.debug("maker learned cap: %s", e)
-    return {**res, "topic": topic, "target": target, "round": deepen_round}
+            _warm_chat(config)
+        except Exception:
+            pass
 
 
 def _make_image_artifact(config: dict, db_path: str, topic: str,

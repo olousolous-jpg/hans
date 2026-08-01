@@ -1366,6 +1366,24 @@ class HansRoutine:
                     return True
         except Exception:
             pass
+        # (c) maker — dokončený program bez artefaktu pro aktuální kolo prohloubení
+        # (dílo studium→artefakt taky potřebuje mozek v okně 2-6; bez tohohle by
+        # se PC neprobudil a dílo by nevzniklo, i když je co vyrobit)
+        try:
+            if (self.config.get("maker", {}) or {}).get("auto", True):
+                from scripts import hans_maker as _mk
+                import sqlite3 as _sq
+                _c = _sq.connect("file:%s?mode=ro" % self._diary_path,
+                                 uri=True, timeout=3.0)
+                _comp = _c.execute("SELECT topic, deepen_round FROM study_program "
+                                   "WHERE status='completed'").fetchall()
+                _c.close()
+                for _tp, _rnd in _comp:
+                    if not _mk.has_artifact_for_round(self._diary_path, _tp,
+                                                      int(_rnd or 0)):
+                        return True
+        except Exception:
+            pass
         return False
 
     def _render_pending_art_before_shutdown(self):
