@@ -1182,6 +1182,24 @@ class OpenWebUIDirectHandler:
             except Exception:
                 study_ctx = ""
 
+        # HANS_DIRECTION_V1 — můj vlastní zvolený SMĚR (dopředná aspirace).
+        # Dává tón „k čemu vědomě rostu"; na dotaz „kam směřuješ" ať odpoví
+        # tímhle, ne konfabulací. Jen full mód, read-only, graceful.
+        direction_ctx = ""
+        if not for_greeting:
+            try:
+                from scripts.hans_direction import active_direction_line
+                _dbd = (self.config.get("diary_db")
+                        or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                        or "data/hans_diary.db")
+                _dl = active_direction_line(self.config, _dbd)
+                if _dl:
+                    direction_ctx = ("\n\nMůj vlastní zvolený směr (k čemu "
+                                     "vědomě rostu; zmiň, když se ptají kam "
+                                     "směřuji nebo co chci dělat dál): " + _dl)
+            except Exception:
+                direction_ctx = ""
+
         # HANS_SYNTHESIS_IDEAS_V1 (#2) — poslední vlastní postřeh (propojení věcí
         # z různých oblastí). Jen full mód, ne pozdrav (brevita). Read-only, graceful.
         idea_ctx = ""
@@ -1535,7 +1553,7 @@ class OpenWebUIDirectHandler:
                 system_msg = ""
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
-                          + room_ctx + place_ctx + cal_ctx + diary_ctx + story_ctx + study_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_SYNTHESIS_IDEAS_V1 / HANS_CALENDAR_V1
+                          + room_ctx + place_ctx + cal_ctx + diary_ctx + story_ctx + study_ctx + direction_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_DIRECTION_V1 / HANS_SYNTHESIS_IDEAS_V1 / HANS_CALENDAR_V1
                           + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + deepen_ctx + lessons_ctx + teddy_ctx + current
                           + memory_ctx + threads_ctx + interests_ctx
                           + qsuggest_ctx + routine_ctx + cap_ctx)  # …/ HANS_CAPABILITY_AWARENESS_V1

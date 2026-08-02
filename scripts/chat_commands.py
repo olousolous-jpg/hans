@@ -1671,6 +1671,93 @@ register(
 )
 
 
+# ─── /smer — vlastní směr / aspirace (HANS_DIRECTION_V1) ─────────────────────
+def _cmd_smer(handler, name, args) -> str:
+    """/smer — aktivní směr + čekající návrh; /smer schválit|ne; /smer teď =
+    zvaž směr na pozadí; /smer <text> = zadej vlastní směr."""
+    cfg = getattr(handler, "config", {}) or {}
+    db = (cfg.get("diary_db") or (cfg.get("diary", {}) or {}).get("db_path")
+          or "data/hans_diary.db")
+    try:
+        from scripts.hans_direction import HansDirection, DirectionStore
+    except Exception as e:
+        return "Modul směru nedostupný: %s" % e
+    st = DirectionStore(cfg, db)
+    sub = (args or "").strip()
+    low = sub.lower()
+
+    # schválit / zamítnout čekající návrh
+    if low in {"schválit", "schvalit", "schval", "ano", "ok", "approve"}:
+        a = st.approve()
+        if not a:
+            return "Žádný čekající návrh směru ke schválení."
+        return "Přijato za svůj směr: „%s\"" % a["direction"]
+    if low in {"ne", "zamítnout", "zamitnout", "zamítni", "zamitni", "reject"}:
+        if st.pending():
+            st.reject()
+            return "Návrh směru zamítnut. Zůstávám u dosavadního (pokud nějaký byl)."
+        return "Žádný čekající návrh směru."
+
+    # spustit úvahu o směru na pozadí
+    if low in {"teď", "ted", "now", "zvaž", "zvaz"}:
+        import threading as _th
+
+        def _run():
+            try:
+                r = HansDirection(cfg, db).evaluate()
+                if r.get("decision") in ("propose", "evolve") and r.get("message"):
+                    tg = getattr(handler, "telegram", None)
+                    if tg is not None and hasattr(tg, "send_proactive"):
+                        try:
+                            tg.send_proactive(r["message"])
+                        except Exception:
+                            pass
+            except Exception as _e:
+                _log.warning("/smer teď selhalo: %s", _e)
+        _th.Thread(target=_run, daemon=True).start()
+        return ("Zamýšlím se nad svým směrem — ohlédnu se za studiem a tvorbou. "
+                "Když z toho vzejde záměr, dám vědět (chvíli to potrvá).")
+
+    # zadat vlastní směr (uživatelem autorizovaný → rovnou aktivní)
+    if sub and low not in {"stav", "status"}:
+        pid = st.propose(sub, "zadáno uživatelem", "", "user")
+        st.approve(pid)
+        return "Nastaven tvůj směr: „%s\"" % sub
+
+    # výpis (default / stav)
+    cur = st.current_active()
+    pend = st.pending()
+    out = []
+    if cur:
+        out.append("🧭 Můj směr: „%s\"" % cur["direction"])
+        if cur.get("rationale"):
+            out.append("   %s" % cur["rationale"])
+    else:
+        out.append("Zatím nemám vědomě zvolený směr.")
+    if pend:
+        out.append("")
+        out.append("⏳ Čeká na tvé rozhodnutí: „%s\"" % pend["direction"])
+        out.append("   (/smer schválit — /smer ne — /smer <vlastní text>)")
+    elif not cur:
+        out.append("(/smer teď — zvážím ho ze studia a tvorby)")
+    return NL_RUNTIME.join(out)
+
+
+register(
+    "smer",
+    slash_aliases=["smer", "směr", "smetr", "direction", "aspirace"],
+    nl_patterns=[
+        r"jak[ýy]\s+m[áa][sš]\s+sm[eě]r",
+        r"kam\s+sm[eě][rř]uje[sš]",
+        r"co\s+chce[sš]\s+d[eě]lat\s+d[aá]l",
+        r"(?:tv[uů]j|m[uů]j)\s+sm[eě]r",
+        r"k\s+[cč]emu\s+sm[eě][rř]uje[sš]",
+    ],
+    handler=_cmd_smer,
+    help_text="Vlastní směr/aspirace: /smer [schválit|ne|teď|<vlastní text>]",
+)
+
+
 # ─── /dilo — autorský projekt (HANS_AUTHORSHIP_V1) ───────────────────────────
 def _cmd_dilo(handler, name, args) -> str:
     """/dilo — stav autorského projektu; /dilo vše = všechny; /dilo teď = napiš

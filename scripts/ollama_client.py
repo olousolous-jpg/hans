@@ -150,6 +150,35 @@ def resume_warmup() -> None:
 def warmup_paused() -> bool:
     return time.time() < _warmup_pause_until
 
+
+import contextlib as _contextlib
+
+
+@_contextlib.contextmanager
+def base_model_batch(config: Optional[dict] = None, pause_s: float = 1800):
+    """HANS_BASE_MODEL_BATCH_V1 — VRAM handoff pro dávku běžící na BASE modelu
+    (8GB) vedle rezidentního hans-czech (8GB > 16GB VRAM). Na vstupu:
+      1) pause_warmup — oba keepalive (ping_model + ollama_warmup) přestanou
+         re-pinovat hans-czech,
+      2) ollama_unload_all — AKTIVNĚ uvolní hans-czech HNED (pause samo nestačí:
+         keep_alive=-1 nevyprší a Ollama ho neevictuje ani pro nový request →
+         base model se nevejde → 300s timeout). Na výstupu resume_warmup.
+    hans-czech se dotáhne on-demand při reálném chatu. Sjednocuje handoff, který
+    dřív měly jen study/maker inline (immune/evening_reflection měly jen pause →
+    thrashing)."""
+    try:
+        pause_warmup(pause_s)
+        try:
+            ollama_unload_all(config=config)
+        except Exception as _ue:
+            _log.debug("base_model_batch unload: %s", _ue)
+        yield
+    finally:
+        try:
+            resume_warmup()
+        except Exception:
+            pass
+
 # OLLAMA_CLIENT_MARKER (idempotence)
 
 

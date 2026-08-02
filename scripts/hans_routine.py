@@ -147,6 +147,7 @@ class HansRoutine:
         self._last_rel_reflection_date = ""
         self._last_reflection_date = ""  # AUTO_EVENING_REFLECTION_V1
         self._last_severka_check = ""    # HANS_SEVERKA_V1 (3c, týdenní guard)
+        self._last_direction_check = ""  # HANS_DIRECTION_V1 (týdenní guard)
         self._last_narrative = ""        # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3, týdenní guard)
         self._last_creation_reflection = ""  # HANS_CREATION_REFLECTION_V1 (D, týdenní guard)
         self._last_study_date = ""       # HANS_STUDY_V1 (1 studijní session/noc)
@@ -527,6 +528,7 @@ class HansRoutine:
             self._last_rel_reflection_date = s.get(
                 "last_rel_reflection_date", "")
             self._last_severka_check = s.get("last_severka_check", "")
+            self._last_direction_check = s.get("last_direction_check", "")
             self._last_narrative = s.get("last_narrative", "")
             self._last_creation_reflection = s.get("last_creation_reflection", "")
             self._last_study_date = s.get("last_study_date", "")  # HANS_STUDY_V1
@@ -556,6 +558,7 @@ class HansRoutine:
                     "last_rel_reflection_date":
                         self._last_rel_reflection_date,
                     "last_severka_check": self._last_severka_check,
+                    "last_direction_check": self._last_direction_check,
                     "last_narrative": self._last_narrative,
                     "last_creation_reflection": self._last_creation_reflection,
                     "last_study_date": self._last_study_date,  # HANS_STUDY_V1
@@ -588,6 +591,44 @@ class HansRoutine:
             return (d1 - d0).days >= 7
         except Exception:
             return True
+
+    def _direction_due(self, today: str) -> bool:
+        """True když uplynul aspoň týden od poslední úvahy o směru."""
+        last = self._last_direction_check
+        if not last:
+            return True
+        try:
+            d0 = datetime.strptime(last, "%Y-%m-%d").date()
+            d1 = datetime.strptime(today, "%Y-%m-%d").date()
+            return (d1 - d0).days >= 7
+        except Exception:
+            return True
+
+    def _run_direction_check(self, today: str) -> bool:
+        """HANS_DIRECTION_V1 — týdenní úvaha o vlastním SMĚRU. Reasoning tier
+        (qwen3, num_gpu:0 = CPU → žádný VRAM handoff). Při návrhu vznikne
+        pending (ask-first) + Hans dá vědět. Vrací True když ODLOŽENO (LLM dole)
+        → volající nenastaví guard, zkusí příště (NIGHT_DEFERRAL_SAFE_V1)."""
+        try:
+            from scripts.hans_direction import HansDirection
+            res = HansDirection(self.config, self._diary_path).evaluate()
+        except Exception as _e:
+            _log.warning("Direction check selhal: %s", _e)
+            return True
+        if res.get("deferred"):
+            _log.info("Direction: odloženo (LLM dole) → zkusím příště.")
+            return True
+        if res.get("decision") in ("propose", "evolve") and res.get("message"):
+            _log.info("Direction: NÁVRH směru (pending id=%s). Viz /smer.",
+                      res.get("id"))
+            if self._notifier:
+                try:
+                    self._notifier(res["message"])
+                except Exception as _ne:
+                    _log.warning("Direction notifier selhal: %s", _ne)
+        else:
+            _log.info("Direction: %s (drží se / gate).", res.get("decision"))
+        return False
 
     def _run_severka_check(self, today: str) -> bool:
         """Severčino rozhodnutí. Při návrhu vznikne pending verze (nic se
@@ -1681,6 +1722,18 @@ class HansRoutine:
                 except Exception as _re:
                     _log.warning("avatar render pending selhal (Severka OK): %s", _re)
 
+            # HANS_DIRECTION_V1 — týdenní úvaha o vlastním SMĚRU (intencionální
+            # vrstva). Reasoning tier (qwen3, num_gpu:0 = CPU → nesoupeří o VRAM,
+            # žádný handoff). Deferral-safe. Samostatná kadence, ask-first.
+            if self._direction_due(today) and self._chat_quiet_ok():
+                try:
+                    _dir_deferred = self._run_direction_check(today)
+                    if not _dir_deferred:
+                        self._last_direction_check = today
+                        self._save_routine_state()
+                except Exception as _de:
+                    _log.error("Direction check selhal: %s", _de)
+
             # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3) — týdenní narativní kapitola
             # (samostatná kadence, nezávislá na Severce). Base LLM, deferral-safe.
             # NIGHT_DEFERRAL_SAFE_V1 — guard NASTAV AŽ po úspěšném consolidate
@@ -1905,28 +1958,20 @@ class HansRoutine:
                     and self._chat_quiet_ok()):
                 _creative_busy = True
                 try:
-                    # HANS_WARMUP_PAUSE_V1 — immune běží na base OpenEuroLLM
-                    # (VRAM). Uspi keepalive warmup hans-czech na dobu kontroly,
-                    # ať ho neevictuje (8+8 > 16GB). Auto-expiry 10 min.
-                    try:
-                        from scripts.ollama_client import pause_warmup as _pw
-                        _pw(600)
-                    except Exception:
-                        pass
-                    from scripts.hans_immune import run_immune_check
-                    _icode = run_immune_check(self.config, self._diary_path)
+                    # HANS_BASE_MODEL_BATCH_V1 — immune běží na base OpenEuroLLM
+                    # (8GB). Aktivní VRAM handoff (pause + unload hans-czech),
+                    # ne jen pause: keep_alive=-1 hans-czech sám nevyprší → jinak
+                    # 8+8 > 16GB → 300s timeout (doloženo v noci 2.8.).
+                    from scripts.ollama_client import base_model_batch
+                    with base_model_batch(self.config, pause_s=600):
+                        from scripts.hans_immune import run_immune_check
+                        _icode = run_immune_check(self.config, self._diary_path)
                     if _icode != "deferred":
                         self._last_immune_date = today
                         self._save_routine_state()
                     _log.info("Imunitní kontrola: %s", _icode)
                 except Exception as _iue:
                     _log.warning("Imunitní kontrola selhala: %s", _iue)
-                finally:
-                    try:
-                        from scripts.ollama_client import resume_warmup as _rw
-                        _rw()
-                    except Exception:
-                        pass
 
             # HANS_DASHBOARD_PROPOSAL_V1 (Tier 1) — JEDNORÁZOVĚ po dostudování
             # Designu: Hans napíše designovou kritiku + návrh vlastní nástěnky

@@ -170,15 +170,19 @@ class HansEveningReflection:
         except Exception as _te:
             _log.warning("tendency snapshot selhal (reflexe OK): %s", _te)
 
-        # HANS_WARMUP_PAUSE_V1 — od teď běží base-model analytika (importance,
-        # lessons, commitments, book_mentions) na OpenEuroLLM (8GB). Uspi
-        # keepalive warmup hans-czech (jinak ho evictuje uprostřed → 300s
-        # timeouty). Auto-expiry 30 min kdyby dávka spadla; resume v finally níž.
+        # HANS_BASE_MODEL_BATCH_V1 — od teď běží base-model analytika (importance,
+        # lessons, commitments, book_mentions) na OpenEuroLLM (8GB). Aktivní VRAM
+        # handoff: pause_warmup (oba keepalive přestanou re-pinovat) + AKTIVNÍ
+        # unload hans-czech. Samotná pauza nestačí — keep_alive=-1 nevyprší a
+        # Ollama ho neevictuje ani pro nový request → 8+8 > 16GB → 300s timeout.
+        # Auto-expiry pauzy 30 min; resume v finally níž.
         try:
-            from scripts.ollama_client import pause_warmup as _pause_warmup
+            from scripts.ollama_client import (pause_warmup as _pause_warmup,
+                                               ollama_unload_all as _unload_all)
             _pause_warmup(1800)
+            _unload_all(config=self._config)
         except Exception as _pwe:
-            _log.debug("pause_warmup nedostupné: %s", _pwe)
+            _log.debug("VRAM handoff nedostupné: %s", _pwe)
 
         # AUTOBIOGRAPHICAL_IMPORTANCE_V1 — oskóruj neoskórované epizody dne
         # (base model, WHERE importance IS NULL = self-healing catch-up).

@@ -52,7 +52,7 @@ _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika", "nitky",
                            "zajmy", "seznam", "kalendar", "zdravi", "nastroj",
                            "brief", "vytvor", "prohloubit", "rozvrh", "vhledy",
                            "anomalie"})
-_MUTATING_CMDS = frozenset({"hlidej", "experiment"})
+_MUTATING_CMDS = frozenset({"hlidej", "experiment", "smer"})
 
 
 # ── top-level ────────────────────────────────────────────────────────────────
@@ -122,6 +122,8 @@ def handle_command(text: str, ctx: BridgeCtx) -> bool:
             "/uvaha — má poslední úvaha\n"
             "/stav — stav systému (teplota, RAM, disk, mozek)\n"
             "/studium — můj studijní program (co studuji)\n"
+            "/smer — můj vlastní směr/aspirace (/smer teď = zvážím ho, "
+            "/smer schválit|ne = rozhodnutí o návrhu)\n"
             "/dilo — mé autorské dílo na pokračování\n"
             "/napad — mé vlastní postřehy (synteze)\n"
             "/kritika — co u sebe chci zlepšit (sebekritika)\n"

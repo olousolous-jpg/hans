@@ -480,6 +480,42 @@ def _topic_engagement(diary_db_path: str, examples) -> int:
     return total
 
 
+def _dir_tokens(s: str) -> set:
+    """Normalizované tokeny (bez diakritiky, min. 4 znaky) pro afinitu."""
+    import unicodedata
+    s = "".join(c for c in unicodedata.normalize("NFKD", (s or "").lower())
+                if not unicodedata.combining(c))
+    return {w for w in re.split(r"[^a-z0-9]+", s) if len(w) >= 4}
+
+
+def _tok_match(a: str, b: str) -> bool:
+    """Shoda dvou tokenů přes PREFIX (české skloňování: hrady↔hradů,
+    architektura↔architekturu). Sdílený prefix ≥5 znaků nebo jeden je prefix
+    druhého (u kratších)."""
+    n = min(len(a), len(b))
+    if n < 4:
+        return a == b
+    p = 5 if n >= 5 else n
+    return a[:p] == b[:p]
+
+
+def _direction_affinity(direction_text: str, name: str, examples) -> float:
+    """HANS_DIRECTION_STUDY_BIAS_V1 — jak moc koníček ladí s aktivním směrem.
+    Podíl tokenů koníčku (název+příklady), které mají PREFIXOVOU shodu se
+    směrem (řeší CZ skloňování). Konzervativní: jen nudge, reálný zájem
+    (engagement) zůstává hlavní."""
+    dtok = _dir_tokens(direction_text)
+    if not dtok:
+        return 0.0
+    htok = _dir_tokens(name)
+    for e in (examples or [])[:6]:
+        htok |= _dir_tokens(str(e))
+    if not htok:
+        return 0.0
+    matched = sum(1 for h in htok if any(_tok_match(h, d) for d in dtok))
+    return matched / len(htok)
+
+
 def _is_strong_topic(config: dict, diary_db_path: str, topic: str) -> bool:
     """Deep tier (skutečný výzkum) se odemkne u VELMI silného koníčku. Dvě cesty:
     (1) evidence_count >= min_evidence (délka trvání), NEBO (2) chytrý gate dle
@@ -963,9 +999,32 @@ class StudyStore:
         # objemem zájmu (ne arbitrárně mezi remízami na evidence_count). Hans
         # tak studuje napřed to, co ho reálně nejvíc zaměstnává (Cardiff/Design).
         if c.get("select_by_engagement", True):
-            candidates.sort(
-                key=lambda h: _topic_engagement(self._diary_path, h.examples),
-                reverse=True)
+            # HANS_DIRECTION_STUDY_BIAS_V1 — když má Hans vlastní zvolený SMĚR,
+            # zvýhodni koníčky, které s ním ladí (afinita), ať studium slouží
+            # jeho záměru. Konzervativně: boost = engagement × (1 + w×afinita),
+            # takže reálný zájem zůstává hlavní, směr jen nakloní mezi blízkými.
+            dir_text = ""
+            try:
+                from scripts.hans_direction import DirectionStore
+                _cur = DirectionStore(config, self._diary_path).current_active()
+                dir_text = (_cur or {}).get("direction", "") if _cur else ""
+            except Exception:
+                dir_text = ""
+            w = float(c.get("direction_bias_weight", 0.5))
+
+            def _score(h):
+                eng = _topic_engagement(self._diary_path, h.examples)
+                if dir_text:
+                    aff = _direction_affinity(dir_text, h.name, h.examples)
+                    return eng * (1.0 + w * aff)
+                return eng
+            candidates.sort(key=_score, reverse=True)
+            if dir_text and candidates:
+                _aff0 = _direction_affinity(dir_text, candidates[0].name,
+                                            candidates[0].examples)
+                if _aff0 > 0:
+                    _log.info("study: výběr '%s' zohlednil směr (afinita %.2f)",
+                              candidates[0].name, _aff0)
         chosen = candidates[0]
 
         curriculum = _generate_curriculum(config, chosen.name, chosen.examples)

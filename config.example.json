@@ -283,8 +283,21 @@
     "max_turns": 50
   },
   "known_persons": {
-    "standa": {"gender": "muž", "notes": "pan domu", "nom": "Standa", "acc": "Standu", "voc": "Stando"},
-    "jana": {"gender": "žena", "notes": "pani domu", "nom": "Jana", "acc": "Janu", "voc": "Jano", "full": "Johana"}
+    "standa": {
+      "gender": "muž",
+      "notes": "pan domu",
+      "nom": "Standa",
+      "acc": "Standu",
+      "voc": "Stando"
+    },
+    "jana": {
+      "gender": "žena",
+      "notes": "pani domu",
+      "nom": "Jana",
+      "acc": "Janu",
+      "voc": "Jano",
+      "full": "Johana"
+    }
   },
   "fisheye": {
     "enabled": false,
@@ -1108,5 +1121,16 @@
     "record_width": 640,
     "record_keep": 20,
     "_record_keep_note": "Kolik poslednich videi si nechat (starsi se mazou)."
+  },
+  "direction": {
+    "reasoning_model": "qwen3:30b",
+    "reasoning_num_gpu": 0,
+    "reasoning_num_ctx": 12288,
+    "reasoning_num_predict": 6144,
+    "reasoning_temperature": 0.4,
+    "reasoning_timeout": 900,
+    "voice_model": "hans-czech:latest",
+    "voice_temperature": 0.4,
+    "_note": "HANS_DIRECTION_V1 — intencionalni vrstva; reasoning tier (qwen3 EN) -> voice (hans-czech CZ). reasoning_model=\"\" -> legacy base model."
   }
 }
