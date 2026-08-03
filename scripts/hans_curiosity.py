@@ -116,6 +116,7 @@ class HansCuriosity:
         self.config        = config
         self._reader       = WebReader(config)
         self._diary_path   = diary_db_path
+        self._knowledge    = None   # HANS_READ_RAG_V1 — RAG uploader (lazy set)
         self._ollama       = config.get("openwebui_chat", {}).get(
                                "base_url", "http://127.0.0.1:11434")
         # Priorita: models.utility → hans_dialog.ollama_model →
@@ -263,18 +264,26 @@ class HansCuriosity:
         except Exception as _e:
             _log.warning('Curiosity random_wiki selhalo: %s', _e)
 
+    def set_knowledge(self, knowledge):
+        """HANS_READ_RAG_V1 — napoj RAG uploader (z hans_idle, po jeho vzniku),
+        ať se přečtené články ukládají do čtenářské paměti (recall)."""
+        self._knowledge = knowledge
+
     def trigger_url(self, url: str, topic: str = "url"):
         """
         Manuální trigger — Hans přečte konkrétní URL.
-        Lze volat z chatu (/read <url>).
+        Lze volat z chatu (/read <url>) i z detekce URL v běžné zprávě.
         """
         if self._busy:
             _log.info("WebReader busy — URL trigger skipped")
             return
-        _log.info("Curiosity trigger: URL — %s", url)
+        _log.info("Curiosity trigger: URL (%s) — %s", topic, url)
+        # HANS_READ_TOPIC_V1 — předej REÁLNÉ téma (dřív natvrdo 'url' →
+        # web_read nesl neurčitý štítek, špatně se vybavoval). fetch_url dostane
+        # topic přes lambdu, _read_async ho použije i pro cooldown/deník.
         self._read_async(
             fn    = lambda u=url, t=topic: self._reader.fetch_url(u, t),
-            topic = "url",
+            topic = topic or "url",
             key   = url,
         )
 
@@ -673,6 +682,27 @@ class HansCuriosity:
                 conn.close()
             except Exception as e:
                 _log.warning("Diary store error: %s", e)
+
+        # HANS_READ_RAG_V1 — přečtený článek do čtenářské paměti (RAG hans_cetba),
+        # ať si ho Hans VYBAVÍ v běžném rozhovoru („co víš o X"). Dřív se do RAG
+        # ukládalo jen studium → ruční/curiosity čtení bylo „write-only" (v deníku,
+        # ale nevybavitelné). Doloženo dadštinou (3.8.): přečteno, ale nezapamatováno.
+        if (self._knowledge is not None
+                and getattr(self._knowledge, "enabled", False)
+                and result.summary):
+            try:
+                coll = str((self.config.get("curiosity", {}) or {}).get(
+                    "rag_collection", "hans_cetba"))
+                _rid = int(getattr(result, "fetched_at", 0) or 0)
+                self._knowledge.upload(
+                    collection_key=coll,
+                    doc_id="read_%s_%d" % (result.topic or "url", _rid),
+                    title=result.title[:120],
+                    text=result.summary,
+                    metadata={"téma": result.topic, "zdroj": result.source,
+                              "url": result.url})
+            except Exception as _ke:
+                _log.debug("read RAG upload: %s", _ke)
 
         # HANS_ENTITY_STORE_C1_V1 — zachyť entitu z přečteného článku (name=
         # vyřešený titul, gloss=první definiční věta ze zdroje → 0 konfabulace).

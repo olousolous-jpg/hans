@@ -161,6 +161,14 @@ class HansIdle:
             _log.warning('HansKnowledge init failed: %s', _e)
             self._knowledge = None
 
+        # HANS_READ_RAG_V1 — napoj RAG uploader do curiosity (vznikl dřív než
+        # knowledge), ať se přečtené články ukládají do čtenářské paměti.
+        try:
+            if getattr(self, '_curiosity', None) is not None:
+                self._curiosity.set_knowledge(self._knowledge)
+        except Exception as _ke:
+            _log.debug('curiosity set_knowledge: %s', _ke)
+
         # SynthesisHooks — auto-reflexe na vybrané zápisy do deníku
         try:
             from scripts.hans_synthesis import HansSynthesisHooks  # SYNTHESIS_MERGED_V1

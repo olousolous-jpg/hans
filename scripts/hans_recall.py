@@ -1326,32 +1326,97 @@ def _extract_knowledge_topic(text: str) -> Optional[str]:
     return x.strip() or None
 
 
+# kvalifikátory, které v „co víš o jazyku X / o filmu X" nesou téma až za sebou
+_TOPIC_QUALIFIERS = {
+    "jazyku", "jazyce", "jazyk", "tematu", "tématu", "téma", "tema",
+    "filmu", "film", "knize", "kniha", "knihy", "meste", "městě", "město",
+    "projektu", "projekt", "autorovi", "autor", "pojmu", "pojem", "slovu",
+    "slovo", "clanku", "článku", "clanek", "článek", "strance", "stránce",
+    "stranka", "stránka", "webu", "web",
+}
+
+
+def _topic_core_prefixes(topic: str) -> list:
+    """HANS_RECALL_DECLENSION_V1 — jádrová slova tématu (bez kvalifikátorů)
+    oříznutá na prefix (declension-safe). 'jazyku dadština' → ['dadšt']."""
+    import re as _re
+    words = [w for w in _re.split(r"[^0-9a-zá-žA-ZÁ-Ž]+", (topic or "").lower())
+             if len(w) >= 4 and w not in _TOPIC_QUALIFIERS]
+    return [w[:max(5, len(w) - 2)] for w in words]
+
+
 def _topic_in_memory(db_path: str, topic: str) -> bool:
-    """True když topic MÁ nějaký záznam v deníku / entities (case-insensitive
-    substring). Levný check — vyhne se draze RAG dotaz."""
+    """True když topic MÁ nějaký záznam v deníku / entities. Declension-safe
+    (HANS_RECALL_DECLENSION_V1): matchuje na PREFIX každého jádrového slova
+    ('jazyku dadština'/'dadštině' → 'dadšt'). U víceslovných témat musí najít
+    VŠECHNA jádrová slova (AND) → 'žirafí polévka' nedá false-positive jen
+    protože 'polévka' někde je."""
     if not topic or len(topic) < 3:
+        return False
+    prefixes = _topic_core_prefixes(topic)
+    if not prefixes:
         return False
     conn = None
     try:
         conn = _ro(db_path)
-        # entities.name (Wikipedia lookup uložený)
-        r = conn.execute(
-            "SELECT 1 FROM entities WHERE lower(name) LIKE ? LIMIT 1",
-            ("%" + topic.lower() + "%",)).fetchone()
-        if r:
-            return True
-        # diary.title / note — nejrelevantnější kolekce
-        r = conn.execute(
-            "SELECT 1 FROM diary WHERE (lower(title) LIKE ? OR lower(note) LIKE ?) "
-            "AND event_type IN ('web_read','study_note','book_read','book_reflection',"
-            "'movie_opinion','kodi_playing','reading_takeaway') LIMIT 1",
-            ("%" + topic.lower() + "%", "%" + topic.lower() + "%")).fetchone()
-        return bool(r)
+        for pref in prefixes:
+            like = "%" + pref + "%"
+            r = conn.execute(
+                "SELECT 1 FROM entities WHERE lower(name) LIKE ? "
+                "UNION SELECT 1 FROM diary WHERE (lower(title) LIKE ? OR "
+                "lower(note) LIKE ?) AND event_type IN ('web_read','study_note',"
+                "'book_read','book_reflection','movie_opinion','kodi_playing',"
+                "'reading_takeaway') LIMIT 1",
+                (like, like, like)).fetchone()
+            if not r:
+                return False   # jádrové slovo bez záznamu → celé téma není
+        return True            # všechna jádrová slova mají záznam
     except Exception:
         return False
     finally:
         if conn:
             conn.close()
+
+
+def reading_recall_answer(db_path: str, question: str = "") -> Optional[str]:
+    """HANS_READING_RECALL_V1 — dotaz „co víš o X?" → dohledej Hansovo VLASTNÍ
+    čtení o X (web_read/reading_takeaway/study_note, declension-safe) a vrať
+    GROUNDED blok s tím, co si přečetl. None = nic → normální tok. Deterministické,
+    žádný LLM. Řeší „přečteno ale nezapamatováno": ruční odkaz z chatu jde do
+    web_read, ale RAG ho na tenkém souhrnu semanticky nedohledá; tady se najde
+    přímo z deníku (declension-safe AND na jádrových slovech)."""
+    if not question or not is_knowledge_check_query(question):
+        return None
+    prefixes = _topic_core_prefixes(_extract_knowledge_topic(question) or "")
+    if not prefixes:
+        return None
+    conn = None
+    try:
+        conn = _ro(db_path)
+        where = " AND ".join(
+            ["lower(coalesce(note,'')||coalesce(title,'')||coalesce(data,'')) "
+             "LIKE ?"] * len(prefixes))
+        params = ["%" + p + "%" for p in prefixes]
+        rows = conn.execute(
+            "SELECT coalesce(NULLIF(note,''), data) AS body FROM diary "
+            "WHERE event_type IN ('web_read','reading_takeaway','study_note') AND "
+            + where + " ORDER BY ts DESC LIMIT 3", params).fetchall()
+        conn.close()
+        conn = None
+        bits = []
+        for (body,) in rows:
+            b = re.sub(r"^\[[^\]]{1,30}\]\s*", "", (body or "").strip())  # ořízni [topic]
+            if b and len(b) > 15:
+                bits.append(b[:400])
+        if not bits:
+            return None
+        return ("\n\nZ TVÉ ČTENÁŘSKÉ PAMĚTI (co sis o tom sám přečetl a zapsal "
+                "— odpověz z tohohle, ne z domýšlení):\n"
+                + "\n".join("• " + x for x in bits[:3]) + "\n")
+    except Exception:
+        if conn:
+            conn.close()
+        return None
 
 
 def knowledge_check_answer(db_path: str, user_text: str) -> Optional[str]:

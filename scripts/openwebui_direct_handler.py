@@ -545,11 +545,19 @@ class OpenWebUIDirectHandler:
         # user query, přebíjí persona finetune.
         try:
             from scripts.hans_recall import (
-                is_knowledge_check_query, knowledge_check_answer)
+                is_knowledge_check_query, knowledge_check_answer,
+                reading_recall_answer)
             if is_knowledge_check_query(str(_text)):
                 _dbp_kc = (self.config.get("diary_db")
                            or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                            or "data/hans_diary.db")
+                # HANS_READING_RECALL_V1 — nejdřív deterministicky dohledej, co
+                # si o tom Hans SÁM přečetl (declension-safe, obchází flaky RAG
+                # na tenkých souhrnech). Má přednost před „nemám záznam".
+                _rr = reading_recall_answer(_dbp_kc, str(_text))
+                if _rr:
+                    self._grounding_outcome = 'grounded'
+                    return _rr
                 _kc = knowledge_check_answer(_dbp_kc, str(_text))
                 if _kc:
                     self._grounding_outcome = 'grounded'
@@ -2279,6 +2287,28 @@ class OpenWebUIDirectHandler:
             else:
                 return "⚠ Použití: /note <text poznámky>"
 
+        # ── HANS_READ_URL_NL_V1 — URL v běžné zprávě s intentem čtení ──────────
+        # „zjisti víc o X, tu je odkaz https://…" → Hans stránku přečte, uloží do
+        # čtenářské paměti (RAG) a zapamatuje si TÉMA (ne jen 'url'/URL). Bez
+        # intentu (URL jen tak zmíněná) se nechytá → normální chat.
+        if not stripped.startswith("/"):
+            import re as _re_u
+            _um = _re_u.search(r"https?://\S+", stripped)
+            _intent = any(w in stripped.lower() for w in (
+                "zjisti", "přečti", "precti", "přečte", "precte", "podívej",
+                "podivej", "mrkni", "koukni", "stáhni", "stahni", "odkaz",
+                "stránk", "stranka", "nastuduj", "prostuduj"))
+            if _um and _intent:
+                _url = _um.group(0).rstrip('.,);:!?\'"')
+                _topic = self._extract_read_topic(stripped, _url)
+                _hi = getattr(self, '_hans_idle', None)
+                if _hi and hasattr(_hi, '_curiosity'):
+                    _hi._curiosity.trigger_url(_url, topic=_topic)
+                    from scripts.hans_persona import persona_name as _pn
+                    lbl = ("téma „%s\"" % _topic) if _topic != "url" else "stránku"
+                    return ("Přečtu si %s a zapamatuji si, co tam najdu, %s."
+                            % (lbl, name or "pane"))
+
         # ── HANS_DOWNTIME_V1 — uzavření smyčky výpadku ───────────────────
         # Hans se u příchozí osoby zmínil o výpadku a zeptal se, co se dělo
         # (downtime_ctx surfaced). První NE-příkazová odpověď osoby = vyprávění
@@ -2547,6 +2577,27 @@ class OpenWebUIDirectHandler:
             except Exception as _e:
                 print(f"[Chat] chat memory upload (worker): {_e}")
         _th.Thread(target=_work, daemon=True, name="ChatMemoryUpload").start()
+
+    @staticmethod
+    def _extract_read_topic(msg: str, url: str) -> str:
+        """HANS_READ_URL_NL_V1 — z uživatelovy zprávy vytáhni TÉMA čtení
+        (na co se ptá), aby web_read neslo neurčité 'url'. Priorita:
+        uvozovkovaný termín → 'o <termín>' → 'url' fallback."""
+        import re as _re
+        m = (msg or "").replace(url, " ")
+        # 1) termín v uvozovkách („X" / "X" / 'X')
+        q = _re.search(r"[\"'„»“]([^\"'„»“”«]{2,40})[\"'“”«]", m)
+        if q and q.group(1).strip():
+            return q.group(1).strip()[:40]
+        # 2) „o [jazyku/tématu/…] <termín>" (1-2 slova)
+        o = _re.search(
+            r"\bo\s+(?:jazyku|jazyce|t[ée]matu|str[áa]nce|filmu|knize|"
+            r"projektu|autorovi|m[eě]st[eě]|)\s*"
+            r"([A-Za-zÁ-Žá-ž0-9][\wÁ-Žá-ž]{2,30}(?:\s+[A-Za-zÁ-Žá-ž0-9]"
+            r"[\wÁ-Žá-ž]{2,30})?)", m, _re.IGNORECASE)
+        if o and o.group(1).strip():
+            return o.group(1).strip()[:40]
+        return "url"
 
     def _save_note(self, name: str, note_text: str):
         """Uloží poznámku do known_persons[name].notes v config.json."""
