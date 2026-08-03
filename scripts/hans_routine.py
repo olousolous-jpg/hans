@@ -148,6 +148,7 @@ class HansRoutine:
         self._last_reflection_date = ""  # AUTO_EVENING_REFLECTION_V1
         self._last_severka_check = ""    # HANS_SEVERKA_V1 (3c, týdenní guard)
         self._last_direction_check = ""  # HANS_DIRECTION_V1 (týdenní guard)
+        self._night_throttle = {}        # HANS_NIGHT_RETRY_THROTTLE_V1
         self._last_narrative = ""        # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3, týdenní guard)
         self._last_creation_reflection = ""  # HANS_CREATION_REFLECTION_V1 (D, týdenní guard)
         self._last_study_date = ""       # HANS_STUDY_V1 (1 studijní session/noc)
@@ -591,6 +592,20 @@ class HansRoutine:
             return (d1 - d0).days >= 7
         except Exception:
             return True
+
+    def _night_throttled(self, key: str, min_s: float) -> bool:
+        """HANS_NIGHT_RETRY_THROTTLE_V1 — True (přeskoč) když se `key` pokoušel
+        naposledy před méně než min_s. Jinak zaznamená pokus a vrátí False.
+        Chrání deferral-safe noční úlohy (narrative, toolscout) před retry á
+        tick (~60s) celou noc, když LLM defere/thrashuje (doloženo 3.8.:
+        toolscout 311× + narrative 149× za noc)."""
+        import time as _t
+        now = _t.time()
+        last = self._night_throttle.get(key, 0)
+        if now - last < min_s:
+            return True
+        self._night_throttle[key] = now
+        return False
 
     def _direction_due(self, today: str) -> bool:
         """True když uplynul aspoň týden od poslední úvahy o směru."""
@@ -1321,6 +1336,15 @@ class HansRoutine:
         "writing_section", "work_completion_reflection", "lesson_learned",
         "book_completion_reflection", "musing", "introspection")
 
+    # HANS_SHUTDOWN_SETTLE_FIX_V1 (3.8.) — settle guard shutdownu NESMÍ počítat
+    # `introspection`: je to ambient sebereflexe na timeru (á ~5 min, když je
+    # Hans sám), NE ohraničená noční práce. Po nočním probuzení mozku běží celou
+    # noc → settle (20 min ticha) nikdy nenastal → PC se nevypnul (doloženo
+    # 3.8.: wake 03:00 OK, ale introspekce á 5 min držela PC nahoře do rána).
+    # Studium/analytika/tvorba (ohraničené) settle drží správně.
+    _SHUTDOWN_SETTLE_EVENTS = tuple(
+        e for e in _NIGHT_ANALYTICS_EVENTS if e != "introspection")
+
     # HANS_PC_NIGHT_ANALYTICS_WAKE_V2 (26.7.) — TĚŽKÁ reasoning-tier analytika
     # (qwen3: syntéza/sebekritika), která běží AŽ v analytics_hour. Wake PC se
     # rozhoduje podle NÍ, NE podle celého _NIGHT_ANALYTICS_EVENTS: night_summary
@@ -1485,13 +1509,15 @@ class HansRoutine:
             if rc and rc[0] and nowts - rc[0] < chat_q:
                 conn.close()
                 return
-            # analytika usazená? poslední noční event > settle_minutes
+            # analytika usazená? poslední OHRANIČENÁ noční práce > settle_minutes
+            # (HANS_SHUTDOWN_SETTLE_FIX_V1 — bez ambient introspekce, jinak
+            # nikdy nesettle a PC se nevypne).
             settle = int(c.get("settle_minutes", 20)) * 60
-            ph = ",".join("?" * len(self._NIGHT_ANALYTICS_EVENTS))
+            ph = ",".join("?" * len(self._SHUTDOWN_SETTLE_EVENTS))
             ra = conn.execute(
                 "SELECT MAX(ts) FROM diary WHERE event_type IN (%s) "
                 "AND ts >= ?" % ph,
-                (*self._NIGHT_ANALYTICS_EVENTS, nowts - 16 * 3600)).fetchone()
+                (*self._SHUTDOWN_SETTLE_EVENTS, nowts - 16 * 3600)).fetchone()
             conn.close()
             if ra and ra[0] and nowts - ra[0] < settle:
                 return  # analytika ještě běží
@@ -1725,7 +1751,8 @@ class HansRoutine:
             # HANS_DIRECTION_V1 — týdenní úvaha o vlastním SMĚRU (intencionální
             # vrstva). Reasoning tier (qwen3, num_gpu:0 = CPU → nesoupeří o VRAM,
             # žádný handoff). Deferral-safe. Samostatná kadence, ask-first.
-            if self._direction_due(today) and self._chat_quiet_ok():
+            if (self._direction_due(today) and self._chat_quiet_ok()
+                    and not self._night_throttled("direction", 1800)):
                 try:
                     _dir_deferred = self._run_direction_check(today)
                     if not _dir_deferred:
@@ -1738,7 +1765,8 @@ class HansRoutine:
             # (samostatná kadence, nezávislá na Severce). Base LLM, deferral-safe.
             # NIGHT_DEFERRAL_SAFE_V1 — guard NASTAV AŽ po úspěšném consolidate
             # (dřív set-before → výpadek Ollamy zahodil kapitolu na CELÝ TÝDEN).
-            if self._narrative_due(today):
+            if (self._narrative_due(today)
+                    and not self._night_throttled("narrative", 1800)):
                 try:
                     from scripts.hans_narrative import consolidate
                     _chap = consolidate(self.config, self._diary_path)
@@ -1800,7 +1828,8 @@ class HansRoutine:
             # HANS_TOOLSCOUT_V1 — po dostudování domény (study_program completed)
             # navrhni nástroj (LLM) pro finální dílo. Idempotentní per téma
             # (has_for_topic). Lehké (1 search + krátký resident LLM), deferral-safe.
-            if self._in_night_window() and self._chat_quiet_ok():
+            if (self._in_night_window() and self._chat_quiet_ok()
+                    and not self._night_throttled("toolscout", 1800)):
                 try:
                     from scripts import hans_toolscout as _ts
                     if _ts.enabled(self.config):

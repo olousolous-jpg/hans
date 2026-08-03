@@ -144,11 +144,16 @@ def consolidate(config: dict, db_path: str, model: str = None,
         "STRIKTNĚ vycházej z materiálu — nic si nevymýšlej. Důstojný, střídmý, "
         "introspektivní tón. 4-7 vět, souvislý odstavec, žádné odrážky.")
     try:
-        from scripts.ollama_client import ollama_generate
-        text = ollama_generate(
-            model=model, prompt=_build_prompt(m, name), system=system,
-            config=config, timeout=timeout, keep_alive=0,
-            options={"temperature": 0.4})
+        # HANS_BASE_MODEL_BATCH_V1 — consolidate běží na base OpenEuroLLM (8GB)
+        # vedle rezidentního hans-czech (8GB > 16GB VRAM). Aktivní VRAM handoff,
+        # jinak thrashing → prázdné/uříznuté odpovědi → „prázdná kapitola" loop
+        # (doloženo 3.8.: 149× za noc + 300s timeouty).
+        from scripts.ollama_client import ollama_generate, base_model_batch
+        with base_model_batch(config, pause_s=max(timeout + 120, 600)):
+            text = ollama_generate(
+                model=model, prompt=_build_prompt(m, name), system=system,
+                config=config, timeout=timeout, keep_alive=0,
+                options={"temperature": 0.4})
     except Exception as e:
         _log.warning("narrative: LLM selhal (zkusím příště): %s", e)
         return ""
