@@ -1575,6 +1575,32 @@ register(
 
 # ─── /studium — studijní program z koníčku (HANS_STUDY_V1, #1 odbornost) ──
 _STUDY_NOW = {"teď", "ted", "now", "session", "studuj"}
+# HANS_STUDY_NUDGE_V1 (4.8.) — ruční popostrčení, když se studium zaseklo na
+# pod-tématu, ke kterému encyklopedie nemá článek. Automatika ho přeskočí až po
+# `max_subtopic_failures` NOCÍCH (default 3) — tohle je zkratka pro uživatele.
+_STUDY_SKIP = {"přeskoč", "preskoc", "přeskoc", "preskoč", "skip", "dál", "dal",
+               "další", "dalsi", "jeď dál", "jed dal"}
+
+
+def _notify_user(handler, msg: str) -> bool:
+    """HANS_STUDY_NUDGE_V1 — ohlas výsledek úlohy běžící na pozadí.
+
+    Příkazy typu `/studium teď` startují vlákno a hned se vrátí; bez tohohle
+    uživatel nikdy nezjistí, že session skončila `noread` (přesně to zamlčelo
+    zaseknuté studium 4.8.). Posílá se přes Notifier (Matrix) — `send_proactive`
+    respektuje tiché okno, takže v noci to počká do rána."""
+    try:
+        tg = getattr(handler, "telegram", None)   # = Notifier (historický název)
+        if tg is None or not getattr(tg, "enabled", True):
+            return False
+        _send = getattr(tg, "send_proactive", None) or getattr(tg, "send", None)
+        if not _send:
+            return False
+        _send(msg)
+        return True
+    except Exception as _e:
+        _log.debug("notify_user: %s", _e)
+        return False
 
 
 def _cmd_studium(handler, name, args) -> str:
@@ -1593,16 +1619,68 @@ def _cmd_studium(handler, name, args) -> str:
         import threading as _th
         kn = getattr(handler, "_knowledge", None) or getattr(handler, "knowledge", None)
 
+        # HANS_STUDY_NUDGE_V1 — session běží na pozadí; když skončí JINAK než
+        # úspěchem, uživatel se to dosud NEDOZVĚDĚL (odpověď zněla „výsledek
+        # uvidíte v /studium" a pak ticho). Doloženo 4.8.: „Geologie Českého
+        # ráje" → noread, program stál a nic to nehlásilo. Teď se výsledek
+        # ohlásí zpět — u `noread` i s nabídkou ruční zkratky.
+        _prev = store.get_active_program()
+        _prev_sub = ""
+        try:
+            _prev_sub = str(_prev["curriculum"][_prev["current_index"]])
+        except Exception:
+            pass
+
         def _run():
             try:
                 code = run_study_session(cfg, db, knowledge=kn)
                 _log.info("/studium teď → %s", code)
+                _msg = None
+                if code == "noread":
+                    _msg = ("K pod-tématu „%s\" jsem nenašel žádný použitelný "
+                            "zdroj, pane — encyklopedie ho zřejmě nezná. "
+                            "Program tím pádem stojí. Můžete mi říct "
+                            "„/studium přeskoč\" a pustím se do dalšího."
+                            % (_prev_sub or "aktuální"))
+                elif code == "deferred":
+                    _msg = ("Studium jsem musel odložit, pane — buď mi nebyl "
+                            "dostupný mozek, nebo encyklopedie neodpovídala. "
+                            "Zkusím to znovu sám.")
+                elif code == "idle":
+                    _msg = "Teď nemám co studovat, pane — vše z kurikula je hotové."
+                if _msg:
+                    _notify_user(handler, _msg)
             except Exception as _e:
                 _log.warning("/studium teď selhalo: %s", _e)
         _th.Thread(target=_run, daemon=True, name="StudyNow").start()
         return ("Pustil jsem se do studia, pane — nastuduji další pod-téma. "
                 "Chvíli to potrvá (čtení + zápis poznámky), výsledek pak "
-                "uvidíte v /studium a v deníku.")
+                "uvidíte v /studium a v deníku. Kdyby se nedařilo, ozvu se.")
+
+    if sub in _STUDY_SKIP:
+        # HANS_STUDY_NUDGE_V1 — ruční přeskočení zaseklého pod-tématu. Automatika
+        # ho přeskočí až po `max_subtopic_failures` nocích; tohle je zkratka,
+        # když uživatel VIDÍ, že na tom program vázne.
+        ap = store.get_active_program()
+        if not ap:
+            return "Teď nestuduji žádný program, pane — není co přeskočit."
+        curriculum = ap["curriculum"]
+        idx = int(ap["current_index"])
+        if idx >= len(curriculum):
+            return "Kurikulum už je u konce, pane — není co přeskočit."
+        skipped = str(curriculum[idx])
+        nxt = idx + 1
+        store._update_fields(ap["id"], current_index=nxt, fail_count=0)
+        _log.info("/studium přeskoč → '%s' (program [%d], %d→%d)",
+                  skipped, ap["id"], idx, nxt)
+        if nxt >= len(curriculum):
+            return ("Přeskočil jsem „%s\", pane — a tím je kurikulum „%s\" "
+                    "u konce. Mistrovskou reflexi sepíšu v noci."
+                    % (skipped, ap["topic"]))
+        return ("Přeskočil jsem „%s\", pane. Další na řadě: „%s\" "
+                "(%d z %d). Nastuduji ho v noci — nebo hned, řeknete-li "
+                "„/studium teď\"."
+                % (skipped, curriculum[nxt], nxt + 1, len(curriculum)))
 
     if sub in {"programy", "programs", "vše", "vse", "all"}:
         progs = store.all_programs()
@@ -1640,7 +1718,18 @@ def _cmd_studium(handler, name, args) -> str:
             mark = " "
         out.append("   %s %s" % (mark, s))
     out.append("")
-    out.append("Sessions: %d  |  ručně: /studium teď" % ap["sessions_done"])
+    # HANS_STUDY_NUDGE_V1 — bez tohohle nebylo z výpisu poznat, že program
+    # VÁZNE (jen že stojí na pod-tématu). fail_count = kolik nocí po sobě se
+    # k němu nenašel zdroj; po `max_subtopic_failures` ho automatika přeskočí.
+    _fc = int(ap.get("fail_count", 0) or 0)
+    if _fc:
+        _maxf = int((cfg.get("study", {}) or {}).get("max_subtopic_failures", 3))
+        out.append("⚠ K tomuhle pod-tématu se mi %d× nepodařilo najít zdroj "
+                   "(z %d pokusů, pak ho přeskočím sám). "
+                   "Chcete-li hned: /studium přeskoč" % (_fc, _maxf))
+        out.append("")
+    out.append("Sessions: %d  |  ručně: /studium teď, /studium přeskoč"
+               % ap["sessions_done"])
     # HANS_STUDY_RECALL_V1 — fronta pending (aby bylo jasné, co JEŠTĚ NENÍ
     # nastudováno; jinak by se dalo splést zařazené s hotovým).
     try:
@@ -1667,7 +1756,7 @@ register(
         r"na\s+[cč]em\s+.{0,6}studuje[sš]",
     ],
     handler=_cmd_studium,
-    help_text="Studijní program: /studium [programy|teď]",
+    help_text="Studijní program: /studium [programy|teď|přeskoč]",
 )
 
 

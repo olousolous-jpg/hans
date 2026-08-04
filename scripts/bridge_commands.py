@@ -54,6 +54,15 @@ _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika", "nitky",
                            "anomalie"})
 _MUTATING_CMDS = frozenset({"hlidej", "experiment", "smer"})
 
+# HANS_STUDY_NUDGE_V1 (4.8.) — některé příkazy jsou read-only JEN v základním
+# tvaru: `/studium` vypíše stav (inspect), ale `/studium přeskoč` posune program
+# a `/studium teď` spustí session = zásah do stavu. Whitelist je per-PŘÍKAZ, ne
+# per-argument, takže by je z read-only role pustil. Tady se dogatují argumenty.
+_ARG_NEEDS_FULL = {
+    "studium": ("přeskoč", "preskoc", "přeskoc", "preskoč", "skip", "dál", "dal",
+                "další", "dalsi", "teď", "ted", "now", "session", "studuj"),
+}
+
 
 # ── top-level ────────────────────────────────────────────────────────────────
 def handle(text: str, ctx: BridgeCtx) -> bool:
@@ -125,7 +134,7 @@ def handle_command(text: str, ctx: BridgeCtx) -> bool:
             "/stav — stav systému (teplota, RAM, disk, mozek)\n"
             "/zdravi — zdraví závislostí (Ollama/Kodi/STT/PC/disk); "
             "/zdravi vylec = self-heal\n"
-            "/studium — můj studijní program (co studuji)\n"
+            "/studium — můj studijní program (/studium teď|přeskoč)\n"
             "/smer — můj vlastní směr/aspirace (/smer teď = zvážím ho, "
             "/smer schválit|ne = rozhodnutí o návrhu)\n"
             "/dilo — mé autorské dílo na pokračování\n"
@@ -154,6 +163,12 @@ def _route_inspect_command(text: str, cmd: str, ctx: BridgeCtx) -> bool:
         return False
     if _cid_ in _MUTATING_CMDS and not ctx.is_full:
         ctx.send("Tenhle příkaz vám bohužel provést nemohu, pane.")
+        return True
+    # HANS_STUDY_NUDGE_V1 — argumenty, které z inspect příkazu dělají zásah
+    _args_ = str(resolved[1] if len(resolved) > 1 else "").strip().lower()
+    if (not ctx.is_full and _args_
+            and _args_ in _ARG_NEEDS_FULL.get(_cid_, ())):
+        ctx.send("Vypsat vám to mohu, ale měnit to bohužel ne, pane.")
         return True
     if ctx.handler is None:
         ctx.send("Tenhle příkaz teď neumím obsloužit (chybí spojení s mozkem).")
