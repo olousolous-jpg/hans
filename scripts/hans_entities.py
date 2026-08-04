@@ -342,8 +342,17 @@ class EntityStore:
                 q_all_matched = all(
                     any(_tok_match(kt_tok, qt) for kt_tok in kt)
                     for qt in q_content)
+                # HANS_ENTITY_SURNAME_PERSON_ONLY_V1 (4.8.) — „shoda na posledním
+                # tokenu" dává smysl JEN u jmen osob (příjmení: „pan Sorge" →
+                # „Erich Robert Sorge"). U ostatních entit je to jen slabá shoda
+                # na náhodném koncovém slově — a `_tok_match` bere prefix ≥4, což
+                # spolehlivě splete i věci bez souvislosti.
+                # Doloženo 4.8.: „namaluj Bud Spencer" → „Což takhle dát si
+                # ŠPENÁT" (spen|cer ↔ spen|at) → obraz Jiřího Sováka a Vladimíra
+                # Menšíka místo herce. Proto: surname jen pro osoby/postavy.
+                _et = (self.get(_id) or {}).get("etype")
                 surname = (loose and len(kt) >= 2 and kt[-1] in matched
-                           and q_all_matched)
+                           and q_all_matched and _et in ("osoba", "postava"))
                 # etype filtr (HANS_ART_PULID_V1): omez na daný druh (např.
                 # 'osoba' → v „osoba + objekt" najdi osobu, ne přebíjející objekt)
                 _ok_etype = (etype is None

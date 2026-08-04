@@ -1423,6 +1423,47 @@ def paint_self(config: dict, diary_db_path: str, full_figure: bool = True,
     return (rel_path, caption)
 
 
+def _name_shaped(subject: str) -> bool:
+    """HANS_ART_PERSON_WIKI_LOOKUP_V1 — vypadá námět jako JMÉNO (a stojí tedy za
+    to zkusit, jestli to není osoba)? Krátký a s velkým písmenem. Drží Wikipedia
+    dotaz od běžných námětů („kočka na zdi"), ať se nedělá zbytečný request
+    navíc — `_ground_subject` si stejně sáhne na Wikipedii sám."""
+    s = (subject or "").strip()
+    if not s:
+        return False
+    toks = s.split()
+    if not (1 <= len(toks) <= 4):
+        return False
+    # aspoň jeden token začíná velkým písmenem (a nejde o celou větu)
+    return any(t[:1].isupper() for t in toks)
+
+
+def _wiki_capture_person(config: dict, db_path: str, subject: str):
+    """Dohledej námět na Wikipedii a ulož jako entitu (etype určí `_classify`).
+    Vrací NÁZEV nalezeného článku (nebo None) — ne jen True: Wikipedia opraví
+    i překlep („TerRence Hill" → „Terence Hill") a resolvovat se pak musí podle
+    OPRAVENÉHO titulu, jinak by překlep entitu minul (token-prefix match potřebuje
+    shodné první 4 znaky, a „terr" ≠ „tere"). Sdílí mechaniku s `_ground_subject`;
+    tady jde o to, aby cesta k PODOBĚ měla stejné vstupy jako grounding."""
+    try:
+        from scripts.web_reader import WebReader
+        from scripts.hans_entities import EntityStore
+        lang = (config.get("curiosity", {}) or {}).get("wiki_lang", "cs")
+        art = WebReader(config).wikipedia_article(subject, lang=lang,
+                                                  max_chars=1500)
+        if not art or not (art.get("text") or "").strip():
+            return None
+        EntityStore(config, db_path).capture_from_reading(
+            art["title"], art["text"], url=art.get("url", ""),
+            lang=art.get("lang", lang))
+        _log.info("art: osobu '%s' jsem neznal → dohledal na Wikipedii '%s'",
+                  subject, art["title"])
+        return art["title"]
+    except Exception as e:
+        _log.debug("art: wiki lookup osoby selhal: %s", e)
+        return None
+
+
 def paint_subject(config: dict, diary_db_path: str, subject: str,
                   style: str = ""):
     """Hans namaluje obraz na LIBOVOLNÉ téma / dojem (např. z rozhovoru).
@@ -1453,6 +1494,28 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
                 _ent = None
             if not _ent:
                 _ent = _resolve_entity(config, diary_db_path, subject)
+            # HANS_ART_PERSON_WIKI_LOOKUP_V1 (4.8.) — osobu, kterou Hans JEŠTĚ
+            # NEZNÁ, dohledej na Wikipedii a teprve pak rozhodni o podobě.
+            # Bez tohohle měla cesta k podobě přísnější vstup než samotný
+            # grounding (ten Wikipedii umí) → u neznámé/překlepnuté osoby se
+            # PuLID vůbec nespustil a FLUX maloval jen podle jména.
+            # Doloženo 4.8.: „Bud Spencer" (v paměti nebyl) i „TerRence Hill"
+            # (překlep) skončily jako generický muž, ačkoli cs.wikipedia má
+            # u obou článek s portrétem.
+            if (not _ent or _ent.get("etype") != "osoba") and _name_shaped(subject):
+                _wt = _wiki_capture_person(config, diary_db_path, subject)
+                if _wt:
+                    try:
+                        from scripts.hans_entities import EntityStore as _ES2
+                        _es2 = _ES2(config, diary_db_path)
+                        # resolvuj podle OPRAVENÉHO titulu (překlep by minul),
+                        # fallback na původní námět
+                        _ent2 = (_es2.resolve(_wt, loose=True, etype="osoba")
+                                 or _es2.resolve(subject, loose=True, etype="osoba"))
+                        if _ent2:
+                            _ent = _ent2
+                    except Exception:
+                        pass
             # HANS_ENTITY_POSTAVA_V1 (20.7.) — ZKUŠENO+ZAMÍTNUTO: rozšíření gate
             # na etype=='postava' (fiktivní postavy → img2img z Wiki obrázku)
             # dopadlo špatně — Wiki obrázek postavy je FOTKA HERCE (Rimmer→Chris
