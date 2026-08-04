@@ -72,6 +72,10 @@ def _args_hash(action: str, args: dict) -> str:
 # odpovědní/film-recall cestu před únosem do add_study_topic.
 _RECALL_PAT = re.compile(
     r"zjisti[t]?\s+v[ií]c|co\s+v[ií][šs]|[řr]ekni\s+mi\s+o|"
+    # HANS_AGENT_SOCIAL_GUARD_V1 (4.8.) — „kdo je X?" je dotaz TEĎ, ne pokyn
+    # ke studiu. Doloženo testem: „kdo je Bud Spencer?" → router navrhl
+    # add_study_topic (conf 0.90) místo odpovědi.
+    r"kdo\s+(je|byl|to\s+je)\b|"
     r"zn[áa][šs]\b|pamatuje[šs]", re.IGNORECASE)
 
 
@@ -602,6 +606,7 @@ class AgentRouter:
 
     def __init__(self, config: dict):
         self.config = config or {}
+        self._intent = None      # HANS_AGENT_SOCIAL_GUARD_V1 (lazy, sdílený)
         c = (config.get("agent", {}) or {})
         self.enabled = bool(c.get("enabled", False))
         self.threshold = float(c.get("confidence_threshold", 0.7))
@@ -717,6 +722,53 @@ class AgentRouter:
         return result
 
     # ── návrh ───────────────────────────────────────────────────────────────
+    # HANS_AGENT_SOCIAL_GUARD_V1 — CÍLENÝ prompt, ne obecné „faktický ×
+    # volný". Obecný klasifikátor (`hans_intent`) tuhle hranici netrefí:
+    # „co se děje doma?" mu vyšlo jako volná konverzace → potlačil by
+    # LEGITIMNÍ report_home_status (změřeno). Rozdíl „ptá se na MĚ × na DŮM"
+    # je jiná otázka a chce vlastní příklady — s nimi 12/12.
+    _SOCIAL_SYSTEM = (
+        "Rozhodni, čeho se týká česká otázka položená domácímu asistentovi.\n"
+        "ASISTENT = ptá se na NĚJ samotného (jak se má, co dělá, jeho nálada, "
+        "co je u něj nového).\n"
+        "DUM = ptá se na dění v domácnosti (kdo je doma, co běží v televizi, "
+        "co se děje doma).\n\n"
+        "Příklady:\n„jak se máš?\" -> asistent\n„co děláš?\" -> asistent\n"
+        "„co je u tebe nového?\" -> asistent\n„nudíš se?\" -> asistent\n"
+        "„kdo je doma?\" -> dum\n„co hraje na TV?\" -> dum\n"
+        "„co se děje doma?\" -> dum\n\n"
+        "Odpověz JEDNÍM slovem: asistent nebo dum."
+    )
+
+    def _is_small_talk(self, message: str) -> bool:
+        """Ptá se zpráva na HANSE (→ potlač stavovou akci), nebo na DŮM?
+
+        Běží na mini modelu NA PI (viz [[intent-mini-model-on-pi]]) — funguje
+        i s vypnutým PC / v herním módu. Selhání nebo nejednoznačná odpověď
+        → False = akce projde jako dosud (guard nikdy nezhorší dostupnost)."""
+        import json as _json
+        import urllib.request as _url
+        ic = (self.config.get("intent", {}) or {})
+        if not ic.get("use_llm", False):
+            return False
+        body = _json.dumps({
+            "model": ic.get("model", "qwen2.5:1.5b"), "stream": False,
+            "keep_alive": ic.get("keep_alive", "30m"),
+            "options": {"num_predict": 4, "temperature": 0.0},
+            "messages": [{"role": "system", "content": self._SOCIAL_SYSTEM},
+                         {"role": "user", "content": message or ""}],
+        }).encode("utf-8")
+        try:
+            url = str(ic.get("base_url", "http://127.0.0.1:11434")).rstrip("/")
+            req = _url.Request(url + "/api/chat", body,
+                               {"Content-Type": "application/json"})
+            with _url.urlopen(req, timeout=int(ic.get("timeout", 20))) as r:
+                out = _json.loads(r.read())["message"]["content"]
+        except Exception as e:
+            _log.debug("agent social gate: %s", e)
+            return False
+        return (out or "").strip().lower().startswith("asist")
+
     def propose(self, handler, name: str, message: str) -> Optional[str]:
         """Vrátí propose_text (Hansův návrh + [ano/ne]) nebo None (běžný chat)."""
         if not self.enabled:
@@ -738,6 +790,18 @@ class AgentRouter:
             # X") se NESMÍ zrouteovat na studium (malý model občas splete „víc"
             # a „si") → nech odpovědní/film-recall cestu (action=null).
             if aid == "add_study_topic" and _looks_like_recall(message):
+                return None
+            # HANS_AGENT_SOCIAL_GUARD_V1 (4.8.) — zdvořilostní dotaz NA HANSE
+            # („jak se ti daří?", „máš se dobře?", „co je u tebe nového?") se
+            # NESMÍ zrouteovat na hlášení stavu domácnosti. Doloženo testem:
+            # router odpovídal „Na TV právě hraje… Vidím tu henka" (a to i
+            # s conf 1.00) — věcně mimo, a ještě to zmíní třetí osobu.
+            # Rozhoduje TÝŽ klasifikátor jako grounding (`hans_intent`), tedy
+            # i mini model na Pi → pokrývá i formulace, které nikdo nevypsal
+            # do seznamu. Cena je JEN u těchto tří akcí, ne u každé zprávy.
+            if aid in ("report_home_status", "report_who_is_home",
+                       "report_now_playing") and self._is_small_talk(message):
+                _log.info("agent: %s potlačen — dotaz je o Hansovi, ne o domě", aid)
                 return None
             action = ACTIONS.get(aid)
             if not action:

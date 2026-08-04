@@ -1166,5 +1166,15 @@
     "voice_model": "hans-czech:latest",
     "voice_temperature": 0.4,
     "_note": "HANS_DIRECTION_V1 — intencionalni vrstva; reasoning tier (qwen3 EN) -> voice (hans-czech CZ). reasoning_model=\"\" -> legacy base model."
+  },
+  "intent": {
+    "enabled": true,
+    "use_llm": true,
+    "model": "qwen2.5:1.5b",
+    "base_url": "http://127.0.0.1:11434",
+    "timeout": 20,
+    "keep_alive": "30m",
+    "gray_zone_threshold": 0.6,
+    "_note": "HANS_INTENT_LLM_PI_V1 - sedou zonu (dotaz vypada jako otazka, ale zadna fakticka trida nesedla) rozhodne MINI MODEL NA PI (CPU, ~1 GB) - ne na PC: musi fungovat i kdyz je PC vypnute nebo se hraje. Duvod: seznam vzoru pokryje jen videne formulace; jina osoba se zepta jinak (mas se dobre? / nudis se? / co je u tebe noveho?) a Hans spadl do anti-konfabulacni abstinence. Zmereno na qwen2.5:1.5b: 14/16, medial 2.7 s, v rodine 'jak se mas' 10/10. use_llm=false vrati puvodni chovani (jen regexy)."
   }
 }

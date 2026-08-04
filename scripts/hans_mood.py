@@ -167,15 +167,27 @@ class HansMood:
     def intensity(self) -> float:
         return self._state.intensity
 
-    def get_prompt_addition(self) -> str:
-        """Vrať doplněk do system promptu podle aktuální nálady."""
+    def get_prompt_addition(self, chat_partner: str = "") -> str:
+        """Vrať doplněk do system promptu podle aktuální nálady.
+
+        HANS_MOOD_HIDE_3RD_PARTY_V1 (4.8.) — `chat_partner` = s kým Hans právě
+        mluví. Když je zadán a „naposledy viděl" je NĚKDO JINÝ, jméno té třetí
+        osoby se do promptu NEDÁ. `HANS_CHAT_HIDE_3RD_PARTY_V1` (20.7.) tohle
+        řešil jen u `surroundings_db`, ale náladová vrstva jméno protlačila
+        vlastním kanálem — doloženo 4.8. 12:0x: olda se ptal „jak se ti daří",
+        Hans odpověděl „…, šárko" a oslovil uprostřed řeči nepřítomnou třetí
+        osobu. Nálada SAMA (i její důvod) zůstává, mizí jen cizí JMÉNO."""
         base = MOOD_PROMPTS.get(self._state.mood, "")
         alone_h = (time.time() - self._state.alone_since) / 3600
         extras = []
         if alone_h > 2:
             extras.append(f"Jsi sám již {alone_h:.0f} hodiny.")
-        if self._state.last_person:
-            extras.append(f"Naposledy jsi viděl: {self._state.last_person}.")
+        _lp = self._state.last_person
+        if _lp and chat_partner:
+            if str(_lp).strip().lower() != str(chat_partner).strip().lower():
+                _lp = ""          # 3. osoba → do promptu nepatří
+        if _lp:
+            extras.append(f"Naposledy jsi viděl: {_lp}.")
         if self._kodi_title:
             extras.append(f"Kodi hraje: {self._kodi_title}.")
         # HANS_MOOD_REASON_V1 — konkrétní důvod nálady patří do promptu.

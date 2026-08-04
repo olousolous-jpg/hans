@@ -73,8 +73,21 @@ class IntentResult:
 _VOLNA_PAT = re.compile(
     r"\b("
     r"ahoj|čau|čus|nazdar|dobr[ýé]\s+(ráno|den|večer|odpoledne)|"
-    r"dobrou\s+noc|měj\s+se|jak\s+se\s+(máš|maš|vede|daří)|"
-    r"co\s+(děláš|delas)|jak\s+je|díky|děkuj|prosím|promiň|"
+    r"dobrou\s+noc|měj\s+se|"
+    # HANS_INTENT_WELLBEING_V1 (4.8.) — dřív jen „jak se máš": vsunuté zájmeno
+    # nebo příslovce vzor rozbilo („jak se TI daří", „jakPAK se ti DNES daří"),
+    # dotaz spadl na `udalost` → grounding → žádná fakta → ANTI-KONFAB ABSTINENCE.
+    # Doloženo 4.8. 11:58 a 12:01: na „jakpak se ti dnes daří?" Hans odpověděl
+    # „K tomuhle nemám spolehlivý záznam a nerad bych si domýšlel." Zdvořilostní
+    # dotaz na VLASTNÍ stav není faktický dotaz na svět — patří do volné
+    # konverzace, kde Hans mluví z nálady a z toho, co dnes dělal.
+    # `ja[kmn]` = tolerance na překlep od sousední klávesy („jam se ti dari?",
+    # reálný vstup z mobilu 4.8.). Zbytek vzoru je dost specifický, aby to
+    # nechytalo nic jiného; rewriter F1 opravuje až NA faktické cestě, tedy
+    # pozdě — klasifikace musí překlep přežít sama.
+    r"ja[kmn](pak)?\s+se\s+(ti\s+|v[áa]m\s+)?(dnes(ka)?\s+)?(m[áa][šs]|vede|da[řr][íi])|"
+    r"co(pak)?\s+(te[ďd]\s+|pr[áa]v[ěe]\s+)?(d[ěe]l[áa][šs]|delas)|"
+    r"jak\s+je|díky|děkuj|prosím|promiň|"
     r"jsi\s+(chytr|hodn|milý|skvěl|fajn|dobr|super|úžasn)|"
     r"jak[ýáé]\s+jsi|kdo\s+jsi|líbí\s+se\s+ti|"
     r"těší\s+mě|rád\s+tě|mám\s+tě\s+rád|chybíš"
@@ -120,7 +133,12 @@ _UDALOST_PAT = re.compile(
     r"\b("
     r"kdy\s+(se|byl|byla|bylo|proběhl|došlo|začal|skončil)|"
     r"co\s+se\s+stalo|v\s+kolik|kolik\s+(je|bylo|stojí|má|měří|váží)|"
-    r"co\s+(je|znamená|to\s+je)\s+\w+|"
+    # HANS_INTENT_LLM_PI_V1 (4.8.) — „co je …" je široký vzor a chytal i
+    # zdvořilostní „co je u tebe nového?" / „co je s tebou?". Tím vyrobil
+    # FALEŠNOU pozitivní evidenci (skóre 1) → dotaz se nedostal do šedé zóny,
+    # mini model ho nesměl zachránit a Hans na běžnou frázi abstinoval.
+    # Negativní lookahead vyřadí obraty mířené NA HANSE.
+    r"co\s+(je|znamená|to\s+je)\s+(?!u\s+tebe|s\s+tebou|s\s+t[ěe]bou|nov[éěe])\w+|"
     r"válka|revoluce|bitva|objev|vynález|historie|dějiny|"
     r"vysvětli|řekni\s+mi\s+(o|něco\s+o)|pověz\s+mi\s+o|"
     r"který\s+rok|kterého\s+roku|letopočet"
@@ -190,6 +208,10 @@ class HansIntent:
                 "base_url", "http://127.0.0.1:11434")
         )
         self._timeout: int = int(ic.get("timeout", 15))
+        # HANS_INTENT_LLM_PI_V1 — model drž nahraný, ať se neplatí 15-20 s
+        # cold start při každém prvním dotazu (na Pi je load nejdražší část).
+        self._keep_alive: str = str(ic.get("keep_alive", "30m"))
+        self._llm_cache: dict = {}
         # G2_KEYWORD_TUNE_V1 — LLM VYPNUTÝ defaultně (VRAM: qwen2.5:7b
         # se nevejde k hans-czech+bge-m3 do 16GB). Keyword + fallback stačí.
         self._use_llm: bool = bool(ic.get("use_llm", False))
@@ -211,11 +233,38 @@ class HansIntent:
         if kw.confidence >= self._gray_zone:
             return kw  # jasný případ — hotovo levně
 
-        # 2) ŠEDÁ ZÓNA → LLM (jen když je povolený a dostupný)
+        # 2) ŠEDÁ ZÓNA → mini model na Pi (HANS_INTENT_LLM_PI_V1)
+        #
+        # Proč to má cenu: seznam vzorů pokryje JEN formulace, které jsme
+        # viděli. Jiný člověk se zeptá jinak („máš se dobře?", „nudíš se?",
+        # „co je u tebe nového?") → vzor nesedne → dotaz projde jako faktický
+        # → grounding nenajde fakta → ANTI-KONFABULAČNÍ ABSTINENCE na obyčejnou
+        # zdvořilost. Model tuhle rodinu pokrývá bez vyjmenovávání (10/10 na
+        # neviděných formulacích).
+        #
+        # ASYMETRIE (bezpečnostní jádro): eskaluje se JEN tam, kde keyword
+        # NEMÁ žádnou pozitivní shodu s faktickou třídou a rozhodl se pouze
+        # podle otazníku. Model tak může dotaz posunout z „abstinoval bych"
+        # na „popovídám si", ALE NIKDY nevezme dobře doložený faktický dotaz
+        # a neudělá z něj nezakotvené povídání — ty totiž mají skóre ≥1
+        # a do šedé zóny se vůbec nedostanou.
         if self._use_llm and self._enabled:
-            llm = self._classify_llm(msg)
-            if llm is not None:
-                return llm
+            _cached = self._llm_cache.get(msg)
+            if _cached is None:
+                _fact = self._llm_is_factual(msg)
+                if _fact is not None and len(self._llm_cache) < 256:
+                    self._llm_cache[msg] = _fact
+            else:
+                _fact = _cached
+            if _fact is False:
+                _log.info("intent: mini model → VOLNÁ (%.40s)", msg)
+                return IntentResult(intent="volna", confidence=0.75,
+                                    source="llm")
+            if _fact is True:
+                return IntentResult(
+                    intent=kw.intent if kw.intent != "volna" else "udalost",
+                    confidence=0.7, source="llm")
+            # None → model nedostupný/nejednoznačný → keyword jako dosud
 
         # 3) FALLBACK — keyword nejistý + LLM nedostupný.
         # Když keyword aspoň něco naznačil, vrať to. Jinak BEZPEČNĚ faktická
@@ -283,6 +332,15 @@ class HansIntent:
         # G2_KEYWORD_TUNE_V1 — zvednuto 0.5→0.65 (klasifikuj PŘÍMO,
         # ne přes fallback; LLM je vypnutý, tak ať je to čisté)
         if factual_signal and not volna_hit:
+            # HANS_INTENT_LLM_PI_V1 — ROZLIŠ doloženou faktickou otázku od
+            # pouhého otazníku. best_score==0 znamená, že žádná faktická třída
+            # nesedla a rozhodujeme jen podle „?"/„jak" — to je přesně šedá
+            # zóna, kde dosud vznikala falešná abstinence („jak se ti daří?").
+            # Nižší confidence → eskaluje na mini model; když není, fallback
+            # níže vrátí `udalost` jako dřív (žádná regrese).
+            if best_score == 0:
+                return IntentResult(intent="udalost", confidence=0.5,
+                                    source="keyword")
             return IntentResult(intent="udalost", confidence=0.65,
                                 source="keyword")
 
@@ -295,44 +353,59 @@ class HansIntent:
 
     # ── LLM vrstva (šedá zóna) ──────────────────────────────────────────────────
 
-    def _classify_llm(self, msg: str) -> Optional[IntentResult]:
-        """Zeptej se malého modelu. Vrátí IntentResult nebo None při selhání."""
+    # HANS_INTENT_LLM_PI_V1 (4.8.) — few-shot BINÁRNÍ prompt. Změřeno na
+    # qwen2.5:1.5b (Pi, CPU): 5-třídní prompt bez příkladů model degeneruje
+    # (0.5b říká na všechno „fakticky", 1.5b na všechno „volna"); s příklady
+    # a JEN dvěma třídami dá 12/12 na trénovacích a 14/16 na neviděných
+    # formulacích — a 10/10 v rodině „jak se máš", kde vznikala ta falešná
+    # abstinence. Třídu (film/misto/…) proto NEURČUJE model, ale keyword
+    # vrstva: ptáme se ho jen na to, co prokazatelně umí.
+    _LLM_SYSTEM = (
+        "Klasifikuj českou zprávu do jedné ze dvou tříd.\n"
+        "VOLNA = pozdrav, poděkování, zdvořilost, nebo dotaz na TEBE "
+        "(tvůj stav, náladu, co děláš, co bys chtěl).\n"
+        "FAKTICKY = dotaz na informaci o světě mimo tebe (lidé, filmy, místa, "
+        "počasí, události, pojmy).\n\n"
+        "Příklady:\n"
+        "„jak se máš?\" -> volna\n"
+        "„co děláš?\" -> volna\n"
+        "„díky moc\" -> volna\n"
+        "„kdo je Karel IV?\" -> fakticky\n"
+        "„jaké je počasí?\" -> fakticky\n"
+        "„co běží v televizi?\" -> fakticky\n\n"
+        "Odpověz JEDNÍM slovem: volna nebo fakticky."
+    )
+
+    def _llm_is_factual(self, msg: str) -> Optional[bool]:
+        """Zeptej se mini modelu: je to faktický dotaz? None = nedostupný.
+
+        ⚠️ ZÁMĚRNĚ NEJDE přes `ollama_client.ollama_chat`: ten má globální
+        `game_mode_on()` gate a míří na PC endpoint. Tenhle klasifikátor běží
+        na MALÉM modelu PŘÍMO NA PI (CPU, ~1 GB) — s VRAM na PC nemá nic
+        společného a musí fungovat i když je PC vypnuté nebo se hraje. Právě
+        proto byla LLM vrstva dosud vypnutá (qwen2.5:7b se k hans-czech do
+        16 GB nevešel) — mini model na Pi tenhle spor ruší."""
+        import json as _json
+        import urllib.request as _url
+        body = _json.dumps({
+            "model": self._model, "stream": False,
+            "keep_alive": self._keep_alive,
+            "options": {"num_predict": 4, "temperature": 0.0},
+            "messages": [{"role": "system", "content": self._LLM_SYSTEM},
+                         {"role": "user", "content": msg}],
+        }).encode("utf-8")
         try:
-            from scripts.ollama_client import ollama_chat
+            req = _url.Request("%s/api/chat" % self._base_url.rstrip("/"),
+                               body, {"Content-Type": "application/json"})
+            with _url.urlopen(req, timeout=self._timeout) as r:
+                out = _json.loads(r.read())["message"]["content"]
         except Exception as e:
-            _log.warning("intent LLM: import ollama_chat selhal: %s", e)
+            _log.debug("intent LLM nedostupný (%s) → keyword fallback", e)
             return None
-
-        system = (
-            "Jsi klasifikátor. Rozhodni, do které kategorie patří uživatelova "
-            "zpráva. Odpověz JEDNÍM slovem z: film, misto, osobnost, udalost, volna.\n"
-            "- film = dotaz na film, seriál, režiséra, herce\n"
-            "- misto = dotaz na místo, město, lokaci\n"
-            "- osobnost = dotaz na známou osobu (ne pozdrav)\n"
-            "- udalost = dotaz na fakt, událost, co/kdy se stalo, co něco znamená\n"
-            "- volna = pozdrav, emoce, dotaz na tebe, společenská konverzace\n"
-            "Odpověz POUZE jedním slovem, nic víc."
-        )
-        result = ollama_chat(
-            self._model,
-            [{"role": "system", "content": system},
-             {"role": "user", "content": msg}],
-            ollama_url=self._base_url,
-            timeout=self._timeout,
-            options={"num_predict": 8, "temperature": 0.0},
-        )
-        if result is None:
-            _log.warning("intent LLM: ollama_chat vrátil None (model=%s)",
-                         self._model)
-            return None
-
-        # parsuj — najdi první platnou třídu v odpovědi
-        low = result.strip().lower()
-        for cls in ALL_CLASSES:
-            if cls in low:
-                return IntentResult(intent=cls, confidence=0.7, source="llm")
-
-        # LLM vrátil nesmysl → bezpečně faktická (radši grounding)
-        _log.warning("intent LLM: neočekávaná odpověď %r → fallback udalost",
-                     result[:50])
-        return IntentResult(intent="udalost", confidence=0.4, source="fallback")
+        low = (out or "").strip().lower()
+        if low.startswith("volna") or low.startswith("volná"):
+            return False
+        if low.startswith("fakt"):
+            return True
+        _log.debug("intent LLM: nejednoznačné %r → keyword fallback", low[:30])
+        return None

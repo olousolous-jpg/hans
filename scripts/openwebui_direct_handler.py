@@ -1423,7 +1423,11 @@ class OpenWebUIDirectHandler:
         # Nálada
         mood_ctx = ""
         if _hi and hasattr(_hi, '_mood'):
-            _mp = _hi._mood.get_prompt_addition()
+            # HANS_MOOD_HIDE_3RD_PARTY_V1 — v chatu neprozrazuj jméno JINÉ
+            # osoby, kterou Hans zrovna vidí (jinak ji osloví uprostřed
+            # odpovědi partnerovi). V pozdravu se nefiltruje.
+            _mp = _hi._mood.get_prompt_addition(
+                chat_partner=(name or "") if not for_greeting else "")
             if _mp:
                 mood_ctx = "\n\n" + _mp
 
