@@ -279,3 +279,48 @@ if __name__ == "__main__":
         g = person_gender(n)
         print(f"  {n!r:10} → gender={g!r},  address={address(n)!r},  "
               f"came={came(n)!r},  was_neg={was(n, negate=True)!r}")
+
+
+# ── HANS_ADDRESSEE_V2 (4.8.) — deterministická oprava oslovení ───────────────
+def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
+    """Přepiš oslovení CIZÍ osoby na skutečného partnera. Vrací (text, počet).
+
+    Proč deterministicky a ne promptem: hans-czech je persona finetune a
+    system prompt přebíjí — doloženo 4.8., kdy uživatel napsal „jak se máš?" a Hans
+    odpověděl „Odpovím vám, paní Jano" (a po zesílení promptu + přesunu
+    adresáta na konec ještě „Jsem v pořádku, Jano"). Týž vzor jako
+    HANS_KNOWLEDGE_CHECK_V1: tři iterace promptu nezabraly, zabral až bypass.
+
+    Přepisuje VÝHRADNĚ VOKATIV (5. pád) cizí osoby — tedy tvar, který slouží
+    k oslovení („Jano"). Zmínky ve 3. osobě („Jana je doma", „vidím Janu")
+    zůstávají nedotčené, protože ty jsou legitimní odpovědí na dotaz o domě.
+    """
+    if not text or not partner:
+        return text, 0
+    known = (config or {}).get("known_persons", {}) or {}
+    if not known:
+        return text, 0
+    target = address(partner, config)          # správné oslovení partnera
+    n = 0
+    for pname in known:
+        if str(pname).strip().lower() == str(partner).strip().lower():
+            continue
+        voc = address(pname, config)           # vokativ cizí osoby
+        if not voc or len(voc) < 3:
+            continue
+        # volitelný titul „pane/paní" před jménem se přepíše zároveň
+        pat = re.compile(r"\b(?:pan[íi]\s+|pane\s+)?" + re.escape(voc) + r"\b",
+                         re.IGNORECASE)
+        text, cnt = pat.subn(target, text)
+        n += cnt
+        # „paní Jana" — model titul spojí s 1. pádem, ne s vokativem. Titul
+        # + jméno je ale JEDNOZNAČNÉ oslovení, takže se přepisuje taky.
+        # Bez titulu se 1. pád NEtrhá (to je legitimní 3. osoba).
+        for form in {str(pname), display_name(pname, config)}:
+            if not form or len(form) < 3:
+                continue
+            pat2 = re.compile(r"\b(?:pan[íi]|pane)\s+" + re.escape(form) + r"\b",
+                              re.IGNORECASE)
+            text, cnt2 = pat2.subn(target, text)
+            n += cnt2
+    return text, n

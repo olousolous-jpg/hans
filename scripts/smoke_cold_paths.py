@@ -77,7 +77,7 @@ def check_bridge_commands(cfg):
         ctx = bc.BridgeCtx(
             send=lambda t: (out.append(("T", t)) or True),
             send_photo=lambda p, c="": (out.append(("P", p)) or True),
-            person="olda", is_full=True, handler=None, config=cfg, state={})
+            person="uzivatel", is_full=True, handler=None, config=cfg, state={})
         return ctx, out
 
     # tyto příkazy MAJÍ vždy něco odeslat (nápověda/stav/deník/úvaha/obraz)

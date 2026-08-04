@@ -174,8 +174,8 @@ class HansMood:
         mluví. Když je zadán a „naposledy viděl" je NĚKDO JINÝ, jméno té třetí
         osoby se do promptu NEDÁ. `HANS_CHAT_HIDE_3RD_PARTY_V1` (20.7.) tohle
         řešil jen u `surroundings_db`, ale náladová vrstva jméno protlačila
-        vlastním kanálem — doloženo 4.8. 12:0x: olda se ptal „jak se ti daří",
-        Hans odpověděl „…, šárko" a oslovil uprostřed řeči nepřítomnou třetí
+        vlastním kanálem — doloženo 4.8. 12:0x: uživatel se ptal „jak se ti daří",
+        Hans odpověděl „…, jano" a oslovil uprostřed řeči nepřítomnou třetí
         osobu. Nálada SAMA (i její důvod) zůstává, mizí jen cizí JMÉNO."""
         base = MOOD_PROMPTS.get(self._state.mood, "")
         alone_h = (time.time() - self._state.alone_since) / 3600

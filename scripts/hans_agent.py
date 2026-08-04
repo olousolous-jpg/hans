@@ -794,7 +794,7 @@ class AgentRouter:
             # HANS_AGENT_SOCIAL_GUARD_V1 (4.8.) — zdvořilostní dotaz NA HANSE
             # („jak se ti daří?", „máš se dobře?", „co je u tebe nového?") se
             # NESMÍ zrouteovat na hlášení stavu domácnosti. Doloženo testem:
-            # router odpovídal „Na TV právě hraje… Vidím tu henka" (a to i
+            # router odpovídal „Na TV právě hraje… Vidím tu Janu" (a to i
             # s conf 1.00) — věcně mimo, a ještě to zmíní třetí osobu.
             # Rozhoduje TÝŽ klasifikátor jako grounding (`hans_intent`), tedy
             # i mini model na Pi → pokrývá i formulace, které nikdo nevypsal

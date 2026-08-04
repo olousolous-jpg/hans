@@ -2044,7 +2044,7 @@ class HansIdle:
         nebyl = _cz_was(name, self.config, negate=True)   # nebyl / nebyla
         byl   = _cz_was(name, self.config)                # byl / byla
         disp  = _cz_display(name)
-        akuz  = _cz_acc(name, self.config)                # HANS_NAME_INFLECTION_V2: akuzativ „Šárku"
+        akuz  = _cz_acc(name, self.config)                # HANS_NAME_INFLECTION_V2: akuzativ „Janu"
         # Šablona — 5 variant Hansova hlasu (komorník). Hans („neviděl") je m.
         templates = [
             f'{akuz} jsem neviděl už {doba}. Doufám, že je v pořádku.',

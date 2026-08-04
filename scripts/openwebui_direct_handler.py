@@ -1059,6 +1059,12 @@ class OpenWebUIDirectHandler:
                     if notes:        line += f": {notes}"
                 else:
                     line = f"- {pname}"
+                # HANS_ADDRESSEE_V2 (4.8.) — v seznamu VYZNAČ partnera. Bez toho
+                # je to jen soupis jmen s rody a model si adresáta vybere sám
+                # (doloženo: uživatel se ptal „jak se mas?", Hans odpověděl
+                # „Odpovím vám, paní Jano" — oslovil nepřítomnou třetí osobu).
+                if name and pname == name:
+                    line += "  ← S TOUTO OSOBOU PRÁVĚ MLUVÍŠ"
                 lines.append(line)
             persons_ctx = "\n\nZnáš tyto osoby z domu:\n" + "\n".join(lines)
         else:
@@ -1384,6 +1390,14 @@ class OpenWebUIDirectHandler:
             f" oslovuj ji ve druhé osobě (ty/vy) a vokativem."
             f" NIKDY o ní nemluv ve třetí osobě a NIKDY nikomu netlumoč její vzkazy."
         )
+        # HANS_ADDRESSEE_V2 (4.8.) — ostatní jména v kontextu jsou TŘETÍ OSOBY.
+        # Model si bez tohohle vybral adresáta ze seznamu osob domu podle
+        # rodu/persony („paní Jano"), ačkoli psal jinému uživateli.
+        current += (
+            f" Jakákoli JINÁ jména v tomto kontextu jsou třetí osoby, které tu"
+            f" teď nepíšou — NEOSLOVUJ je, neodpovídej jim a nepiš jejich jméno"
+            f" do oslovení. Oslovení patří VÝHRADNĚ osobě {name}."
+        )
 
         read_ctx = ""
         _hi = getattr(self, '_hans_idle', None)
@@ -1566,9 +1580,13 @@ class OpenWebUIDirectHandler:
         else:
             system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
                           + room_ctx + place_ctx + cal_ctx + diary_ctx + story_ctx + study_ctx + direction_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_DIRECTION_V1 / HANS_SYNTHESIS_IDEAS_V1 / HANS_CALENDAR_V1
-                          + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + deepen_ctx + lessons_ctx + teddy_ctx + current
+                          + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + deepen_ctx + lessons_ctx + teddy_ctx
                           + memory_ctx + threads_ctx + interests_ctx
-                          + qsuggest_ctx + routine_ctx + cap_ctx)  # …/ HANS_CAPABILITY_AWARENESS_V1
+                          + qsuggest_ctx + routine_ctx + cap_ctx
+                          # HANS_ADDRESSEE_V2 — adresát AŽ NA KONEC: dřív byl
+                          # zaražený doprostřed a následovalo ho ještě šest
+                          # bloků kontextu, takže ho recency přebila.
+                          + current)  # …/ HANS_CAPABILITY_AWARENESS_V1
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
             # rozvláčnosti (jen chat; greeting má vlastní brevitu).
             if not for_greeting:
@@ -2544,6 +2562,22 @@ class OpenWebUIDirectHandler:
             try:
                 from scripts.conversation_store import dedup_address_g4d
                 response = dedup_address_g4d(response)
+            except Exception:
+                pass
+            # HANS_ADDRESSEE_V2 — deterministická oprava oslovení CIZÍ osoby.
+            # Prompt na tohle nestačí (persona finetune ho přebíjí): i po
+            # zesílení instrukce a přesunu adresáta na konec promptu Hans
+            # občas odpověděl „Jsem v pořádku, Jano" jinému uživateli. Přepisuje se
+            # jen VOKATIV (a titul+jméno) — zmínky ve 3. osobě zůstávají.
+            # Běží PŘED zápisem do conv_store i deníku/RAG, ať jsou čisté
+            # všechny cíle (týž důvod jako u dedup_address_g4d výše).
+            try:
+                from scripts.cz_names import fix_addressee
+                response, _nfix = fix_addressee(response, name, self.config)
+                if _nfix:
+                    logging.getLogger(__name__).info(
+                        "HANS_ADDRESSEE_V2: opraveno %d cizích oslovení "
+                        "(partner=%s)", _nfix, name)
             except Exception:
                 pass
         if response:
