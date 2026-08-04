@@ -653,7 +653,11 @@
     "enabled": true,
     "reflection_quiet_min": 15,
     "wol_presence_cooldown_min": 15,
-    "night_check_interval_s": 60
+    "night_check_interval_s": 60,
+    "night_drain_all": true,
+    "_night_drain_all_note": "HANS_NIGHT_DRAIN_ALL_V1 — v nočním okně proběhne v JEDNOM ticku všechno, co může (studium, maker, autorství, syntéza, sebekritika, imunita…), ne jen jedna úloha. Dřív maker (14 min) sežral celé okno po probuzení PC a syntéza/sebekritika se nedostaly na řadu. false = původní chování 1 úloha/tick.",
+    "night_drain_budget_min": 90,
+    "_night_drain_budget_note": "Po vyčerpání rozpočtu se už NESPOUŠTÍ další úlohy (rozdělaná doběhne), ať se smyčka dostane k vypnutí PC. Těžká analytika (syntéza/sebekritika) rozpočet IGNORUJE — kvůli ní se PC budí, vyhladovět se nesmí."
   },
   "kolac_cases": {
     "enabled": true,

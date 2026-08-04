@@ -1814,6 +1814,30 @@ class HansRoutine:
             # na příští tick.
             _creative_busy = False
 
+            # HANS_NIGHT_DRAIN_ALL_V1 (4.8.) — „jeden task za tick" v noci HLADOVÍ.
+            # Doloženo 4.8.: PC se probudil ve 3:00 KVŮLI těžké analytice, ale okno
+            # 03:01→03:18 celé snědl maker (14 min, 8 obrázků) — a protože maker je
+            # v pořadí PŘED syntézou/sebekritikou, ty se na řadu vůbec nedostaly.
+            # `self_critique` tak nespustil od 2.8., ačkoli byl 4.8. due.
+            # V nočním okně proto DRAINUJEME: běží všechno, co může, jedno po druhém
+            # v témž ticku (noční worker má vlastní vlákno — nic jiného neblokuje,
+            # a `_maybe_shutdown_pc` běží až PO drainu, takže PC nezhasne uprostřed).
+            # Pojistky: (a) rozpočet `night_drain_budget_min` zastaví SPOUŠTĚNÍ
+            # dalších úloh (rozdělaná doběhne), ať se smyčka dostane k vypnutí PC;
+            # (b) těžká analytika rozpočet IGNORUJE — vyhladovět se nesmí, přesně
+            # kvůli ní se budí; (c) `night_drain_all=false` = původní 1 task/tick.
+            _rcfg = self.config.get("hans_routine", {}) or {}
+            _drain_all = bool(_rcfg.get("night_drain_all", True))
+            _drain_until = time.time() + 60.0 * float(
+                _rcfg.get("night_drain_budget_min", 90))
+
+            def _slot_free(important: bool = False) -> bool:
+                if not _drain_all:
+                    return not _creative_busy      # původní chování
+                if important:
+                    return True
+                return time.time() < _drain_until
+
             # HANS_STUDY_V1 — studijní program: 1 noční session = nastuduj další
             # pod-téma durable koníčku (Wikipedia → poznámka → deník+RAG). Po
             # dokončení kurikula mistrovská reflexe (grounduje vocational identitu).
@@ -1876,7 +1900,7 @@ class HansRoutine:
             # je → kriticky prohluť studium o hlubší pod-témata (C, pod capem) →
             # znovu se nastuduje (jen NOVÉ) → příště lepší dílo. 1 těžký krok/noc.
             _mk_auto = (self.config.get("maker", {}) or {}).get("auto", True)
-            if (_mk_auto and not _creative_busy and self._in_night_window()
+            if (_mk_auto and _slot_free() and self._in_night_window()
                     and self._chat_quiet_ok()):
                 try:
                     from scripts import hans_maker as _mk
@@ -1931,7 +1955,7 @@ class HansRoutine:
             # osnovy dovětek + složení do data/works/. Deferral-safe (deferred=retry).
             # Gate: jiná noc než studium PROBĚHLO (ať se nestřetnou 2 těžké LLM tasky
             # v jednu noc) — autorství běží, jen když studium dnes nebylo potřeba.
-            if (not _creative_busy
+            if (_slot_free()
                     and self._last_writing_date != today
                     and self._last_study_date == today
                     and self._in_night_window()
@@ -1953,7 +1977,7 @@ class HansRoutine:
             # nového postřehu (Hansův hlas, grounded). Kadence `cadence_days` (default
             # 3) — ne každou noc. Lehčí než studium (1 LLM volání), ale stejně těžké
             # na VRAM → within-tick guard, jen v noci, deferral-safe (deferred=retry).
-            if (not _creative_busy
+            if (_slot_free(important=True)
                     and self._synthesis_due(today)
                     and self._in_night_window()
                     and self._chat_quiet_ok()):
@@ -1976,7 +2000,7 @@ class HansRoutine:
             # Base LLM keep_alive=0, kadence `selfcritique.cadence_days` (default 2),
             # within-tick guard. Deferral-safe: 'deferred' (LLM dole) → guard se
             # NEnastaví, retry; 'idle'/'critiqued' (LLM běžel) → kadence drží odstup.
-            if (not _creative_busy
+            if (_slot_free(important=True)
                     and self._selfcritique_due(today)
                     and self._in_night_window()
                     and self._chat_quiet_ok()):
@@ -1998,7 +2022,7 @@ class HansRoutine:
             # Lehké LLM (base, num_predict 8, max 6 volání), kadence
             # `immune.cadence_days` (default 1). Deferral-safe: 'deferred'
             # (LLM dole) → guard se NEnastaví → retry příští tick.
-            if (not _creative_busy
+            if (_slot_free()
                     and self._immune_due(today)
                     and self._in_night_window()
                     and self._chat_quiet_ok()):
@@ -2024,7 +2048,7 @@ class HansRoutine:
             # (grounding = fakta z šablony + jeho studijní poznámky) + SDXL
             # mockup. Gate uvnitř run_ (completed studium && žádný proposal).
             # Deferral-safe ('deferred' → retry příští tick), within-tick guard.
-            if (not _creative_busy
+            if (_slot_free()
                     and self._in_night_window()
                     and self._chat_quiet_ok()):
                 try:
@@ -2041,7 +2065,7 @@ class HansRoutine:
             # HANS_CAPABILITY_CURIOSITY_V1 — Hans si nově objevenou schopnost
             # ZVĚDAVĚ vyzkouší (u paint reálně namaluje) + reflexe „co svedu, co
             # jsem zjistil". Gate: čeká pending exploration. Deferral-safe.
-            if (not _creative_busy
+            if (_slot_free()
                     and self._in_night_window()
                     and self._chat_quiet_ok()):
                 try:
