@@ -616,7 +616,9 @@
       "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors",
       "clip_vision": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
       "ipadapter_weight": 0.75
-    }
+    },
+    "comfy_probe_timeout": 8,
+    "_comfy_probe_note": "HANS_COMFY_WEDGE_V1 - rychla sonda PRED renderem. Kdyz ComfyUI neodpovi do teto doby, render se ODLOZI misto cekani cely render_timeout. Zatuhly ComfyUI (TCP zije, HTTP mlci) se timeoutem neresi - resi ho restart."
   },
   "unknown_tracker": {
     "enabled": false,
@@ -1093,7 +1095,10 @@
     "self_heal_ollama": false,
     "ollama_restart_cmd": "sudo -n systemctl restart ollama",
     "min_disk_gb": 2.0,
-    "_note": "HANS_HEALTH_V1: zivy watchdog zavislosti (Ollama/ComfyUI/Kodi/STT/PC/disk). Ollama probe = realna inference (odhali wedge, ktery /api/tags nepozna). Self-heal: 2x po sobe WEDGED -> restart Ollamy na PC pres SSH (vyzaduje NOPASSWD sudoers: '<user> ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ollama'). DOWN (PC spi) se neheal-uje."
+    "_note": "HANS_HEALTH_V1: zivy watchdog zavislosti (Ollama/ComfyUI/Kodi/STT/PC/disk). Ollama probe = realna inference (odhali wedge, ktery /api/tags nepozna). Self-heal: 2x po sobe WEDGED -> restart Ollamy na PC pres SSH (vyzaduje NOPASSWD sudoers: '<user> ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ollama'). DOWN (PC spi) se neheal-uje.",
+    "self_heal_comfyui": true,
+    "comfyui_restart_cmd": "systemctl --user restart comfyui",
+    "_self_heal_comfyui_note": "HANS_COMFY_WEDGE_V1 - ComfyUI je systemd USER sluzba, restart NEPOTREBUJE sudo (na rozdil od Ollamy). Spousti se JEN na status WEDGED."
   },
   "toolscout": {
     "enabled": false,

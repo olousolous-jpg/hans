@@ -87,7 +87,26 @@ def probe_ollama(config: dict) -> dict:
 
 
 # ── ComfyUI (malování/avatar) ────────────────────────────────────────────────
+def comfy_alive(config: dict, timeout: float = 6.0) -> bool:
+    """HANS_COMFY_WEDGE_V1 — odpovídá ComfyUI HTTP? (rychlá brána před renderem)"""
+    try:
+        import requests
+        from scripts.avatar_render import _comfy_url
+        r = requests.get("%s/system_stats" % _comfy_url(config), timeout=timeout)
+        return bool(r.ok)
+    except Exception:
+        return False
+
+
 def probe_comfyui(config: dict) -> dict:
+    """HANS_COMFY_WEDGE_V1 (4.8.) — rozliš ZATUHLÝ ComfyUI od vypnutého.
+
+    Doloženo 4.8.: port 8188 přijímal TCP spojení, ale HTTP neodpovídalo →
+    render se nepovažoval za chybu a čekalo se celý `render_timeout` (nejdřív
+    600 s, po zvednutí 900 s) → obraz „se nevyrenderoval". Zvyšování timeoutu
+    tenhle případ NEŘEŠÍ, protože server nebyl pomalý, ale zaseklý.
+    Rozlišení: TCP se spojí, ale HTTP mlčí = WEDGED (kandidát na self-heal);
+    TCP se nespojí = DOWN (PC spí / služba neběží)."""
     try:
         import requests
         from scripts.avatar_render import _comfy_url
@@ -95,9 +114,25 @@ def probe_comfyui(config: dict) -> dict:
         r = requests.get(f"{url}/system_stats", timeout=6)
         if r.ok:
             return {"status": OK, "detail": "system_stats ok"}
-        return {"status": DOWN, "detail": "HTTP %s" % r.status_code}
+        return {"status": WEDGED, "detail": "HTTP %s" % r.status_code}
     except Exception as e:
+        if _tcp_open(config):
+            return {"status": WEDGED,
+                    "detail": "port žije, HTTP neodpovídá (%s)" % str(e)[:50]}
         return {"status": DOWN, "detail": str(e)[:80]}
+
+
+def _tcp_open(config: dict, timeout: float = 3.0) -> bool:
+    """Přijímá ComfyUI aspoň TCP spojení? (rozlišuje wedge od vypnuté služby)"""
+    try:
+        import socket
+        from urllib.parse import urlparse
+        from scripts.avatar_render import _comfy_url
+        u = urlparse(_comfy_url(config))
+        with socket.create_connection((u.hostname, u.port or 8188), timeout):
+            return True
+    except Exception:
+        return False
 
 
 # ── Kodi (media) ─────────────────────────────────────────────────────────────
@@ -280,6 +315,29 @@ def heal_ollama(config: dict) -> bool:
         return False
 
 
+def heal_comfyui(config: dict) -> bool:
+    """HANS_COMFY_WEDGE_V1 — restart zatuhlého ComfyUI na PC přes SSH.
+
+    Na rozdíl od Ollamy je to systemd USER služba (`comfyui.service`), takže
+    NEPOTŘEBUJE sudo ani sudoers záznam. Volá se JEN na status WEDGED."""
+    if not _cfg(config).get("self_heal_comfyui", True):
+        _log.info("health: self-heal ComfyUI vypnut configem")
+        return False
+    try:
+        from scripts import pc_remote
+        if not pc_remote.enabled(config):
+            return False
+        cmd = _cfg(config).get("comfyui_restart_cmd",
+                               "systemctl --user restart comfyui")
+        _log.warning("health: ComfyUI WEDGED → restartuji na PC (%s)", cmd)
+        out = pc_remote.run(config, cmd, timeout=30)
+        _log.info("health: restart ComfyUI odeslán (out=%r)", out)
+        return out is not None
+    except Exception as e:
+        _log.warning("health: self-heal ComfyUI selhal: %s", e)
+        return False
+
+
 # ── stav pro dashboard / surfacing ───────────────────────────────────────────
 def _write_state(health: dict, healed: list) -> None:
     try:
@@ -342,6 +400,11 @@ def run_health_check(config: dict, heal: bool = True) -> dict:
     if heal and health.get("ollama", {}).get("status") == WEDGED:
         if heal_ollama(config):
             healed.append("ollama")
+    # HANS_COMFY_WEDGE_V1 — zatuhlý ComfyUI jinak blokuje malování až do ručního
+    # zásahu (render čeká celý timeout a spadne na horší fallback).
+    if heal and health.get("comfyui", {}).get("status") == WEDGED:
+        if heal_comfyui(config):
+            healed.append("comfyui")
     _write_state(health, healed)
     bad = degraded_services(health)
     if bad:

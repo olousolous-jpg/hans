@@ -278,8 +278,24 @@ class WebReader:
             }, timeout=self._timeout)
             self._note_http(r)
             pfx = r.json().get("query", {}).get("prefixsearch", [])
+            # HANS_WIKI_PREFIX_GATE_V1 (4.8.) — prefixsearch se dosud bral SLEPĚ,
+            # bez title-similarity gate, který hlídá až srsearch. Jenže MediaWiki
+            # prefixsearch je našeptávač: na „horu Říp" vrátí „Horní Planá" (shoda
+            # jen na „Hor"), a protože se bral první hit, PŘEBIL správný srsearch
+            # výsledek „Říp" (sim 0.50 → prošel by relaxem). Doloženo 4.8.:
+            # „namaluj horu Říp" → obraz vesnice Horní Planá u Lipna.
+            # Kanonické trefy (WCAG→WCAG, Icon of the Seas) mají sim 1.0, takže
+            # jim gate neublíží; pod prahem propadneme na srsearch.
             if pfx:
-                return pfx[0]["title"]
+                _pmin = float((self.config.get("curiosity", {}) or {})
+                              .get("wiki_title_min_score", 0.6))
+                _best = max((p.get("title", "") for p in pfx),
+                            key=lambda t: _title_similarity(query, t),
+                            default="")
+                if _best and _title_similarity(query, _best) >= _pmin:
+                    return _best
+                _log.debug("Wikipedia prefixsearch %r pro %r pod prahem → "
+                           "zkouším srsearch", _best, query)
         except Exception as e:
             _log.debug("Wikipedia prefixsearch error: %s", e)
         # 2) srsearch s title-similarity filtrem

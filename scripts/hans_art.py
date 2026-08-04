@@ -647,6 +647,27 @@ def _slug(title: str) -> str:
 
 
 # ── Render core (sdílené noční i ruční cestou) ──────────────────────────────
+def _comfy_ready(config: dict) -> bool:
+    """HANS_COMFY_WEDGE_V1 (4.8.) — brána PŘED renderem: odpovídá ComfyUI?
+
+    Doloženo 4.8.: ComfyUI zatuhl (TCP port přijímal spojení, HTTP mlčelo) →
+    render čekal celý `render_timeout` (900 s) a teprve pak spadl na horší
+    fallback. Zvyšování timeoutu tenhle případ neřeší — server nebyl pomalý,
+    ale zaseklý. Rychlá sonda to pozná za sekundy; health vrstva mezitím
+    ComfyUI restartuje (`heal_comfyui`), takže příští pokus projde."""
+    try:
+        from scripts.hans_health import comfy_alive
+        if comfy_alive(config, timeout=float(
+                _acfg(config).get("comfy_probe_timeout", 8))):
+            return True
+    except Exception:
+        return True          # sonda nedostupná → nezdržuj, zkus render
+    _log.warning("art: ComfyUI neodpovídá — render odložen "
+                 "(nečekám %ss naprázdno; health ho zkusí restartovat)",
+                 _acfg(config).get("render_timeout", 900))
+    return False
+
+
 def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
                   en_fallback: str = None,
                   scene_system: str = None, scene_intro: str = None):
@@ -701,6 +722,8 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
     fname = f"{int(time.time())}_{_slug(title)}.png"
     dest = os.path.join(ART_DIR, fname)
 
+    if not _comfy_ready(config):
+        return None
     loaded = _ollama_loaded(config)
     _ollama_unload(config, loaded)
     rtimeout = int(acfg.get("render_timeout", 600))
@@ -1310,6 +1333,8 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
     fname = "%d_%s_podoba.png" % (int(time.time()), _slug(subject))
     dest = os.path.join(ART_DIR, fname)
 
+    if not _comfy_ready(config):
+        return None
     loaded = _ollama_loaded(config)
     _ollama_unload(config, loaded)
     rtimeout = int(acfg.get("render_timeout", 600))
@@ -1435,6 +1460,8 @@ def paint_self(config: dict, diary_db_path: str, full_figure: bool = True,
                         "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors")
     ipa_weight = float(scfg.get("ipadapter_weight", 0.75))
 
+    if not _comfy_ready(config):
+        return None
     _ollama_unload(config, _ollama_loaded(config))
     rtimeout = int(acfg.get("render_timeout", 600))
     ok = False
@@ -1839,6 +1866,8 @@ def paint_home_from_photo(config: dict, diary_db_path: str,
     fname = "%d_muj_domov_foto.png" % int(time.time())
     dest = os.path.join(ART_DIR, fname)
 
+    if not _comfy_ready(config):
+        return None
     loaded = _ollama_loaded(config)
     _ollama_unload(config, loaded)
     rtimeout = int(acfg.get("render_timeout", 600))
