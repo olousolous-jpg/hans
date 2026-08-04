@@ -2234,11 +2234,23 @@ class OpenWebUIDirectHandler:
             _kind_label = {
                 "sources":         "source query",
                 "knowledge_check": "knowledge check",
+                "instant_lookup":  "okamžité dohledání",
             }.get(kind, kind)
-            _note = ("Odpověděl jsem přes deterministickou cestu (bypass mimo "
-                     "mou obvyklou personu — přímý výpis z paměti). Nešlo o "
-                     "vlastní úvahu, ale o vyzvednutí uloženého faktu. "
-                     "Odpověď: „%s\"" % _snippet)
+            # HANS_INSTANT_LOOKUP_V1 — u dohledání NESMÍ zápis tvrdit „výpis
+            # z paměti": opak je pravdou (v paměti to nebylo, proto se hledalo)
+            # a Hans si tyhle poznámky čte v noční reflexi/self_insight → chybný
+            # popis by ho učil nepravdivý příběh o sobě.
+            if kind == "instant_lookup":
+                _note = ("Odpověděl jsem přes deterministickou cestu (bypass mimo "
+                         "mou obvyklou personu). V paměti jsem k tomu NIC neměl, "
+                         "tak jsem to v tu chvíli dohledal a odpověděl PROVIZORNĚ "
+                         "— do paměti jsem si nic nezapsal, čeká to na noční "
+                         "ověření. Odpověď: „%s\"" % _snippet)
+            else:
+                _note = ("Odpověděl jsem přes deterministickou cestu (bypass mimo "
+                         "mou obvyklou personu — přímý výpis z paměti). Nešlo o "
+                         "vlastní úvahu, ale o vyzvednutí uloženého faktu. "
+                         "Odpověď: „%s\"" % _snippet)
             _data = _json.dumps({"kind": kind}, ensure_ascii=False)
             _c = _sq.connect(_diary, timeout=5.0)
             _c.execute(
@@ -2357,14 +2369,36 @@ class OpenWebUIDirectHandler:
                        or "data/hans_diary.db")
             _kb = knowledge_check_bypass(_dbp_kb, user_message, asker=name)
             if _kb:
-                print("[Chat] HANS_KNOWLEDGE_CHECK_V1 → deterministic bypass")
+                # HANS_INSTANT_LOOKUP_V1 (4.8.) — „nemám záznam" už není konec:
+                # zkus téma DOHLEDAT HNED a odpovědět PROVIZORNĚ. Do paměti se
+                # přitom NEZAPÍŠE nic (nález jde do čekárny `unverified_findings`),
+                # ověří se v noci a ráno se případně pošle oprava. Když dohledání
+                # nevyjde (mozek dole / článek nenalezen / gate), padáme zpět na
+                # původní poctivé „nemám záznam" — žádná regrese.
+                _bypass_kind = "knowledge_check"
+                try:
+                    from scripts.hans_recall import _extract_knowledge_topic
+                    from scripts.hans_findings import lookup_now
+                    _topic_kb = _extract_knowledge_topic(user_message)
+                    if _topic_kb:
+                        _prov = lookup_now(self.config, _dbp_kb, _topic_kb,
+                                           user_message, asker=name)
+                        if _prov:
+                            _kb = _prov
+                            _bypass_kind = "instant_lookup"
+                            print("[Chat] HANS_INSTANT_LOOKUP_V1 → provizorní "
+                                  "odpověď z dohledání (čeká na noční ověření)")
+                except Exception as _ile:
+                    print(f"[Chat] instant lookup error: {_ile}")
+                if _bypass_kind == "knowledge_check":
+                    print("[Chat] HANS_KNOWLEDGE_CHECK_V1 → deterministic bypass")
                 try:
                     self.conv_store.add_exchange(name, user_message, _kb, channel=channel)
                 except Exception:
                     pass
                 # HANS_BYPASS_TRACE_V1 — označ deterministickou cestu
                 self._log_human_chat_to_diary(name, user_message, _kb,
-                                              bypass_kind="knowledge_check")
+                                              bypass_kind=_bypass_kind)
                 return _kb
         except Exception as _kce:
             print(f"[Chat] knowledge check bypass error: {_kce}")

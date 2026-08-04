@@ -1602,6 +1602,23 @@ class HansRoutine:
                 maybe_run(self._diary_path, self.config)
             except Exception as _sie:
                 _log.debug("self_insight maybe_run: %s", _sie)
+            # HANS_INSTANT_LOOKUP_V1 (4.8.) — ověř nálezy z okamžitého dohledání
+            # (na co Hans odpověděl PROVIZORNĚ a záměrně si to NEZAPSAL do
+            # paměti). Co projde → TEĎ se zapíše do paměti; co neprojde →
+            # zůstane mimo paměť a jde ráno jako oprava uživateli.
+            # Deferral-safe: mozek dole → 'deferred', zkusí se příští tick.
+            try:
+                from scripts.hans_findings import verify_pending, purge_old
+                _vcode = verify_pending(self.config, self._diary_path,
+                                        curiosity=self._curiosity)
+                if _vcode not in ("idle", "deferred"):
+                    _log.info("Ověření dohledaných nálezů: %s", _vcode)
+                    try:
+                        purge_old(self._diary_path)
+                    except Exception:
+                        pass
+            except Exception as _ile:
+                _log.debug("instant_lookup verify: %s", _ile)
             # HANS_ANOMALY_V1 (18.7.) — algoritmický detektor odchylek (levný,
             # jen SQL count + voice krok). Kadence weekly. Doplněk k self_insight.
             try:

@@ -190,6 +190,16 @@ class HansIdle:
             synthesis=self._synthesis,
             knowledge=self._knowledge,
         )
+        # HANS_INSTANT_LOOKUP_V1 (4.8.) — noční ověření dohledaných nálezů zapisuje
+        # do paměti přes `curiosity._store` (deník + entity + RAG + synthesis hook).
+        # `HansRoutine._curiosity` byl deklarovaný, ale nikdo ho nenastavoval → bez
+        # tohohle drátu by ověřené nálezy neměly kam zapsat a zůstaly by pending.
+        # Drátujeme TADY (ne v display_controller), protože hans_idle vlastní obojí
+        # → funguje i v bězích bez displeje.
+        try:
+            self._routine._curiosity = self._curiosity
+        except Exception as _cwe:
+            _log.debug('routine curiosity wiring: %s', _cwe)
         # SEVERKA_PROACTIVE_NOTIFY_V1 — Hans sám oznámí (Telegram) Severčin návrh
         # identity. Čte self.chat.telegram až při volání (chat se drátuje později).
         def _proactive_notify(text):
@@ -483,6 +493,14 @@ class HansIdle:
                     self._maybe_announce_commitments(known)
                 except Exception as _cae:
                     _log.debug('commit announce: %s', _cae)
+                # HANS_INSTANT_LOOKUP_V1 — oprava toho, co Hans odpověděl
+                # provizorně a noční ověření to neuznalo. Jde PŘED sliby v
+                # důležitosti, ale posílá se až tady, ať se dopoledne nesejde
+                # všechno naráz.
+                try:
+                    self._maybe_announce_corrections(known)
+                except Exception as _coe:
+                    _log.debug('lookup correction: %s', _coe)
             self._present_names = known
             # Mood: příchod osoby
             if hasattr(self, '_mood'):
@@ -499,6 +517,65 @@ class HansIdle:
                 self._end_idle()
             # ATTENTION_PUBLISH_V1 — rychlý refresh pozornosti při detekci
             self._publish_attention()
+
+    def _maybe_announce_corrections(self, known: list):
+        """HANS_INSTANT_LOOKUP_V1 (4.8.) — ranní OPRAVA provizorní odpovědi.
+
+        Když Hans na neznámé téma odpověděl z okamžitého dohledání a noční
+        ověření nález ZAMÍTLO (jiné heslo / nesedící název / model řekl NE),
+        do paměti se nic nezapsalo — ale uživatel tu odpověď už slyšel. Tohle
+        mu to přijde říct. Idempotence přes DB flag `announced` (stejný vzor
+        jako HANS_COMMIT_ANNOUNCE_V1), doručení přes Notifier (Matrix) + hlas.
+        Jen osobě, které odpověď patřila, a jen v denním okně."""
+        if not known:
+            return
+        hour = time.localtime().tm_hour
+        if hour < 9 or hour >= 22:
+            return  # tiché okno
+        dbp = ((self.config.get('hans_idle', {}) or {})
+               .get('diary_db', 'data/hans_diary.db'))
+        try:
+            from scripts.hans_findings import (unannounced_corrections,
+                                               mark_announced, correction_text)
+        except Exception:
+            return
+        rows = unannounced_corrections(dbp, limit=5)
+        if not rows:
+            return
+        present = {str(n).strip().lower() for n in known}
+        mine = [r for r in rows
+                if str(r.get('asker') or '').strip().lower() in present]
+        if not mine:
+            return  # oprava patří někomu, kdo tu není → počká na něj
+        row = mine[0]                      # po jedné, ať to není litanie
+        asker = str(row.get('asker') or '')
+        msg = correction_text(row, asker)
+        delivered = False
+        try:
+            tg = (getattr(self.chat, 'telegram', None)
+                  if getattr(self, 'chat', None) else None)
+            if tg is not None and getattr(tg, 'enabled', False):
+                _send = getattr(tg, 'send_proactive', None) or getattr(tg, 'send', None)
+                if _send:
+                    _send(msg)
+                    delivered = True
+        except Exception as _te:
+            _log.debug('correction notify: %s', _te)
+        try:
+            _tts = getattr(getattr(self, "_hans_dialog", None), "tts", None)
+            _isp = getattr(_tts, "is_speaking", None) if _tts else None
+            if _tts and getattr(_tts, 'enabled', False) and not (
+                    callable(_isp) and _isp()):
+                _tts.speak(msg)
+                delivered = True
+        except Exception as _ve:
+            _log.debug('correction voice: %s', _ve)
+        # Označ JEN když aspoň jeden kanál prošel — jinak se zkusí při dalším
+        # usazení (oprava se nesmí ztratit, to je celý smysl smyčky).
+        if delivered:
+            mark_announced(dbp, [row['id']])
+            _log.info("instant_lookup: odeslána ranní oprava k '%s' (%s)",
+                      row.get('topic'), asker)
 
     def _maybe_announce_commitments(self, known: list):
         """HANS_COMMIT_ANNOUNCE_V1 — když se člověk usadí, dej mu proaktivně

@@ -963,6 +963,20 @@
     "read_summary_num_predict": 260,
     "_read_summary_num_predict_note": "Token budget pro hluboke shrnuti (drive 100). ~260 = 3-5 vet s rezervou."
   },
+  "instant_lookup": {
+    "enabled": true,
+    "_note": "HANS_INSTANT_LOOKUP_V1 — na neznámé téma Hans odpoví HNED z dohledaného článku, ale PROVIZORNĚ: do paměti (deník/entity/RAG) se nezapíše nic, nález čeká v tabulce unverified_findings. V noci se ověří (re-resolve + title gate + úsudek modelu) — co projde, zapíše se do paměti; co neprojde, jde ráno jako oprava uživateli. false = zpět na poctivé 'nemám záznam' bez dohledání.",
+    "max_chars": 3000,
+    "_max_chars_note": "kolik znaků článku se posílá modelu na provizorní shrnutí (chat čeká — nedávat moc)",
+    "num_predict": 220,
+    "num_ctx": 4096,
+    "llm_timeout": 45,
+    "verify_min_similarity": 0.75,
+    "_verify_min_similarity_note": "PŘÍSNĚJŠÍ než čtecí gate (0.6) — falešná shoda typu 'Zootropium'→'Zootropic' musí padnout při ověření",
+    "verify_batch": 5,
+    "judge_timeout": 90,
+    "_judge_note": "úsudek ANO/NE je EN prompt (vzor reasoning-tier-when-to-use); judge_model lze přepsat, default = chat model"
+  },
   "downtime": {
     "enabled": true,
     "min_gap_hours": 14,
