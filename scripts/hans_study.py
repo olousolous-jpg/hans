@@ -126,6 +126,140 @@ def _normalize_subtopic(s: str) -> str:
     return s.strip()
 
 
+_REPAIR_SYSTEM = (
+    "Jsi knihovník. Dostaneš názvy studijních pod-témat, ke kterým encyklopedie "
+    "NEMÁ článek. Ke KAŽDÉMU navrhni KANONICKÝ NÁZEV HESLA, pod kterým tu látku "
+    "encyklopedie skutečně vede — tedy existující pojem, ne opis.\n"
+    "PRAVIDLA: max 4 slova; žádné dvojtečky/závorky; zachovej PŘEDMĚT pod-tématu "
+    "(nenahrazuj ho něčím jiným).\n"
+    "Když tě k danému pod-tématu NIC věrohodného nenapadá, vrať prázdný řetězec — "
+    "to je LEPŠÍ než vymyšlený název.\n"
+    "Příklad: „Geologie Českého ráje\" → „Geopark Český ráj\"; "
+    "„Románské stavebnictví\" → „Románská architektura\".\n"
+    "Vrať VÝHRADNĚ JSON objekt {\"původní název\": \"navržené heslo\", …}."
+)
+
+
+def _findable(config: dict, w, sub: str, topic: str) -> bool:
+    """Najde encyklopedie k pod-tématu vůbec nějaký článek? (včetně kotvy)"""
+    lang = str(_cfg(config).get("wiki_lang", "cs"))
+    for q in _search_queries(sub, topic):
+        if w.last_transient:
+            return True                      # výpadek → netvrď, že to nejde
+        try:
+            if w._wikipedia_search(q, lang):
+                return True
+        except Exception:
+            return True                      # neznámo → radši ponech
+    try:
+        hit = bool(_anchor_pick(config, w, sub, topic, lang, set()))
+    except Exception:
+        return True
+    # Výpadek mohl přijít až u POSLEDNÍHO dotazu nebo uvnitř kotvy — pak „nenašel
+    # jsem" znamená „nemohl jsem hledat". Nikdy z toho nedělej „neexistuje";
+    # volající si podle `last_transient` stejně vyžádá kurikulum beze změny.
+    return True if (not hit and w.last_transient) else hit
+
+
+def _validate_curriculum(config: dict, subs: list, topic: str) -> list:
+    """HANS_STUDY_CURRICULUM_VALIDATE_V1 (4.8.) — ověř pod-témata UŽ PŘI
+    GENEROVÁNÍ, ne až třemi nocemi stání na každém.
+
+    Model si vymýšlí názvy, které encyklopedie nezná („Geologie Českého ráje",
+    „Folklór Českého ráje"): study je pak zkouší 3 noci, než je přeskočí — u
+    programu z 4.8. se neresolvovalo 5 z 8 pod-témat. Tady se každé jednou
+    ověří; co neprojde, dostane šanci na KANONICKOU náhradu od modelu, a ta
+    se ověřuje TOUTÉŽ kontrolou (návrh se nikdy nebere na slovo).
+
+    ⚠️ POJISTKA: když je encyklopedie dočasně dole (HTTP 429/5xx), validace se
+    NEPROVÁDÍ a kurikulum se vrátí BEZE ZMĚNY. Jinak by jeden rate-limit
+    prohlásil všechna pod-témata za nedohledatelná a kurikulum zdecimoval —
+    tichá ztráta by byla horší než chyba, kterou léčíme.
+    """
+    c = _cfg(config)
+    if not c.get("validate_curriculum", True) or not subs:
+        return subs
+    try:
+        from scripts.web_reader import WebReader
+        w = WebReader(config)
+    except Exception:
+        return subs
+    delay = float(c.get("validate_delay_s", 0.7))
+    good, bad = [], []
+    for s in subs:
+        if _findable(config, w, s, topic):
+            good.append(s)
+        else:
+            bad.append(s)
+        if w.last_transient:
+            _log.info("study: validace kurikula přerušena (encyklopedie dole) "
+                      "— beru návrh '%s' beze změny", topic)
+            return subs
+        if delay:
+            time.sleep(delay)
+    if not bad:
+        _log.info("study: kurikulum '%s' — všech %d pod-témat dohledatelných",
+                  topic, len(good))
+        return subs
+    _log.info("study: kurikulum '%s' — %d z %d pod-témat encyklopedie nezná: %s",
+              topic, len(bad), len(subs), "; ".join(bad))
+    fixed = _repair_subtopics(config, w, bad, topic) if c.get(
+        "validate_repair", True) else {}
+    out, seen = [], set()
+    for s in subs:                            # zachovej PŮVODNÍ pořadí studia
+        cand = s if s in good else fixed.get(s)
+        if not cand:
+            _log.info("study: pod-téma '%s' VYPUŠTĚNO z kurikula "
+                      "(encyklopedie ho nezná a náhrada se nenašla)", s)
+            continue
+        if _norm(cand) in seen:
+            continue
+        seen.add(_norm(cand))
+        out.append(cand)
+    if not out:                               # radši původní než prázdné
+        return subs
+    return out
+
+
+def _repair_subtopics(config: dict, w, bad: list, topic: str) -> dict:
+    """Jedním LLM voláním navrhni kanonické náhrady; vrať jen ty OVĚŘENÉ."""
+    lang = str(_cfg(config).get("wiki_lang", "cs"))
+    try:
+        from scripts.ollama_client import ollama_generate
+        raw = ollama_generate(
+            model=_model(config),
+            prompt=("Studijní téma: %s\n\nPod-témata bez článku:\n%s\n\nJSON:"
+                    % (topic, "\n".join("- %s" % b for b in bad))),
+            system=_REPAIR_SYSTEM, config=config,
+            timeout=int(_cfg(config).get("llm_timeout", 300)),
+            keep_alive=0, options={"temperature": 0.2})
+    except Exception as e:
+        _log.debug("_repair_subtopics LLM: %s", e)
+        return {}
+    if not raw:
+        return {}
+    try:
+        m = re.search(r"\{.*\}", raw, re.S)
+        proposals = json.loads(m.group(0)) if m else {}
+    except Exception:
+        return {}
+    out = {}
+    for orig in bad:
+        cand = _normalize_subtopic(str(proposals.get(orig, "") or "").strip())
+        if len(cand) < 3 or _norm(cand) == _norm(orig):
+            continue
+        # návrh modelu se NIKDY nebere na slovo — projde touž kontrolou
+        if _findable(config, w, cand, topic):
+            out[orig] = cand
+            _log.info("study: pod-téma '%s' → '%s' (ověřená náhrada)", orig, cand)
+        else:
+            _log.info("study: náhrada '%s' za '%s' taky nedohledatelná — "
+                      "zahazuji", cand, orig)
+        if w.last_transient:
+            break
+    return out
+
+
 def _generate_curriculum(config: dict, topic: str, examples: list) -> list:
     """Base LLM vygeneruje uspořádané kurikulum pod-témat. [] při selhání."""
     n = int(_cfg(config).get("curriculum_size", 8))
@@ -159,7 +293,9 @@ def _generate_curriculum(config: dict, topic: str, examples: list) -> list:
         if len(s) >= 3 and _norm(s) not in seen:
             out.append(s)
             seen.add(_norm(s))
-    return out[:n]
+    # HANS_STUDY_CURRICULUM_VALIDATE_V1 — ověř dohledatelnost HNED, ať se
+    # nedohledatelný název nevleče 3 nocemi stání (viz `_validate_curriculum`).
+    return _validate_curriculum(config, out[:n], topic)
 
 
 # ── Hloubkové čtení: plný článek + intro pododkazů (HANS_STUDY_DEEP_V1) ──────
@@ -215,6 +351,97 @@ def _search_queries(sub: str, topic: str) -> List[str]:
     _add(s)
     _add(f"{core} {topic}".strip() if core else f"{s} {topic}".strip())
     return out
+
+
+# ── HANS_STUDY_TOPIC_ANCHOR_V1 (4.8.) — kotva na téma programu ───────────────
+# Kurikulum běžně vyrobí složené pod-téma tvaru „<aspekt> <tématu v genitivu>"
+# („Geologie Českého ráje"). Takový článek na Wikipedii NEEXISTUJE, ale existují
+# správné články pod JINÝM názvem („Geopark Český ráj"). Title-similarity gate je
+# ale srazí na 0.33, protože se shoduje jen ta část z názvu programu, ne aspekt
+# → `noread` → fail_count → program uvízne. (Doloženo 4.8.: program „Český ráj
+# a okolní hrady" stál na „Geologie Českého ráje".)
+#
+# Klíčová úvaha: tokeny, které pod-téma zdědilo z NÁZVU PROGRAMU, nejsou
+# rozlišovací — jsou to konstantní kulisy. Zato kandidát, který je OBSAHUJE, je
+# z principu na správném předmětu. Tenhle pozitivní signál dnes zahazujeme.
+# Proto: poslední záchrana = vezmi kandidáta, který (a) obsahuje VŠECHNY tokeny
+# jádra tématu, (b) je krátký/fokusovaný, (c) má aspoň nízké skóre. Garbage typu
+# „Pozemské technologie ve Hvězdné bráně" kotvu programu neobsahuje → neprojde.
+
+def _topic_anchor_tokens(topic: str) -> list:
+    """Jádro názvu programu jako tokeny: „Český ráj a okolní hrady" → [cesky, raj].
+    Ořízne na první spojce/závorce/dvojtečce — zbytek jsou přílepky, ne předmět."""
+    from scripts.web_reader import _title_tokens
+    t = (topic or "").strip()
+    t = re.split(r"\s+(?:a|i|nebo|se|v|na)\s+|[(:,–-]", t, maxsplit=1)[0]
+    return _title_tokens(t)
+
+
+def _anchor_pick(config: dict, w, sub: str, topic: str, lang: str,
+                 used_titles: set) -> Optional[str]:
+    """Vyber článek kotvený na téma programu. None = nic vhodného."""
+    from scripts.web_reader import _title_tokens, _token_match
+    c = _cfg(config)
+    anchor = _topic_anchor_tokens(topic)
+    if not anchor:
+        return None
+    min_score = float(c.get("anchor_min_score", 0.30))
+    max_tok = int(c.get("anchor_max_tokens", 4))
+    try:
+        cands = w.wikipedia_search_candidates(sub, lang=lang, limit=6)
+    except Exception as e:
+        _log.debug("anchor candidates: %s", e)
+        return None
+    for title, score in cands:
+        if _norm(title) in used_titles:
+            continue                     # ať 2 pod-témata nečtou týž článek
+        ttok = _title_tokens(title)
+        if len(ttok) > max_tok:
+            continue                     # dlouhý titul = tangenciální odbočka
+        if not all(any(_token_match(a, tt) for tt in ttok) for a in anchor):
+            continue                     # neobsahuje předmět programu → mimo
+        if score < min_score:
+            continue
+        _log.info("study: '%s' — přesný článek neexistuje, kotvím na téma "
+                  "programu → '%s' (skóre %.2f)", sub, title, score)
+        return title
+    return None
+
+
+def _used_main_titles(db_path: str, topic: str) -> set:
+    """Hlavní články, které už tenhle program v kotvené větvi použil."""
+    if not db_path:
+        return set()
+    try:
+        import sqlite3 as _s
+        conn = _s.connect(db_path, timeout=5.0)
+        conn.execute("CREATE TABLE IF NOT EXISTS study_seen_works "
+                     "(work_id TEXT PRIMARY KEY, title TEXT, ts REAL)")
+        pref = "wiki:%s:" % _norm(topic)
+        rows = conn.execute(
+            "SELECT title FROM study_seen_works WHERE work_id LIKE ?",
+            (pref + "%",)).fetchall()
+        conn.close()
+        return {_norm(r[0]) for r in rows if r and r[0]}
+    except Exception:
+        return set()
+
+
+def _mark_main_title(db_path: str, topic: str, title: str) -> None:
+    if not (db_path and title):
+        return
+    try:
+        import sqlite3 as _s, time as _t
+        conn = _s.connect(db_path, timeout=5.0)
+        conn.execute("CREATE TABLE IF NOT EXISTS study_seen_works "
+                     "(work_id TEXT PRIMARY KEY, title TEXT, ts REAL)")
+        conn.execute("INSERT OR IGNORE INTO study_seen_works "
+                     "(work_id, title, ts) VALUES (?,?,?)",
+                     ("wiki:%s:%s" % (_norm(topic), _norm(title)), title, _t.time()))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        _log.debug("mark_main_title: %s", e)
 
 
 # ── HANS_STUDY_RESEARCH_TIER_V1 — deep tier (skutečný výzkum nad Wikipedií) ──
@@ -578,7 +805,28 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
     except Exception as e:
         _log.warning("_gather_material čtení selhalo (%s): %s", sub, e)
         return None, None, None
+    # HANS_STUDY_TOPIC_ANCHOR_V1 — všechny dotazy selhaly (přesný článek pro
+    # složené pod-téma neexistuje). Poslední záchrana PŘED `noread`: článek
+    # kotvený na téma programu. Dedup přes study_seen_works, ať dvě pod-témata
+    # nečtou týž článek. Když ani to nic nedá, chová se to jako dřív.
     if not art or not (art.get("text") or "").strip():
+        try:
+            _anchor = _anchor_pick(config, w, sub, topic, lang,
+                                   _used_main_titles(db_path, topic))
+            if _anchor:
+                art = w.wikipedia_article(_anchor, lang=lang, max_chars=art_max)
+                if art and (art.get("text") or "").strip():
+                    _mark_main_title(db_path, topic, art.get("page_title") or _anchor)
+        except Exception as e:
+            _log.debug("anchor fallback: %s", e)
+    if not art or not (art.get("text") or "").strip():
+        # HANS_WIKI_TRANSIENT_V1 — rozliš „článek neexistuje" od „Wikipedia
+        # zrovna neodpovídá" (429/5xx). Druhé NESMÍ spálit pokus, jinak by
+        # rate-limit po 3 nocích přeskočil i pod-téma, které článek MÁ.
+        if getattr(w, "last_transient", False):
+            _log.info("_gather_material: '%s' — Wikipedia dočasně nedostupná, "
+                      "ODKLÁDÁM (pokus se nepočítá)", sub)
+            return None, None, "__transient__"
         return None, None, None
 
     used_lang = art.get("lang", lang)
@@ -1085,6 +1333,12 @@ class StudyStore:
         deep = _is_strong_topic(config, self._diary_path, topic)
         material, source_url, _main = _gather_material(
             config, sub, topic, deep=deep, db_path=self._diary_path)
+        # HANS_WIKI_TRANSIENT_V1 — Wikipedia dole (429/5xx) = výpadek zdroje,
+        # NE „nenašel jsem". Odlož jako u výpadku LLM: žádný fail_count, žádný
+        # skip; pod-téma se zkusí znovu, až API odpoví.
+        if not material and _main == "__transient__":
+            _log.info("Studijní session odložena: Wikipedia dočasně nedostupná")
+            return None
         if not material:
             # HANS_STUDY_SKIP_V1 — pro toto pod-téma se nenašlo čtení (nejspíš
             # špatná formulace v kurikulu). Počítej selhání; po max_fail NOCÍCH
@@ -1249,6 +1503,10 @@ class StudyStore:
                 subs = [_normalize_subtopic(str(x))  # HANS_STUDY_CANON_TITLE_V1
                         for x in (d.get("subtopics") or []) if str(x).strip()]
                 subs = [x for x in subs if len(x) >= 3][:max_new]
+                # HANS_STUDY_CURRICULUM_VALIDATE_V1 — deepen trpí týmž neduhem
+                # jako iniciální generování (doloženo Designem: „Analýza
+                # přístupnosti…" → Wikipedia nenašla → 3 noci stání).
+                subs = _validate_curriculum(config, subs, topic)
                 if subs:
                     return {"critique": str(d.get("critique", "")).strip(),
                             "subtopics": subs}

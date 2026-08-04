@@ -139,6 +139,30 @@ class WebReader:
         self._sess.headers.update({
             "User-Agent": "HansBot/1.0 (home assistant; educational use)"
         })
+        # HANS_WIKI_TRANSIENT_V1 (4.8.) — „článek neexistuje" × „Wikipedia teď
+        # neodpovídá" se dosud nedaly rozeznat: 429/5xx spadlo do stejného
+        # `return None` jako prázdný výsledek. Study to bralo jako `noread` →
+        # fail_count++ → po 3 nocích PŘESKOČILO i pod-téma, které článek MÁ.
+        # Tenhle příznak drží poslední HTTP stav, aby volající poznal výpadek
+        # a mohl ODLOŽIT místo počítání pokusu (vzor [[ollama-deferred-processing]]).
+        self.last_transient = False
+
+    def _note_http(self, resp) -> None:
+        """Zaznamenej přechodné selhání API (rate limit / výpadek serveru)."""
+        try:
+            code = int(getattr(resp, "status_code", 0) or 0)
+        except Exception:
+            return
+        if code == 429 or code >= 500:
+            # Jeden sběr materiálu dělá víc requestů → bez tohohle by jeden
+            # rate-limit nasypal 4+ stejných WARNINGů (vzor LOG_CIRCUIT_V1:
+            # hlas jednou, zbytek tiše).
+            if not self.last_transient:
+                _log.warning("Wikipedia API dočasně nedostupná (HTTP %d) — "
+                             "beru jako výpadek, ne jako 'článek neexistuje'", code)
+            else:
+                _log.debug("Wikipedia API HTTP %d (další v téže dávce)", code)
+            self.last_transient = True
 
     # ── Wikipedia ─────────────────────────────────────────────────────────────
 
@@ -252,6 +276,7 @@ class WebReader:
                 "pssearch": query, "format": "json",
                 "pslimit": 3, "psnamespace": 0,
             }, timeout=self._timeout)
+            self._note_http(r)
             pfx = r.json().get("query", {}).get("prefixsearch", [])
             if pfx:
                 return pfx[0]["title"]
@@ -264,6 +289,7 @@ class WebReader:
                 "srsearch": query, "format": "json",
                 "srlimit": 5, "srnamespace": 0,
             }, timeout=self._timeout)
+            self._note_http(r)
             hits = r.json().get("query", {}).get("search", [])
             if not hits:
                 return None
@@ -302,6 +328,36 @@ class WebReader:
         except Exception as e:
             _log.debug("Wikipedia srsearch error: %s", e)
         return None
+
+    def wikipedia_search_candidates(self, query: str, lang: str = "cs",
+                                    limit: int = 6) -> list:
+        """HANS_STUDY_TOPIC_ANCHOR_V1 (4.8.) — surové srsearch kandidáty se
+        skóre: [(title, similarity), …] seřazené od nejlepšího.
+
+        `_wikipedia_search` vrací JEDEN titul a sám rozhoduje prahem — což je
+        správně pro obecné čtení, ale study potřebuje rozhodnout podle kontextu,
+        který web_reader nezná (název studijního programu). Proto tahle metoda
+        jen VRACÍ kandidáty a výběr nechá na volajícím. Existující chování
+        `_wikipedia_search` se NEMĚNÍ (žádný sdílený práh se neuvolňuje)."""
+        api = f"https://{lang}.wikipedia.org/w/api.php"
+        try:
+            r = self._sess.get(api, params={
+                "action": "query", "list": "search",
+                "srsearch": query, "format": "json",
+                "srlimit": int(limit), "srnamespace": 0,
+            }, timeout=self._timeout)
+            self._note_http(r)
+            hits = r.json().get("query", {}).get("search", [])
+        except Exception as e:
+            _log.debug("Wikipedia candidates error: %s", e)
+            return []
+        out = []
+        for h in hits:
+            t = (h.get("title") or "").strip()
+            if t:
+                out.append((t, _title_similarity(query, t)))
+        out.sort(key=lambda x: -x[1])
+        return out
 
     # ── Wikipedia hloubkové čtení (HANS_STUDY_DEEP_V1) ──────────────────────────
 

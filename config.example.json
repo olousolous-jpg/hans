@@ -805,7 +805,15 @@
       "archive_enabled": true,
       "archive_max_chars": 2500
     },
-    "max_deepen_rounds": 2
+    "max_deepen_rounds": 2,
+    "validate_curriculum": true,
+    "_validate_curriculum_note": "HANS_STUDY_CURRICULUM_VALIDATE_V1 — při zakládání/prohlubování kurikula ověř, že encyklopedie pod-téma zná; co nezná, dostane kanonickou náhradu od modelu (a ta se ověřuje taky), jinak se vypustí. Když je encyklopedie dole (429/5xx), validace se PŘESKOČÍ a kurikulum zůstane beze změny.",
+    "validate_repair": true,
+    "validate_delay_s": 0.7,
+    "_validate_delay_note": "prodleva mezi dotazy při validaci — bez ní si vyrobíme vlastní rate-limit",
+    "anchor_min_score": 0.3,
+    "anchor_max_tokens": 4,
+    "_anchor_note": "HANS_STUDY_TOPIC_ANCHOR_V1 — když přesný článek neexistuje, ber kandidáta obsahujícího jádro NÁZVU PROGRAMU (krátký titul, nízké skóre); garbage bez kotvy neprojde."
   },
   "authorship": {
     "enabled": true,
