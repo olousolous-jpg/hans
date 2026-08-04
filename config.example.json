@@ -583,8 +583,8 @@
     "flux_guidance": 3.5,
     "_flux_note": "HANS_ART_FLUX_V1: obecne malovani pres FLUX.1-dev fp8 all-in-one (cele postavy/zvirata/sceny - SDXL to nezvladal). use_flux=false vrati SDXL. Vyzaduje flux1-dev-fp8.safetensors v ComfyUI/checkpoints (~17GB, Comfy-Org). paint_self (autoportret) FLUX NEpouziva, zustava SDXL+IP-Adapter. FLUX render je studeny 17GB load ~250s.",
     "llm_timeout": 90,
-    "render_timeout": 600,
-    "_render_timeout_note": "ComfyUI studeny start (RX6800/ROCm load SDXL checkpointu) + 28 kroku muze trvat >5min; 600s pokryje studeny render. Kazdy art render je studeny (comfy_free po renderu uvolni checkpoint kvuli hans-czech).",
+    "render_timeout": 900,
+    "_render_timeout_note": "Strop jednoho renderu. Zvednuto 600->900 (4.8.): 600 s obcas nestacilo na REALNY cold-start - SDXL/FLUX se nahrava do plne VRAM po predchozim renderu (dolozeno 10:04 img2img Terence Hill: timeout, ruční zopakovani hned pote 65 s). Fallback po timeoutu funguje (text-grounded malba), ale da horsi obraz nez cekani.",
     "vision_model": "llava:7b",
     "vision_timeout": 120,
     "verdict_model": "hans-czech:latest",
@@ -604,10 +604,13 @@
     },
     "person_likeness": {
       "enabled": true,
-      "denoise": 0.5,
+      "denoise": 0.7,
       "use_pulid": false,
       "pulid_weight": 0.9,
-      "_pulid_note": "HANS_ART_PULID_V1: znama osoba + scena/akce ('X na motorce') -> FLUX+PuLID: podoba z ref fota + scena z promptu (cele telo). Vyzaduje use_flux=true + custom node ComfyUI_PuLID_Flux_ll + modely (pulid_flux/EVA-CLIP/antelopev2). use_pulid=false -> legacy img2img (jen portret, drzi kompozici). pulid_weight 0-1.5: vyssi=vernejsi podoba."
+      "_pulid_note": "HANS_ART_PULID_V1: znama osoba + scena/akce ('X na motorce') -> FLUX+PuLID: podoba z ref fota + scena z promptu (cele telo). Vyzaduje use_flux=true + custom node ComfyUI_PuLID_Flux_ll + modely (pulid_flux/EVA-CLIP/antelopev2). use_pulid=false -> legacy img2img (jen portret, drzi kompozici). pulid_weight 0-1.5: vyssi=vernejsi podoba.",
+      "_denoise_note": "Ladeno nazivo 4.8. na Bud Spencerovi: 0.50 = premalovana fotka, 0.65 jeste popisne, 0.70 = drzi podobu a uz je to malba (zvoleno), 0.75 zacina posouvat rysy. Cte JEN img2img vetev - PuLID jede na pulid_weight.",
+      "portrait_img2img": true,
+      "_portrait_img2img_note": "HANS_ART_PORTRAIT_IMG2IMG_V1 - hole jmeno (namaluj Bud Spencer) se prekresli z REALNE fotky (img2img, denoise) = drzi podobu; namet s akci/mistem (Radecky na motorce) jde na FLUX+PuLID, ktery slozi scenu. false = vse pres PuLID."
     },
     "self_portrait": {
       "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors",

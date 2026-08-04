@@ -1196,6 +1196,44 @@ def _fetch_person_ref(config: dict, ent: dict) -> Optional[str]:
         return None
 
 
+_PERSON_FILLER = {
+    "na", "ve", "in", "the", "of", "and", "pan", "pani", "paní", "herce",
+    "herec", "hereckou", "portret", "portrét", "obraz", "podobizna", "jako",
+    "se", "si", "je", "byl", "byla", "sir", "lord", "mistr", "svaty", "svatý",
+}
+
+
+def _subject_beyond_name(subject: str, person_name: str) -> bool:
+    """HANS_ART_PORTRAIT_IMG2IMG_V1 — nese námět kromě JMÉNA ještě něco (akci,
+    místo, rekvizitu)? „Bud Spencer" → False (portrét), „Radecký na motorce"
+    → True (scéna). Rozhoduje o img2img × PuLID, viz `paint_person_from_photo`.
+
+    Porovnává se na složeninách bez diakritiky, prefixově (skloňování
+    „Radeckého") a s podobnostním prahem na PŘEKLEPY („TerRence" vs uložené
+    „Terence" — jinak by překlep vypadal jako obsah navíc a portrét by se
+    poslal na scénu)."""
+    def _fold(s):
+        import unicodedata
+        s = unicodedata.normalize("NFKD", (s or "").lower())
+        s = "".join(c for c in s if not unicodedata.combining(c))
+        return re.sub(r"[^\w\s]", " ", s).split()
+
+    from difflib import SequenceMatcher as _SM
+    name_toks = _fold(person_name)
+    rest = []
+    for t in _fold(subject):
+        if len(t) < 3 or t in _PERSON_FILLER:
+            continue
+        if t in name_toks:
+            continue
+        if any(t[:4] == n[:4] and min(len(t), len(n)) >= 4 for n in name_toks):
+            continue
+        if any(_SM(None, t, n).ratio() >= 0.8 for n in name_toks):
+            continue
+        rest.append(t)
+    return bool(rest)
+
+
 def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
                             ref_path: str, style: str = "",
                             person_name: str = "") -> Optional[tuple]:
@@ -1232,8 +1270,25 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
     # HANS_ART_PULID_V1 — když je FLUX+PuLID zapnutý, zachovej PODOBU z ref fota a
     # slož NOVOU scénu z celého námětu (osoba NA MOTORCE ap.). Jinak legacy
     # img2img (drží kompozici → jen portrét, akce/scéna se ztratí).
+    #
+    # HANS_ART_PORTRAIT_IMG2IMG_V1 (4.8.) — obě cesty mají OPAČNÝ kompromis a
+    # dosud rozhodoval jen config, takže PuLID přebil i prosté portréty:
+    #   • img2img  = překreslí SKUTEČNOU fotku → drží podobu, ale drží i
+    #     kompozici, takže scéna/akce se ztratí,
+    #   • PuLID    = složí novou scénu, podobu drží jen „na první pohled".
+    # Rozhoduje tedy ZADÁNÍ: nese-li námět kromě jména i akci/místo („Radecký
+    # na motorce"), je potřeba scéna → PuLID; holé jméno („Bud Spencer") =
+    # portrét → img2img. Denoise 0.70 (laděno naživo 4.8. na Bud Spencerovi:
+    # 0.50 = přemalovaná fotka, 0.75 už posouvá rysy, 0.70 drží podobu
+    # a přitom je to malba). `denoise` čte JEN img2img větev — PuLID jede na
+    # `pulid_weight`, tahle hodnota mu nesahá do scén.
+    _wants_scene = _subject_beyond_name(subject, nm)
     _use_pulid = (bool(pcfg.get("use_pulid", False))
-                  and bool(acfg.get("use_flux", False)))
+                  and bool(acfg.get("use_flux", False))
+                  and (_wants_scene or not pcfg.get("portrait_img2img", True)))
+    _log.info("art: podoba '%s' → %s (%s)", nm,
+              "FLUX+PuLID (scéna)" if _use_pulid else "img2img překreslení fotky",
+              "námět nese akci/místo" if _wants_scene else "holé jméno = portrét")
     if _use_pulid:
         _flux_ckpt = acfg.get("flux_ckpt", "flux1-dev-fp8.safetensors")
         _intro = ("Subject to depict (described in Czech): %s\n\n"
