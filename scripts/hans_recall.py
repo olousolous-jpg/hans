@@ -683,6 +683,22 @@ def is_source_query(text: str) -> bool:
         r"\bd[ůu]kaz\b",
         # samostatné „zdroj?" / „odkaz." / „a článek?" — krátký standalone dotaz
         r"^\s*(a\s+)?(zdroj|odkaz|[čc]l[áa]nek|pramen)(\s+pros[íi]m)?\s*[\.!\?]*\s*$",
+        # HANS_SOURCE_QUERY_V2 (5.8.) — doplněno po měření na 305 reálných
+        # zprávách: vzory chytily 7 dotazů, ale ze 7 ZKUŠEBNÍCH formulací
+        # propadly 4. Doložený reálný miss: „muze me ukazat zdroj odkud jsi
+        # cerpal?" (chat 17.7.) — obsahuje „zdroj" i „odkud", ale ani jeden
+        # vzor nesedl, protože „odkud" nebylo následováno „to".
+        # ⚠️ Zkoušeno nahradit mini modelem na Pi (bod 2 z nápadu) — ZAMÍTNUTO:
+        # 9/15, propadly přesně tyhle formulace a u „odkud jsi čerpal?" model
+        # místo klasifikace ZAČAL ODPOVÍDAT („z encyklopedie"). Regex je tu
+        # měřeně lepší; detail v backlogu.
+        r"\b[čc]erpal",                      # „odkud/z čeho jsi čerpal"
+        r"\bodkud\s+(jsi|si|m[áa][šs]|jste)",  # „odkud jsi to vzal/čerpal"
+        r"\bz\s+[čc]eho\s+(jsi|si)\s+(to\s+)?(vzal|m[áa][šs]|[čc]erpal)",
+        r"\bkde\s+(ses|jsi\s+se)\s+(to\s+)?dozv[ěe]d[ěe]l",
+        r"\bm[ůu][žz]e[šs]\s+(to\s+)?dolo[žz]it",
+        r"\bjak\s+v[íi][šs]\s*,?\s*[žz]e",
+        r"\bm[áa][šs]\s+(na\s+to\s+)?(n[ěe]jak[ýy]\s+)?(zdroj|odkaz|pramen)",
     )
     return any(re.search(p, t) for p in pats)
 

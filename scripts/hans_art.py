@@ -1026,6 +1026,25 @@ def _ground_subject(config: dict, db_path: str, subject: str) -> str:
     try:
         from scripts.hans_entities import EntityStore
         es = EntityStore(config, db_path)
+        # HANS_ART_COMMON_NOUN_V1 (5.8.) — OBECNÉ podstatné jméno se NEUKOTVUJE
+        # na pojmenovanou entitu. Entity store je od TOHO, aby poznal JMÉNA
+        # („pan Sorge", „Bud Spencer"); u obecného slova je shoda skoro vždy
+        # náhoda. Doloženo 5.8.: „namaluj kočku" → entita „Kockums" (švédská
+        # loděnice) → prompt „Saab Kockums shipyard in Malmö" → obraz PŘÍSTAVU
+        # S JEŘÁBY. Prahem to opravit NELZE: „kocku" je regulérní prefix
+        # „kockums", takže žádné pravidlo o délce prefixu to od českého
+        # skloňování („hrad"→„hradu") neodliší. Rozlišovač, který k dispozici
+        # JE: uživatel píše jména s velkým písmenem, obecná slova malým.
+        # Bez velkého písmene se grounding přeskočí ÚPLNĚ (i Wikipedia — ta
+        # dělá tutéž chybu) a FLUX beztak ví, jak vypadá kočka.
+        # Souvisí HANS_ENTITY_SURNAME_PERSON_ONLY_V1 (táž třída, jiná větev).
+        if not any(w[:1].isupper() for w in s_clean.split() if w):
+            # Obecné slovo → NEGROUNDOVAT VŮBEC (ani Wikipedií: „kočku" tam
+            # padne na „Kockums", „psa" na „Psaní levou rukou" — týž prefix
+            # problém). Syrový námět převede do angličtiny až scene-prompt,
+            # což je přesně jeho práce, a FLUX ví, jak vypadá kočka.
+            _log.info("art: '%s' je obecné slovo — grounding přeskočen", s_clean)
+            return s
         ent = es.resolve(s, loose=True) or es.resolve(s_clean, loose=True)
         gloss = (ent.get("gloss") if ent else "") or ""
         if gloss.strip():
@@ -1574,7 +1593,12 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
                     subject, loose=True, etype="osoba")
             except Exception:
                 _ent = None
-            if not _ent:
+            # HANS_ART_COMMON_NOUN_V1 — `_resolve_entity` při chybějící entitě
+            # SÁM dohledá na Wikipedii a ULOŽÍ ji. U obecného slova tím do
+            # paměti propašuje nesmysl („kočku" → „Kockums", švédská loděnice),
+            # i když `_ground_subject` níž grounding správně přeskočí. Cesta
+            # k podobě OSOBY beztak dává smysl jen u jmen → stejná brána.
+            if not _ent and _name_shaped(subject):
                 _ent = _resolve_entity(config, diary_db_path, subject)
             # HANS_ART_PERSON_WIKI_LOOKUP_V1 (4.8.) — osobu, kterou Hans JEŠTĚ
             # NEZNÁ, dohledej na Wikipedii a teprve pak rozhodni o podobě.
