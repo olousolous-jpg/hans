@@ -95,6 +95,50 @@ def _comfy_url(config: dict) -> str:
     return _acfg(config).get("comfyui_url", "http://127.0.0.1:8188").rstrip("/")
 
 
+def render_status(config: dict, timeout: float = 3.0) -> Optional[dict]:
+    """HANS_RENDER_STATUS_V1 (5.8.) — běží právě render obrazu?
+
+    Ptáme se ComfyUI na frontu (`/queue`), ne vlastního stavu v procesu:
+    render může spustit hans_art, hans_maker i avatar, a Hans se navíc mohl
+    mezitím restartovat — fronta na PC je jediná pravda, která to všechno vidí.
+
+    Vrací {"running": bool, "pending": int, "prompt": str} nebo None, když
+    ComfyUI neodpovídá (PC spí / zatuhlý) — None = NEVÍM, ne „nemaluje".
+    Krátký timeout schválně: tohle visí na /stav, nesmí ho zdržet.
+
+    ⚠️ Měřeno 5.8.: None NEZNAMENÁ jen „PC dole". Během renderu fronta
+    odpovídá normálně, ale v okamžiku DOKONČENÍ (VAE decode + uvolnění VRAM)
+    ComfyUI na pár sekund přestane odbavovat HTTP a probe vyprší. Proto se
+    při None radši mlčí, než aby se tvrdilo „nemaluji" — volající to nesmí
+    číst jako zápor.
+    """
+    try:
+        import requests
+        r = requests.get("%s/queue" % _comfy_url(config), timeout=timeout)
+        if not r.ok:
+            return None
+        q = r.json() or {}
+    except Exception:
+        return None
+    running = q.get("queue_running") or []
+    pending = q.get("queue_pending") or []
+    out = {"running": bool(running), "pending": len(pending), "prompt": ""}
+    # z běžící úlohy vytáhni POZITIVNÍ prompt: negativ poznáme podle toho, že
+    # začíná naším `_NEG_BASE` (nespoléhat na číslo uzlu — grafy se liší)
+    try:
+        graph = running[0][2] if running and len(running[0]) > 2 else {}
+        for node in (graph or {}).values():
+            if (node or {}).get("class_type") != "CLIPTextEncode":
+                continue
+            txt = ((node.get("inputs") or {}).get("text") or "").strip()
+            if txt and not txt.startswith(_NEG_BASE[:20]):
+                out["prompt"] = txt
+                break
+    except Exception:
+        pass
+    return out
+
+
 def _ollama_url(config: dict) -> str:
     return (config.get("models", {}).get("base_url")
             or config.get("openwebui_direct", {}).get("ollama_url")

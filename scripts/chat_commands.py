@@ -319,6 +319,23 @@ def _cmd_info(handler, name, args) -> str:
         from scripts.hans_persona import persona_name as _pn  # PERSONA_NAME_CONFIGURABLE_V1
         parts.append(f"{_pn(getattr(handler, 'config', {}) or {})} idle modul běží.")
     parts.append(f"Aktuálně mluvím s: {name or 'neznámý'}.")
+    # HANS_RENDER_STATUS_V1 (5.8.) — běží právě malba? Ptáme se fronty ComfyUI
+    # (vidí i render spuštěný jiným modulem nebo před restartem Hanse).
+    # None = ComfyUI neodpovídá → mlčíme, radši nic než tvrdit „nemaluji".
+    try:
+        from scripts.avatar_render import render_status
+        _rs = render_status(getattr(handler, "config", {}) or {})
+    except Exception:
+        _rs = None
+    if _rs is not None:
+        if _rs.get("running"):
+            _q = _rs.get("pending") or 0
+            _p = (_rs.get("prompt") or "").strip()
+            _what = (" — " + _p[:70] + "…") if _p else ""
+            parts.append("Právě maluji obraz%s%s" % (
+                (" (ve frontě další %d)" % _q) if _q else "", _what))
+        else:
+            parts.append("Právě nemaluji.")
     return " ".join(parts) if parts else "Nemám k tomu žádné informace."
 
 
