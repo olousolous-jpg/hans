@@ -727,47 +727,17 @@ class AgentRouter:
     # „co se děje doma?" mu vyšlo jako volná konverzace → potlačil by
     # LEGITIMNÍ report_home_status (změřeno). Rozdíl „ptá se na MĚ × na DŮM"
     # je jiná otázka a chce vlastní příklady — s nimi 12/12.
-    _SOCIAL_SYSTEM = (
-        "Rozhodni, čeho se týká česká otázka položená domácímu asistentovi.\n"
-        "ASISTENT = ptá se na NĚJ samotného (jak se má, co dělá, jeho nálada, "
-        "co je u něj nového).\n"
-        "DUM = ptá se na dění v domácnosti (kdo je doma, co běží v televizi, "
-        "co se děje doma).\n\n"
-        "Příklady:\n„jak se máš?\" -> asistent\n„co děláš?\" -> asistent\n"
-        "„co je u tebe nového?\" -> asistent\n„nudíš se?\" -> asistent\n"
-        "„kdo je doma?\" -> dum\n„co hraje na TV?\" -> dum\n"
-        "„co se děje doma?\" -> dum\n\n"
-        "Odpověz JEDNÍM slovem: asistent nebo dum."
-    )
-
     def _is_small_talk(self, message: str) -> bool:
-        """Ptá se zpráva na HANSE (→ potlač stavovou akci), nebo na DŮM?
-
-        Běží na mini modelu NA PI (viz [[intent-mini-model-on-pi]]) — funguje
-        i s vypnutým PC / v herním módu. Selhání nebo nejednoznačná odpověď
-        → False = akce projde jako dosud (guard nikdy nezhorší dostupnost)."""
-        import json as _json
-        import urllib.request as _url
-        ic = (self.config.get("intent", {}) or {})
-        if not ic.get("use_llm", False):
-            return False
-        body = _json.dumps({
-            "model": ic.get("model", "qwen2.5:1.5b"), "stream": False,
-            "keep_alive": ic.get("keep_alive", "30m"),
-            "options": {"num_predict": 4, "temperature": 0.0},
-            "messages": [{"role": "system", "content": self._SOCIAL_SYSTEM},
-                         {"role": "user", "content": message or ""}],
-        }).encode("utf-8")
+        """HANS_AGENT_SOCIAL_GUARD_V1 — ptá se zpráva na HANSE (→ potlač
+        stavovou akci), nebo na DŮM? Detektor je od 5.8. sdílený
+        (`hans_intent.is_about_self`), protože ho potřebuje i chat pro grounded
+        blok o sobě — dvě kopie promptu by se rozešly."""
         try:
-            url = str(ic.get("base_url", "http://127.0.0.1:11434")).rstrip("/")
-            req = _url.Request(url + "/api/chat", body,
-                               {"Content-Type": "application/json"})
-            with _url.urlopen(req, timeout=int(ic.get("timeout", 20))) as r:
-                out = _json.loads(r.read())["message"]["content"]
+            from scripts.hans_intent import is_about_self
+            return is_about_self(message, self.config)
         except Exception as e:
             _log.debug("agent social gate: %s", e)
             return False
-        return (out or "").strip().lower().startswith("asist")
 
     def propose(self, handler, name: str, message: str) -> Optional[str]:
         """Vrátí propose_text (Hansův návrh + [ano/ne]) nebo None (běžný chat)."""

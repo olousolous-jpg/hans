@@ -679,6 +679,38 @@ class OpenWebUIDirectHandler:
             # 1) intent — je dotaz faktický?
             res = _intent.classify(str(_text))
             if not res.is_factual:
+                # HANS_SELF_STATE_V1 (5.8.) — volná konverzace ještě NEZNAMENÁ
+                # „bez faktů". Když se ptá NA HANSE („jak se máš?", „co jsi
+                # dnes dělal?"), dej mu jeho VLASTNÍ dnešek z deníku. Bez toho
+                # model plodil vatu („Službu plním, a to je pro mne
+                # dostatečné") nebo komoleniny („historii zeleného, pana").
+                # Nálada + její důvod už v promptu jsou (mood_ctx), tohle
+                # dodává CO dnes reálně dělal. Detektor sdílený s agentem.
+                try:
+                    from scripts.hans_intent import is_about_self
+                    if is_about_self(str(_text), self.config):
+                        from scripts.hans_recall import self_state_facts
+                        _dbp_ss = (self.config.get("diary_db")
+                                   or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                                   or "data/hans_diary.db")
+                        _mo = _mr = ""
+                        try:
+                            _hi_m = getattr(self, '_hans_idle', None)
+                            _mobj = getattr(_hi_m, '_mood', None) if _hi_m else None
+                            if _mobj is not None:
+                                _mo = getattr(_mobj, 'mood', '') or ''
+                                _mr = getattr(getattr(_mobj, '_state', None),
+                                              'shift_reason', '') or ''
+                        except Exception:
+                            pass
+                        _ss = self_state_facts(_dbp_ss, mood=_mo, mood_reason=_mr)
+                        if _ss:
+                            logging.getLogger(__name__).info(
+                                'HANS_SELF_STATE_V1 → blok o sobě (%d zn)', len(_ss))
+                            self._grounding_outcome = 'self_state'
+                            return '\n\n' + _ss
+                except Exception as _sse:
+                    logging.getLogger(__name__).debug('self_state: %s', _sse)
                 self._grounding_outcome = 'nonfactual'
                 return ''   # volná konverzace → osobnost, žádný retrieval
 

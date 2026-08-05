@@ -302,6 +302,20 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
         return text, 0
     target = address(partner, config)          # správné oslovení partnera
     n = 0
+    # HANS_ADDRESSEE_V3 (5.8.) — nejdřív srovnej oslovení SAMOTNÉHO partnera.
+    # Model bere jméno z konfiguračního klíče, takže osloví 1. pádem a malým
+    # písmenem („Odpovídám vám, jana:" místo „Jano"). Doloženo 4.8. 17:53;
+    # v týdenním vzorku 1/103 odpovědí, takže jde o variabilitu, ne o pravidlo —
+    # oprava je ale zadarmo, brzda po odpovědi běží tak jako tak. Řeší i
+    # diakritiku (config klíč bez háčků → správný tvar s diakritikou).
+    for _form in {str(partner), display_name(partner, config)}:
+        if not _form or len(_form) < 3 or _form.lower() == target.lower():
+            continue
+        # jen v OSLOVENÍ: za čárkou / před dvojtečkou — ne ve 3. osobě
+        _p_addr = re.compile(r"(?<=,)(\s*)" + re.escape(_form) + r"\b(?=\s*[:,.!?]|\s)",
+                             re.IGNORECASE)
+        text, _c = _p_addr.subn(lambda m: m.group(1) + target, text)
+        n += _c
     for pname in known:
         if str(pname).strip().lower() == str(partner).strip().lower():
             continue

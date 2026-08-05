@@ -409,3 +409,69 @@ class HansIntent:
             return True
         _log.debug("intent LLM: nejednoznačné %r → keyword fallback", low[:30])
         return None
+
+
+# ── HANS_SELF_STATE_V1 (5.8.) — „ptá se na MĚ?" jako sdílený detektor ────────
+# Vzniklo v `hans_agent` jako brána proti tomu, aby router odpověděl na „jak se
+# máš?" hlášením domácnosti. Teď to potřebuje i chat (grounded blok o sobě), tak
+# je to tady na JEDNOM místě — druhé použití = čas vytáhnout to ze zdroje
+# (jinak vzniknou dvě kopie s mírně jiným promptem).
+#
+# Proč vlastní prompt a ne obecné „faktický × volný": změřeno 4.8., že obecný
+# klasifikátor „co se děje doma?" označí za volnou konverzaci → potlačil by
+# legitimní dotaz na domácnost. Rozdíl „na MĚ × na DŮM" je jiná otázka a chce
+# vlastní příklady — s nimi 12/12.
+_SELF_SYSTEM = (
+    "Rozhodni, čeho se týká česká otázka položená domácímu asistentovi.\n"
+    "ASISTENT = ptá se na NĚJ samotného (jak se má, co dělá, jeho nálada, "
+    "co je u něj nového, co dnes dělal).\n"
+    "DUM = ptá se na dění v domácnosti (kdo je doma, co běží v televizi, "
+    "co se děje doma).\n\n"
+    "Příklady:\n„jak se máš?\" -> asistent\n„co děláš?\" -> asistent\n"
+    "„co je u tebe nového?\" -> asistent\n„nudíš se?\" -> asistent\n"
+    "„co jsi dnes dělal?\" -> asistent\n"
+    "„kdo je doma?\" -> dum\n„co hraje na TV?\" -> dum\n"
+    "„je někdo v pokoji?\" -> dum\n"
+    "„co se děje doma?\" -> dum\n\n"
+    "Odpověz JEDNÍM slovem: asistent nebo dum."
+)
+
+_self_cache: dict = {}
+
+
+def is_about_self(message: str, config: dict) -> bool:
+    """Ptá se zpráva na HANSE (jeho stav/náladu/činnost)? Mini model na Pi.
+
+    Selhání / nejednoznačná odpověď → False (chovej se jako dosud). Vypnutý
+    `intent.use_llm` → False, žádný fallback na seznam slov: tenhle detektor
+    JE ta náhrada za seznam slov."""
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    ic = (config or {}).get("intent", {}) or {}
+    if not ic.get("use_llm", False):
+        return False
+    if msg in _self_cache:
+        return _self_cache[msg]
+    import json as _json
+    import urllib.request as _url
+    body = _json.dumps({
+        "model": ic.get("model", "qwen2.5:1.5b"), "stream": False,
+        "keep_alive": ic.get("keep_alive", "30m"),
+        "options": {"num_predict": 4, "temperature": 0.0},
+        "messages": [{"role": "system", "content": _SELF_SYSTEM},
+                     {"role": "user", "content": msg}],
+    }).encode("utf-8")
+    try:
+        url = str(ic.get("base_url", "http://127.0.0.1:11434")).rstrip("/")
+        req = _url.Request(url + "/api/chat", body,
+                           {"Content-Type": "application/json"})
+        with _url.urlopen(req, timeout=int(ic.get("timeout", 20))) as r:
+            out = _json.loads(r.read())["message"]["content"]
+    except Exception as e:
+        _log.debug("is_about_self: %s", e)
+        return False
+    res = (out or "").strip().lower().startswith("asist")
+    if len(_self_cache) < 256:
+        _self_cache[msg] = res
+    return res

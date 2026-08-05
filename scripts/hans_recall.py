@@ -1474,3 +1474,78 @@ def knowledge_check_bypass(db_path: str, user_text: str,
             "z tréninku, ale nechci to vydávat za vlastní paměť). "
             "Kdybyste chtěl, mohu si to zařadit do studia — stačí říct "
             "'nastuduj %s'." % (topic, oslov, topic))
+
+
+# ── HANS_SELF_STATE_V1 (5.8.) — grounded blok „jak se mám a co jsem dnes dělal"
+def self_state_facts(db_path: str, max_items: int = 6,
+                     mood: str = "", mood_reason: str = "") -> str:
+    """Stručný VÝČET dnešní Hansovy činnosti z deníku (fakta, ne vyprávění).
+
+    Proč: na „jak se máš?" / „co jsi dnes dělal?" model dosud odpovídal z ničeho
+    a plodil vatu („Službu plním, a to je pro mne dostatečné") nebo komoleniny
+    („zkoumal jsem historii zeleného, pana"). `recent_activity_answer` sice
+    existuje, ale visí na frázovém detektoru a na dotaz typu „jak se máš" se
+    nepřipojí. Tenhle blok je krátký a dává se do promptu jako FAKTA, ze
+    kterých má persona čerpat — Hans pak řekne, co doopravdy dělal.
+
+    Vrací "" když dnes není co hlásit (pak ať model nemluví o ničem).
+    """
+    import datetime as _dt
+    start = _dt.datetime.now().replace(hour=0, minute=0, second=0,
+                                       microsecond=0).timestamp()
+    # (label, event_type) — pořadí = důležitost pro vyprávění o dni
+    cats = [("studoval jsem", "study_note"),
+            ("napsal jsem dílo", "work_artifact"),
+            ("namaloval jsem", "artwork"),
+            ("četl jsem", "web_read"),
+            ("zapsal jsem si ke knize", "book_reflection"),
+            ("napadlo mě", "synthesis_idea"),
+            ("uvědomil jsem si o sobě", "self_critique"),
+            ("hovořil jsem s Koláčem", "teddy_dialog")]
+    out = []
+    conn = None
+    try:
+        conn = _ro(db_path)
+        conn.row_factory = sqlite3.Row
+        for label, etype in cats:
+            rows = conn.execute(
+                "SELECT title, note, data FROM diary WHERE event_type=? "
+                "AND ts >= ? ORDER BY id DESC LIMIT 2", (etype, start)).fetchall()
+            if not rows:
+                continue
+            det = []
+            for r in rows:
+                t = (r["title"] or "").strip()
+                if not t:
+                    t = ((r["note"] or r["data"] or "").strip().split("\n")[0])[:60]
+                if t:
+                    det.append(t[:70])
+            if det:
+                out.append("%s: %s" % (label, "; ".join(det)))
+            if len(out) >= max_items:
+                break
+    except Exception as e:
+        _log.debug("self_state_facts: %s", e)
+        return ""
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    head = []
+    if mood:
+        head.append("nálada: %s%s" % (
+            mood, (" (důvod: %s)" % mood_reason) if mood_reason else ""))
+    if not out and not head:
+        return ""
+    # Instrukce s TVAREM odpovědi: samotná fakta nestačila — persona je jen
+    # olízla a vrátila vatu („Službu plním, a to je pro mne dostatečné").
+    # Model potřebuje říct, KOLIK a CO má z bloku použít.
+    return ("FAKTA O MĚ A O MÉM DNEŠKU — čerpej z NICH, nic si nepřidávej "
+            "(co tu není, dnes nebylo):\n"
+            + ("- " + "\n- ".join(head + out) if (head or out) else "")
+            + "\n\nKdyž se ptá, jak se mám nebo co jsem dělal: odpověz 2–4 větami, "
+              "řekni jak se cítím a PROČ, a jmenuj DVĚ KONKRÉTNÍ věci z dneška "
+              "(téma studia, název díla, co jsem četl). Žádné obecné fráze "
+              "typu „plním službu\" — ty nic neříkají.")
