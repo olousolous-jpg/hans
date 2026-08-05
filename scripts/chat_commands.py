@@ -1829,6 +1829,18 @@ def _cmd_smer(handler, name, args) -> str:
         out.append("   (/smer schválit — /smer ne — /smer <vlastní text>)")
     elif not cur:
         out.append("(/smer teď — zvážím ho ze studia a tvorby)")
+    # HANS_ART_INTENT_V1 (5.8.) — trvalé tvůrčí záměry patří ke směru: destiluje
+    # je reflexe tvorby z reálných děl, tak ať jsou vidět a dají se ověřit.
+    try:
+        from scripts.hans_art_intent import active_intentions as _ai
+        _ints = _ai(db)
+    except Exception:
+        _ints = []
+    if _ints:
+        out.append("")
+        out.append("🎨 V tvorbě sleduju:")
+        for _t in _ints:
+            out.append("   • %s" % _t)
     return NL_RUNTIME.join(out)
 
 

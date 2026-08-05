@@ -65,11 +65,22 @@ ACTIVITIES = {
 ACTIVITY_FRAMING = "character portrait, upper body, waist-up framing, hands visible"
 ACTIVITY_SEED_OFFSET = 0
 
-_NEG = ("lowres, blurry, deformed, extra limbs, bad anatomy, watermark, text, "
-        "signature, multiple people, nsfw, "
-        # AVATAR_ACTIVITY_V1 — anti-drift identity: reading kontext táhl „učence"
-        # (brýle, knírek, starší/hubenější). Drž čistou tvář napříč rendery.
-        "glasses, eyeglasses, moustache, mustache, beard, facial hair")
+# HANS_NEG_SPLIT_V1 (5.8.) — negativ rozdělen na OBECNÝ a AVATAROVÝ.
+# Doloženo: `_NEG` (celý, včetně avatarové části) se sdílel do KAŽDÉHO rendru
+# přes `_comfy_workflow*`, takže když Hans maloval Salvadora Dalího, měl
+# v negativním promptu „moustache" — aktivně si odmazával nejcharakterističtější
+# rys té osoby (na obraze z 4.8. knír opravdu chybí a podoba nesedí; totéž
+# vousy u Jacka Blacka, plnovous u Gandalfa). Anti-drift patří JEN na Hansovu
+# vlastní tvář, ne na portréty cizích lidí.
+_NEG_BASE = ("lowres, blurry, deformed, extra limbs, bad anatomy, watermark, "
+             "text, signature, multiple people, nsfw")
+
+# AVATAR_ACTIVITY_V1 — anti-drift identity: reading kontext táhl „učence"
+# (brýle, knírek, starší/hubenější). Drž čistou tvář napříč rendery.
+_NEG_AVATAR = "glasses, eyeglasses, moustache, mustache, beard, facial hair"
+
+# Výchozí = obojí → avatarové cesty (avatar_render, paint_self) se nemění.
+_NEG = _NEG_BASE + ", " + _NEG_AVATAR
 
 # Pole descriptoru, co tvoří popis vzhledu (anglicky).
 _APPEARANCE = ("role", "attire", "age_look", "build", "demeanor", "setting",
@@ -165,8 +176,10 @@ def _ollama_warm(config: dict, model: str) -> None:
 
 # ── ComfyUI API ─────────────────────────────────────────────────────────────
 def _comfy_workflow(ckpt: str, prompt: str, seed: int, w: int, h: int,
-                    steps: int, cfg: float) -> dict:
-    """Minimální SDXL txt2img graf (ComfyUI API format)."""
+                    steps: int, cfg: float, negative: str = "") -> dict:
+    """Minimální SDXL txt2img graf (ComfyUI API format).
+    negative="" → výchozí `_NEG` (obecný + avatarový anti-drift). Cesty, které
+    malují CIZÍ osobu, si předají `_NEG_BASE` (HANS_NEG_SPLIT_V1)."""
     return {
         "4": {"class_type": "CheckpointLoaderSimple",
               "inputs": {"ckpt_name": ckpt}},
@@ -175,7 +188,7 @@ def _comfy_workflow(ckpt: str, prompt: str, seed: int, w: int, h: int,
         "6": {"class_type": "CLIPTextEncode",
               "inputs": {"text": prompt, "clip": ["4", 1]}},
         "7": {"class_type": "CLIPTextEncode",
-              "inputs": {"text": _NEG, "clip": ["4", 1]}},
+              "inputs": {"text": negative or _NEG, "clip": ["4", 1]}},
         "3": {"class_type": "KSampler",
               "inputs": {"seed": seed, "steps": steps, "cfg": cfg,
                          "sampler_name": "dpmpp_2m", "scheduler": "karras",
@@ -295,7 +308,8 @@ def _comfy_upload_image(base: str, local_path: str) -> Optional[str]:
 
 def _comfy_workflow_img2img(ckpt: str, prompt: str, seed: int, image_name: str,
                             denoise: float, steps: int, cfg: float,
-                            vae_name: str = "sdxl_vae.safetensors") -> dict:
+                            vae_name: str = "sdxl_vae.safetensors",
+                            negative: str = "") -> dict:
     """SDXL img2img graf — LoadImage(template) → VAEEncode → KSampler(denoise<1).
     AVATAR_IMG2IMG_VAE_FIX_V1: VAE z checkpointu sd_xl_base dělá u img2img encode
     barevné fleky/ghost text → samostatný VAELoader (sdxl-vae-fp16-fix) pro
@@ -307,7 +321,7 @@ def _comfy_workflow_img2img(ckpt: str, prompt: str, seed: int, image_name: str,
         "11": {"class_type": "VAEEncode",
                "inputs": {"pixels": ["10", 0], "vae": vae}},
         "6":  {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["4", 1]}},
-        "7":  {"class_type": "CLIPTextEncode", "inputs": {"text": _NEG, "clip": ["4", 1]}},
+        "7":  {"class_type": "CLIPTextEncode", "inputs": {"text": negative or _NEG, "clip": ["4", 1]}},
         "3":  {"class_type": "KSampler",
                "inputs": {"seed": seed, "steps": steps, "cfg": cfg,
                           "sampler_name": "dpmpp_2m", "scheduler": "karras",
@@ -326,7 +340,8 @@ def _comfy_workflow_ipadapter(ckpt: str, prompt: str, seed: int, w: int, h: int,
                               steps: int, cfg: float, image_name: str,
                               ipadapter_file: str, clip_vision_name: str,
                               weight: float = 0.75,
-                              weight_type: str = "linear") -> dict:
+                              weight_type: str = "linear",
+                              negative: str = "") -> dict:
     """SDXL txt2img graf s IP-ADAPTEREM: prázdný latent (NOVÁ kompozice/póza dle
     dimenzí w×h) + referenční obrázek přes IP-Adapter → drží PODOBU reference,
     ale volná kompozice (např. celá postava z portrétní reference)."""
@@ -338,7 +353,7 @@ def _comfy_workflow_ipadapter(ckpt: str, prompt: str, seed: int, w: int, h: int,
         "6": {"class_type": "CLIPTextEncode",
               "inputs": {"text": prompt, "clip": ["4", 1]}},
         "7": {"class_type": "CLIPTextEncode",
-              "inputs": {"text": _NEG, "clip": ["4", 1]}},
+              "inputs": {"text": negative or _NEG, "clip": ["4", 1]}},
         "10": {"class_type": "LoadImage",
                "inputs": {"image": image_name}},
         "11": {"class_type": "IPAdapterModelLoader",

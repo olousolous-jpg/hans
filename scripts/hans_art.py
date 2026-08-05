@@ -31,6 +31,7 @@ from scripts.avatar_render import (
     _first_image, _comfy_fetch_image,
     _ollama_loaded, _ollama_unload, _comfy_free, _ollama_warm,
     _comfy_upload_image, _comfy_workflow_img2img, _comfy_workflow_ipadapter,
+    _NEG_BASE,
 )
 
 _log = logging.getLogger("hans_art")
@@ -286,7 +287,7 @@ def _looks_english(s: str) -> bool:
 
 def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
                   system: str = None, source_intro: str = None,
-                  en_fallback: str = None) -> Optional[str]:
+                  en_fallback: str = None, prev: dict = None) -> Optional[str]:
     """LLM (levný, keep_alive=0) → anglický SDXL scene prompt. Fallback šablona.
     HANS_ART_LESSON_V1: když db_path, vloží do promptu ponaučení z minulých obrazů.
     HANS_DREAMS_V1: system+source_intro lze přepsat (snová varianta místo knižní)."""
@@ -355,10 +356,38 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     model = str(acfg.get("prompt_model", "qwen2.5:7b"))
     user = (source_intro if source_intro is not None
             else f"Book: {title}\n\nReader's reflection (Czech):\n{reflection}\n\n")
-    lessons = _recent_lessons(db_path)
+    # HANS_ART_INTENT_V1 (5.8.) — TRVALÉ ZÁMĚRY mají přednost před posledními
+    # ponaučeními. Ponaučení jsou reakce na JEDEN obraz a jsou zaměnitelná
+    # (115 unikátních textů, ale pořád „introduce subtle X to enhance visual
+    # depth") → tři náhodná z posledních dnů nedávají směr. Záměr říká, co
+    # Hans dlouhodobě sleduje; destiluje ho týdenní reflexe z reálných děl.
+    # Ponaučení zůstávají jako DOPLNĚK (konkrétní řemeslo), ne jako hlavní
+    # vodítko — a když ještě žádný záměr není, chová se to jako dřív.
+    _intents = []
+    try:
+        from scripts.hans_art_intent import active_intentions
+        _intents = active_intentions(db_path)
+    except Exception:
+        _intents = []
+    if _intents:
+        user += ("YOUR STANDING ARTISTIC INTENT (what you pursue across works — "
+                 "let it shape this piece):\n- " + "\n- ".join(_intents) + "\n\n")
+        _log.info("art: scene prompt nese %d trvalých záměrů", len(_intents))
+    # HANS_ART_CONTINUITY_V1 — předchozí dílo téže série: nová práce na něj
+    # NAVAZUJE. „Nes jedno dál, jedno vědomě změň" je záměrně asymetrické —
+    # čistá variace by dala 20× tentýž obraz, čistá novota zas žádnou linku.
+    if prev and prev.get("prompt"):
+        user += ("PREVIOUS WORK IN THIS SERIES (%s) — you painted it and judged it:\n"
+                 "  scene: %s\n  your own verdict: %s\n"
+                 "This new piece CONTINUES that work: carry ONE element forward "
+                 "(a motif, the light, the palette) and deliberately CHANGE one "
+                 "thing so it moves on. Do not repeat the same scene.\n\n"
+                 % (prev.get("title") or "", prev["prompt"], prev.get("verdict") or "—"))
+        _log.info('art: navazuji na předchozí dílo „%s"', prev.get("title") or "?")
+    lessons = _recent_lessons(db_path, 2 if _intents else 3)
     if lessons:
-        user += ("LEARNED GUIDANCE from your past paintings (respect these — they "
-                 "make the next piece better):\n- " + "\n- ".join(lessons) + "\n\n")
+        user += ("Craft notes from recent pieces (secondary to the intent above):"
+                 "\n- " + "\n- ".join(lessons) + "\n\n")
         _log.info("art: scene prompt zohledňuje %d ponaučení", len(lessons))
     if medium:
         user += ("MEDIUM: render this as %s (or another fine-art medium if it "
@@ -628,6 +657,33 @@ def _recent_lessons(db_path: str, limit: int = 3) -> list:
     return out
 
 
+_NEG_HANDS = "deformed hands, extra fingers, fused fingers, mutated hands"
+
+
+def _person_negative(db_path: str) -> str:
+    """HANS_PERSON_NEG_V1 (5.8.) — negativ pro portrét CIZÍ osoby.
+
+    Dvě opravy naráz:
+      (1) `_NEG_BASE` místo `_NEG` → bez avatarového anti-driftu (jinak měl
+          Dalí v negativu „moustache" a Jack Black „beard").
+      (2) cesta podoby osoby si stavěla workflow sama a `_lesson_negatives`
+          NIKDY nevolala (ty jsou jen v `_render_image`) → Hans se na ní
+          nemohl poučit, ani kdyby si ponaučení o rukách zapsal. Teď se
+          napojují, plus ruce natvrdo: portrét je má skoro vždy v záběru
+          a jsou to nejslabší místo modelu.
+
+    Ruce se NEŘEŠÍ oříznutím kompozice (zvažováno, uživatel zamítl 5.8.):
+    radši znetvořené ruce v obraze než ohýbat kompozici, aby nebyly vidět."""
+    parts = [_NEG_BASE, _NEG_HANDS]
+    try:
+        extra = _lesson_negatives(_recent_lessons(db_path))
+    except Exception:
+        extra = ""
+    if extra:
+        parts.append(extra)
+    return ", ".join(dict.fromkeys(", ".join(parts).split(", ")))
+
+
 def _lesson_negatives(lessons: list) -> str:
     """Deterministicky odvodí extra negativní termy z ponaučení (keyword trigger)."""
     blob = " ".join(lessons).lower()
@@ -668,9 +724,38 @@ def _comfy_ready(config: dict) -> bool:
     return False
 
 
+def _last_in_series(db_path: str, series: str) -> Optional[dict]:
+    """HANS_ART_CONTINUITY_V1 (5.8.) — poslední Hansovo dílo TÉŽE série
+    (day/dream/home/book) i s jeho vlastním verdiktem. Slouží k tomu, aby další
+    obraz na předchozí NAVAZOVAL, ne aby začínal od nuly.
+    Záměrně jen v rámci série: řetězit „pes" do „mého dne" by dalo nesmysl."""
+    if not db_path or not series:
+        return None
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        row = con.execute(
+            "SELECT title, note, data FROM diary WHERE event_type='artwork' "
+            "AND data LIKE ? ORDER BY ts DESC LIMIT 1",
+            ('%"source": "' + series + '"%',)).fetchone()
+        con.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    title, note, data = row
+    try:
+        prompt = (json.loads(data or "{}") or {}).get("prompt") or ""
+    except Exception:
+        prompt = ""
+    if not prompt:
+        return None
+    return {"title": title or "", "verdict": (note or "")[:300], "prompt": prompt[:400]}
+
+
 def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
                   en_fallback: str = None,
-                  scene_system: str = None, scene_intro: str = None):
+                  scene_system: str = None, scene_intro: str = None,
+                  series: str = ""):
     """Vyrenderuje 1 obraz přes ComfyUI/SDXL. Vrací (rel_path, prompt, vision_desc)
     nebo None. VRAM orchestrace uvnitř (unload LLM → render → _comfy_free →
     llava vize → warm hans-czech). vision_desc = llava popis renderu pro hodnocení
@@ -704,7 +789,8 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
 
     prompt = _scene_prompt(config, title, reflection, db_path,
                            system=scene_system, source_intro=scene_intro,
-                           en_fallback=en_fallback)
+                           en_fallback=en_fallback,
+                           prev=_last_in_series(db_path, series) if series else None)
     # HANS_ART_SAFE_FALLBACK_V1 — _scene_prompt vrátí None, když LLM selhal a
     # není bezpečný anglický námět → ODLOŽ render (radši žádný obraz než garbage
     # z nepřeloženého českého námětu, doloženo 30.7. „domov" → muž na ulici).
@@ -735,7 +821,13 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
                                       int(acfg.get("flux_steps", 20)),
                                       float(acfg.get("flux_guidance", 3.5)))
         else:
-            wf = _comfy_workflow(ckpt, prompt, seed, w, h, steps, cfg_s)
+            # HANS_NEG_SPLIT_V1 — `_NEG_BASE` bez avatarového anti-driftu:
+            # tudy jde VŠECHNA obecná malba (den, sen, kniha, námět na
+            # požádání), takže „moustache/beard/glasses" v negativu srážel
+            # každou vousatou postavu (doloženo Gandalf 25.7.). Anti-drift
+            # zůstává jen na Hansově vlastní tváři (paint_self/avatar_render).
+            wf = _comfy_workflow(ckpt, prompt, seed, w, h, steps, cfg_s,
+                                 negative=_NEG_BASE)
         # HANS_ART_LESSON_V1 — dolň negativní prompt podle ponaučení z minulých obrazů
         extra_neg = _lesson_negatives(_recent_lessons(db_path))
         if extra_neg and isinstance(wf.get("7"), dict):
@@ -1368,9 +1460,11 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
                 float(pcfg.get("pulid_weight", 0.9)))
             _log.info("art: podoba osoby FLUX+PuLID start (%s) — %.90s", nm, prompt)
         else:
+            _pneg = _person_negative(diary_db_path)
             wf = _comfy_workflow_img2img(ckpt, prompt, seed, img_name, dn, steps,
-                                         cfg_s)
-            _log.info("art: podoba osoby img2img start (%s, denoise %.2f)", nm, dn)
+                                         cfg_s, negative=_pneg)
+            _log.info("art: podoba osoby img2img start (%s, denoise %.2f) — neg: %.90s",
+                      nm, dn, _pneg)
         pid = _comfy_submit(base, wf, client_id)
         if pid:
             hist = _comfy_wait(base, pid, timeout=rtimeout)
@@ -2099,7 +2193,8 @@ def paint_dream(config: dict, diary_db_path: str) -> bool:
     scene_intro = "A dream (described in Czech):\n%s\n\n" % text
     res = _render_image(config, title, text, diary_db_path,
                         en_fallback="a surreal, dreamlike scene, soft and atmospheric",
-                        scene_system=_DREAM_SCENE_SYSTEM, scene_intro=scene_intro)
+                        scene_system=_DREAM_SCENE_SYSTEM, scene_intro=scene_intro,
+                        series="dream")
     if not res:
         _log.warning("art: sen se nevyrenderoval — retry příště")
         return False
@@ -2247,7 +2342,8 @@ def paint_day(config: dict, diary_db_path: str) -> bool:
     scene_intro = "A person's day and mood:\n%s\n\n" % source
     res = _render_image(config, title, source, diary_db_path,
                         en_fallback="a quiet everyday scene from domestic life",
-                        scene_system=_DAY_SCENE_SYSTEM, scene_intro=scene_intro)
+                        scene_system=_DAY_SCENE_SYSTEM, scene_intro=scene_intro,
+                        series="day")
     if not res:
         _log.warning("art: obraz dne se nevyrenderoval — retry příště")
         return False

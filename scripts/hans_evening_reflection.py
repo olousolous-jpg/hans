@@ -428,6 +428,48 @@ class HansEveningReflection:
                   topic, len(text))
         return text
 
+    _INTENT_SYSTEM = (
+        "Jsi kurátor. Dostaneš PŘEHLED toho, co autor v posledních dnech "
+        "vytvořil, a jeho vlastní ohlédnutí. Pojmenuj 2 až 3 TRVALÉ TVŮRČÍ "
+        "ZÁMĚRY — co autor dlouhodobě sleduje, ne rada k jednomu obrazu.\n"
+        "PRAVIDLA:\n"
+        "  1. Každý záměr max 12 slov, v první osobě („Chci…\", „Hledám…\").\n"
+        "  2. Musí vycházet z PŘEDLOŽENÝCH děl — nic si nepřidávej.\n"
+        "  3. ŽÁDNÉ technické rady typu „přidej hloubku pozadí\" — to je "
+        "ponaučení k jednomu obrazu, ne záměr.\n"
+        "Vrať POUZE JSON pole 2–3 řetězců, nic víc."
+    )
+
+    def _distill_art_intentions(self, facts: str, reflection: str) -> int:
+        """Z reflexe udělej 2–3 trvalé záměry. 0 = nezměněno (staré zůstávají)."""
+        import json as _json
+        import re as _re
+        try:
+            from scripts.ollama_client import ollama_generate
+            from scripts.hans_art_intent import set_intentions
+        except Exception:
+            return 0
+        model = (self._config.get("evening_reflection", {}) or {}).get(
+            "model") or "jobautomation/OpenEuroLLM-Czech:latest"
+        raw = ollama_generate(
+            model=model,
+            prompt="%s\n\nAutorovo ohlédnutí:\n%s\n\nJSON:" % (facts[:2200], reflection[:900]),
+            system=self._INTENT_SYSTEM, config=self._config,
+            timeout=180, keep_alive=0,
+            options={"temperature": 0.3, "num_predict": 220})
+        if not raw:
+            return 0
+        m = _re.search(r"\[.*\]", raw, _re.S)
+        if not m:
+            return 0
+        try:
+            items = _json.loads(m.group(0))
+        except Exception:
+            return 0
+        texts = [str(x).strip() for x in items
+                 if isinstance(x, (str,)) and 8 <= len(str(x).strip()) <= 200]
+        return set_intentions(self._diary_path, texts)
+
     def reflect_on_creations(self, date_str=None, window_days=14):
         """HANS_CREATION_REFLECTION_V1 (D) — periodická reflexe vlastní tvorby
         (úvahy/obrazy/eseje) jako SEBEPOZNÁNÍ. -> deník + RAG. NEvolá _extract_stances
@@ -486,6 +528,16 @@ class HansEveningReflection:
             db.close()
         except Exception as e:
             _log.warning("creation reflection diary write failed: %s", e)
+        # HANS_ART_INTENT_V1 (5.8.) — z reflexe DESTILUJ 2–3 TRVALÉ ZÁMĚRY.
+        # Ponaučení k jednotlivým obrazům jsou zaměnitelná („introduce subtle X
+        # to enhance visual depth" ve 115 převlecích) a do promptu se vracela
+        # poslední tři → Hans dokola dostával tři variace téže rady a nic se
+        # nekumulovalo. Záměr je jiná vrstva: co dlouhodobě sleduje. Mění se
+        # POMALU a vzniká z toho, co SKUTEČNĚ vytvořil (facts výše), ne z ničeho.
+        try:
+            self._distill_art_intentions(facts, text)
+        except Exception as _ie:
+            _log.debug("destilace záměrů: %s", _ie)
         if self._knowledge and self._knowledge.enabled:
             try:
                 self._knowledge.upload(
