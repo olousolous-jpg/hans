@@ -2133,9 +2133,21 @@ class HansRoutine:
                         _due_cr = True
                 if (_due_cr and self._reflection is not None
                         and hasattr(self._reflection, 'reflect_on_creations')):
-                    self._last_creation_reflection = today
-                    self._save_routine_state()
-                    self._reflection.reflect_on_creations()
+                    # HANS_CREATION_REFLECTION_GUARD_FIX_V1 (5.8.) — razítko se
+                    # dávalo PŘED voláním, takže neúspěch (mozek dole → text=None,
+                    # nebo málo tvorby) zablokoval reflexi na CELÝ TÝDEN.
+                    # Doloženo: routine_state hlásil běh 30.7., ale poslední
+                    # `creation_reflection` v deníku je z 16.7. — dvacet dní ticha
+                    # při 141 obrazech za měsíc. Deferral-safe vzor (jako studium
+                    # a syntéza): razítkuj AŽ po úspěchu, jinak zkus příští noc.
+                    _cr = self._reflection.reflect_on_creations()
+                    if _cr:
+                        self._last_creation_reflection = today
+                        self._save_routine_state()
+                        _log.info("Reflexe tvorby: zapsána")
+                    else:
+                        _log.debug("Reflexe tvorby: neproběhla (mozek/málo dat) "
+                                   "— zkusím příště")
             except Exception as _cre:
                 _log.warning("creation reflection selhala: %s", _cre)
 
