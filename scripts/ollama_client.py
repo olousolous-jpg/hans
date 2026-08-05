@@ -42,7 +42,19 @@ def ollama_unload_all(ollama_url: str | None = None,
         models = [m.get("model") or m.get("name")
                   for m in (r.json() or {}).get("models", [])]
     except Exception as exc:
-        _log.warning("unload_all: /api/ps selhal: %s", exc)
+        # HANS_UNLOAD_QUIET_V1 (5.8.) — když Ollama vůbec neběží (noční
+        # shutdown PC / herní mód), NENÍ co uvolňovat a hláška je šum: 138
+        # WARNINGů za noc 4.→5.8., tj. 90 % všech. Nedostupný endpoint =
+        # DEBUG; skutečné chyby (běžící server odpoví chybou) zůstávají
+        # WARNING, ať se neschová něco reálného.
+        _unreachable = isinstance(
+            exc, (requests.exceptions.ConnectionError,
+                  requests.exceptions.Timeout))
+        if _unreachable:
+            _log.debug("unload_all: Ollama nedostupná (%s) — není co uvolnit",
+                       type(exc).__name__)
+        else:
+            _log.warning("unload_all: /api/ps selhal: %s", exc)
     n = 0
     for m in models:
         if not m:

@@ -1826,12 +1826,32 @@ class HansRoutine:
             # dalších úloh (rozdělaná doběhne), ať se smyčka dostane k vypnutí PC;
             # (b) těžká analytika rozpočet IGNORUJE — vyhladovět se nesmí, přesně
             # kvůli ní se budí; (c) `night_drain_all=false` = původní 1 task/tick.
+            # HANS_NIGHT_DRAIN_BRAIN_GATE_V1 (5.8.) — všechny kreativní úlohy
+            # jsou LLM úlohy. Když je mozek dole (noční shutdown PC / herní
+            # mód), NEMÁ smysl je zkoušet: každá udělá plný pokus a zaloguje
+            # „deferred". Doloženo v noci 4.→5.8.: 411 řádků mezi 00:00–03:00,
+            # protože DRAIN (4.8.) nechá běžet všechny úlohy každý tick, ne
+            # jednu — chování je správné, jen se to trojnásobně projevilo
+            # v logu. Jedna sonda za tick místo N marných pokusů; jakmile PC
+            # ve 3:00 naběhne, drain se rozjede bez zdržení (proto NE throttle
+            # na čas — ten by práci po probuzení zdržel až o 30 min).
+            # Vzor HANS_BRAIN_GATE_V1 / HANS_STUDY_BRAIN_GATE_V1.
+            _brain_down = False
+            try:
+                from scripts.ollama_client import brain_available as _brain_ok
+                if self._in_night_window() and not _brain_ok(self.config):
+                    _brain_down = True
+                    _log.debug("noční tvorba: mozek dole → přeskakuji dávku")
+            except Exception as _bge:
+                _log.debug("night drain brain gate: %s", _bge)
             _rcfg = self.config.get("hans_routine", {}) or {}
             _drain_all = bool(_rcfg.get("night_drain_all", True))
             _drain_until = time.time() + 60.0 * float(
                 _rcfg.get("night_drain_budget_min", 90))
 
             def _slot_free(important: bool = False) -> bool:
+                if _brain_down:
+                    return False        # LLM úlohy nemá smysl zkoušet
                 if not _drain_all:
                     return not _creative_busy      # původní chování
                 if important:
