@@ -2422,6 +2422,30 @@ class OpenWebUIDirectHandler:
         except Exception as _ce:
             print(f"[Chat] command dispatch error: {_ce}")
 
+        # ── HANS_CHAT_WAIT_FOR_PAINT_V1 (5.8.) — maluju, ozvu se potom ──────
+        # Chatová odpověď natáhne hans-czech (8 GB) do VRAM a tím podřízne
+        # běžící render: FLUX se nevejde, spadne do lowvram a obraz trvá
+        # násobně dýl (naměřeno 475 s vs 210 s). `pause_warmup` tenhle případ
+        # NEKRYJE — ta zabíjí jen automatické re-piny, ne reálný chat.
+        # Proto radši krátká poctivá věta než tichý sabotovaný obraz.
+        # ZÁMĚRNĚ AŽ ZA PŘÍKAZY: `/stav`, `/zdravi` apod. musí jít i při
+        # malování (jsou deterministické, mozek nepotřebují).
+        try:
+            from scripts.avatar_render import render_in_progress
+            if render_in_progress():
+                from scripts.hans_persona import persona_name as _pn
+                _reply = ("Zrovna maluji, pane — až obraz dokončím, budu se "
+                          "Vám plně věnovat. Chvilku strpení.")
+                try:
+                    self.conv_store.add_exchange(name, user_message, _reply,
+                                                 channel=channel)
+                except Exception:
+                    pass
+                print("[Chat] odloženo — %s právě renderuje obraz" % _pn(self.config))
+                return _reply
+        except Exception as _pe:
+            print(f"[Chat] paint-wait gate error: {_pe}")
+
         # HANS_KNOWLEDGE_CHECK_V1 BYPASS (18.7. → 19.7.) — hans-czech persona
         # halucinuje „mám v paměti záznamy" i pro věci, které nikdy neviděl
         # (doložený Červený trpaslík). Grounding block s explicit „PAMĚŤ

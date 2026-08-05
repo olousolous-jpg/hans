@@ -484,6 +484,19 @@ def _comfy_submit(base: str, workflow: dict, client_id: str) -> Optional[str]:
         return json.load(r).get("prompt_id")
 
 
+# HANS_CHAT_WAIT_FOR_PAINT_V1 (5.8.) — „právě maluji, ozvu se, až domaluji".
+# Příznak je IN-PROCESS a s deadlinem, ne dotaz na frontu ComfyUI. Důvod:
+# fronta umí zůstat obsazená úlohou, kterou Hans dávno vzdal (doloženo 5.8.,
+# job mlel 8 minut po jeho timeoutu) — a na tom by se chat zasekl natrvalo.
+# Takhle drží jen tak dlouho, jak dlouho Hans SÁM na obraz čeká.
+_render_until = 0.0
+
+
+def render_in_progress() -> bool:
+    """Čeká Hans právě na obraz? (Deadline se sám zahojí, kdyby úklid selhal.)"""
+    return time.time() < _render_until
+
+
 def _comfy_wait(base: str, prompt_id: str, timeout: int = 300) -> Optional[dict]:
     """Poll /history dokud render nedoběhne. Vrátí history záznam nebo None.
 
@@ -495,9 +508,19 @@ def _comfy_wait(base: str, prompt_id: str, timeout: int = 300) -> Optional[dict]
     úloha zmizela z fronty A NENÍ v historii" = mrtvá úloha → skonči hned.
     Kontroluje se až po `grace` sekundách, aby se nezaměnil krátký okamžik
     mezi přijetím a zařazením do fronty."""
+    global _render_until
     deadline = time.time() + timeout
     started = time.time()
     grace = 20.0
+    _render_until = deadline          # chat od téhle chvíle ví, že maluju
+    try:
+        return _comfy_wait_loop(base, prompt_id, deadline, started, grace)
+    finally:
+        _render_until = 0.0
+
+
+def _comfy_wait_loop(base: str, prompt_id: str, deadline: float,
+                     started: float, grace: float) -> Optional[dict]:
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(f"{base}/history/{prompt_id}", timeout=15) as r:
