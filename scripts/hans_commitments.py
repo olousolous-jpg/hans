@@ -112,14 +112,63 @@ _SELF_NARRATION = (
 )
 
 
-def _is_operational(promise: str) -> bool:
+# HANS_COMMIT_LLM_FILTER_V1 (5.8.) — blocklist frází chytí jen to, co někdo
+# vypsal. Doložené propadnutí ze živé DB: „pokračuji ve studiích Cimrmanovy
+# verze externismu" (id 13, status=open) a „budu se usilovně snažit předejít
+# podobným situacím" (id 14) — obojí vedeno jako SLIB, ačkoli první je popis
+# vlastní činnosti a druhé vágní předsevzetí bez adresáta i výstupu.
+# Rozšiřovat blocklist donekonečna nejde (a „studuji " už jednou přeblokovalo
+# „naSTUDUJI ti"), tak se ptáme modelu — až KDYŽ blocklist minul.
+# Změřeno na hans-czech: 15/15, medián 1,1 s. Běží v noční extrakci, pár vět
+# za noc → latence nehraje roli.
+_COMMIT_FILTER_SYSTEM = (
+    "Asistent řekl v rozhovoru větu. Rozhodni, jestli je to SLIB ČLOVĚKU "
+    "(budoucí akce, jejíž výsledek asistent někomu doručí — něco zjistí a "
+    "řekne, něco nastuduje, něco namaluje, na něco upozorní), nebo NENÍ SLIB "
+    "(popis vlastní současné činnosti, obecné předsevzetí bez adresáta "
+    "a bez konkrétního výstupu).\n\n"
+    "Příklady:\n„nastuduji ti to a dám vědět\" -> slib\n"
+    "„připomenu ti ten recept\" -> slib\n„zjistím to a řeknu ti\" -> slib\n"
+    "„zaměřuji se na pochopení principů designu\" -> neslib\n"
+    "„čerpám z poznatků o japonských zahradách\" -> neslib\n"
+    "„budu se snažit být lepší\" -> neslib\n\n"
+    "Odpověz JEDNÍM slovem: slib nebo neslib."
+)
+
+
+def _llm_says_not_promise(promise: str, config: dict) -> bool:
+    """True = model tvrdí, že to NENÍ slib (→ zahodit).
+
+    Fail-safe smyká na SOUČASNÉ chování: model nedostupný / nejednoznačná
+    odpověď → False, tedy slib zůstane. Ztratit skutečný slib je horší než
+    podržet pár provozních vět (ty se dají označit `dropped` ručně)."""
+    if not (config or {}).get("intent", {}).get("use_llm", False):
+        return False
+    try:
+        from scripts.hans_intent import _ask_classifier
+        out = _ask_classifier(config, _COMMIT_FILTER_SYSTEM, promise)
+    except Exception as e:
+        _log.debug("commit filter LLM: %s", e)
+        return False
+    if out is None:
+        return False
+    return (out or "").strip().lower().startswith("neslib")
+
+
+def _is_operational(promise: str, config: dict = None) -> bool:
     pl = (promise or "").lower()
     if any(k in pl for k in _OPERATIONAL):
         return True
     if any(k in pl for k in _SELF_NARRATION):  # HANS_COMMIT_SELF_NARRATION_V1
         return True
     # info-lookup akce = ne budoucí slib
-    return bool(_INFO_LOOKUP_RE.search(promise or ""))
+    if _INFO_LOOKUP_RE.search(promise or ""):
+        return True
+    # HANS_COMMIT_LLM_FILTER_V1 — blocklist minul → druhý názor od modelu
+    if config is not None and _llm_says_not_promise(promise, config):
+        _log.info("commitment odfiltrován (model: není slib): %.60s", promise)
+        return True
+    return False
 
 
 # HANS_COMMIT_FULFILL_V1 — druh splnitelného slibu (řídí, JAK se dotáhne):
@@ -303,7 +352,7 @@ def extract_commitments(config: dict, diary_db_path: str,
                 promise = str(it.get("promise", "") or "").strip()
                 if len(promise) < 8:
                     continue
-                if _is_operational(promise):
+                if _is_operational(promise, config):
                     _log.info("commitment odfiltrován (provozní): %.60s", promise)
                     continue
                 pn = _norm(promise)
