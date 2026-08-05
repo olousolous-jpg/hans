@@ -2398,6 +2398,16 @@ class OpenWebUIDirectHandler:
         try:
             from scripts.chat_commands import parse_command, dispatch
             _cmd = parse_command(user_message)
+            if not _cmd:
+                # HANS_CMD_LLM_ROUTE_V1 (5.8.) — regexy minuly; zeptej se
+                # modelu, jestli věta nežádá o některý ČTECÍ výpis. Řeší
+                # „ptám se jinak, než je ve vzorech" (nález uživatele 4.8.).
+                # Fail-safe: None → pokračuje běžná cesta beze změny.
+                try:
+                    from scripts.chat_commands import resolve_command_llm
+                    _cmd = resolve_command_llm(user_message, self.config)
+                except Exception as _re:
+                    print(f"[Chat] cmd route error: {_re}")
             if _cmd:
                 # CHAT_COMMANDS_LOG_FIX
                 print(f"[Chat] command detected: {_cmd[0]}")

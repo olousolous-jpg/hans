@@ -2988,3 +2988,96 @@ register(
     handler=_cmd_anomalie,
     help_text="Týdenní odchylky ve tvém chování (algoritmicky) — /anomalie teď = spusť detekci",
 )
+
+
+# ── HANS_CMD_LLM_ROUTE_V1 (5.8.) — příkaz z volné řeči ───────────────────────
+# Problém: `nl_patterns` pokryjí jen formulace, které někdo vypsal. „jak jde
+# studium?" ve vzorech je, „pokročil jsi v tom učení?" ne — a uživatel pak
+# dostane obecné žvanění místo grounded výpisu. Regexy zůstávají PRVNÍ (jsou
+# zdarma); model se ptá, teprve když minou.
+#
+# ⚠️ JEN ČTECÍ PŘÍKAZY. Model může hádat, a hádání nesmí smazat historii
+# (`zapomen`), zapnout hlídání (`hlidej`) ani spustit enrollment. Allowlist je
+# proto VÝČET, ne odvození z registru: nový příkaz se NEZAŘADÍ sám (fail-closed).
+# Args se předávají PRÁZDNÉ → i u příkazů, které mají mutující podpříkazy
+# (`/studium přeskoč`, `/smer schválit`), se spustí jen holý výpis.
+#
+# Model: hans-czech na PC (viz HANS_INTENT_PC_V1). Změřeno 29/30 při 20
+# štítcích, medián 1,4 s; VŠECH 8 negativů správně (běžný hovor se neunáší).
+# Malý model na Pi tutéž úlohu nezvládl (11/16) — detail v backlogu.
+_LLM_ROUTE_CMDS = [
+    ("studium",    "co studuje, jak pokračuje jeho učení"),
+    ("cetl",       "co a kdy četl (knihy, články)"),
+    ("film",       "jaký film nebo pořad viděl"),
+    ("hraje",      "co se PRÁVĚ přehrává na TV"),
+    ("napad",      "jeho vlastní nápady a postřehy (synteze)"),
+    ("kritika",    "co u sebe chce zlepšit (sebekritika)"),
+    ("dilo",       "jeho autorské dílo na pokračování"),
+    ("smer",       "jeho vlastní směr a aspirace"),
+    ("vhledy",     "co si všiml ve vlastních datech"),
+    ("anomalie",   "odchylky v jeho chování"),
+    ("vzpominka",  "jeho první/nejstarší vzpomínka"),
+    ("videl",      "kdy koho naposledy viděl"),
+    ("rozhovory",  "o čem jsme se spolu bavili"),
+    ("seznam",     "seznam poznámek a úkolů"),
+    ("kalendar",   "nadcházející události z kalendáře"),
+    ("rozvrh",     "jeho rozvrh rutin, kdy co naposledy běželo"),
+    ("zdravi",     "zdraví systému: Ollama, Kodi, PC, disk"),
+    ("zajmy",      "co koho zajímá"),
+    ("nitky",      "rozjeté nitky (nedokončená témata) s osobou"),
+    ("schopnosti", "co všechno umí"),
+]
+
+_LLM_ROUTE_SYSTEM = (
+    "Uživatel mluví s domácím asistentem. Rozhodni, který VÝPIS jeho věta "
+    "vyžaduje.\nMožnosti:\n"
+    + "\n".join("  %s = %s" % (c, d) for c, d in _LLM_ROUTE_CMDS)
+    + "\n  zadny = věta nevyžaduje žádný výpis (běžný hovor, názor, zdvořilost, "
+      "dotaz na svět, žádost o obraz)\n\n"
+      "Příklady:\n„jak jde studium?\" -> studium\n„co jsi četl?\" -> cetl\n"
+      "„co běží v televizi?\" -> hraje\n„jsi hodný\" -> zadny\n"
+      "„kdo byl Napoleon?\" -> zadny\n„namaluj kočku\" -> zadny\n\n"
+      "Odpověz JEDNÍM slovem ze seznamu."
+)
+
+_llm_route_cache: dict = {}
+_LLM_ROUTE_MAX_WORDS = 14      # delší věta = vyprávění, ne žádost o výpis
+
+
+def resolve_command_llm(message: str, config: dict):
+    """Vrátí (command_id, "") když věta žádá o některý ČTECÍ výpis, jinak None.
+
+    Volá se AŽ když `parse_command` (slash + regexy) minul. Fail-safe: model
+    nedostupný / neznámý štítek / herní mód → None = beze změny chování."""
+    msg = (message or "").strip()
+    if not msg or msg.startswith("/"):
+        return None
+    if len(msg.split()) > _LLM_ROUTE_MAX_WORDS:
+        return None
+    cfg = (config or {}).get("intent", {}) or {}
+    if not cfg.get("use_llm", False) or not cfg.get("cmd_route", True):
+        return None
+    if msg in _llm_route_cache:
+        cid = _llm_route_cache[msg]
+        return (cid, "") if cid else None
+    try:
+        from scripts.hans_intent import _ask_classifier
+        out = _ask_classifier(config, _LLM_ROUTE_SYSTEM, msg)
+    except Exception as e:
+        _log.debug("cmd route: %s", e)
+        return None
+    if out is None:
+        return None
+    tok = (out or "").strip().lower().strip('".,!?').split()
+    tok = tok[0] if tok else ""
+    valid = {c for c, _ in _LLM_ROUTE_CMDS}
+    cid = tok if tok in valid else ""
+    if cid and cid not in _COMMANDS:      # registr je pravda, ne můj výčet
+        _log.warning("cmd route: '%s' není v registru — ignoruji", cid)
+        cid = ""
+    if len(_llm_route_cache) < 256:
+        _llm_route_cache[msg] = cid
+    if cid:
+        _log.info("HANS_CMD_LLM_ROUTE_V1: '%.40s' → /%s", msg, cid)
+        return (cid, "")
+    return None

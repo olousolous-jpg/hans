@@ -1175,6 +1175,8 @@
     "timeout": 20,
     "keep_alive": -1,
     "gray_zone_threshold": 0.6,
-    "_note": "HANS_INTENT_PC_V1 (5.8.) - klasifikace jede na hans-czech NA PC (drive mini model na Pi). Zmereno: routing prikazu 18/18 vs 11/16, dotaz na zdroj 15/15 vs 9/15, a 2x rychleji (1,0-1,2 s vs 2,7 s). Obava 'musi to jet i s vypnutym PC' na CHAT cestu neplati - kdyz je mozek dole, Hans neodpovida tak jako tak. hans-czech je uz rezidentni, takze klasifikace nestoji ani GB VRAM navic. NOCNI cesty (overovani nalezu) na Pi zustavaji. !! keep_alive MUSI byt -1: jina hodnota by rezidentnimu modelu prepsala keep_alive a shodila ho z VRAM. use_llm=false = zpet jen regexy."
+    "_note": "HANS_INTENT_PC_V1 (5.8.) - klasifikace jede na hans-czech NA PC (drive mini model na Pi). Zmereno: routing prikazu 18/18 vs 11/16, dotaz na zdroj 15/15 vs 9/15, a 2x rychleji (1,0-1,2 s vs 2,7 s). Obava 'musi to jet i s vypnutym PC' na CHAT cestu neplati - kdyz je mozek dole, Hans neodpovida tak jako tak. hans-czech je uz rezidentni, takze klasifikace nestoji ani GB VRAM navic. NOCNI cesty (overovani nalezu) na Pi zustavaji. !! keep_alive MUSI byt -1: jina hodnota by rezidentnimu modelu prepsala keep_alive a shodila ho z VRAM. use_llm=false = zpet jen regexy.",
+    "cmd_route": true,
+    "_cmd_route_note": "HANS_CMD_LLM_ROUTE_V1 - kdyz regexy (nl_patterns) minou, model rozhodne, jestli veta zada o nektery CTECI vypis (/studium, /cetl, /zdravi...). Allowlist je vycet, ne odvozeni z registru: novy prikaz se nezaradi sam a MUTUJICI prikazy (zapomen, hlidej, enroll) tam nepatri - model muze hadat a hadani nesmi neco smazat. Args se predavaji prazdne. false = jen regexy."
   }
 }
