@@ -302,6 +302,17 @@ def _run_who_home(handler, args) -> str:
     names = [n for n in (getattr(hi, "_present_names", None) or [])
              if n and n not in ("Unknown", "?", "")]
     if names:
+        # HANS_AGENT_NAME_CASE_V1 (5.8.) — jméno v AKUZATIVU a s velkým
+        # písmenem: `_present_names` nese konfigurační klíč (malým, 1. pád), takže
+        # Hans hlásil „Vidím tu jana." (1. pád místo 4.). Doloženo v chatu 12:54.
+        # `cz_names` to umí od HANS_NAME_INFLECTION_V2 — jen se to tady
+        # nepoužilo.
+        try:
+            from scripts.cz_names import accusative as _acc
+            cfg = getattr(handler, "config", {}) or {}
+            names = [_acc(n, cfg) or n for n in names]
+        except Exception:
+            pass
         if len(names) == 1:
             return f"Vidím tu {names[0]}."
         return "Vidím tu: " + ", ".join(names) + "."
@@ -340,7 +351,7 @@ def _run_now_playing(handler, args) -> str:
 def _run_kolac_status(handler, args) -> str:
     """KOLAC_STATUS_V1 — „co dělá Koláč?" z REÁLNÉHO stavu (poslední dialog),
     ne z domýšlení. Koláč = Hansův animatronický společník, NE osoba v domě
-    (jinak router odpovídal home_status: „na TV hraje…, vidím henku")."""
+    (jinak router odpovídal home_status: „na TV hraje…, vidím Janu")."""
     from scripts.hans_kolac import kolac_name
     kn = kolac_name(getattr(handler, "config", {}) or {})
     ts = note = None
@@ -876,7 +887,7 @@ class AgentRouter:
             aid = decision.get("action")
             # KOLAC_STATUS_GUARD_V1 — deterministická pojistka: dotaz o Koláčovi
             # (společník) se NESMÍ zrouteovat na domácí/přítomnostní akce (router
-            # občas zvolí home_status → „na TV hraje…, vidím henku"). Přesměruj.
+            # občas zvolí home_status → „na TV hraje…, vidím Janu"). Přesměruj.
             if aid in ("report_home_status", "report_who_is_home",
                        "report_now_playing") and self._mentions_kolac(message):
                 aid = "report_kolac_status"

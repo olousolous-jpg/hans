@@ -3053,6 +3053,49 @@ _llm_route_cache: dict = {}
 _LLM_ROUTE_MAX_WORDS = 14      # delší věta = vyprávění, ne žádost o výpis
 
 
+# HANS_CMD_LLM_ROUTE_V3 (5.8.) — DRUHÁ BRÁNA na „vnitřní" štítky.
+# Doloženo naživo: „co si myslíš o cimrmanově filosofii externismu?" → /napad
+# (Hans vysypal syntézu o Mauna Loa a ponorce Titan místo odpovědi).
+# Měřením potvrzeno u 6 z 9 dotazů na svět: unesly je napad, cetl, kritika,
+# vhledy, smer. Vzorec: tyhle štítky se týkají Hansova VNITŘNÍHO ŽIVOTA
+# a otázky na ně mají TOTOŽNÝ TVAR jako otázky na svět — liší se jen
+# předmětem („co bys zlepšil U SEBE" × „NA TOM OBRAZU"). Negativní příklady
+# v promptu nepomohly: „co si myslíš o dešti? -> zadny" tam bylo A PŘESTO
+# model poslal filosofii na /napad.
+# Řešení: u rizikových štítků se DOPTÁ druhá otázka „ptá se na TVOJE vlastní
+# záznamy, nebo na něco jiného?" — jiný kontrast, který model zvládá (15/16).
+# Bezpečné štítky (seznam, kalendář, zdraví…) branou NEPROCHÁZEJÍ: jsou
+# konkrétní a druhá brána by je jen zdržela (a „co mám na seznamu?" by
+# dokonce zamítla — seznam je uživatelův, ne Hansův).
+_LLM_ROUTE_RISKY = frozenset({"napad", "kritika", "vhledy", "smer", "cetl"})
+
+_OWN_RECORDS_SYSTEM = (
+    "Uživatel se ptá domácího asistenta. Rozhodni, jestli se ptá na "
+    "ASISTENTOVY VLASTNÍ ZÁZNAMY (co ON sám dělal, studoval, četl, co JEHO "
+    "napadlo, co si všiml NA SOBĚ, kam ON směřuje), nebo na NĚCO JINÉHO "
+    "(vnější téma, cizí dílo, názor na věc, obecná otázka).\n\n"
+    "Příklady:\n„napadlo tě něco zajímavého?\" -> vlastni\n"
+    "„co bys u sebe zlepšil?\" -> vlastni\n„pokročil jsi v učení?\" -> vlastni\n"
+    "„všiml sis něčeho na sobě?\" -> vlastni\n"
+    "„co si myslíš o Kantovi?\" -> jine\n„co bys zlepšil na tom obrazu?\" -> jine\n"
+    "„co soudíš o té knize?\" -> jine\n„kam to podle tebe spěje?\" -> jine\n\n"
+    "Odpověz JEDNÍM slovem: vlastni nebo jine."
+)
+
+
+def _asks_own_records(message: str, config: dict) -> bool:
+    """Ptá se na Hansovy VLASTNÍ záznamy? Selhání → True (nezhoršuj dostupnost
+    routingu, když model neodpoví — riziko nese až samotné routování)."""
+    try:
+        from scripts.hans_intent import _ask_classifier
+        out = _ask_classifier(config, _OWN_RECORDS_SYSTEM, message)
+    except Exception:
+        return True
+    if out is None:
+        return True
+    return not (out or "").strip().lower().startswith("jine")
+
+
 def resolve_command_llm(message: str, config: dict):
     """Vrátí (command_id, "") když věta žádá o některý ČTECÍ výpis, jinak None.
 
@@ -3086,6 +3129,11 @@ def resolve_command_llm(message: str, config: dict):
         cid = ""
     if len(_llm_route_cache) < 256:
         _llm_route_cache[msg] = cid
+    if cid and cid in _LLM_ROUTE_RISKY and not _asks_own_records(msg, config):
+        _log.info("HANS_CMD_LLM_ROUTE_V3: '%.40s' → /%s ZAMÍTNUTO "
+                  "(ptá se na svět, ne na Hansovy záznamy)", msg, cid)
+        _llm_route_cache[msg] = ""
+        return None
     if cid:
         _log.info("HANS_CMD_LLM_ROUTE_V1: '%.40s' → /%s", msg, cid)
         return (cid, "")
