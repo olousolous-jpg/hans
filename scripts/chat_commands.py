@@ -3090,3 +3090,67 @@ def resolve_command_llm(message: str, config: dict):
         _log.info("HANS_CMD_LLM_ROUTE_V1: '%.40s' → /%s", msg, cid)
         return (cid, "")
     return None
+
+
+# ── HANS_KODI_PLAYCTL_V1 (5.8.) — zastavení/pauza přehrávání ─────────────────
+# Nález uživatele: „ještě film zastav" — a zjistilo se, že to NEJDE. Hans umí
+# film PUSTIT (agentní akce kodi_play_film), ale zastavit ne; uživatel zkusil
+# „/film stop" a dostal výpis, co Hans viděl (`film` je čtecí příkaz, `stop`
+# jen ignorovaný argument). Kodi to přitom umí (`stop_playback`/`pause`).
+def _cmd_stop(handler, name, args) -> str:
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts.kodi_client import KodiClient
+        k = KodiClient(cfg)
+        if not k.is_playing():
+            return "Teď nic neběží, pane."
+        now = ""
+        try:
+            np = k.get_now_playing()
+            now = (np or {}).get("title") or ""
+        except Exception:
+            pass
+        ok = k.stop_playback()
+        if ok:
+            return ("Zastaveno, pane%s." % ((" — „%s\"" % now) if now else ""))
+        return "Zastavit se to nepodařilo, pane."
+    except Exception as e:
+        _log.warning("/stop selhal: %s", e)
+        return "K televizi se teď nedostanu, pane."
+
+
+def _cmd_pauza(handler, name, args) -> str:
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts.kodi_client import KodiClient
+        k = KodiClient(cfg)
+        if not k.is_playing():
+            return "Teď nic neběží, pane."
+        k.toggle_pause()
+        return "Hotovo, pane."
+    except Exception as e:
+        _log.warning("/pauza selhal: %s", e)
+        return "K televizi se teď nedostanu, pane."
+
+
+register(
+    "stop",
+    slash_aliases=["stop", "zastav", "vypni film"],
+    nl_patterns=[
+        r"\bzastav(\s+(to|film|ten\s+film|p[řr]ehr[áa]v[áa]n[íi]))?\b",
+        r"\bvypni\s+(to|film|ten\s+film|televiz)",
+        r"\bstopni\s+(to|film)",
+        r"\bu[žz]\s+to\s+nechci\s+(koukat|sledovat)",
+    ],
+    handler=_cmd_stop,
+    help_text="Zastaví přehrávání na TV: /stop (i „zastav film\")",
+)
+
+register(
+    "pauza",
+    slash_aliases=["pauza", "pause", "pauzni"],
+    nl_patterns=[r"\bpauzn(i|out)\b", r"\b(dej|d[áa]|dejte)\s+pauzu\b",
+                 r"\bzastav\s+na\s+chv[íi]li\b"],
+    handler=_cmd_pauza,
+    help_text="Pauza/pokračování přehrávání: /pauza",
+)

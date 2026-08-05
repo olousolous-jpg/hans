@@ -52,7 +52,8 @@ _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika", "nitky",
                            "zajmy", "seznam", "kalendar", "zdravi", "nastroj",
                            "brief", "vytvor", "prohloubit", "rozvrh", "vhledy",
                            "anomalie"})
-_MUTATING_CMDS = frozenset({"hlidej", "experiment", "smer"})
+# HANS_KODI_PLAYCTL_V1 — stop/pauza jsou zásah do přehrávání → role full
+_MUTATING_CMDS = frozenset({"hlidej", "experiment", "smer", "stop", "pauza"})
 
 # HANS_STUDY_NUDGE_V1 (4.8.) — některé příkazy jsou read-only JEN v základním
 # tvaru: `/studium` vypíše stav (inspect), ale `/studium přeskoč` posune program

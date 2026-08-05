@@ -354,28 +354,49 @@ class KodiClient:
         s = "".join(c for c in s if not unicodedata.combining(c))
         return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
-    def find_movie(self, title: str, limit: int = 800) -> dict | None:
+    def find_movie(self, title: str, limit: int = 5000) -> dict | None:
         """HANS_AGENT_V1 — najdi film v knihovně dle názvu (fuzzy, bez diakritiky,
         oboustranný substring). Vrací dict {movieid,title,year,...} nebo None.
-        Read-only — grounding pro agentní akci kodi_play_film."""
+        Read-only — grounding pro agentní akci kodi_play_film.
+
+        HANS_KODI_FIND_V2 (5.8.): (a) limit zvednut z 800 — knihovna má 968
+        filmů, takže 168 jich bylo pro vyhledávání NEVIDITELNÝCH; (b) hledá
+        i v ORIGINÁLNÍM názvu, protože Kodi má řadu titulů pod originálem
+        („Ring" / リング), zatímco uživatel řekne český distribuční název.
+        """
         w = self._norm_title(title)
         if not w:
             return None
         r = self._call("VideoLibrary.GetMovies", {
-            "properties": ["title", "year", "genre", "playcount"],
+            "properties": ["title", "year", "genre", "playcount",
+                           "originaltitle"],
             "limits": {"start": 0, "end": int(limit)},
         })
         movies = (r or {}).get("result", {}).get("movies", []) if r else []
         best = None
         for m in movies:
-            nm = self._norm_title(m.get("title"))
-            if not nm:
-                continue
-            if nm == w:            # přesná shoda = přednost
+            names = [self._norm_title(m.get("title")),
+                     self._norm_title(m.get("originaltitle"))]
+            names = [n for n in names if n]
+            if any(n == w for n in names):     # přesná shoda = přednost
                 return m
-            if w in nm or nm in w:  # substring (série „…2/3")
+            if any(w in n or n in w for n in names):   # substring („…2/3")
                 best = best or m
         return best
+
+    def movie_titles(self, limit: int = 5000) -> list:
+        """HANS_KODI_PLAYCTL_V1 — seznam názvů v knihovně (pro honestní
+        odpověď „tenhle film nemám, mám ale tyhle podobné")."""
+        r = self._call("VideoLibrary.GetMovies", {
+            "properties": ["title", "originaltitle"],
+            "limits": {"start": 0, "end": int(limit)},
+        })
+        out = []
+        for m in (r or {}).get("result", {}).get("movies", []) if r else []:
+            t = (m.get("title") or "").strip()
+            if t:
+                out.append(t)
+        return out
 
     def play_movie(self, movieid: int) -> bool:
         """HANS_AGENT_V1 — pusť film podle movieid (Player.Open). Vrací úspěch."""

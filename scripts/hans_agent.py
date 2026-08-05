@@ -90,7 +90,16 @@ def _looks_like_recall(message: str) -> bool:
 
 class Action:
     def __init__(self, aid, desc, hints, args, run,
-                 grounding=None, needs_confirm=True, cooldown_s=60):
+                 grounding=None, needs_confirm=True, cooldown_s=60,
+                 reject_text=None):
+        # HANS_AGENT_SPEAK_REJECT_V1 (5.8.) — když grounding akci ODMÍTNE,
+        # `propose` dosud vrátil None = agent mlčky ustoupí a odpověď doskládá
+        # persona. Ta pak POTVRDÍ akci, která se nestala. Doloženo 5.8. 11:16:
+        # „kodi_play_film grounding zamítl (film není v knihovně)" a Hans přesto
+        # řekl „Rozumím, pane. Připravuji přehrání filmu Kruh" — uživatel pak
+        # řešil, jak zastavit horor, který nikdy nenaběhl. Konfabulace AKCE je
+        # horší než konfabulace faktu: uživatel podle ní jedná.
+        # `reject_text` = věta, kterou Hans řekne MÍSTO ticha ({titul} se doplní).
         self.id = aid
         self.desc = desc          # popis pro LLM router
         self.hints = hints        # pre-gate klíčová slova (lower, bez diakr.)
@@ -99,6 +108,7 @@ class Action:
         self.grounding = grounding
         self.needs_confirm = needs_confirm
         self.cooldown_s = cooldown_s
+        self.reject_text = reject_text
 
 
 # ── Handlery akcí ────────────────────────────────────────────────────────────
@@ -438,7 +448,11 @@ ACTIONS: dict[str, Action] = {
         hints=["film", "pust", "pusť", "koukni", "podivat", "podívat",
                "smrtonosn", "bond", "sledovat", "na tv", "dej to", "spust"],
         args=["titul"], run=_run_kodi_play, grounding=_ground_kodi_play,
-        needs_confirm=True, cooldown_s=300),
+        needs_confirm=True, cooldown_s=300,
+        reject_text=("Film „{titul}\" v knihovně nemám, pane — a nechci "
+                     "předstírat, že ho pouštím. Kodi ho možná vede pod jiným "
+                     "názvem (často originálním); zkuste mi ho říct tak, jak "
+                     "je uložený.")),
     "hans_sleep": Action(
         "hans_sleep",
         "Uspat sebe (Hanse) — ztišit se, přestat mluvit. Když uživatel řekne "
@@ -795,6 +809,14 @@ class AgentRouter:
                 ok, args, gmsg = action.grounding(handler, args)
                 if not ok:
                     log.info("agent: %s grounding zamítl (%s)", aid, gmsg)
+                    # HANS_AGENT_SPEAK_REJECT_V1 — u akcí, kde by ticho svádělo
+                    # personu k potvrzení, řekni PRAVDU místo mlčení.
+                    if action.reject_text:
+                        try:
+                            return action.reject_text.format(
+                                titul=(args.get("titul") or "").strip() or "ten titul")
+                        except Exception:
+                            return action.reject_text
                     return None
             prop = Proposal(action, args,
                             decision.get("propose_text", ""), conf,
