@@ -124,6 +124,96 @@ def _run_kodi_play(handler, args) -> str:
             else "Nepodařilo se mi film spustit, pane.")
 
 
+# ── HANS_KODI_ALT_TITLE_V1 (5.8.) — český název → název v knihovně ───────────
+# Doloženo: uživatel chtěl „Kruh", Kodi film vede jako „Ring" (originál リング).
+# Lexikálně se to netrefí NIKDY — chybí překlad distribučního názvu.
+# Deterministická cesta (bez LLM, tedy bez rizika výmyslu):
+#   „Kruh" → cs.wikipedia prefixsearch „Kruh (film" → „Kruh (film, 2002)"
+#          → langlink EN „The Ring (2002 film)" → ořízni závorku → „The Ring"
+#          → find_movie („The Ring" ⊂ „Ring") → TREFA
+# Kandidát musí ZAČÍNAT dotazem a mít v titulu „(film" — jinak prefixsearch
+# přihodí i „Kouř (film)" nebo „Kruh u Jilemnice".
+def _alt_titles(title: str, lang: str = "cs", limit: int = 6) -> list:
+    """Alternativní (originální/anglické) názvy filmu. [] když nic."""
+    import re as _re
+    import unicodedata as _ud
+    try:
+        import requests as _rq
+    except Exception:
+        return []
+
+    def _fold(x):
+        x = _ud.normalize("NFKD", (x or "").lower())
+        return "".join(c for c in x if not _ud.combining(c)).strip()
+
+    q = (title or "").strip()
+    if not q:
+        return []
+    api = "https://%s.wikipedia.org/w/api.php" % lang
+    hdr = {"User-Agent": "HansBot/1.0 (home assistant; educational use)"}
+    try:
+        r = _rq.get(api, params={"action": "query", "list": "prefixsearch",
+                                 "pssearch": "%s (film" % q, "pslimit": limit,
+                                 "psnamespace": 0, "format": "json"},
+                    headers=hdr, timeout=12).json()
+        cands = [x["title"] for x in r.get("query", {}).get("prefixsearch", [])]
+    except Exception as e:
+        log.debug("alt_titles prefixsearch: %s", e)
+        return []
+    qf = _fold(q)
+    cands = [c for c in cands if _fold(c).startswith(qf) and "(film" in _fold(c)]
+    out = []
+    for c in cands:
+        try:
+            rr = _rq.get(api, params={"action": "query", "prop": "langlinks",
+                                      "lllimit": 50, "titles": c,
+                                      "redirects": 1, "format": "json"},
+                         headers=hdr, timeout=12).json()
+        except Exception:
+            continue
+        for _, pg in (rr.get("query", {}).get("pages", {}) or {}).items():
+            for ll in pg.get("langlinks", []):
+                if ll.get("lang") not in ("en", "sk", "de"):
+                    continue
+                t = _re.sub(r"\s*\([^)]*\)\s*$", "", ll.get("*", "")).strip()
+                if t and t.lower() != q.lower() and t not in out:
+                    out.append(t)
+    return out
+
+
+def _reject_kodi_play(handler, args) -> str:
+    """HANS_KODI_OUTSIDE_LIB_V1 (5.8.) — film NENÍ v knihovně (ani pod
+    alternativním názvem). Místo holého „nemám" řekni, CO to je — Hans o
+    filmech čte, tak ať to není němá zeď. Zdroj = Wikipedia (grounded, žádný
+    výmysl); když ani ta nic nemá, přizná se to.
+    Backlog „Film mimo knihovnu — web search" (14.7.), bod 1 a 3."""
+    title = (args.get("titul") or "").strip() or "ten film"
+    gloss = ""
+    try:
+        from scripts.web_reader import WebReader
+        w = WebReader(getattr(handler, "config", {}) or {})
+        art = None
+        for q in ("%s (film)" % title, title):
+            art = w.wikipedia_article(q, lang="cs", max_chars=700)
+            if art and (art.get("text") or "").strip():
+                break
+        if art:
+            from scripts.hans_entities import _first_sentence
+            g = _first_sentence(art.get("text") or "")
+            # rozcestník = k ničemu (doloženo „Kruh" → „Kruh může být…")
+            import re as _re
+            if g and not _re.search(r"m[uů][žz]e b[ýy]t|rozcestn[íi]k", g, _re.I):
+                gloss = g.strip()
+    except Exception as e:
+        log.debug("reject_kodi_play wiki: %s", e)
+    base = ("Film „%s\" v knihovně nemám, pane — a nechci předstírat, "
+            "že ho pouštím." % title)
+    if gloss:
+        return base + (" Vím o něm aspoň tolik: %s" % gloss[:300])
+    return base + (" Kodi ho možná vede pod jiným názvem; zkuste mi ho říct "
+                   "tak, jak je uložený.")
+
+
 def _ground_kodi_play(handler, args):
     title = (args.get("titul") or "").strip()
     if not title:
@@ -132,6 +222,14 @@ def _ground_kodi_play(handler, args):
     if not kodi:
         return False, args, "kodi nedostupné"
     m = kodi.find_movie(title)
+    if not m:
+        # HANS_KODI_ALT_TITLE_V1 — zkus originální/anglický název („Kruh"→„Ring")
+        for alt in _alt_titles(title):
+            m = kodi.find_movie(alt)
+            if m:
+                log.info("agent: '%s' nalezen pod alternativním názvem '%s' → '%s'",
+                         title, alt, m.get("title"))
+                break
     if not m:
         return False, args, "film není v knihovně"
     args["_movie"] = m
@@ -449,10 +547,7 @@ ACTIONS: dict[str, Action] = {
                "smrtonosn", "bond", "sledovat", "na tv", "dej to", "spust"],
         args=["titul"], run=_run_kodi_play, grounding=_ground_kodi_play,
         needs_confirm=True, cooldown_s=300,
-        reject_text=("Film „{titul}\" v knihovně nemám, pane — a nechci "
-                     "předstírat, že ho pouštím. Kodi ho možná vede pod jiným "
-                     "názvem (často originálním); zkuste mi ho říct tak, jak "
-                     "je uložený.")),
+        reject_text=_reject_kodi_play),
     "hans_sleep": Action(
         "hans_sleep",
         "Uspat sebe (Hanse) — ztišit se, přestat mluvit. Když uživatel řekne "
@@ -706,11 +801,26 @@ class AgentRouter:
             self._pending.pop(name, None)
             return None
         m = _norm(message)
-        first = m.split()[0] if m.split() else ""
-        is_yes = (m in _YES or first in _YES
-                  or any(m.startswith(y + " ") for y in _YES))
-        is_no = (m in _NO or first in _NO
-                 or any(m.startswith(n + " ") for n in _NO))
+        words = m.split()
+        first = words[0] if words else ""
+        # HANS_AGENT_CONFIRM_PAYLOAD_V1 (5.8.) — POTVRZOVACÍ slovník se překrývá
+        # s PŘÍKAZOVÝM: „pusť"/„spusť"/„dej" znamená jak „ano, pusť to", tak
+        # „pusť TOHLE (něco jiného)". Nová žádost se pak spolkne jako souhlas
+        # s čekajícím návrhem. Doloženo 5.8. při testu: čekal návrh na film
+        # „Ring", přišlo „pust film Vykoupení z věznice Shawshank" → Hans pustil
+        # RING (a to zrovna horor, kterého se domácnost bála).
+        # Rozlišovač: potvrzení je KRÁTKÉ a bez nového obsahu („ano", „pusť to").
+        # Jakmile věta nese další podstatné slovo, je to NOVÝ požadavek.
+        _short = len(words) <= 2
+        is_yes = (m in _YES
+                  or (_short and (first in _YES
+                                  or any(m.startswith(y + " ") for y in _YES))))
+        is_no = (m in _NO
+                 or (_short and (first in _NO
+                                 or any(m.startswith(n + " ") for n in _NO))))
+        if not is_yes and not is_no and (first in _YES or first in _NO):
+            log.info("agent: '%.40s' vypadá jako potvrzení, ale nese vlastní "
+                     "obsah → beru jako NOVÝ požadavek", message)
         if not is_yes and not is_no:
             # nejednoznačné — návrh zahoď a nech projít do běžného chatu
             self._pending.pop(name, None)
@@ -813,10 +923,13 @@ class AgentRouter:
                     # personu k potvrzení, řekni PRAVDU místo mlčení.
                     if action.reject_text:
                         try:
+                            if callable(action.reject_text):
+                                return action.reject_text(handler, args)
                             return action.reject_text.format(
                                 titul=(args.get("titul") or "").strip() or "ten titul")
-                        except Exception:
-                            return action.reject_text
+                        except Exception as _re:
+                            log.debug("reject_text: %s", _re)
+                            return ("Tohle teď provést nemohu, pane.")
                     return None
             prop = Proposal(action, args,
                             decision.get("propose_text", ""), conf,
