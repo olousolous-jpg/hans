@@ -305,38 +305,11 @@ def _cmd_zapomen(handler, name, args) -> str:
 
 
 def _cmd_info(handler, name, args) -> str:
-    """Vrátí stav."""
-    parts = []
-    store = getattr(handler, "conv_store", None)
-    if store and hasattr(store, "get_history") and name:
-        try:
-            h = store.get_history(name)
-            parts.append(f"Mám v paměti {len(h)} zpráv z našich hovorů.")
-        except Exception:
-            pass
-    _hi = getattr(handler, "_hans_idle", None)
-    if _hi:
-        from scripts.hans_persona import persona_name as _pn  # PERSONA_NAME_CONFIGURABLE_V1
-        parts.append(f"{_pn(getattr(handler, 'config', {}) or {})} idle modul běží.")
-    parts.append(f"Aktuálně mluvím s: {name or 'neznámý'}.")
-    # HANS_RENDER_STATUS_V1 (5.8.) — běží právě malba? Ptáme se fronty ComfyUI
-    # (vidí i render spuštěný jiným modulem nebo před restartem Hanse).
-    # None = ComfyUI neodpovídá → mlčíme, radši nic než tvrdit „nemaluji".
-    try:
-        from scripts.avatar_render import render_status
-        _rs = render_status(getattr(handler, "config", {}) or {})
-    except Exception:
-        _rs = None
-    if _rs is not None:
-        if _rs.get("running"):
-            _q = _rs.get("pending") or 0
-            _p = (_rs.get("prompt") or "").strip()
-            _what = (" — " + _p[:70] + "…") if _p else ""
-            parts.append("Právě maluji obraz%s%s" % (
-                (" (ve frontě další %d)" % _q) if _q else "", _what))
-        else:
-            parts.append("Právě nemaluji.")
-    return " ".join(parts) if parts else "Nemám k tomu žádné informace."
+    """/stav — HANS_STATUS_UNIFIED_V1: tentýž text jako z mostu (Matrix).
+    Dvě samostatné implementace se ukázaly jako matoucí (5.8.): most chytá
+    „stav" dřív, takže z telefonu se tahle verze nikdy neukázala."""
+    from scripts.hans_status import status_text
+    return status_text(getattr(handler, "config", {}) or {}, handler, name or "")
 
 
 def _cmd_help(handler, name, args) -> str:

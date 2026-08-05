@@ -338,64 +338,11 @@ def _cmd_musing(ctx: BridgeCtx):
 
 
 def _cmd_status(ctx: BridgeCtx):
-    lines = ["Stav systému:"]
-    try:
-        with open("/sys/class/thermal/thermal_zone0/temp") as f:
-            lines.append("Teplota CPU: %.0f °C" % (int(f.read().strip()) / 1000.0))
-    except Exception:
-        pass
-    try:
-        import psutil
-        cpu = psutil.cpu_percent(interval=0.5)
-        vm = psutil.virtual_memory()
-        du = psutil.disk_usage("/")
-        lines.append("Zátěž CPU: %.0f %%" % cpu)
-        lines.append("RAM: %.1f / %.1f GB (volné %.1f GB)" % (
-            (vm.total - vm.available) / 1e9, vm.total / 1e9, vm.available / 1e9))
-        lines.append("Disk: volných %.0f GB z %.0f GB" % (
-            du.free / 1e9, du.total / 1e9))
-    except Exception:
-        pass
-    try:
-        la = os.getloadavg()
-        lines.append("Load: %.2f %.2f %.2f" % la)
-    except Exception:
-        pass
-    try:
-        with open("/proc/uptime") as f:
-            up = float(f.read().split()[0])
-        lines.append("Běžím: %dd %dh %dm" % (
-            int(up // 86400), int((up % 86400) // 3600), int((up % 3600) // 60)))
-    except Exception:
-        pass
-    try:
-        from scripts.ollama_client import game_mode_on
-        lines.append("Herní mód: " + ("ZAPNUT (grafika uvolněna pro hru)"
-                                       if game_mode_on() else "vypnut"))
-    except Exception:
-        pass
-    try:  # HANS_GUARD_STATUS_V2 — stav hlídacího přepínače (/hlidej)
-        from scripts import hans_guard as _g
-        _gs = _g.state()
-        if _gs.get("armed"):
-            import time as _t
-            _since = _gs.get("since") or 0
-            _od = _t.strftime("%H:%M", _t.localtime(_since)) if _since else "?"
-            lines.append("Hlídání: ZAPNUTO (od %s, dnes %d snímků)"
-                         % (_od, int(_gs.get("sent_today", 0))))
-        else:
-            lines.append("Hlídání: vypnuto")
-    except Exception:
-        pass
-    try:
-        url = ((ctx.config.get("openwebui_chat", {}) or {}).get("base_url", "")
-               or "").rstrip("/")
-        if url and requests is not None:
-            r = requests.get(url + "/api/tags", timeout=4)
-            lines.append("Mozek (LLM): " + ("online" if r.ok else "nedostupný"))
-    except Exception:
-        lines.append("Mozek (LLM): spí / nedostupný")
-    ctx.send("\n".join(lines))
+    """HANS_STATUS_UNIFIED_V1 — text staví `hans_status`, aby `/stav` z mostu
+    a `/stav` z chatu říkaly TOTÉŽ. Dřív to byly dvě nezávislé implementace
+    a uživatel dostal jinou odpověď podle toho, odkud se zeptal."""
+    from scripts.hans_status import status_text
+    ctx.send(status_text(ctx.config))
 
 
 # ── herní mód ────────────────────────────────────────────────────────────────

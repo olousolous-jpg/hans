@@ -140,9 +140,32 @@ def render_status(config: dict, timeout: float = 3.0) -> Optional[dict]:
 
 
 def _ollama_url(config: dict) -> str:
-    return (config.get("models", {}).get("base_url")
-            or config.get("openwebui_direct", {}).get("ollama_url")
-            or "http://127.0.0.1:11434").rstrip("/")
+    """HANS_ART_OLLAMA_URL_FIX_V1 (5.8.) — SDÍLENÁ resoluce s `ollama_client`.
+
+    Doloženo 5.8. měřením při živém renderu: obě lokální klíče (`models.
+    base_url`, `openwebui_direct.ollama_url`) v configu NEEXISTUJÍ, takže se
+    tady vždy vracelo `127.0.0.1:11434` — tedy Ollama na PI, ne na PC. Celý
+    VRAM handoff kolem renderu proto mířil na špatný stroj: `_ollama_loaded`
+    vracel prázdno, `_ollama_unload` neměl co uvolnit a `_ollama_warm` psal
+    do prázdna. Dokud na Pi běžel mini model, aspoň to tiše odpojovalo JEHO;
+    po jeho odstranění (5.8.) byl handoff úplně inertní.
+
+    Následek: hans-czech (8 GB) zůstával na PC v VRAM přes celý render, FLUX
+    se nevešel a mlel v lowvram — naměřeno 475 s místo ~70 s. Tohle je pravý
+    kořen „render timeoutů", ne pomalý ComfyUI.
+
+    Pravdu o URL má `ollama_client._resolve_url` (čte `openwebui_chat.base_url`)
+    → jedna resoluce místo dvou, které si nesedly."""
+    for key, sub in (("models", "base_url"),
+                     ("openwebui_direct", "ollama_url")):
+        val = (config.get(key, {}) or {}).get(sub)
+        if val:
+            return str(val).rstrip("/")
+    try:
+        from scripts.ollama_client import _resolve_url
+        return _resolve_url(None, config)
+    except Exception:
+        return "http://127.0.0.1:11434"
 
 
 # ── Prompt z descriptoru ────────────────────────────────────────────────────
@@ -170,7 +193,32 @@ def _render_targets() -> list:
 
 # ── VRAM orchestrace (uvolni LLM pro SDXL, pak vrať) ────────────────────────
 def _ollama_unload(config: dict, models: list) -> None:
-    """keep_alive=0 → modely se po (prázdném) requestu uvolní z VRAM."""
+    """keep_alive=0 → modely se po (prázdném) requestu uvolní z VRAM.
+
+    HANS_RENDER_VRAM_LOCK_V1 (5.8.) — uvolnit VRAM NESTAČÍ: keepalive warmup
+    (`ollama_client.warmup` á pár minut i chatový ping) model během renderu
+    zase napinuje. Doloženo 5.8.: FLUX render startoval 16:13:51, v 16:14:39
+    byl hans-czech korektně venku, ale v 16:15:24 už měl ComfyUI k dispozici
+    jen 2,4 GB VRAM a 9,2 GB transformeru odložil do RAM → render mlel přes
+    45 minut, Hans na něj po `render_timeout` rezignoval a ComfyUI zůstal
+    obsazený zaseklou úlohou, takže nešlo malovat vůbec.
+
+    Proto se s uvolněním rovnou USPÍ warmup (`pause_warmup`) — stejný handoff,
+    jaký má noční base-model dávka (HANS_WARMUP_PAUSE_V1). Pauza má auto-expiry
+    (render_timeout + rezerva), aby se sama zahojila i u volajících, kteří
+    model zpátky nenahřívají (room_observer, hans_place, enrollment).
+    `_ollama_warm` ji ruší (`resume_warmup`) = konec GPU práce.
+
+    ⚠️ Nekryje REÁLNÝ CHAT: když uživatel během renderu napíše, model se
+    nahraje (keep_alive=-1) a VRAM zase chybí. Pauza zabíjí jen automatické
+    re-piny, což byl doložený případ."""
+    try:
+        from scripts.ollama_client import pause_warmup
+        _rt = float((config.get("hans_avatar", {}) or {}).get(
+            "render_timeout", 600))
+        pause_warmup(_rt + 180)
+    except Exception as _pe:
+        _log.debug("avatar: pause_warmup selhal: %s", _pe)
     url = _ollama_url(config)
     for m in models:
         try:
@@ -207,6 +255,12 @@ def _comfy_free(config: dict) -> None:
 
 
 def _ollama_warm(config: dict, model: str) -> None:
+    # HANS_RENDER_VRAM_LOCK_V1 — konec GPU práce → warmup smí zase pinovat.
+    try:
+        from scripts.ollama_client import resume_warmup
+        resume_warmup()
+    except Exception as _re:
+        _log.debug("avatar: resume_warmup selhal: %s", _re)
     try:
         data = json.dumps({"model": model, "prompt": "ok", "keep_alive": -1,
                            "stream": False}).encode()
