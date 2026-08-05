@@ -114,7 +114,7 @@ def handle_command(text: str, ctx: BridgeCtx) -> bool:
     if _route_inspect_command(text, cmd, ctx):
         return True
     if cmd in ("help", "pomoc", "napoveda", "nápověda", "start"):
-        ctx.send(
+        _manual = (
             "Většinu věcí mi můžete říct i normální řečí — sám poznám, "
             "co chcete, a nabídnu to (s potvrzením). Např.:\n"
             "  „pusť Smrtonosnou past\" · „přidej na nákup mléko\" ·\n"
@@ -147,8 +147,45 @@ def handle_command(text: str, ctx: BridgeCtx) -> bool:
             "/hlidej — hlídám dům: při pohybu nebo změně světla pošlu "
             "snímek (/hlidej stop = konec, /hlidej stav = jak jsem na tom)\n"
             "/help — tato nápověda")
+        ctx.send(_manual + _help_missing(_manual))
         return True
     return False
+
+
+# HANS_BRIDGE_HELP_SYNC_V1 (5.8.) — telefonní help je psaný RUČNĚ, chatový
+# `/help` se generuje z registru → drift. Audit 3.8. našel 7 bridge-dostupných
+# příkazů, které v telefonním helpu chyběly; tři se dopsaly ručně, což problém
+# jen odložilo (dnes přibyly /stop a /pauza a zase by chyběly).
+# Řešení je HYBRID, ne přegenerování: kurátorský text (hezčí pořadí i
+# formulace) ZŮSTÁVÁ, ale co v něm chybí a přitom je na mostu dostupné, se
+# dopíše samo. Drift tím přestane být možný a ruční kurace se nezahodí.
+# ZÁMĚRNĚ skryté z telefonního helpu (rozhodnutí 3.8.) — maker/dílna je
+# rozpracovaná a v běžné nápovědě by mátla. NENÍ to drift, proto to musí být
+# vypsané: jinak by automatika vědomé rozhodnutí přebila a nikdo by nepoznal
+# rozdíl mezi „schválně chybí" a „zapomnělo se".
+_HELP_HIDDEN = frozenset({"brief", "vytvor", "prohloubit", "nastroj"})
+
+
+def _help_missing(manual_text: str) -> str:
+    """Řádky pro bridge-dostupné příkazy, které v ručním helpu nejsou."""
+    try:
+        from scripts.chat_commands import list_commands
+    except Exception:
+        return ""
+    known = {c["id"]: c for c in list_commands()}
+    missing = []
+    for cid in sorted((set(_INSPECT_CMDS) | set(_MUTATING_CMDS)) - _HELP_HIDDEN):
+        spec = known.get(cid)
+        if not spec:
+            continue
+        slash = spec.get("slash") or cid
+        if ("/%s" % slash) in manual_text or ("/%s" % cid) in manual_text:
+            continue
+        help_txt = (spec.get("help") or "").strip()
+        missing.append("/%s — %s" % (slash, help_txt) if help_txt else "/%s" % slash)
+    if not missing:
+        return ""
+    return "\n\nDalší, co umím:\n" + "\n".join(missing)
 
 
 def _route_inspect_command(text: str, cmd: str, ctx: BridgeCtx) -> bool:

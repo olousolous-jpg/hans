@@ -1038,7 +1038,7 @@ def _ground_subject(config: dict, db_path: str, subject: str) -> str:
         # Bez velkého písmene se grounding přeskočí ÚPLNĚ (i Wikipedia — ta
         # dělá tutéž chybu) a FLUX beztak ví, jak vypadá kočka.
         # Souvisí HANS_ENTITY_SURNAME_PERSON_ONLY_V1 (táž třída, jiná větev).
-        if not any(w[:1].isupper() for w in s_clean.split() if w):
+        if not _is_proper_name(s_clean, config):   # HANS_ART_NAME_CLASSIFY_V1
             # Obecné slovo → NEGROUNDOVAT VŮBEC (ani Wikipedií: „kočku" tam
             # padne na „Kockums", „psa" na „Psaní levou rukou" — týž prefix
             # problém). Syrový námět převede do angličtiny až scene-prompt,
@@ -1524,6 +1524,55 @@ def paint_self(config: dict, diary_db_path: str, full_figure: bool = True,
     return (rel_path, caption)
 
 
+# HANS_ART_NAME_CLASSIFY_V1 (5.8.) — „je to JMÉNO, nebo obecné slovo?"
+# `HANS_ART_COMMON_NOUN_V1` to rozhodoval podle VELKÉHO PÍSMENE, což je slabé:
+# „namaluj bud spencer" malým písmenem přišlo o grounding a FLUX maloval jen
+# podle jména. Rozhoduje teď model (hans-czech, viz HANS_INTENT_PC_V1) —
+# změřeno 19/19 při 1,2 s, včetně sporných („kočka na zdi", „západ slunce"
+# → obecné; „říp", „pán prstenů" → jméno).
+# Fallback zůstává velké písmeno: model dole → přesně původní chování.
+_NAME_CLS_SYSTEM = (
+    "Uživatel chce namalovat obraz a řekl NÁMĚT. Rozhodni, jestli je námět "
+    "VLASTNÍ JMÉNO (konkrétní osoba, postava, dílo, značka nebo zeměpisné "
+    "jméno — něco, co má encyklopedické heslo), nebo OBECNÉ SLOVO (druh věci, "
+    "zvíře, rostlina, běžný předmět nebo krajina).\n\n"
+    "Příklady:\n„bud spencer\" -> jmeno\n„rumcajs\" -> jmeno\n"
+    "„matka tereza\" -> jmeno\n„říp\" -> jmeno\n„pán prstenů\" -> jmeno\n"
+    "„kočka\" -> obecne\n„pes\" -> obecne\n„les\" -> obecne\n"
+    "„starý dům\" -> obecne\n\n"
+    "Odpověz JEDNÍM slovem: jmeno nebo obecne."
+)
+
+_name_cls_cache: dict = {}
+
+
+def _is_proper_name(subject: str, config: dict) -> bool:
+    """Je námět vlastní jméno (→ má smysl groundovat)?"""
+    s = (subject or "").strip()
+    if not s:
+        return False
+    _cap = any(w[:1].isupper() for w in s.split() if w)   # fallback heuristika
+    if s in _name_cls_cache:
+        return _name_cls_cache[s]
+    try:
+        from scripts.hans_intent import _ask_classifier
+        out = _ask_classifier(config, _NAME_CLS_SYSTEM, s)
+    except Exception:
+        out = None
+    if out is None:
+        return _cap
+    low = (out or "").strip().lower()
+    if low.startswith("jmeno") or low.startswith("jméno"):
+        res = True
+    elif low.startswith("obecne") or low.startswith("obecné"):
+        res = False
+    else:
+        return _cap                       # nejednoznačné → heuristika
+    if len(_name_cls_cache) < 256:
+        _name_cls_cache[s] = res
+    return res
+
+
 def _name_shaped(subject: str) -> bool:
     """HANS_ART_PERSON_WIKI_LOOKUP_V1 — vypadá námět jako JMÉNO (a stojí tedy za
     to zkusit, jestli to není osoba)? Krátký a s velkým písmenem. Drží Wikipedia
@@ -1598,7 +1647,7 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             # paměti propašuje nesmysl („kočku" → „Kockums", švédská loděnice),
             # i když `_ground_subject` níž grounding správně přeskočí. Cesta
             # k podobě OSOBY beztak dává smysl jen u jmen → stejná brána.
-            if not _ent and _name_shaped(subject):
+            if not _ent and _name_shaped(subject) and _is_proper_name(subject, config):
                 _ent = _resolve_entity(config, diary_db_path, subject)
             # HANS_ART_PERSON_WIKI_LOOKUP_V1 (4.8.) — osobu, kterou Hans JEŠTĚ
             # NEZNÁ, dohledej na Wikipedii a teprve pak rozhodni o podobě.
@@ -1608,7 +1657,9 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             # Doloženo 4.8.: „Bud Spencer" (v paměti nebyl) i „TerRence Hill"
             # (překlep) skončily jako generický muž, ačkoli cs.wikipedia má
             # u obou článek s portrétem.
-            if (not _ent or _ent.get("etype") != "osoba") and _name_shaped(subject):
+            if ((not _ent or _ent.get("etype") != "osoba")
+                    and _name_shaped(subject)
+                    and _is_proper_name(subject, config)):
                 _wt = _wiki_capture_person(config, diary_db_path, subject)
                 if _wt:
                     try:

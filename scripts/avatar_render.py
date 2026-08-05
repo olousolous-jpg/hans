@@ -372,18 +372,49 @@ def _comfy_submit(base: str, workflow: dict, client_id: str) -> Optional[str]:
 
 
 def _comfy_wait(base: str, prompt_id: str, timeout: int = 300) -> Optional[dict]:
-    """Poll /history dokud render nedoběhne. Vrátí history záznam nebo None."""
+    """Poll /history dokud render nedoběhne. Vrátí history záznam nebo None.
+
+    HANS_COMFY_DEAD_JOB_V1 (5.8.) — pozná, že ComfyUI pod námi SPADL a úloha
+    s ním. Doloženo: render psa začal 11:51:43, ComfyUI ve 12:01:54 spadl
+    (systemd ho zvedl, NRestarts=1) a Hans dál čekal na soubor, který nikdy
+    nepřijde — vyčerpal by celých 900 s a teprve pak spadl na fallback.
+    Restart vyprázdní /history i frontu, takže „server odpovídá, ale NAŠE
+    úloha zmizela z fronty A NENÍ v historii" = mrtvá úloha → skonči hned.
+    Kontroluje se až po `grace` sekundách, aby se nezaměnil krátký okamžik
+    mezi přijetím a zařazením do fronty."""
     deadline = time.time() + timeout
+    started = time.time()
+    grace = 20.0
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(f"{base}/history/{prompt_id}", timeout=15) as r:
                 hist = json.load(r)
             if prompt_id in hist:
                 return hist[prompt_id]
+            if time.time() - started > grace and not _comfy_job_alive(base, prompt_id):
+                _log.warning("ComfyUI: úloha %s zmizela (server nejspíš "
+                             "restartoval) — nečekám do timeoutu", prompt_id[:8])
+                return None
         except Exception as _e:
             _log.debug("avatar: history poll: %s", _e)
         time.sleep(2)
     return None
+
+
+def _comfy_job_alive(base: str, prompt_id: str) -> bool:
+    """Je naše úloha pořád ve frontě (běžící nebo čekající)? Chyba → True
+    (nedostupná fronta NENÍ důkaz smrti; radši čekej dál)."""
+    try:
+        with urllib.request.urlopen(f"{base}/queue", timeout=10) as r:
+            q = json.load(r)
+    except Exception:
+        return True
+    for key in ("queue_running", "queue_pending"):
+        for item in (q.get(key) or []):
+            # položka fronty: [priorita, prompt_id, prompt, extra, outputs]
+            if isinstance(item, (list, tuple)) and len(item) > 1 and item[1] == prompt_id:
+                return True
+    return False
 
 
 def _comfy_fetch_image(base: str, img: dict, dest_path: str) -> bool:
