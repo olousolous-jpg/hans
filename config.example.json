@@ -1170,11 +1170,11 @@
   "intent": {
     "enabled": true,
     "use_llm": true,
-    "model": "qwen2.5:1.5b",
-    "base_url": "http://127.0.0.1:11434",
+    "model": "hans-czech:latest",
+    "base_url": "http://192.168.1.10:11434",
     "timeout": 20,
-    "keep_alive": "30m",
+    "keep_alive": -1,
     "gray_zone_threshold": 0.6,
-    "_note": "HANS_INTENT_LLM_PI_V1 - sedou zonu (dotaz vypada jako otazka, ale zadna fakticka trida nesedla) rozhodne MINI MODEL NA PI (CPU, ~1 GB) - ne na PC: musi fungovat i kdyz je PC vypnute nebo se hraje. Duvod: seznam vzoru pokryje jen videne formulace; jina osoba se zepta jinak (mas se dobre? / nudis se? / co je u tebe noveho?) a Hans spadl do anti-konfabulacni abstinence. Zmereno na qwen2.5:1.5b: 14/16, medial 2.7 s, v rodine 'jak se mas' 10/10. use_llm=false vrati puvodni chovani (jen regexy)."
+    "_note": "HANS_INTENT_PC_V1 (5.8.) - klasifikace jede na hans-czech NA PC (drive mini model na Pi). Zmereno: routing prikazu 18/18 vs 11/16, dotaz na zdroj 15/15 vs 9/15, a 2x rychleji (1,0-1,2 s vs 2,7 s). Obava 'musi to jet i s vypnutym PC' na CHAT cestu neplati - kdyz je mozek dole, Hans neodpovida tak jako tak. hans-czech je uz rezidentni, takze klasifikace nestoji ani GB VRAM navic. NOCNI cesty (overovani nalezu) na Pi zustavaji. !! keep_alive MUSI byt -1: jina hodnota by rezidentnimu modelu prepsala keep_alive a shodila ho z VRAM. use_llm=false = zpet jen regexy."
   }
 }

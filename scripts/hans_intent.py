@@ -385,22 +385,8 @@ class HansIntent:
         společného a musí fungovat i když je PC vypnuté nebo se hraje. Právě
         proto byla LLM vrstva dosud vypnutá (qwen2.5:7b se k hans-czech do
         16 GB nevešel) — mini model na Pi tenhle spor ruší."""
-        import json as _json
-        import urllib.request as _url
-        body = _json.dumps({
-            "model": self._model, "stream": False,
-            "keep_alive": self._keep_alive,
-            "options": {"num_predict": 4, "temperature": 0.0},
-            "messages": [{"role": "system", "content": self._LLM_SYSTEM},
-                         {"role": "user", "content": msg}],
-        }).encode("utf-8")
-        try:
-            req = _url.Request("%s/api/chat" % self._base_url.rstrip("/"),
-                               body, {"Content-Type": "application/json"})
-            with _url.urlopen(req, timeout=self._timeout) as r:
-                out = _json.loads(r.read())["message"]["content"]
-        except Exception as e:
-            _log.debug("intent LLM nedostupný (%s) → keyword fallback", e)
+        out = _ask_classifier(self._config, self._LLM_SYSTEM, msg)
+        if out is None:
             return None
         low = (out or "").strip().lower()
         if low.startswith("volna") or low.startswith("volná"):
@@ -439,6 +425,50 @@ _SELF_SYSTEM = (
 _self_cache: dict = {}
 
 
+def _ask_classifier(config: dict, system: str, message: str) -> Optional[str]:
+    """HANS_INTENT_PC_V1 (5.8.) — jedno místo, kudy jdou klasifikační dotazy.
+
+    Od 5.8. míří na `hans-czech` NA PC (dřív mini model na Pi). Změřeno:
+    18/18 vs 11/16 (routing příkazů) a 15/15 vs 9/15 (dotaz na zdroj), a to
+    2× rychleji (1,0–1,2 s vs 2,7 s). Původní obava „musí to jet i s vypnutým
+    PC" na CHAT cestu NEPLATÍ — když je mozek dole, Hans neodpovídá tak jako
+    tak. Noční cesty (ověřování nálezů) na Pi zůstávají.
+
+    ⚠️ `keep_alive` MUSÍ být -1: hans-czech je rezidentní (KEEPALIVE_FIX_V2) a
+    jakákoli hodnota v requestu mu keep_alive PŘEPÍŠE → model by po vypršení
+    spadl z VRAM a chat by ho pak dotahoval znovu. Klasifikace tedy nesmí
+    sáhnout na jeho residenci.
+
+    ⚠️ Herní mód: teď jedeme po GPU na PC, takže respektuj `game_mode_on()`
+    (na Pi to bylo jedno). V herním módu je chat stejně vypnutý.
+    """
+    ic = (config or {}).get("intent", {}) or {}
+    try:
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            return None
+    except Exception:
+        pass
+    import json as _json
+    import urllib.request as _url
+    body = _json.dumps({
+        "model": ic.get("model", "hans-czech:latest"), "stream": False,
+        "keep_alive": ic.get("keep_alive", -1),
+        "options": {"num_predict": 5, "temperature": 0.0},
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": message}],
+    }).encode("utf-8")
+    try:
+        url = str(ic.get("base_url", "http://127.0.0.1:11434")).rstrip("/")
+        req = _url.Request(url + "/api/chat", body,
+                           {"Content-Type": "application/json"})
+        with _url.urlopen(req, timeout=int(ic.get("timeout", 20))) as r:
+            return _json.loads(r.read())["message"]["content"]
+    except Exception as e:
+        _log.debug("klasifikátor nedostupný (%s) → fallback", e)
+        return None
+
+
 def is_about_self(message: str, config: dict) -> bool:
     """Ptá se zpráva na HANSE (jeho stav/náladu/činnost)? Mini model na Pi.
 
@@ -453,23 +483,8 @@ def is_about_self(message: str, config: dict) -> bool:
         return False
     if msg in _self_cache:
         return _self_cache[msg]
-    import json as _json
-    import urllib.request as _url
-    body = _json.dumps({
-        "model": ic.get("model", "qwen2.5:1.5b"), "stream": False,
-        "keep_alive": ic.get("keep_alive", "30m"),
-        "options": {"num_predict": 4, "temperature": 0.0},
-        "messages": [{"role": "system", "content": _SELF_SYSTEM},
-                     {"role": "user", "content": msg}],
-    }).encode("utf-8")
-    try:
-        url = str(ic.get("base_url", "http://127.0.0.1:11434")).rstrip("/")
-        req = _url.Request(url + "/api/chat", body,
-                           {"Content-Type": "application/json"})
-        with _url.urlopen(req, timeout=int(ic.get("timeout", 20))) as r:
-            out = _json.loads(r.read())["message"]["content"]
-    except Exception as e:
-        _log.debug("is_about_self: %s", e)
+    out = _ask_classifier(config, _SELF_SYSTEM, msg)
+    if out is None:
         return False
     res = (out or "").strip().lower().startswith("asist")
     if len(_self_cache) < 256:
