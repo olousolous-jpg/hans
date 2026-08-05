@@ -3008,8 +3008,13 @@ register(
 _LLM_ROUTE_CMDS = [
     ("studium",    "co studuje, jak pokračuje jeho učení"),
     ("cetl",       "co a kdy četl (knihy, články)"),
-    ("film",       "jaký film nebo pořad viděl"),
-    ("hraje",      "co se PRÁVĚ přehrává na TV"),
+    # ⚠️ `film` a `hraje` tu ZÁMĚRNĚ NEJSOU (HANS_CMD_LLM_ROUTE_V2, 5.8.):
+    # sedí sémanticky hned vedle AKCÍ agenta („pusť film Kruh" → kodi_play_film,
+    # „děje se něco doma?" → report_home_status). Doloženo naživo hodinu po
+    # nasazení V1: „pust film kruh" → /film = výpis, CO Hans viděl, místo aby
+    # se film pustil; „deje se neco doma?" → /hraje. Routing běží PŘED agentem,
+    # takže mu takové věty ukradne. Obojí má vlastní nl_patterns i agentní
+    # akci — z LLM allowlistu se tím neztrácí nic podstatného.
     ("napad",      "jeho vlastní nápady a postřehy (synteze)"),
     ("kritika",    "co u sebe chce zlepšit (sebekritika)"),
     ("dilo",       "jeho autorské dílo na pokračování"),
@@ -3035,8 +3040,12 @@ _LLM_ROUTE_SYSTEM = (
     + "\n  zadny = věta nevyžaduje žádný výpis (běžný hovor, názor, zdvořilost, "
       "dotaz na svět, žádost o obraz)\n\n"
       "Příklady:\n„jak jde studium?\" -> studium\n„co jsi četl?\" -> cetl\n"
-      "„co běží v televizi?\" -> hraje\n„jsi hodný\" -> zadny\n"
-      "„kdo byl Napoleon?\" -> zadny\n„namaluj kočku\" -> zadny\n\n"
+      "„jsi hodný\" -> zadny\n„kdo byl Napoleon?\" -> zadny\n"
+      # HANS_CMD_LLM_ROUTE_V2 — POKYNY K AKCI nejsou žádost o výpis. Bez těchto
+      # příkladů model posílal „pusť film X" na /film (= co Hans viděl).
+      "„namaluj kočku\" -> zadny\n„pusť film Kruh\" -> zadny\n"
+      "„přehraj ten seriál\" -> zadny\n„co běží v televizi?\" -> zadny\n"
+      "„děje se něco doma?\" -> zadny\n„zapni hlídání\" -> zadny\n\n"
       "Odpověz JEDNÍM slovem ze seznamu."
 )
 
