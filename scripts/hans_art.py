@@ -285,9 +285,54 @@ def _looks_english(s: str) -> bool:
     return not any(t in _CZ_COMMON for t in toks)
 
 
+_CS_WORD_RE = re.compile(r"[a-záčďéěíňóřšťúůýž]{6,}")
+
+
+def _cs_leak(subject_cs: str, prompt_en: str) -> str:
+    """HANS_ART_CS_LEAK_V1 (5.8.) — zůstalo v anglickém promptu ČESKÉ slovo?
+
+    Doloženo: „namaluj zenskeho kentaura" → prompt „A female **kentaur** …"
+    (3 pokusy ze 3). FLUX slovo nezná, chytne se zbytku („equine forms")
+    a namaluje KONĚ. Anglicky je to `centaur` — model transliteroval místo
+    aby přeložil.
+
+    Heuristika: vezmi z českého námětu slova délky ≥6, ustřihni 2 znaky
+    koncovky (skloňování) a hledej kmen v anglickém promptu. „kentaura" →
+    „kentaur" → nalezeno = únik. Falešný poplach je levný (jeden překlad
+    navíc), takže se hraje na jistotu."""
+    low = (prompt_en or "").lower()
+    for w in _CS_WORD_RE.findall((subject_cs or "").lower()):
+        stem = w[:-2]
+        if len(stem) >= 5 and stem in low:
+            return w
+    return ""
+
+
+def _translate_subject(config: dict, subject_cs: str) -> str:
+    """Český námět → anglicky, vyhrazeným krátkým dotazem (ne uvnitř psaní
+    scény). Změřeno 5/5 správně vč. „vodníka" → water sprite a zachovaného
+    „Karlštejn Castle". POUŽÍVÁ SE JEN JAKO NÁPOVĚDA při úniku — překládat
+    rovnou celý námět je horší: „souboj kočky se psem" → „cat fight" (ztratí
+    psa), protože překlad zkracuje."""
+    try:
+        from scripts.ollama_client import ollama_generate
+    except Exception:
+        return ""
+    out = ollama_generate(
+        str(_acfg(config).get("prompt_model", "qwen2.5:7b")),
+        "Czech: %s\nEnglish:" % subject_cs,
+        system=("Translate the Czech noun phrase into ENGLISH. Output ONLY the "
+                "English words, 1-6 words, nothing else. Never transliterate — "
+                "if it is a creature or thing, use its real English name."),
+        config=config, timeout=60, keep_alive=0,
+        options={"temperature": 0.0, "num_predict": 24})
+    return (out or "").strip().strip('."\'').splitlines()[0][:60] if out else ""
+
+
 def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
                   system: str = None, source_intro: str = None,
-                  en_fallback: str = None, prev: dict = None) -> Optional[str]:
+                  en_fallback: str = None, prev: dict = None,
+                  cs_subject: str = "") -> Optional[str]:
     """LLM (levný, keep_alive=0) → anglický SDXL scene prompt. Fallback šablona.
     HANS_ART_LESSON_V1: když db_path, vloží do promptu ponaučení z minulých obrazů.
     HANS_DREAMS_V1: system+source_intro lze přepsat (snová varianta místo knižní)."""
@@ -343,6 +388,29 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     # HANS_ART_SAFE_FALLBACK_V1 — fallback (LLM dole) smí do FLUXu jen s
     # anglickým námětem; český → en_fallback od volajícího, jinak None = odlož.
     def _fb():
+        # HANS_ART_CS_LEAK_V1 (5.8.) — `_looks_english` je DĚRAVÝ: pozná jen
+        # diakritiku a seznam běžných českých slov, takže „zenskeho kentaura"
+        # (uživatel psal bez háčků, ani jedno slovo v seznamu není) projde jako
+        # angličtina a syrová čeština doteče do FLUXu. Doloženo 5.8.: LLM na
+        # scénu vypršel, fallback poslal do modelu „zenskeho kentaura, gouache".
+        # Rozšiřovat seznam slov je nekonečná práce → radši se ZEPTEJ na
+        # překlad (krátký dotaz projde i tam, kde dlouhý na scénu vypršel).
+        if cs_subject:
+            _en = _translate_subject(config, cs_subject)
+            if _en and _looks_english(_en) and not _cs_leak(cs_subject, _en):
+                _log.info('art: fallback — český námět „%s" přeložen na „%s"',
+                          cs_subject, _en)
+                return ", ".join(x for x in (_en, _fstyle, _tail) if x)
+        # Překlad nevyšel (mozek dole / zahlcený): NESMÍME spadnout zpátky na
+        # `_looks_english`, ta český námět bez diakritiky propustí. Když v
+        # námětu čeština prokazatelně zůstala, radši ODLOŽ render — tohle je
+        # celý smysl HANS_ART_SAFE_FALLBACK_V1 (radši žádný obraz než garbage).
+        if cs_subject and _cs_leak(cs_subject, fallback):
+            if en_fallback:
+                return ", ".join(x for x in (en_fallback, _tail) if x)
+            _log.warning('art: námět „%s" se nepodařilo dostat do angličtiny '
+                         '— render odložen (retry příště)', cs_subject)
+            return None
         if _looks_english(_fsubj):
             return fallback
         if en_fallback:
@@ -412,6 +480,34 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     if len(p2) < 0.6 * len(p):
         _log.warning("art: scene prompt ujel do CJK (%d→%d zn) — fallback", len(p), len(p2))
         return _fb()
+    # HANS_ART_CS_LEAK_V1 — zůstalo v „anglickém" promptu české slovo? Pak ho
+    # model transliteroval místo přeložil a SDXL/FLUX ho nezná (kentaur→kůň).
+    # Opravujeme JEN při úniku: doplníme anglickou nápovědu do závorky (systém
+    # ji už umí použít, viz „If the description gives an English name in
+    # parentheses") a scénu napíšeme znovu — celý námět překládat dopředu
+    # NELZE, překlad zkracuje („souboj kočky se psem" → „cat fight").
+    leak = _cs_leak(cs_subject, p2) if cs_subject else ""
+    if leak:
+        en = _translate_subject(config, cs_subject)
+        if en and not _cs_leak(cs_subject, en):
+            _log.info('art: český únik „%s" v promptu → nápověda „%s", píšu scénu znovu',
+                      leak, en)
+            hint = "%s (%s)" % (cs_subject, en)
+            user2 = user.replace(cs_subject, hint, 1) if cs_subject in user else (
+                user + "\nENGLISH NAME OF THE SUBJECT: %s\n" % en)
+            try:
+                raw2 = ollama_generate(
+                    model, user2, system=(system or _PROMPT_SYSTEM), config=config,
+                    timeout=int(acfg.get("llm_timeout", 90)), keep_alive=0)
+            except Exception as _e2:
+                raw2 = ""
+                _log.warning("art: přepis scény po úniku selhal: %s", _e2)
+            p3 = _strip_cjk((raw2 or "").strip().strip('"').replace("\n", " "))
+            if p3 and not _cs_leak(cs_subject, p3):
+                return p3[:600]
+            _log.warning('art: české slovo „%s" v promptu zůstalo i po přepisu', leak)
+        else:
+            _log.warning('art: český únik „%s", ale překlad nevyšel', leak)
     return p2[:600]
 
 
@@ -755,7 +851,7 @@ def _last_in_series(db_path: str, series: str) -> Optional[dict]:
 def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
                   en_fallback: str = None,
                   scene_system: str = None, scene_intro: str = None,
-                  series: str = ""):
+                  series: str = "", cs_subject: str = ""):
     """Vyrenderuje 1 obraz přes ComfyUI/SDXL. Vrací (rel_path, prompt, vision_desc)
     nebo None. VRAM orchestrace uvnitř (unload LLM → render → _comfy_free →
     llava vize → warm hans-czech). vision_desc = llava popis renderu pro hodnocení
@@ -790,7 +886,8 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
     prompt = _scene_prompt(config, title, reflection, db_path,
                            system=scene_system, source_intro=scene_intro,
                            en_fallback=en_fallback,
-                           prev=_last_in_series(db_path, series) if series else None)
+                           prev=_last_in_series(db_path, series) if series else None,
+                           cs_subject=cs_subject)
     # HANS_ART_SAFE_FALLBACK_V1 — _scene_prompt vrátí None, když LLM selhal a
     # není bezpečný anglický námět → ODLOŽ render (radši žádný obraz než garbage
     # z nepřeloženého českého námětu, doloženo 30.7. „domov" → muž na ulici).
@@ -1807,7 +1904,8 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             "(fitting the person/thing described).\n\n" % grounded)
         _scene_sys = _SUBJECT_SCENE_SYSTEM
     res = _render_image(config, title, grounded, diary_db_path,
-                        scene_system=_scene_sys, scene_intro=scene_intro)
+                        scene_system=_scene_sys, scene_intro=scene_intro,
+                        cs_subject=subject)
     if not res:
         _log.warning('art: obraz na téma „%s" se nevyrenderoval', title)
         return None
