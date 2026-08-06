@@ -929,9 +929,17 @@ class AgentRouter:
             # Rozhoduje TÝŽ klasifikátor jako grounding (`hans_intent`), tedy
             # i mini model na Pi → pokrývá i formulace, které nikdo nevypsal
             # do seznamu. Cena je JEN u těchto tří akcí, ne u každé zprávy.
+            # HANS_AGENT_SOCIAL_GUARD_V2 (6.8.) — `report_kolac_status` PATŘÍ
+            # do stejné množiny. Doloženo živě: „jak se mas?" → „Koláč zrovna
+            # tiše přemítá po mém boku" (conf 0.95). Router má v kontextu
+            # posledních N výměn, a když se pár předchozích točilo kolem
+            # Koláče, přetáhne k němu i osobní otázku. Guard kryl jen tři
+            # „domácí" akce, takže tudy únos prošel.
             if aid in ("report_home_status", "report_who_is_home",
-                       "report_now_playing") and self._is_small_talk(message):
-                _log.info("agent: %s potlačen — dotaz je o Hansovi, ne o domě", aid)
+                       "report_now_playing", "report_kolac_status"
+                       ) and self._is_small_talk(message):
+                _log.info("agent: %s potlačen — dotaz je o Hansovi, "
+                          "ne o domě/Koláčovi", aid)
                 return None
             action = ACTIONS.get(aid)
             if not action:
