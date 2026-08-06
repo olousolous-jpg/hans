@@ -50,6 +50,13 @@ if not row:
 pid, curr, idx = row
 subs = json.loads(curr)
 
+# Sloupec existuje a je čitelný. POZOR: od backfillu 6.8. už nese
+# historická přeskočení, takže se NEsmí očekávat prázdno — test proto
+# pracuje s PŘÍRŮSTKEM, ne s absolutní hodnotou.
+ap = store.get_active_program()
+t("skipped_idx je množina", isinstance(ap.get("skipped_idx"), set), True)
+before = set(ap.get("skipped_idx") or set())
+
 # Vyber dokončené pod-téma, které NEPOKRÝVÁ žádné jiné. Jinak by test
 # selhal právem: `already_studied` hlásí pokrytí už při dvou shodných
 # významových slovech, takže „Románské prvky v gotické architektuře"
@@ -58,6 +65,8 @@ _stem_ = _stem_tokens  # totéž kritérium, jaké používá already_studied
 done = subs[:int(idx)]
 target = sub_name = None
 for i, s in enumerate(done):
+    if i in before:                      # tenhle už přeskočený je
+        continue
     if all(len(_stem_(s) & _stem_(x)) < 2
            for j, x in enumerate(done) if j != i):
         target, sub_name = i, s
@@ -66,10 +75,6 @@ if target is None:
     print("přeskakuji — všechna pod-témata se navzájem překrývají")
     sys.exit(0)
 
-# ── migrace je zpětně kompatibilní: prázdné pole = nic přeskočeno ───────
-ap = store.get_active_program()
-t("čerstvý sloupec je prázdná množina", ap.get("skipped_idx"), set())
-
 # ── před označením se pod-téma tváří jako nastudované ───────────────────
 t("před: téma je pokryté", bool(already_studied(sub_name, str(tmp))), True)
 
@@ -77,18 +82,20 @@ store.mark_skipped(pid, target)
 
 # ── po označení už NE — jinak by Hans odmítl nabídnout studium ──────────
 t("po: přeskočené NENÍ pokryté", already_studied(sub_name, str(tmp)), None)
-t("zapsáno do programu", store.get_active_program().get("skipped_idx"),
-  {target})
+t("zapsáno do programu",
+  store.get_active_program().get("skipped_idx"), before | {target})
 
 # ── ostatní pod-témata zůstávají nedotčená ─────────────────────────────
-other = next((s for i, s in enumerate(subs[:int(idx)]) if i != target), None)
+other = next((s for i, s in enumerate(subs[:int(idx)])
+              if i != target and i not in before), None)
 if other:
     t("jiné pod-téma zůstává pokryté",
       bool(already_studied(other, str(tmp))), True)
 
 # ── idempotence: opakované označení nic nerozbije ──────────────────────
 store.mark_skipped(pid, target)
-t("idempotentní", store.get_active_program().get("skipped_idx"), {target})
+t("idempotentní",
+  store.get_active_program().get("skipped_idx"), before | {target})
 
 # ── výpis /studium kreslí ⤼, ne ✓ ─────────────────────────────────────
 class _H:

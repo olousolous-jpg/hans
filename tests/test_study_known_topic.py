@@ -27,9 +27,11 @@ def t(label, got, exp):
 
 
 # ── datová brzda: co je nastudované, se nenabízí ────────────────────────
-for topic in ("byzantská vojenská technika", "byzantske vojenske technice",
-              "hrady", "vývoj zbrojnic", "typologie hradů",
-              "gotická architektura"):
+# Pozn.: „Byzantská vojenská architektura" tu ZÁMĚRNĚ není — od 6.8. je
+# označená jako PŘESKOČENÁ (`HANS_STUDY_SKIPPED_MARK_V1`), takže pokrytá
+# být nesmí. Testuje to `test_study_skipped.py`.
+for topic in ("hrady", "vývoj zbrojnic", "typologie hradů",
+              "gotická architektura", "krizacke hrady v Levante"):
     t(f"pokryto: {topic!r}", bool(already_studied(topic)), True)
 
 # Nenastudované se nabídnout SMÍ — jinak by Hans nešel nikdy dál.
