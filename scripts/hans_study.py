@@ -102,9 +102,16 @@ def already_studied(topic: str, db_path: str = "data/hans_diary.db"):
     conn = None
     try:
         conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=5)
-        rows = conn.execute(
-            "SELECT topic, curriculum, current_index FROM study_program "
-            "WHERE status IN ('active','completed')").fetchall()
+        # Tahle funkce čte DB READ-ONLY a NEVOLÁ `_init_db`, takže sloupec
+        # `skipped_idx` tu ještě nemusí být (starší DB, Hans běží na starším
+        # kódu). Bez fallbacku spadl celý dotaz a `already_studied` vracelo
+        # None na VŠECHNO — tichá regrese chycená testem 6.8.
+        _sql = ("SELECT topic, curriculum, current_index, %s "
+                "FROM study_program WHERE status IN ('active','completed')")
+        try:
+            rows = conn.execute(_sql % "COALESCE(skipped_idx,'[]')").fetchall()
+        except sqlite3.OperationalError:
+            rows = conn.execute(_sql % "'[]'").fetchall()
     except Exception as e:
         _log.debug("already_studied: %s", e)
         return None
@@ -114,7 +121,14 @@ def already_studied(topic: str, db_path: str = "data/hans_diary.db"):
                 conn.close()
             except Exception:
                 pass
-    for prog_topic, curriculum, idx in rows:
+    for prog_topic, curriculum, idx, skipped_raw in rows:
+        # HANS_STUDY_SKIPPED_MARK_V1 — přeskočené pod-téma NENÍ nastudované;
+        # kdyby se počítalo jako pokryté, Hans by odmítl nabídnout studium
+        # tématu, které reálně nestudoval.
+        try:
+            skipped = set(json.loads(skipped_raw or "[]"))
+        except Exception:
+            skipped = set()
         if _already_covered(topic, [_norm(prog_topic or "")]):
             return (prog_topic, prog_topic)
         try:
@@ -123,7 +137,9 @@ def already_studied(topic: str, db_path: str = "data/hans_diary.db"):
             subs = []
         # JEN dokončená pod-témata (před current_index) — na nenastudované
         # se studium nabídnout SMÍ, to je legitimní.
-        for sub in subs[:max(0, int(idx or 0))]:
+        for _i, sub in enumerate(subs[:max(0, int(idx or 0))]):
+            if _i in skipped:
+                continue
             st = _sig_tokens(sub)
             if st and (nt <= st or st <= nt):
                 return (sub, prog_topic)
@@ -1135,6 +1151,14 @@ class StudyStore:
                            "fail_count INTEGER NOT NULL DEFAULT 0")
             except sqlite3.OperationalError:
                 pass  # sloupec už existuje
+            # HANS_STUDY_SKIPPED_MARK_V1 — které indexy kurikula byly
+            # PŘESKOČENY (nenašel se zdroj), ne nastudovány. Prázdné pole =
+            # nic přeskočeno → staré programy se chovají přesně jako dosud.
+            try:
+                db.execute("ALTER TABLE study_program ADD COLUMN "
+                           "skipped_idx TEXT NOT NULL DEFAULT '[]'")
+            except sqlite3.OperationalError:
+                pass
             # HANS_STUDY_DEEPEN_V1 — kolo prohloubení (spirála studium→dílo→kritika)
             try:
                 db.execute("ALTER TABLE study_program ADD COLUMN "
@@ -1155,7 +1179,8 @@ class StudyStore:
 
     def _update_fields(self, pid: int, **fields):
         """Bezpečný UPDATE vybraných sloupců programu (jen whitelist)."""
-        allowed = {"current_index", "fail_count", "status", "sessions_done"}
+        allowed = {"current_index", "fail_count", "status", "sessions_done",
+                   "skipped_idx"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return
@@ -1180,7 +1205,42 @@ class StudyStore:
             d["curriculum"] = json.loads(d.get("curriculum") or "[]")
         except Exception:
             d["curriculum"] = []
+        # HANS_STUDY_SKIPPED_MARK_V1 — indexy, které se PŘESKOČILY.
+        try:
+            d["skipped_idx"] = set(json.loads(d.get("skipped_idx") or "[]"))
+        except Exception:
+            d["skipped_idx"] = set()
         return d
+
+    def mark_skipped(self, pid: int, idx: int):
+        """HANS_STUDY_SKIPPED_MARK_V1 — zapiš, že pod-téma bylo PŘESKOČENO.
+
+        Bez tohohle se přeskočené tvářilo jako nastudované: stav se odvozoval
+        jen z `current_index`, takže „prošel jsem kolem" a „nastudoval jsem"
+        vypadaly stejně (nález uživatele 6.8.).
+        """
+        try:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT skipped_idx FROM study_program WHERE id=?",
+                    (pid,)).fetchone()
+                cur = set()
+                if row:
+                    try:
+                        cur = set(json.loads(row["skipped_idx"] or "[]"))
+                    except Exception:
+                        cur = set()
+                cur.add(int(idx))
+                conn.execute(
+                    "UPDATE study_program SET skipped_idx=?, updated_ts=? "
+                    "WHERE id=?",
+                    (json.dumps(sorted(cur)), time.time(), pid))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("mark_skipped failed: %s", e)
 
     def get_active_program(self) -> Optional[dict]:
         try:
@@ -1419,6 +1479,9 @@ class StudyStore:
                 skip_idx = idx + 1
                 self._update_fields(prog["id"], current_index=skip_idx,
                                     fail_count=0)
+                # HANS_STUDY_SKIPPED_MARK_V1 — ať se to ve /studium neukazuje
+                # jako nastudované a `already_studied` to nebere za pokryté.
+                self.mark_skipped(prog["id"], idx)
                 _log.info("study: pod-téma '%s' PŘESKOČENO po %d pokusech bez "
                           "čtení (program [%d])", sub, new_fail, prog["id"])
                 if skip_idx >= len(curriculum):

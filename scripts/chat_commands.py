@@ -1661,6 +1661,12 @@ def _cmd_studium(handler, name, args) -> str:
         skipped = str(curriculum[idx])
         nxt = idx + 1
         store._update_fields(ap["id"], current_index=nxt, fail_count=0)
+        # HANS_STUDY_SKIPPED_MARK_V1 — i RUČNÍ přeskočení se musí zapsat,
+        # jinak by se ve /studium ukázalo jako nastudované (nález 6.8.).
+        try:
+            store.mark_skipped(ap["id"], idx)
+        except Exception as _mse:
+            _log.warning("mark_skipped (ruční): %s", _mse)
         _log.info("/studium přeskoč → '%s' (program [%d], %d→%d)",
                   skipped, ap["id"], idx, nxt)
         if nxt >= len(curriculum):
@@ -1699,14 +1705,23 @@ def _cmd_studium(handler, name, args) -> str:
     cur = ap["current_index"]
     total = len(ap["curriculum"])
     out = ["Studuji: „%s\" — pod-téma %d z %d:" % (ap["topic"], cur + 1 if cur < total else total, total)]
+    # HANS_STUDY_SKIPPED_MARK_V1 — přeskočené se NESMÍ kreslit jako ✓
+    # (nález uživatele 6.8.: „ukazuje jako nastudováno").
+    _skipped = ap.get("skipped_idx") or set()
+    _n_skip = 0
     for i, s in enumerate(ap["curriculum"]):
-        if i < cur:
+        if i in _skipped:
+            mark = "⤼"
+            _n_skip += 1
+        elif i < cur:
             mark = "✓"
         elif i == cur:
             mark = "→"
         else:
             mark = " "
         out.append("   %s %s" % (mark, s))
+    if _n_skip:
+        out.append("   (⤼ = přeskočeno, nenašel jsem k tomu zdroj)")
     out.append("")
     # HANS_STUDY_NUDGE_V1 — bez tohohle nebylo z výpisu poznat, že program
     # VÁZNE (jen že stojí na pod-tématu). fail_count = kolik nocí po sobě se
