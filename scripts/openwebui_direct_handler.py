@@ -533,6 +533,16 @@ class OpenWebUIDirectHandler:
         if not _text or not str(_text).strip():
             return ''
 
+        # HANS_THREAD_V1 — navazující věta si nese předmět z předchozí
+        # repliky, aby ji detektory neposuzovaly izolovaně. Guard na shodu
+        # s originálem: _build_grounding se volá i mimo hlavní chat cestu.
+        try:
+            _tc = getattr(self, '_thread_ctx', None)
+            if _tc and str(_tc[0]) == str(_text) and _tc[1] != _tc[0]:
+                _text = _tc[1]
+        except Exception:
+            pass
+
         # HANS_SELFCONSISTENCY_A1_V1 — zaznamenej výsledek groundingu pro
         # volajícího (A1 short-circuit běží jen u 'factual_nofacts').
         self._grounding_outcome = 'skip'
@@ -2397,6 +2407,23 @@ class OpenWebUIDirectHandler:
         # CHAT_COMMANDS_DISPATCH_PATCH
         try:
             from scripts.chat_commands import parse_command, dispatch
+            # HANS_THREAD_V1 (6.8.) — rozhodovací vrstva byla BEZSTAVOVÁ:
+            # parse_command i detektory v _build_grounding dostávaly holou
+            # větu, zatímco LLM historii měl. Doloženo 5.8. 19:17-19:23 —
+            # korekce „myslel jsem rozhovor s Kolacem" neměla žádný účinek.
+            # Tady se z předchozí repliky doplní předmět; ORIGINÁL zůstává
+            # pro generaci (persona dál slyší, co uživatel napsal).
+            _t_turns = []      # musí existovat i když blok níž selže
+            try:
+                from scripts import hans_thread as _thr
+                _t_turns = _thr.recent_turns(self, name, channel)
+                _t_res, _t_subj = _thr.resolve_reference(user_message, _t_turns)
+                self._thread_ctx = (user_message, _t_res, _t_subj)
+                if _t_subj:
+                    print(f"[Chat] thread: odkaz rozřešen → {_t_subj}")
+            except Exception as _te:
+                self._thread_ctx = None
+                print(f"[Chat] thread error: {_te}")
             _cmd = parse_command(user_message)
             if not _cmd:
                 # HANS_CMD_LLM_ROUTE_V1 (5.8.) — regexy minuly; zeptej se
@@ -2405,13 +2432,46 @@ class OpenWebUIDirectHandler:
                 # Fail-safe: None → pokračuje běžná cesta beze změny.
                 try:
                     from scripts.chat_commands import resolve_command_llm
-                    _cmd = resolve_command_llm(user_message, self.config)
+                    # HANS_THREAD_LLMROUTE_V1 — router posuzuje větu
+                    # ROZŘEŠENOU (s předmětem z předchozí repliky), jinak
+                    # navazující dotaz hodnotí izolovaně stejně jako regexy.
+                    _rt = user_message
+                    try:
+                        _tc = getattr(self, '_thread_ctx', None)
+                        if _tc and _tc[0] == user_message and _tc[1]:
+                            _rt = _tc[1]
+                    except Exception:
+                        pass
+                    # HANS_CMD_LLM_ROUTE_V4 — vlákno i pro deterministické
+                    # brzdy routeru (kdo je „třetí strana" ví jen kontext).
+                    _cmd = resolve_command_llm(_rt, self.config,
+                                               turns=_t_turns)
                 except Exception as _re:
                     print(f"[Chat] cmd route error: {_re}")
+            if _cmd:
+                # HANS_THREAD_V1 — uživatel právě OPRAVIL tutéž cestu, která
+                # odpovídala minule → nepouštět ji znovu (vracela by totéž;
+                # doloženo 19:19 vs 19:23, kde se lišil jen počet výměn).
+                # ÚZKÉ SCHVÁLNĚ: jen při korekci, NE při doslovném opakování
+                # („namaluj kočku" 5× za sebou je legitimní záměr).
+                try:
+                    from scripts import hans_thread as _thr
+                    if _thr.should_suppress(name, channel, _cmd[0],
+                                            user_message):
+                        print(f"[Chat] thread: '{_cmd[0]}' potlačen "
+                              f"(korekce) → odpoví model")
+                        _cmd = None
+                except Exception:
+                    pass
             if _cmd:
                 # CHAT_COMMANDS_LOG_FIX
                 print(f"[Chat] command detected: {_cmd[0]}")
                 _reply = dispatch(_cmd, self, name=name)
+                try:
+                    from scripts import hans_thread as _thr
+                    _thr.note_outcome(name, channel, _cmd[0], user_message)
+                except Exception:
+                    pass
                 # Ulož do historie + diary jako normální exchange
                 try:
                     self.conv_store.add_exchange(name, user_message, _reply, channel=channel)

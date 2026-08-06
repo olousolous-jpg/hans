@@ -72,6 +72,12 @@ def _args_hash(action: str, args: dict) -> str:
 # odpovědní/film-recall cestu před únosem do add_study_topic.
 _RECALL_PAT = re.compile(
     r"zjisti[t]?\s+v[ií]c|co\s+v[ií][šs]|[řr]ekni\s+mi\s+o|"
+    # HANS_STUDY_KNOWN_TOPIC_V1 (6.8.) — formulace, které guard minul a Hans
+    # na ně nabídl studium tématu, jež už má odškrtnuté (5× 08:48–09:06).
+    # „mi/me/mě" — uživatel píše bez diakritiky a s překlepy („co ME muzes")
+    r"co\s+(mi|me|m[ěe])?\s*m[ůu][žz]e[šs]\s+[řr][íi]c|"
+    r"pov[ěe]z\s+mi|[řr]ekni\s+(mi\s+)?co|co\s+v[íi]te\s+o|"
+    r"jen\s+[řr]ekni|nezji[šs][ťt]uj|nestuduj|"
     # HANS_AGENT_SOCIAL_GUARD_V1 (4.8.) — „kdo je X?" je dotaz TEĎ, ne pokyn
     # ke studiu. Doloženo testem: „kdo je Bud Spencer?" → router navrhl
     # add_study_topic (conf 0.90) místo odpovědi.
@@ -896,6 +902,25 @@ class AgentRouter:
             # a „si") → nech odpovědní/film-recall cestu (action=null).
             if aid == "add_study_topic" and _looks_like_recall(message):
                 return None
+            # HANS_STUDY_KNOWN_TOPIC_V1 (6.8.) — DATOVÁ brzda: nenabízej
+            # nastudovat něco, co UŽ máš odškrtnuté. Doloženo 5× po sobě
+            # (08:48–09:06) na tématech, u kterých `/studium` hlásilo 12 z 12.
+            # Regexový guard výše má nutně díry ve vzorech; tohle se ptá DAT,
+            # takže je nezávislé na tom, jak se uživatel zeptá.
+            # action=null → odpoví recall/LLM z vlastních zápisků (což umí:
+            # v 08:59 na „ne, jen rekni co uz vis" odpověděl správně).
+            if aid == "add_study_topic":
+                try:
+                    from scripts.hans_study import already_studied
+                    _t = (decision.get("args") or {}).get("tema") or ""
+                    _cov = already_studied(_t, _diary_path(handler)) if _t else None
+                    if _cov:
+                        _log.info("HANS_STUDY_KNOWN_TOPIC_V1: '%s' už pokryto "
+                                  "(%s) → nenabízím studium, odpovím z paměti",
+                                  _t, _cov[0])
+                        return None
+                except Exception as _kte:
+                    _log.debug("already_studied: %s", _kte)
             # HANS_AGENT_SOCIAL_GUARD_V1 (4.8.) — zdvořilostní dotaz NA HANSE
             # („jak se ti daří?", „máš se dobře?", „co je u tebe nového?") se
             # NESMÍ zrouteovat na hlášení stavu domácnosti. Doloženo testem:

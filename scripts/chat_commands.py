@@ -2348,6 +2348,68 @@ def _cmd_rozhovory(handler, name, args) -> str:  # HANS_CHAT_SUMMARY_V1
                                      _extract_conv_topic)
     cfg = getattr(handler, "config", {}) or {}
     q = args or ""
+    # HANS_THREAD_V1 — když příkaz vybral LLM router, args jsou PRÁZDNÉ
+    # (`resolve_command_llm` vrací `(cid, "")` schválně, aby se nespustil
+    # mutující podpříkaz). Sumář rozhovorů tím ale ztratí celý dotaz a vždy
+    # spadne na „poslední den" — doloženo živě 6.8.: „co delal Kolac?"
+    # vrátilo sumář rozhovoru s TAZATELEM. Tenhle příkaz je čistě ČTECÍ,
+    # takže původní věta se dá bezpečně vzít zpět z vlákna.
+    if not q:
+        try:
+            _tc = getattr(handler, "_thread_ctx", None)
+            if _tc and _tc[0]:
+                q = str(_tc[0])
+        except Exception:
+            pass
+    # HANS_THREAD_V1 — dotaz může mířit na rozhovor s TŘETÍ stranou (Koláč).
+    # chat_summary umí jen `human_chat` (tazatel↔Hans) a `hans_recall`
+    # dokonce vyřazuje `teddy_dialog` jako šum (_DIARY_NOISE) → vrátit místo
+    # toho sumář JINÉHO rozhovoru je horší než přiznat, že to zatím neumím.
+    # Doloženo 5.8. 19:23. Odpadne s vrstvou B (FTS nad všemi rozhovory).
+    try:
+        from scripts.hans_thread import third_party_scope, recent_turns
+        # Vlákno je součást vstupu: „jste se o TOM bavili" neřekne, s KÝM —
+        # to ví jen předchozí replika (doloženo živě 6.8.).
+        _turns = recent_turns(handler, name)
+        _tp = third_party_scope(q, cfg, turns=_turns)
+        if _tp and _tp != "?":
+            # HANS_CONVINDEX_V1 (6.8.) — hledej v ROZHOVORECH S KOLÁČEM
+            # (`teddy_dialog`). Do 6.8. to nešlo vůbec: `hans_recall` ten
+            # typ vyřazuje jako šum (_DIARY_NOISE) a `chat_summary` umí jen
+            # `human_chat` → na „myslel jsem rozhovor s Kolacem" vracel
+            # sumář rozhovoru s TAZATELEM (doloženo 5.8. 19:23).
+            from scripts.hans_convindex import answer_about, topic_tokens
+            # Hledej ROZŘEŠENOU větou — „v jakem kontextu jste se o tom
+            # bavili" sama žádné téma nenese, to je v předchozí replice.
+            _sq = q
+            try:
+                _tc = getattr(handler, "_thread_ctx", None)
+                if _tc and _tc[2]:
+                    _sq = "%s %s" % (q, _tc[2])
+            except Exception:
+                pass
+            # Bez TÉMATU se nehledá: „co dělal Koláč?" je dotaz na STAV, ne
+            # na rozhovor (jinak FTS vrátí náhodné staré dialogy — jméno je
+            # v každém z nich, doloženo živě 6.8.). Odpoví na to ale TÁŽ
+            # funkce jako agentní akce `kolac_status`, ne sumář rozhovoru
+            # s tazatelem — jinak by dotaz na Koláče končil u výpisu „spolu
+            # jsme vedli N výměn" (vzor HANS_UNIFY_ACTIONS_V1: jeden kód).
+            if not topic_tokens(_sq, exclude=(_tp,)):
+                from scripts.hans_agent import _run_kolac_status
+                _st = _run_kolac_status(handler, {})
+                if _st:
+                    return _st
+            if topic_tokens(_sq, exclude=(_tp,)):
+                _hits = answer_about(_sq, source="teddy_dialog")
+                if _hits:
+                    # Jméno v 1. pádu — `cz_names` instrumentál neumí.
+                    return ("%s a já jsme se o tom bavili, pane. Tady je, co "
+                            "mám zapsáno:\n\n%s" % (_tp, _hits))
+                return ("%s a já spolu rozprávíme, ale k tomuhle nemám "
+                        "zapsaný žádný náš rozhovor, pane — a nebudu si ho "
+                        "vymýšlet." % _tp)
+    except Exception:
+        pass
     topic = _extract_conv_topic(q)
     if topic:
         out = topic_conversation(_recall_db(handler), name, topic)
@@ -3031,7 +3093,9 @@ _LLM_ROUTE_CMDS = [
     ("rozvrh",     "jeho rozvrh rutin, kdy co naposledy běželo"),
     ("zdravi",     "zdraví systému: Ollama, Kodi, PC, disk"),
     ("zajmy",      "co koho zajímá"),
-    ("nitky",      "rozjeté nitky (nedokončená témata) s osobou"),
+    # HANS_CMD_LLM_ROUTE_V4 — dřív „…s osobou": model to četl jako
+    # „věta zmiňující osobu" a posílal sem dotazy na Koláče.
+    ("nitky",      "nedokončená témata, která zbývá dotáhnout"),
     ("schopnosti", "co všechno umí"),
 ]
 
@@ -3052,6 +3116,24 @@ _LLM_ROUTE_SYSTEM = (
 )
 
 _llm_route_cache: dict = {}
+
+
+def _route_cache_key(msg: str, turns=None) -> str:
+    """HANS_CMD_LLM_ROUTE_CACHE_V1 — klíč cache = věta + PŘEDMĚT z vlákna.
+
+    Bez předmětu by se první rozhodnutí o dané větě zafixovalo napořád
+    a `HANS_THREAD_V1` by nemělo jak ho změnit (táž věta, jiný kontext,
+    jiný správný štítek). Když vlákno nic nenese, klíč je jen text —
+    chování beze změny.
+    """
+    if not turns:
+        return msg
+    try:
+        from scripts.hans_thread import extract_subject, last_assistant_text
+        subj = extract_subject(last_assistant_text(turns))
+    except Exception:
+        subj = ""
+    return "%s\x00%s" % (msg, subj) if subj else msg
 _LLM_ROUTE_MAX_WORDS = 14      # delší věta = vyprávění, ne žádost o výpis
 
 
@@ -3098,21 +3180,58 @@ def _asks_own_records(message: str, config: dict) -> bool:
     return not (out or "").strip().lower().startswith("jine")
 
 
-def resolve_command_llm(message: str, config: dict):
+def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
+    """HANS_CMD_LLM_ROUTE_V4 — oprav štítek podle DETERMINISTICKÝCH signálů.
+
+    Aplikuje se na čerstvý i cachovaný výsledek, ať je rozhodnutí stejné.
+    Dnes řeší jediný, ale doložený případ: dotaz na rozhovor s TŘETÍ STRANOU
+    (Koláč) model posílá na `nitky` (2× z 50 vět, 6.8.). Tam pro něj není
+    nic — kdežto `rozhovory` má A4 (`HANS_THREAD_V1`), který hledá
+    v `teddy_dialog` přes `hans_convindex`.
+    """
+    if cid not in ("nitky", "rozhovory"):
+        return cid
+    try:
+        from scripts.hans_thread import third_party_scope
+        if third_party_scope(msg, config, turns=turns):
+            if cid != "rozhovory":
+                _log.info("HANS_CMD_LLM_ROUTE_V4: '%.40s' /%s → /rozhovory "
+                          "(dotaz na třetí stranu)", msg, cid)
+            return "rozhovory"
+    except Exception:
+        pass
+    return cid
+
+
+def resolve_command_llm(message: str, config: dict, turns=None):
     """Vrátí (command_id, "") když věta žádá o některý ČTECÍ výpis, jinak None.
 
     Volá se AŽ když `parse_command` (slash + regexy) minul. Fail-safe: model
-    nedostupný / neznámý štítek / herní mód → None = beze změny chování."""
+    nedostupný / neznámý štítek / herní mód → None = beze změny chování.
+    `turns` = vlákno rozhovoru (HANS_THREAD_V1) pro deterministické brzdy."""
     msg = (message or "").strip()
     if not msg or msg.startswith("/"):
         return None
     if len(msg.split()) > _LLM_ROUTE_MAX_WORDS:
         return None
+    # HANS_CMD_LLM_ROUTE_V4 — KOREKCE nikdy nežádá výpis; je to oprava
+    # předchozí odpovědi. Doloženo 6.8.: „to nebyla kritika, myslel jsem co
+    # jsis odnesl ze studia" → /studium (uživatel přitom právě říkal, že se
+    # NEptá na výpis). PŘED cache schválně — korekce se nemá ani zapamatovat.
+    try:
+        from scripts.hans_thread import is_correction
+        if is_correction(msg):
+            _log.info("HANS_CMD_LLM_ROUTE_V4: '%.40s' → routing přeskočen "
+                      "(korekce)", msg)
+            return None
+    except Exception:
+        pass
     cfg = (config or {}).get("intent", {}) or {}
     if not cfg.get("use_llm", False) or not cfg.get("cmd_route", True):
         return None
-    if msg in _llm_route_cache:
-        cid = _llm_route_cache[msg]
+    _ckey = _route_cache_key(msg, turns)
+    if _ckey in _llm_route_cache:
+        cid = _thread_guard(_llm_route_cache[_ckey], msg, config, turns)
         return (cid, "") if cid else None
     try:
         from scripts.hans_intent import _ask_classifier
@@ -3129,12 +3248,13 @@ def resolve_command_llm(message: str, config: dict):
     if cid and cid not in _COMMANDS:      # registr je pravda, ne můj výčet
         _log.warning("cmd route: '%s' není v registru — ignoruji", cid)
         cid = ""
+    cid = _thread_guard(cid, msg, config, turns)
     if len(_llm_route_cache) < 256:
-        _llm_route_cache[msg] = cid
+        _llm_route_cache[_ckey] = cid
     if cid and cid in _LLM_ROUTE_RISKY and not _asks_own_records(msg, config):
         _log.info("HANS_CMD_LLM_ROUTE_V3: '%.40s' → /%s ZAMÍTNUTO "
                   "(ptá se na svět, ne na Hansovy záznamy)", msg, cid)
-        _llm_route_cache[msg] = ""
+        _llm_route_cache[_ckey] = ""
         return None
     if cid:
         _log.info("HANS_CMD_LLM_ROUTE_V1: '%.40s' → /%s", msg, cid)

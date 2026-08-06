@@ -49,6 +49,18 @@ def _sig_tokens(s: str) -> set:
     return {w for w in _norm(s).split() if len(w) > 2}
 
 
+def _stem_tokens(s: str) -> set:
+    """Významná slova zkrácená na kmen — české koncovky bez slovníku."""
+    import unicodedata
+    out = set()
+    for w in _norm(s).split():
+        w = "".join(c for c in unicodedata.normalize("NFKD", w)
+                    if not unicodedata.combining(c))
+        if len(w) > 2:
+            out.add(w[:5] if len(w) >= 6 else w)
+    return out
+
+
 def _already_covered(topic: str, studied_norms) -> Optional[str]:
     """HANS_STUDY_NEAR_DUP_V1 — je téma už POKRYTÉ existujícím programem? Vrátí
     norm shodného programu, nebo None. Kryje přesnou shodu I blízká synonyma:
@@ -64,6 +76,64 @@ def _already_covered(topic: str, studied_norms) -> Optional[str]:
         st = _sig_tokens(sn)
         if nt and st and (nt <= st or st <= nt):
             return sn
+    return None
+
+
+def already_studied(topic: str, db_path: str = "data/hans_diary.db"):
+    """HANS_STUDY_KNOWN_TOPIC_V1 (6.8.) — studoval už Hans tohle téma?
+
+    Vrací (co_to_pokrývá, celé_téma_programu) nebo None. Kryje DVĚ úrovně:
+      • celý program        („hrady a historická architektura")
+      • DOKONČENÉ pod-téma  („Křižácké hrady v Levantě")
+    Druhá úroveň je ta podstatná — `_already_covered` uměl jen programy,
+    kdežto uživatel se ptá právě na pod-témata.
+
+    PROČ: 6.8. 08:48–09:06 Hans **5× po sobě** nabídl „mám si to nastudovat?"
+    na témata, která má odškrtnutá jako hotová (`/studium` hlásilo 12 z 12).
+    Pravidlo proti tomu v router promptu JE (`HANS_CHAT_STUDY_BRIDGE_V1`)
+    a nefunguje; regexový guard `_looks_like_recall` má díry ve vzorech
+    („co mi můžeš říct o…", „pověz mi něco o…"). Odpověď na to není další
+    fráze v seznamu, ale **ověření proti datům** — nezávislé na formulaci.
+    """
+    nt = _sig_tokens(topic)
+    if not nt:
+        return None
+    ns = _stem_tokens(topic)
+    conn = None
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=5)
+        rows = conn.execute(
+            "SELECT topic, curriculum, current_index FROM study_program "
+            "WHERE status IN ('active','completed')").fetchall()
+    except Exception as e:
+        _log.debug("already_studied: %s", e)
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    for prog_topic, curriculum, idx in rows:
+        if _already_covered(topic, [_norm(prog_topic or "")]):
+            return (prog_topic, prog_topic)
+        try:
+            subs = json.loads(curriculum or "[]")
+        except Exception:
+            subs = []
+        # JEN dokončená pod-témata (před current_index) — na nenastudované
+        # se studium nabídnout SMÍ, to je legitimní.
+        for sub in subs[:max(0, int(idx or 0))]:
+            st = _sig_tokens(sub)
+            if st and (nt <= st or st <= nt):
+                return (sub, prog_topic)
+            # Podmnožina je na češtinu moc přísná: „byzantská vojenská
+            # TECHNIKA" × „Byzantská vojenská ARCHITEKTURA" se plně nekryjí,
+            # a přesto jde o totéž pod-téma. Práh DVĚ shodná významová slova
+            # (po ustřižení koncovky) — jedno by bralo i „hrady ve východních
+            # Čechách" jako pokryté, což by bylo špatně (to nestudoval).
+            if len(ns & _stem_tokens(sub)) >= 2:
+                return (sub, prog_topic)
     return None
 
 
