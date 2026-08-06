@@ -34,14 +34,41 @@ _log = logging.getLogger(__name__)
 
 INDEX_PATH = "data/hans_conv_index.db"
 
-# Druhy deníkových událostí, které JSOU rozhovor. `dialog_reflection` sem
-# ZÁMĚRNĚ nepatří — to je Hansova úvaha O dialogu, ne dialog sám (jinak by
-# vyhledávání vracelo dvakrát totéž, jednou zprostředkovaně).
+# Co se indexuje. `kind` dělí dva různé světy, které se nesmí míchat:
+#   talk      = co jsme si ŘEKLI  (rozhovory)
+#   knowledge = co Hans VÍ        (studium, četba)
+# `dialog_reflection` sem ZÁMĚRNĚ nepatří — to je úvaha O dialogu, ne dialog
+# sám (vyhledávání by vracelo dvakrát totéž, jednou zprostředkovaně).
+#
+# HANS_CONVINDEX_KNOWLEDGE_V1 (6.8.) — znalostní zdroje přibyly proto, že Hans
+# zapíral, co má nastudované: „co mi můžeš říct o křižáckých stavebních
+# technikách?" → „nemám spolehlivý záznam", ačkoli `study_note` z téhož dne
+# mluví o křižáckých státech a jejich hradní architektuře. RAG i
+# `already_studied` minuly na lexikální neshodě (1 společné slovo);
+# FTS s kmeny a prefixy má šanci výrazně vyšší.
 SOURCES = {
-    "human_chat":      {"label": "s vámi",    "text": "note"},
-    "teddy_dialog":    {"label": "s Koláčem", "text": "note"},
-    "chat_reflection": {"label": "úvaha po rozhovoru", "text": "data"},
+    # ── co jsme si řekli ──────────────────────────────────────────────
+    "human_chat":       {"label": "s vámi", "text": "note", "kind": "talk"},
+    "teddy_dialog":     {"label": "s Koláčem", "text": "note", "kind": "talk"},
+    "chat_reflection":  {"label": "úvaha po rozhovoru", "text": "data",
+                         "kind": "talk"},
+    # ── co Hans ví ────────────────────────────────────────────────────
+    # Pořadí = klesající hodnota obsahu: destilát studia > shrnutí >
+    # poznámka z četby > surový výcuc článku.
+    "study_note":       {"label": "z mého studia", "text": "data",
+                         "kind": "knowledge"},
+    "study_mastery":    {"label": "shrnutí studia", "text": "data",
+                         "kind": "knowledge"},
+    "reading_takeaway": {"label": "z četby", "text": "data",
+                         "kind": "knowledge"},
+    "web_read":         {"label": "z článku", "text": "note",
+                         "kind": "knowledge"},
 }
+
+
+def sources_of_kind(kind: str) -> list:
+    """Názvy event_type daného druhu ('talk' / 'knowledge')."""
+    return [k for k, v in SOURCES.items() if v.get("kind") == kind]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS conv_doc (
@@ -122,6 +149,13 @@ def _row_to_doc(diary_id, ts, event_type, title, data, note):
     partner = (title or "").strip()
     if event_type == "teddy_dialog":
         partner = "Koláč"
+    # U znalostních zdrojů je TITLE to nejcennější pro vyhledávání — nese
+    # název pod-tématu („Studium: hrady… — Křižácké hrady v Levantě"), který
+    # se v samotném textu nemusí objevit ani jednou. Jde tedy do `topic`
+    # (indexovaný sloupec), ne do `partner` (to je pro rozhovory).
+    if spec.get("kind") == "knowledge":
+        topic = (title or topic or "").strip()[:160]
+        partner = ""
     return text, topic, partner
 
 
@@ -162,20 +196,29 @@ def sync(diary_path: str = "data/hans_diary.db",
             _log.info("HANS_CONVINDEX_V1: doplněn text u %d řádků",
                       len(missing))
 
-        row = conn.execute("SELECT COALESCE(MAX(id), 0) FROM conv_doc").fetchone()
-        last = int(row[0] or 0)
+        # Watermark PER ZDROJ, ne globální. Globální `id > MAX(id)` znamená,
+        # že nově přidaný zdroj se NIKDY nedojede — jeho záznamy mají nižší
+        # id než poslední zaindexovaný rozhovor. Doloženo 6.8. při přidání
+        # znalostních zdrojů: sync ohlásil „0 nových", ačkoli v deníku čekalo
+        # ~4800 záznamů.
+        marks = {s: 0 for s in SOURCES}
+        for s, mx in conn.execute(
+                "SELECT source, MAX(id) FROM conv_doc GROUP BY source"):
+            marks[s] = int(mx or 0)
         src = sqlite3.connect("file:%s?mode=ro" % diary_path, uri=True, timeout=10)
+        rows = []
         try:
-            q = ("SELECT id, ts, event_type, title, data, note FROM diary "
-                 "WHERE id > ? AND event_type IN (%s) ORDER BY id"
-                 % ",".join("?" * len(SOURCES)))
-            args = [last] + list(SOURCES.keys())
-            if limit > 0:
-                q += " LIMIT ?"
-                args.append(limit)
-            rows = src.execute(q, args).fetchall()
+            for s, mark in marks.items():
+                q = ("SELECT id, ts, event_type, title, data, note FROM diary "
+                     "WHERE event_type = ? AND id > ? ORDER BY id")
+                args = [s, mark]
+                if limit > 0:
+                    q += " LIMIT ?"
+                    args.append(limit)
+                rows.extend(src.execute(q, args).fetchall())
         finally:
             src.close()
+        rows.sort(key=lambda r: r[0])
         for did, ts, et, title, data, note in rows:
             doc = _row_to_doc(did, ts, et, title, data, note)
             if not doc:
@@ -227,10 +270,16 @@ def _stem(tok: str) -> str:
     složí `bratrich*`, což na „Bratři“ (`bratri`) nesedí. Useknutí dvou
     znaků dá `bratri*` a trefí obojí. Doloženo živým testem 6.8.
     """
+    # Pevná délka kmene, ne useknutí koncovky: „ceskem" (6) a „cesky" (5) by
+    # useknutím daly „ceske" × „cesk" a minuly se. Prefix na PEVNOU délku dá
+    # obojí „cesk" a FTS `cesk*` trefí i „Česko", „česká".
+    # Délky voleny podle reálných dotazů: „hradech"→„hrad" musí trefit
+    # „hrady", „zbrojnice"→„zbro" musí trefit „zbrojnic". Delší prefix
+    # (5) obojí minul kvůli české alternaci koncovek (6.8.).
     if len(tok) >= 7:
-        return tok[:-2]
+        return tok[:4]
     if len(tok) >= 5:
-        return tok[:-1]
+        return tok[:4]
     return tok
 
 
@@ -255,7 +304,7 @@ def _fts_query(text: str, stem: bool = False) -> str:
 def search(query: str, limit: int = 8, source: Optional[str] = None,
            partner: Optional[str] = None, index_path: str = INDEX_PATH,
            diary_path: str = "data/hans_diary.db",
-           auto_sync: bool = True) -> list:
+           auto_sync: bool = True, kind: Optional[str] = None) -> list:
     """Najdi rozhovory k dotazu. Vrací [(ts, source, partner, topic, text)].
 
     Nejdřív AND (všechna slova) — přesnější; když nic, spadne na OR, ať
@@ -279,6 +328,14 @@ def search(query: str, limit: int = 8, source: Optional[str] = None,
         if source:
             where.append("d.source = ?")
             args_tail.append(source)
+        elif kind:
+            # „co jsme si řekli" × „co vím" se nesmí míchat — dotaz na
+            # znalost nemá vracet útržky rozhovorů a naopak.
+            srcs = sources_of_kind(kind)
+            if not srcs:
+                return []
+            where.append("d.source IN (%s)" % ",".join("?" * len(srcs)))
+            args_tail.extend(srcs)
         if partner:
             where.append("lower(d.partner) = ?")
             args_tail.append(partner.lower())
@@ -297,13 +354,56 @@ def search(query: str, limit: int = 8, source: Optional[str] = None,
         # Prázdný výsledek a poctivé „nemám zapsáno“ je vždycky lepší
         # ([[anticonfabulation-guiding-principle]]).
         attempts = [expr]
+        narrow = []      # stupně omezené na systematicky studovaná témata
         if expr_stem and expr_stem != expr:
             attempts.append(expr_stem)
+        # RELAXACE — jen pro znalosti. Věta „řekni mi, jak se vyvíjely
+        # zbrojnice" nese balast („rekni", „vyvijely"), který AND zabije,
+        # ačkoli `study_note` „Vývoj zbrojnic" existuje (doloženo 6.8.).
+        # Postupně se odebírá NEJKRATŠÍ token — kratší slovo bývá obecnější,
+        # delší specifičtější. U rozhovorů se NErelaxuje: tam by falešný
+        # nález znamenal „mluvili jsme o tom", což je horší než mlčet.
+        if kind == "knowledge":
+            raw = [t for t in _WORD.findall(query or "")
+                   if len(_fold(t)) >= 3 and _fold(t) not in _STOP]
+            raw.sort(key=len, reverse=True)
+            toks = [_stem(_fold(t)) for t in raw]
+            while len(toks) > 1:
+                toks = toks[:-1]
+                # Na JEDINÉ slovo se smí zúžit jen výraz, který je sám o sobě
+                # dost specifický (≥7 znaků v originále). Bez téhle podmínky
+                # spadlo „co víš o českém ráji" na „1. česká fotbalová liga" —
+                # zbylo obecné „cesk*" a trefilo cokoli českého (6.8.).
+                if len(toks) == 1:
+                    if len(raw[0]) < 7:
+                        break
+                    # Nejužší stupeň má dvě pojistky, obě doložené 6.8.:
+                    #  (a) hledá POUZE V TITULU — ten říká, o čem zápisek JE,
+                    #      kdežto text zmiňuje kdeco okrajově;
+                    #  (b) jen ve zdrojích, které Hans SYSTEMATICKY studoval
+                    #      (kurátorované tituly „Studium: X — Y"), ne v surové
+                    #      četbě. Bez (b) trefila „kvantová teleportace
+                    #      mravenců" článek „Seznam majitelů televizních práv"
+                    #      (kmen „tele*" sedl na „televizních").
+                    narrow.append('topic:"%s"*' % toks[0])
+                    break
+                attempts.append(" ".join('"%s"*' % t for t in toks))
         rows = []
         for e in attempts:
             rows = conn.execute(sql, [e] + args_tail + [limit]).fetchall()
             if rows:
                 break
+        if not rows and narrow:
+            curated = ("study_note", "study_mastery")
+            sql_n = ("SELECT d.ts, d.source, d.partner, d.topic, d.text "
+                     "FROM conv_fts f JOIN conv_doc d ON d.id = f.rowid "
+                     "WHERE conv_fts MATCH ? AND d.source IN (?,?) "
+                     "ORDER BY rank, d.ts DESC LIMIT ?")
+            for e in narrow:
+                rows = conn.execute(
+                    sql_n, [e] + list(curated) + [limit]).fetchall()
+                if rows:
+                    break
         return [tuple(r) for r in rows]
     except Exception as e:
         _log.warning("convindex search selhal: %s", e)
@@ -368,10 +468,11 @@ def format_hits(rows: list, limit: int = 3, max_chars: int = 420) -> str:
 def answer_about(query: str, source: Optional[str] = None,
                  partner: Optional[str] = None, limit: int = 3,
                  index_path: str = INDEX_PATH,
-                 diary_path: str = "data/hans_diary.db") -> str:
+                 diary_path: str = "data/hans_diary.db",
+                 kind: Optional[str] = None) -> str:
     """Hotová odpověď „o tomhle jsme mluvili tehdy a tehdy", nebo ''."""
     rows = search(query, limit=limit, source=source, partner=partner,
-                  index_path=index_path, diary_path=diary_path)
+                  index_path=index_path, diary_path=diary_path, kind=kind)
     if not rows:
         return ""
     return format_hits(rows, limit=limit)

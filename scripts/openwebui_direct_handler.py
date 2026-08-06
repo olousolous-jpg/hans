@@ -519,6 +519,40 @@ class OpenWebUIDirectHandler:
                 return "Fakta o osobě " + _c.display_name + ": " + ", ".join(_parts) + "."
         return ''
 
+    def _knowledge_fts_grounding(self, text: str) -> str:
+        """HANS_KNOWLEDGE_FTS_V1 (6.8.) — poslední šance před abstinencí.
+
+        Prohledá Hansovy VLASTNÍ zápisky (`study_note`, `study_mastery`,
+        `reading_takeaway`, `web_read`) lexikálním FTS. Sémantický RAG míjí,
+        když se dotaz a zápisek liší SLOVY — doloženo 6.8.: „řekni mi, jak se
+        vyvíjely zbrojnice" → „nemám spolehlivý záznam", ačkoli `study_note`
+        s přesně tím titulem existuje.
+
+        Vrací GROUNDING (model odpoví ze zápisků), ne hotovou větu — obsah je
+        Hansův vlastní, jen se k němu neuměl dostat. AND-only vyhledávání
+        v `hans_convindex` drží riziko falešného nálezu nízko.
+
+        ⚠️ Volá se ze DVOU míst: G3C (žádná shoda pod prahem) i #2 (RAG slabý).
+        První verze patche mířila jen na to druhé a v provozu se NIKDY
+        nespustila — reálná cesta vede přes G3C (ověřeno v logu, ne z kódu).
+        """
+        try:
+            from scripts.hans_convindex import search as _kfts
+            hits = _kfts(str(text), limit=3, kind='knowledge')
+            if not hits:
+                return ''
+            blk = '\n\n'.join(
+                '[Z mých zápisků — %s]\n%s' % ((t or s), (x or '')[:700])
+                for _ts, s, _p, t, x in hits)
+            logging.getLogger(__name__).info(
+                'HANS_KNOWLEDGE_FTS_V1: %d zápisků → grounding '
+                '(RAG nic nenašel)', len(hits))
+            return ('\n\n' + ANTIKONFAB + '\n\nTOHLE MÁŠ VE SVÝCH ZÁPISCÍCH '
+                    '(odpověz z toho; co v nich není, nedomýšlej):\n' + blk)
+        except Exception as e:
+            logging.getLogger(__name__).debug('knowledge FTS: %s', e)
+            return ''
+
     def _build_grounding(self, user, name=None) -> str:
         """G3B_GROUNDING_V1 — vrátí grounding blok pro faktický dotaz.
 
@@ -818,6 +852,13 @@ class OpenWebUIDirectHandler:
                         str(_text)[:40])
                     self._grounding_outcome = 'grounded'
                     return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
+                # HANS_KNOWLEDGE_FTS_V1 — tudy vede REÁLNÁ cesta k abstinenci
+                # (ověřeno v logu 6.8.: „žádná shoda pod prahem → G3C").
+                # Původní patch mířil jen na druhé místo níž a NIC neopravil.
+                _kb = self._knowledge_fts_grounding(str(_text))
+                if _kb:
+                    self._grounding_outcome = 'grounded'
+                    return _kb
                 logging.getLogger(__name__).info(
                     'G3B: žádná shoda pod prahem pro [%s] %r → anti-konfab bez fakt (G3C)',
                     res.intent, str(_text)[:40])
@@ -894,6 +935,10 @@ class OpenWebUIDirectHandler:
             facts = '\n\n'.join(_parts)
 
             if not facts.strip():
+                _kb = self._knowledge_fts_grounding(str(_text))
+                if _kb:
+                    self._grounding_outcome = 'grounded'
+                    return _kb
                 # RAG slabé A žádný autoritativní zdroj = jako by prázdné.
                 logging.getLogger(__name__).info(
                     '#2: bez faktů (RAG slabý, žádná entita/karta) → factual_nofacts')
