@@ -55,8 +55,8 @@ t("výpis /zdravi nedá téma",
   extract_subject("Stav mých systémů, pane:\n✅ Mozek — ok\n✅ Kamera — vidí"),
   "")
 t("konverzační Title-case projde",
-  extract_subject("Naposledy jsem tu zahlédl Šárku, teď tu nikoho nevidím."),
-  "Šárku")
+  extract_subject("Naposledy jsem tu zahlédl Janu, teď tu nikoho nevidím."),
+  "Janu")
 
 # ── vlastní předmět ─────────────────────────────────────────────────────
 t("má předmět: jak slo malovani", has_own_subject("jak slo malovani?"), True)
