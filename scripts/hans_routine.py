@@ -1231,7 +1231,15 @@ class HansRoutine:
                 if not txt:
                     continue
                 try:
-                    self._notifier(txt)
+                    # HANS_NOTIFY_DIAG_V1 — notifier vrací False, když most
+                    # chybí / je vypnutý / odmítl (tiché hodiny). Dřív se tu
+                    # návratová hodnota ignorovala → fronta se vyprázdnila
+                    # a zpráva se ZTRATILA, přestože log hlásil „odesláno".
+                    if self._notifier(txt) is False:
+                        _log.warning("HANS_NOTIFY_QUEUE_V1: neodesláno — "
+                                     "nechávám ve frontě na další tick")
+                        kept.append(ln)
+                        continue
                     _log.info("HANS_NOTIFY_QUEUE_V1: odesláno (%d zn)", len(txt))
                 except Exception as e:
                     _log.warning("notify queue: odeslání selhalo (%s) — "

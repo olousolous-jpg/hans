@@ -203,14 +203,37 @@ class HansIdle:
         # SEVERKA_PROACTIVE_NOTIFY_V1 — Hans sám oznámí (Telegram) Severčin návrh
         # identity. Čte self.chat.telegram až při volání (chat se drátuje později).
         def _proactive_notify(text):
+            # HANS_NOTIFY_DIAG_V1 (6.8.) — dřív tahle funkce TIŠE nic neudělala,
+            # když most chyběl nebo byl vypnutý, a výjimky šly do debug logu.
+            # Volající pak hlásil „odesláno", ačkoli zpráva nikam nedorazila
+            # (doloženo: test notify_queue prošel, na Matrix nic).
+            # Souvisí [[robustness-silent-failure-audit]].
             try:
                 tg = getattr(self.chat, 'telegram', None) if self.chat else None
-                if tg is not None and getattr(tg, 'enabled', False):
-                    # TELEGRAM_QUIET_HOURS_V1 — Severka běží v noci → odloží do 9:00
-                    _send = getattr(tg, 'send_proactive', tg.send)
-                    _send(text)
+                if tg is None:
+                    _log.warning('proactive_notify: ŽÁDNÝ most (chat=%s) — '
+                                 'zpráva NEODESLÁNA: %.60s',
+                                 'None' if not self.chat else 'bez .telegram',
+                                 text)
+                    return False
+                if not getattr(tg, 'enabled', False):
+                    _log.warning('proactive_notify: most VYPNUTÝ (%s) — '
+                                 'zpráva NEODESLÁNA: %.60s',
+                                 type(tg).__name__, text)
+                    return False
+                # TELEGRAM_QUIET_HOURS_V1 — Severka běží v noci → odloží do 9:00
+                _send = getattr(tg, 'send_proactive', tg.send)
+                ok = _send(text)
+                if ok is False:
+                    _log.warning('proactive_notify: most odmítl odeslat '
+                                 '(tiché hodiny?) — %.60s', text)
+                    return False
+                _log.info('proactive_notify: odesláno přes %s',
+                          type(tg).__name__)
+                return True
             except Exception as _pe:
-                _log.debug('proactive_notify selhal: %s', _pe)
+                _log.warning('proactive_notify selhal: %s', _pe)
+                return False
         if hasattr(self._routine, 'set_notifier'):
             self._routine.set_notifier(_proactive_notify)
         self._cases   = KolacCases(config, _diary_db)
