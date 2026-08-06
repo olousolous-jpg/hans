@@ -1908,6 +1908,25 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
                         cs_subject=subject)
     if not res:
         _log.warning('art: obraz na téma „%s" se nevyrenderoval', title)
+        # HANS_ART_PROMISE_KEPT_V1 (6.8.) — uživateli už bylo řečeno „maluji"
+        # (chat odpovídá HNED, render běží na pozadí). Když se render odloží,
+        # nesmí to skončit jen řádkem v logu — jinak Hans slíbil obraz, který
+        # nikdy nepřijde. Doloženo 15:06: Ollama timeout → render odložen,
+        # uživatel čekal a `/stav` mezitím hlásil, že se nemaluje.
+        # Fronta doručí zprávu Hansovým mostem (`HANS_NOTIFY_QUEUE_V1`).
+        try:
+            import json as _js
+            import time as _tm
+            with open("data/notify_queue.jsonl", "a", encoding="utf-8") as _q:
+                _q.write(_js.dumps({
+                    "text": ("Omlouvám se, pane — obraz na téma „%s\" se mi "
+                             "teď nepodařilo namalovat (nedostal jsem se ke "
+                             "svému mozku). Zkusím to znovu; kdyby to "
+                             "spěchalo, řekněte a pustím se do toho hned."
+                             % title),
+                    "ts": _tm.time()}, ensure_ascii=False) + "\n")
+        except Exception as _ne:
+            _log.debug("art: notifikace o odloženém renderu: %s", _ne)
         return None
     rel_path, prompt, vision_desc = res
     caption = _evaluate_artwork(config, diary_db_path, title, subject, vision_desc,
