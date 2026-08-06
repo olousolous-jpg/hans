@@ -1,0 +1,10 @@
+[Unit]
+Description=Hans — hlídač kvality rozhovorů (dopad HANS_THREAD_V1, commit edea960)
+Documentation=file:%h/Desktop/face-recognition/tools/watch_chat_quality.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/face-recognition
+# Mlčí, dokud se nenasbírá ~100 výměn. Pak uloží report a zprávu předá
+# Hansovi přes data/notify_queue.jsonl (E2E most, HANS_NOTIFY_QUEUE_V1).
+ExecStart=/usr/bin/python3 %h/Desktop/face-recognition/tools/watch_chat_quality.py

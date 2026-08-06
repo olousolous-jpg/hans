@@ -1192,9 +1192,58 @@ class HansRoutine:
             self._on_phase_change(old, new_phase)
         # HANS_CALENDAR_V1 — throttlovaný sync Proton kalendáře (ICS) na pozadí.
         self._maybe_calendar_sync()
+        # HANS_NOTIFY_QUEUE_V1 — odešli, co do fronty zapsal skript zvenčí.
+        self._drain_notify_queue()
         # NIGHT_WORKER_THREAD_V1 — noční LLM analytika se sem UŽ NEVOLÁ; běží
         # ve vlastním vlákně (_night_worker_loop). Zaseklá Ollama tak
         # neblokuje tento tick ani volajícího (proaktivita/film/autoplay).
+
+    def _drain_notify_queue(self, path: str = "data/notify_queue.jsonl"):
+        """HANS_NOTIFY_QUEUE_V1 — pošli zprávy, které do fronty zapsal skript
+        běžící MIMO Hansův proces (systemd timer, ruční nástroj).
+
+        Proč fronta a ne přímé odeslání: Matrix E2E store snese jen jednoho
+        klienta (`hans_matrix.py:16`), takže cizí proces nesmí založit
+        vlastní nio session — poškodil by olm klíče. Tudy jde zpráva
+        Hansovým existujícím mostem, tedy ŠIFROVANĚ.
+
+        Fronta se maže AŽ PO úspěšném odeslání: když most zrovna neběží
+        (mozek dole, start), zpráva počká na další tick místo ztráty
+        ([[ollama-deferred-processing]]).
+        """
+        import json
+        import os
+        if not self._notifier:
+            return
+        try:
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
+                return
+            with open(path, "r", encoding="utf-8") as f:
+                lines = [ln.strip() for ln in f if ln.strip()]
+            if not lines:
+                return
+            kept = []
+            for ln in lines:
+                try:
+                    txt = (json.loads(ln) or {}).get("text") or ""
+                except Exception:
+                    txt = ln           # holý text taky bereme
+                if not txt:
+                    continue
+                try:
+                    self._notifier(txt)
+                    _log.info("HANS_NOTIFY_QUEUE_V1: odesláno (%d zn)", len(txt))
+                except Exception as e:
+                    _log.warning("notify queue: odeslání selhalo (%s) — "
+                                 "nechávám ve frontě", e)
+                    kept.append(ln)
+            if kept:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(kept) + "\n")
+            else:
+                os.remove(path)
+        except Exception as e:
+            _log.warning("notify queue selhala: %s", e)
 
     def _maybe_calendar_sync(self):
         """HANS_CALENDAR_V1 — stáhne ICS feed (throttle sync_interval_min).

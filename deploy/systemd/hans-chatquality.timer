@@ -1,0 +1,10 @@
+[Unit]
+Description=Denní kontrola, jestli je dost dat na přeměření kvality rozhovorů (20:00)
+
+[Timer]
+OnCalendar=*-*-* 20:00:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target
