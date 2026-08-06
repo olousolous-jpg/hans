@@ -61,6 +61,43 @@ def enqueue(text: str) -> None:
                            ensure_ascii=False) + "\n")
 
 
+def _numbers(report: str, section: str):
+    """Vytáhne (opakované %, duplicity %) z dané sekce reportu."""
+    part = report.split(section, 1)
+    if len(part) < 2:
+        return None, None
+    block = part[1].split("──", 1)[0]
+    rep = re.search(r"opakovan\S* dotaz[^:]*:\s*\d+\s*\((\d+)\s*%\)", block)
+    dup = re.search(r"duplik\S*[^:]*:\s*\d+\s*\((\d+)\s*%\)", block)
+    return (rep.group(1) if rep else None), (dup.group(1) if dup else None)
+
+
+def _compose(report: str, n: int) -> str:
+    """Zpráva na telefon: VŽDY nese čísla, i když je dat málo.
+
+    Dřív se posílalo jen „Verdikt viz report" — measure skript totiž při
+    < 100 výměnách skončí dřív, než verdikt vypíše, takže zpráva byla
+    k ničemu (doloženo při ostrém testu 6.8.).
+    """
+    b_rep, b_dup = _numbers(report, "PŘED nasazením")
+    a_rep, a_dup = _numbers(report, "PO nasazení")
+    lines = []
+    if a_rep and b_rep:
+        lines.append("opakované dotazy: %s %% → %s %%" % (b_rep, a_rep))
+    if a_dup and b_dup:
+        lines.append("duplicitní odpovědi: %s %% → %s %%" % (b_dup, a_dup))
+    verdict = next((l.strip() for l in report.splitlines()
+                    if l.startswith("→")), "")
+    if not verdict:
+        verdict = ("Vzorek je zatím malý (%d z ~100), takže to ber jako "
+                   "průběžný stav, ne závěr." % n)
+    return ("Pane, od úprav ze 6. srpna se nasbíralo %d rozhovorů — "
+            "změřil jsem, jestli pomohly.\n\n%s\n\n%s\n\n"
+            "Celý rozbor je v data/chat_quality_report.txt."
+            % (n, "\n".join(lines) if lines else "(čísla viz report)",
+               verdict))
+
+
 def main() -> int:
     force = "--force" in sys.argv
     if STAMP.exists() and not force:
@@ -76,18 +113,7 @@ def main() -> int:
     report = (out.stdout or "") + (out.stderr or "")
     REPORT.write_text(report, encoding="utf-8")
 
-    # Do zprávy jen VERDIKT a čísla, ne celý výpis — na telefon se hodí krátce.
-    verdict = ""
-    for line in report.splitlines():
-        if line.startswith("→"):
-            verdict = line.strip()
-    nums = [l.strip() for l in report.splitlines()
-            if re.search(r"(kleslo|STOUPLO|beze změny)", l)]
-    msg = ("Pane, nasbíralo se %d rozhovorů od úprav ze 6. srpna — "
-           "změřil jsem, jestli pomohly.\n\n%s%s\n\n"
-           "Celý rozbor mám v data/chat_quality_report.txt."
-           % (n, ("\n".join(nums) + "\n\n") if nums else "",
-              verdict or "Verdikt viz report."))
+    msg = _compose(report, n)
     enqueue(msg)
     STAMP.write_text(str(time.time()), encoding="utf-8")
     print(f"report hotov ({n} výměn), zpráva ve frontě")
