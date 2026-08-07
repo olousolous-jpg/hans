@@ -58,6 +58,19 @@ _REQUEST_OPENERS = frozenset({
     "muzes", "můžeš", "muzeš", "mohl", "mohla", "mohls", "dokazes", "dokážeš",
     "zvladnes", "zvládneš", "prosim", "prosím", "chci", "chtel", "chtěl",
     "potreboval", "potřeboval",
+    # HANS_AGENT_IMPERATIVE_OPENERS_V1 (7.8.) — ROZKAZY. Docstring
+    # `_looks_like_request` je sliboval od začátku („tázací/rozkazovací
+    # začátek"), ale v množině nebyly → „popis co se deje doma" se k routeru
+    # vůbec nedostalo a odpovídal model z hlavy (vymyslel si režim spánku
+    # a bezpečnostní kamery). Imperativ dosud prošel JEN tam, kde ho někdo
+    # vypsal do hintů konkrétní akce — přesně ten seznam slov, který měl
+    # HANS_AGENT_NO_WORDGATE_V1 odstranit.
+    # ⚠️ Držet u sloves typu „sděl mi / ukaž mi", ne u obecných rozkazů —
+    # brána jen POUŠTÍ k routeru, ale širší brána = víc šancí na únos
+    # běžného hovoru (vzor HANS_AGENT_SOCIAL_GUARD).
+    "popis", "popiš", "rekni", "řekni", "povez", "pověz", "ukaz", "ukaž",
+    "vypis", "vypiš", "zjisti", "shrn", "shrň", "povidej", "povídej",
+    "najdi", "zkontroluj", "mrkni", "koukni", "spocitej", "spočítej",
 })
 
 
@@ -877,8 +890,28 @@ class AgentRouter:
             from scripts.hans_intent import is_about_self
             return is_about_self(message, self.config)
         except Exception as e:
-            _log.debug("agent social gate: %s", e)
+            log.debug("agent social gate: %s", e)
             return False
+
+    # HANS_AGENT_SLEEP_QUESTION_GUARD_V1 — rozkazová slovesa, která znamenají
+    # SKUTEČNOU žádost o uspání. Když ve větě jsou, je to příkaz i s otazníkem
+    # („můžeš jít spát?").
+    _SLEEP_IMPERATIVE = re.compile(
+        r"\b(b[ěe][zž]|jdi|jd[ěe]te|usni|usn[ěe]te|sp[ěe]te|ztich|utich|"
+        r"odpo[čc]i[nň]|dobrou\s+noc|m[uů][zž]e[sš]\s+(j[íi]t\s+)?spa?t)",
+        re.IGNORECASE)
+    # Zápor u režimu = korekce („NEměl bys být v režimu spánku").
+    _SLEEP_NEGATION = re.compile(r"\bne\w{0,3}(m[ěe]l|m[áa][sš]|jsi|budeš|bys)\b",
+                                 re.IGNORECASE)
+
+    def _sleep_question(self, message: str) -> bool:
+        """Ptá se věta na režim / opravuje ho (→ NENÍ to žádost o uspání)?"""
+        m = (message or "").strip()
+        if not m:
+            return False
+        if self._SLEEP_IMPERATIVE.search(m):
+            return False          # skutečný rozkaz — nech projít
+        return m.endswith("?") or bool(self._SLEEP_NEGATION.search(m))
 
     def propose(self, handler, name: str, message: str) -> Optional[str]:
         """Vrátí propose_text (Hansův návrh + [ano/ne]) nebo None (běžný chat)."""
@@ -915,12 +948,12 @@ class AgentRouter:
                     _t = (decision.get("args") or {}).get("tema") or ""
                     _cov = already_studied(_t, _diary_path(handler)) if _t else None
                     if _cov:
-                        _log.info("HANS_STUDY_KNOWN_TOPIC_V1: '%s' už pokryto "
+                        log.info("HANS_STUDY_KNOWN_TOPIC_V1: '%s' už pokryto "
                                   "(%s) → nenabízím studium, odpovím z paměti",
                                   _t, _cov[0])
                         return None
                 except Exception as _kte:
-                    _log.debug("already_studied: %s", _kte)
+                    log.debug("already_studied: %s", _kte)
             # HANS_AGENT_SOCIAL_GUARD_V1 (4.8.) — zdvořilostní dotaz NA HANSE
             # („jak se ti daří?", „máš se dobře?", „co je u tebe nového?") se
             # NESMÍ zrouteovat na hlášení stavu domácnosti. Doloženo testem:
@@ -935,10 +968,25 @@ class AgentRouter:
             # posledních N výměn, a když se pár předchozích točilo kolem
             # Koláče, přetáhne k němu i osobní otázku. Guard kryl jen tři
             # „domácí" akce, takže tudy únos prošel.
+            # HANS_AGENT_SLEEP_QUESTION_GUARD_V1 (7.8.) — OTÁZKA na režim ani
+            # KOREKCE režimu není žádost o uspání. Doloženo 2× živě: „jsi
+            # v rezimu spanku?" → návrh hans_sleep (conf 1.00) a „nemel by byt
+            # v rezimu spanku, je 13:00" → „Přecházím do režimu spánku, pane."
+            # Hans přitom nikdy neusnul (v logu žádné `SLEEP: aktivuji`) —
+            # uživatel ale četl text návrhu jako hotovou akci.
+            # Rozlišovač je TVAR VĚTY, ne téma: rozkaz („běž spát", „ztich se")
+            # projde, tázací/záporná věta se potlačí a odpověď obstará
+            # deterministický blok o režimu (HANS_SELF_STATE_AWAKE_V2).
+            # ⚠️ ZÁMĚRNĚ ne přes `_is_small_talk` — ta vrací True i pro „běž
+            # spát" (taky se týká Hanse) a zabila by legitimní příkaz.
+            if aid == "hans_sleep" and self._sleep_question(message):
+                log.info("agent: hans_sleep potlačen — věta se na režim PTÁ "
+                         "nebo ho opravuje, nežádá o uspání: %.50s", message)
+                return None
             if aid in ("report_home_status", "report_who_is_home",
                        "report_now_playing", "report_kolac_status"
                        ) and self._is_small_talk(message):
-                _log.info("agent: %s potlačen — dotaz je o Hansovi, "
+                log.info("agent: %s potlačen — dotaz je o Hansovi, "
                           "ne o domě/Koláčovi", aid)
                 return None
             action = ACTIONS.get(aid)

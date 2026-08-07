@@ -1443,12 +1443,18 @@ def _cmd_hraje(handler, name, args) -> str:
 register(
     "hraje",
     slash_aliases=["hraje", "prehrava", "přehrává"],
+    # HANS_HRAJE_WORDORDER_V1 (7.8.) — „teď" smí stát PŘED i ZA slovesem.
+    # Doloženo: „co TEĎ běží v tv?" minulo (volitelné „teď" bylo jen ZA
+    # slovesem) → propadlo na LLM router → vyhrál `rozvrh` a Hans vypsal
+    # seznam autonomních rutin. „co hraje" to mělo správně už předtím —
+    # nekonzistence uvnitř jednoho bloku.
     nl_patterns=[
         r"co\s+(te[ďd]\s+)?hraj[eí]",
         r"hraje\s+(te[ďd]\s+)?n[ěe]jak",
         r"co\s+se\s+(te[ďd]\s+)?p[řr]ehr[aá]v[aá]",
-        r"co\s+b[ěe][žz][ií]\s+(te[ďd]\s+)?(v\s+)?(televiz|tv|kodi)",
-        r"co\s+d[aá]vaj[ií]\s+(te[ďd]\s+)?(v\s+)?(televiz|tv)",
+        r"p[řr]ehr[aá]v[aá]\s+se\s+(te[ďd]\s+)?n[ěe]co",
+        r"co\s+(te[ďd]\s+)?b[ěe][žz][ií]\s+(te[ďd]\s+)?(v\s+)?(televiz|tv|kodi)",
+        r"co\s+(te[ďd]\s+)?d[aá]vaj[ií]\s+(te[ďd]\s+)?(v\s+)?(televiz|tv)",
     ],
     handler=_cmd_hraje,
     help_text="Co se právě přehrává (živě z Kodi): co hraje?",
@@ -2339,7 +2345,27 @@ register(
 def _cmd_videl(handler, name, args) -> str:
     cfg = getattr(handler, "config", {}) or {}
     from scripts.hans_recall import last_seen_answer
-    out = last_seen_answer(_recall_db(handler), cfg, args or "", name)
+    q = args or ""
+    # HANS_LLM_ROUTE_SUBJECT_V1 (7.8.) — když příkaz vybral LLM router, args
+    # jsou PRÁZDNÉ schválně (aby nemohl spustit mutující podpříkaz). Tady tím
+    # ale zmizí OSOBA, na kterou se uživatel ptá, a `_resolve_person` spadne
+    # na tazatele → Hans odpoví o někom jiném, a sebejistě.
+    # Doloženo 7.8. 11:29: „<jméno> doma neni?" → router vybral `videl`
+    # s args='' → „Naposledy jsem VÁS viděl ve čtvrtek…". Totéž u „kdy jsi
+    # viděl <jméno>?" — dotaz na jinou osobu odpoví o tazateli.
+    # Řešení je TÝŽ vzorec, jaký už 6.8. dostal `_cmd_rozhovory` (tehdy
+    # „co delal Kolac?" → sumář rozhovoru s tazatelem) — jen sem nebyl
+    # protažen. Příkaz je čistě ČTECÍ, takže vzít původní větu je bezpečné.
+    # ⚠️ NEDĚLAT plošně: `smer`, `studium`, `seznam`, `zdravi`, `nitky`
+    # a `kalendar` mají mutující podpříkazy a prázdné args je před nimi chrání.
+    if not q:
+        try:
+            _tc = getattr(handler, "_thread_ctx", None)
+            if _tc and _tc[0]:
+                q = str(_tc[0])
+        except Exception:
+            pass
+    out = last_seen_answer(_recall_db(handler), cfg, q, name)
     return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
 
 
@@ -2355,6 +2381,64 @@ register(
     ],
     handler=_cmd_videl,
     help_text="Kdy jsem koho naposledy viděl (přímo z deníku person_seen)",
+)
+
+
+# ─── /rezim — vlastní provozní stav (HANS_REZIM_SHORTCIRCUIT_V1) ────────────
+def _cmd_rezim(handler, name, args) -> str:
+    """Spím/bdím + hlídání — přímo ze stavu, ŽÁDNÝ LLM.
+
+    Doloženo 7.8.: i když měl model fakt „teď: jsem vzhůru" v promptu (blok
+    894 zn), odpověděl „Ano, jsem v režimu spánku." Fakta v promptu tenhle
+    případ neuhlídají — proto deterministická odpověď, vzor `/vzpominka`.
+    """
+    _sleeping = None
+    try:
+        # ⚠️ `_routine` drží `hans_idle`, ne handler (vzorec TIME_AWARENESS_V1).
+        _hi = getattr(handler, "_hans_idle", None)
+        _rt = getattr(_hi, "_routine", None) if _hi else None
+        if _rt is not None:
+            _sleeping = bool(getattr(_rt, "_sleeping", False))
+    except Exception:
+        pass
+    _guard = None
+    try:
+        import json as _js
+        import os as _os
+        _gp = "data/.hans_guard"
+        if _os.path.exists(_gp):
+            with open(_gp, encoding="utf-8") as _f:
+                _guard = bool((_js.load(_f) or {}).get("armed"))
+        else:
+            _guard = False
+    except Exception:
+        pass
+    if _sleeping is None and _guard is None:
+        return "Svůj stav teď nedokážu spolehlivě zjistit, pane."
+    out = []
+    if _sleeping is not None:
+        out.append("Ne, pane, nespím — jsem vzhůru a v běžném provozu."
+                   if not _sleeping else
+                   "Ano, pane, jsem v nočním režimu (spánek).")
+    if _guard is not None:
+        out.append("Hlídací režim mám %s." % ("zapnutý" if _guard else "vypnutý"))
+    return " ".join(out)
+
+
+register(
+    "rezim",
+    slash_aliases=["rezim", "režim", "spis", "spíš"],
+    nl_patterns=[
+        r"\b(jsi|js|nejsi)\s+(te[ďd]\s+)?(v\s+)?(re[žz]imu\s+)?sp[áa]nk",
+        r"\bsp[íi][sš]\s*\?",
+        r"\bnesp[íi][sš]\b",
+        r"\b(jsi|nejsi)\s+vzh[uů]ru",
+        r"\bne?m[ěe]l\s+bys?\s+b[ýy]t\s+(v\s+)?(re[žz]imu\s+)?sp[áa]nk",
+        r"\bv\s+jak[ée]m\s+jsi\s+re[žz]imu",
+        r"\bhl[íi]d[áa][sš]\s+(te[ďd]\s+)?(d[uů]m|dom)",
+    ],
+    handler=_cmd_rezim,
+    help_text="V jakém jsem režimu (spánek, hlídání) — přímo ze stavu",
 )
 
 
@@ -3128,10 +3212,14 @@ _LLM_ROUTE_CMDS = [
     ("anomalie",   "odchylky v jeho chování"),
     ("vzpominka",  "jeho první/nejstarší vzpomínka"),
     ("videl",      "kdy koho naposledy viděl"),
-    ("rozhovory",  "o čem jsme se spolu bavili"),
+    # HANS_ROUTE_SELF_ACTIVITY_V1 — dřív jen „o čem jsme se spolu bavili":
+    # model pod to schoval i „co jsi dnes dělal?" a Hans vysypal přepis chatu.
+    ("rozhovory",  "OBSAH našich dřívějších rozhovorů (o čem jsme spolu mluvili)"),
     ("seznam",     "seznam poznámek a úkolů"),
     ("kalendar",   "nadcházející události z kalendáře"),
-    ("rozvrh",     "jeho rozvrh rutin, kdy co naposledy běželo"),
+    # HANS_HRAJE_WORDORDER_V1 — dřív „…kdy co naposledy BĚŽELO": sloveso
+    # kolidovalo s „co teď BĚŽÍ v tv" a router posílal dotaz na televizi sem.
+    ("rozvrh",     "jeho vlastní rozvrh autonomních rutin a jejich poslední tik"),
     ("zdravi",     "zdraví systému: Ollama, Kodi, PC, disk"),
     ("zajmy",      "co koho zajímá"),
     # HANS_CMD_LLM_ROUTE_V4 — dřív „…s osobou": model to četl jako
@@ -3151,6 +3239,11 @@ _LLM_ROUTE_SYSTEM = (
       # HANS_CMD_LLM_ROUTE_V2 — POKYNY K AKCI nejsou žádost o výpis. Bez těchto
       # příkladů model posílal „pusť film X" na /film (= co Hans viděl).
       "„namaluj kočku\" -> zadny\n„pusť film Kruh\" -> zadny\n"
+      # HANS_ROUTE_SELF_ACTIVITY_V1 — otázka na Hansův DEN patří chatu, který
+      # má grounded blok „FAKTA O MĚ A O MÉM DNEŠKU" (HANS_SELF_STATE_V1).
+      # Bez těchto příkladů to model schovával pod `rozhovory` (= přepis chatu).
+      "„co jsi dnes dělal?\" -> zadny\n„jak se dnes máš?\" -> zadny\n"
+      "„co jsi dělal celý den?\" -> zadny\n"
       "„přehraj ten seriál\" -> zadny\n„co běží v televizi?\" -> zadny\n"
       "„děje se něco doma?\" -> zadny\n„zapni hlídání\" -> zadny\n\n"
       "Odpověz JEDNÍM slovem ze seznamu."

@@ -1702,6 +1702,30 @@ class StudyStore:
                 "subtopics": subs, "round": cur_round, "topic": row["topic"]}
 
     def get_pending_deepen(self, topic: str = None) -> list:
+        # HANS_DEEPEN_TTL_V1 (7.8.) — prošlé návrhy nejdřív zavři.
+        # Bez expirace ležel návrh ve frontě neomezeně a bral na sebe holé
+        # „ano/ne" i po hodinách (7.8.: návrh z 03:26 spolkl v 11:23 odpověď
+        # určenou nabídce filmu). Agentní návrh vyprší po 3 min; tenhle je
+        # jiný žánr — uživatel se má rozmyslet — proto DEN.
+        try:
+            _ttl = float((self.config.get("study", {}) or {}).get(
+                "deepen_ttl_h", 24)) * 3600.0
+            if _ttl > 0:
+                _c = self._connect()
+                try:
+                    _cur = _c.execute(
+                        "UPDATE deepen_proposals SET status='expired' "
+                        "WHERE status='pending' AND ts < ?",
+                        (time.time() - _ttl,))
+                    _c.commit()
+                    if _cur.rowcount:
+                        _log.info("HANS_DEEPEN_TTL_V1: %d návrhů prohloubení "
+                                  "vypršelo (starší než %.0f h)",
+                                  _cur.rowcount, _ttl / 3600.0)
+                finally:
+                    _c.close()
+        except Exception as _te:
+            _log.debug("deepen ttl: %s", _te)
         conn = self._connect()
         try:
             if topic:

@@ -119,6 +119,19 @@ _SYSTEM = (
     "4) NEPŘIDÁVEJ žádná fakta, tvrzení ani domněnky. Jenom přepis.\n"
     "5) Zachovej JAZYK vstupu (typicky česky) a otázkovou formu, "
     "pokud vstup byl otázka.\n"
+    # HANS_REWRITER_KEEP_NEGATION_V1 (7.8.) — měřeno na 10 reálných větách
+    # ze `human_chat`: zápor mizel v 6 z nich. Doložený případ 11:06:
+    # „nemel by byt v rezimu spanku, je 11:00" → „Měl by být byt v režimu
+    # spánku, i když je 11:00?" — z KOREKCE se stal souhlasný dotaz
+    # a grounding se pak stavěl na obráceném významu.
+    # ⚠️ Neplošně: u zdvořilostní nabídky („nechceš si zjistit o X?") je
+    # převod na kladný dotaz pro vyhledávání SPRÁVNÝ — proto se rozlišuje
+    # zápor VÝZNAMOVÝ (tvrzení/korekce/popření) od řečnického.
+    "5b) ZÁPOR JE VÝZNAM. Když uživatel něco popírá, opravuje nebo tvrdí, "
+    "že něco NENÍ / NEMÁ / NEVIDĚL / NEŘEKL, musí zápor v přepisu ZŮSTAT. "
+    "Nikdy z „nemělo by to být X“ nedělej „mělo by to být X“. "
+    "Výjimka: zdvořilá nabídka („nechceš…?“, „nemáš…?“) smí přejít "
+    "v kladný dotaz — tam zápor význam nenese.\n"
     "6) Vrať POUZE přepsanou otázku, jednu větu, bez uvozovek, "
     "bez komentářů, bez 'OTÁZKA:', bez markdownu."
 )
