@@ -747,7 +747,33 @@ class OpenWebUIDirectHandler:
                                               'shift_reason', '') or ''
                         except Exception:
                             pass
-                        _ss = self_state_facts(_dbp_ss, mood=_mo, mood_reason=_mr)
+                        # HANS_SELF_STATE_AWAKE_V1 — dolož skutečný provozní
+                        # stav (spánek/kamera/hlídání), ať si ho model nedomýšlí.
+                        _rt_state = {}
+                        try:
+                            # ⚠️ Handler `_routine` NEMÁ — drží ho `hans_idle`
+                            # (týž vzorec jako TIME_AWARENESS_V1 na ř. 1342).
+                            # Přímé `getattr(self, "_routine")` by tiše vracelo
+                            # None a stav by se do bloku nikdy nedostal.
+                            _hi_rt = getattr(self, "_hans_idle", None)
+                            _rt = getattr(_hi_rt, "_routine", None) if _hi_rt else None
+                            if _rt is not None:
+                                _rt_state["sleeping"] = bool(
+                                    getattr(_rt, "_sleeping", False))
+                            import json as _js_g
+                            import os as _os_g
+                            _gp = "data/.hans_guard"
+                            if _os_g.path.exists(_gp):
+                                with open(_gp, encoding="utf-8") as _gf:
+                                    _rt_state["guard"] = bool(
+                                        (_js_g.load(_gf) or {}).get("armed"))
+                            else:
+                                _rt_state["guard"] = False
+                        except Exception as _rse:
+                            logging.getLogger(__name__).debug(
+                                'self_state runtime: %s', _rse)
+                        _ss = self_state_facts(_dbp_ss, mood=_mo, mood_reason=_mr,
+                                               runtime=_rt_state or None)
                         if _ss:
                             logging.getLogger(__name__).info(
                                 'HANS_SELF_STATE_V1 → blok o sobě (%d zn)', len(_ss))
@@ -792,12 +818,20 @@ class OpenWebUIDirectHandler:
             # C1: entity store — deterministické resolvování ZNÁMÉ entity
             # (z Hansova čtení) PŘED RAG. Autoritativní fakt (definiční věta
             # ze zdroje) → zabíjí kolizi jmen i konfabulaci významu.
-            _ent_fact = self._entity_fact(_q_for_retrieval)
+            # HANS_PERSON_FACT_V1 — člen domácnosti má PŘEDNOST před obecnou
+            # entitou i před RAG: je to tvrdý záznam, ne nález z četby.
+            # HANS_SELF_STATE_AWAKE_V2 — vlastní režim má přednost úplně první:
+            # je to tvrdý běhový fakt, ne nález z paměti.
+            _ent_fact = (self._self_runtime_fact(str(_text))
+                         or self._person_fact(str(_text))
+                         or self._person_fact(_q_for_retrieval)
+                         or self._entity_fact(_q_for_retrieval))
 
             # 2) vyber kolekce dle třídy (G3B_MULTICOLLECTION_V1 — list)
             collections = self._GROUNDING_COLLECTION.get(res.intent)
             if not collections:
-                # C1: i bez RAG kolekce máme-li entitu, vrať ji jako fakt
+                # C1 / HANS_PERSON_FACT_V1: i bez RAG kolekce máme-li tvrdý
+                # fakt (entita nebo osoba), vrať ho
                 if _ent_fact:
                     self._grounding_outcome = 'grounded'
                     return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
@@ -992,6 +1026,154 @@ class OpenWebUIDirectHandler:
             return _es.fact_block(_ent)
         except Exception:
             return ''
+
+    # HANS_PERSON_FACT_V1 (7.8.) — dotaz na OSOBU domácnosti.
+    # Jen otázky na IDENTITU („kdo je X", „co víš o X"), NE na přítomnost
+    # („je X doma?") — tu obsluhuje agentní akce z živých dat.
+    _PERSON_Q_PAT = re.compile(
+        r"(kdo\s+(to\s+)?je|kdo\s+(to\s+)?byl[ao]?|co\s+v[íi][sš]\s+o|"
+        r"[rř]ekni\s+mi\s+o|pov[ěe]z\s+mi\s+o|popi[sš]\s+mi|kdo\s+to\s+"
+        r"vlastn[ěe]\s+je)", re.IGNORECASE)
+
+    # HANS_SELF_STATE_AWAKE_V2 (7.8.) — dotaz na VLASTNÍ PROVOZNÍ REŽIM.
+    # V1 dal stav jen do NEfaktické větve (`is_about_self`), jenže „jsi
+    # v režimu spánku?" intent klasifikuje jako FAKTICKÝ → blok se nezapojil
+    # a model si režim dál vymýšlel (živý test 12:44: „Jsem v režimu spánku?
+    # Chcete abych usnul?" a „Připravím systém na režim spánku"). Právě proto,
+    # že je to faktický dotaz, se má odpovídat ze STAVU, ne z RAG.
+    # Levný regex místo LLM klasifikátoru — faktická cesta jde na každou větu.
+    _SELF_RUNTIME_PAT = re.compile(
+        r"(sp[íi][sš]|span[ke]|sp[áa]nk|vzh[uů]ru|bd[íi][sš]|"
+        r"hl[íi]d[áa][sš]|hl[íi]d[áa]n|kameru?\b|vid[íi][sš]\b|"
+        r"re[žz]im\w*)", re.IGNORECASE)
+
+    def _self_runtime_fact(self, text: str) -> str:
+        """Deterministický blok o Hansově vlastním režimu (spánek/kamera/hlídání).
+
+        Vrací '' když se věta režimu netýká. Jinak fakta + zákaz tvrdit, že
+        něco přepíná — sám to neumí, mění se to na povel (`/sleep`, `/hlidej`).
+        """
+        t = (text or "").strip()
+        if not t or not self._SELF_RUNTIME_PAT.search(t):
+            return ''
+        st = self._runtime_state()
+        if not st:
+            return ''
+        lines = []
+        if st.get("sleeping") is not None:
+            lines.append("spím (noční režim)" if st["sleeping"]
+                         else "jsem vzhůru, v běžném provozu")
+        if st.get("guard") is not None:
+            lines.append("hlídací režim je zapnutý" if st["guard"]
+                         else "hlídací režim je vypnutý")
+        if not lines:
+            return ''
+        logging.getLogger(__name__).info(
+            'HANS_SELF_STATE_AWAKE_V2: dotaz na vlastní režim → %s', lines)
+        return ("MŮJ SKUTEČNÝ REŽIM PRÁVĚ TEĎ (odpověz POUZE podle tohohle):\n"
+                + "\n".join("- %s" % x for x in lines)
+                + "\nNikdy netvrď, že něco přepínáš nebo jsi přepnul — režim "
+                  "sám měnit neumím, děje se to na povel uživatele.")
+
+    def _runtime_state(self) -> dict:
+        """HANS_SELF_STATE_AWAKE_V1 — skutečný provozní stav Hanse.
+        ⚠️ Handler `_routine` NEMÁ — drží ho `hans_idle` (vzorec z
+        TIME_AWARENESS_V1, ř. 1342); přímý `getattr(self, "_routine")` by
+        tiše vracel None a stav by se nikam nedostal."""
+        out = {}
+        try:
+            _hi = getattr(self, "_hans_idle", None)
+            _rt = getattr(_hi, "_routine", None) if _hi else None
+            if _rt is not None:
+                out["sleeping"] = bool(getattr(_rt, "_sleeping", False))
+            import json as _js_g
+            import os as _os_g
+            _gp = "data/.hans_guard"
+            if _os_g.path.exists(_gp):
+                with open(_gp, encoding="utf-8") as _gf:
+                    out["guard"] = bool((_js_g.load(_gf) or {}).get("armed"))
+            else:
+                out["guard"] = False
+        except Exception as _rse:
+            logging.getLogger(__name__).debug('runtime_state: %s', _rse)
+        return out
+
+    @staticmethod
+    def _fold(s: str) -> str:
+        import unicodedata
+        return "".join(c for c in unicodedata.normalize("NFKD", (s or "").lower())
+                       if not unicodedata.combining(c))
+
+    def _person_fact(self, text: str) -> str:
+        """Deterministický fakt o členovi domácnosti z `relationships`.
+
+        Vrací blok pro grounding, nebo '' když dotaz není na identitu osoby
+        / osoba není známá. Shoda na PREFIX (4 znaky, bez diakritiky), aby
+        prošlo skloňování (2.–7. pád) i psaní bez háčků — právě rozdíl
+        „jméno bez diakritiky" × „s diakritikou" dnes rozhodoval mezi
+        zapřením a výmyslem. Deaktivované záznamy (testovací osoby) se přeskakují.
+        """
+        t = (text or "").strip()
+        if not t or not self._PERSON_Q_PAT.search(t):
+            return ''
+        try:
+            import sqlite3 as _sql
+            _dbp = (self.config.get("diary_db")
+                    or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                    or "data/hans_diary.db")
+            db = _sql.connect("file:%s?mode=ro" % _dbp, uri=True, timeout=3.0)
+            rows = db.execute(
+                "SELECT person_id, display_name, role, family_links, "
+                "characterization FROM relationships "
+                "WHERE COALESCE(deactivated_at, 0) = 0").fetchall()
+            db.close()
+        except Exception as e:
+            logging.getLogger(__name__).debug('person_fact: %s', e)
+            return ''
+        toks = [w for w in re.split(r"[^\w]+", self._fold(t)) if len(w) >= 3]
+        hit = None
+        for pid, disp, role, links, charact in rows:
+            for cand in (disp, pid):
+                fc = self._fold(cand)
+                # Shoda na TŘI znaky + strop na rozdíl délek. Čtyři znaky
+                # nestačí — česká deklinace u krátkých jmen mění právě
+                # 4. písmeno (dativ), takže 4-znakový prefix ty tvary zahodí
+                # (změřeno). Tři znaky samy o sobě pouštějí i cizí slova,
+                # proto délková pojistka: obojí musí být zhruba stejně dlouhé.
+                # Zbylý falešný poplach stojí jen jeden blok navíc v groundingu
+                # a spouští se výhradně u otázek na identitu — proto se loguje.
+                if len(fc) < 3:
+                    continue
+                if any(w[:3] == fc[:3] and abs(len(w) - len(fc)) <= 3
+                       for w in toks):
+                    hit = (pid, disp, role, links, charact)
+                    break
+            if hit:
+                break
+        if not hit:
+            return ''
+        pid, disp, role, links, charact = hit
+        parts = ["%s — %s" % (disp or pid, role or "člen domácnosti")]
+        try:
+            import json as _js
+            fam = _js.loads(links or "{}") or {}
+            names = {r[0]: (r[1] or r[0]) for r in rows}
+            if fam.get("parents"):
+                parts.append("rodiče: %s" % ", ".join(
+                    names.get(p, p) for p in fam["parents"]))
+            if fam.get("children"):
+                parts.append("děti: %s" % ", ".join(
+                    names.get(c, c) for c in fam["children"]))
+            if fam.get("spouse"):
+                parts.append("partner: %s" % names.get(fam["spouse"], fam["spouse"]))
+        except Exception:
+            pass
+        if charact:
+            parts.append((charact or "").strip().split(". ")[0].strip() + ".")
+        logging.getLogger(__name__).info(
+            'HANS_PERSON_FACT_V1: osoba resolvována z dotazu → %r', disp or pid)
+        return "ZÁZNAM O OSOBĚ (z mé evidence domácnosti):\n" + "\n".join(
+            "- %s" % p for p in parts)
 
     def _thread_store(self):
         # HANS_THREADS_SURFACING_V1 — lazy singleton ThreadStore
@@ -2245,6 +2427,27 @@ class OpenWebUIDirectHandler:
         pend = st.get_pending_deepen()
         if not pend:
             return None
+        # HANS_CONFIRM_PRECEDENCE_V1 (7.8.) — ODPOVĚĎ PATŘÍ NEJČERSTVĚJŠÍMU NÁVRHU.
+        # Doloženo 7.8. 11:22–11:23: Hans nabídl film na Kodi, uživatel řekl „ne"
+        # — a Hans odpověděl „„hrady a historická architektura" nechám tak, jak
+        # je." Zamítnutí spolkl návrh prohloubení studia z **03:26 ráno** (8 h
+        # starý), protože tahle větev běží PŘED `agent.check_confirmation`
+        # (ř. 2719 × 2738) a návrhy prohloubení NEMAJÍ expiraci — kdežto agentní
+        # návrh vyprší po 3 min. Starý a nesmrtelný tak vždy přebil čerstvý.
+        # Když agent čeká na potvrzení, ustup — odpověď je jeho.
+        # (Vedlejší zisk: ušetří se LLM klasifikace na každé zprávě, dokud
+        # nějaký návrh prohloubení leží ve frontě.)
+        try:
+            _ag = self._agent_router()
+            _ap = getattr(_ag, "_pending", None) if _ag is not None else None
+            _p = _ap.get(name) if _ap else None
+            if _p is not None and (time.time() - _p.ts) <= 180:
+                logging.getLogger(__name__).info(
+                    'HANS_CONFIRM_PRECEDENCE_V1: čeká agentní návrh %s '
+                    '→ prohloubení ustupuje', getattr(_p.action, "id", "?"))
+                return None
+        except Exception as _cpe:
+            logging.getLogger(__name__).debug('confirm precedence: %s', _cpe)
         p0 = pend[0]
         from scripts.ollama_client import ollama_generate
         model = (self.config.get("dialog", {}) or {}).get("model") or "hans-czech:latest"

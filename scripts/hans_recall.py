@@ -1494,7 +1494,8 @@ def knowledge_check_bypass(db_path: str, user_text: str,
 
 # ── HANS_SELF_STATE_V1 (5.8.) — grounded blok „jak se mám a co jsem dnes dělal"
 def self_state_facts(db_path: str, max_items: int = 6,
-                     mood: str = "", mood_reason: str = "") -> str:
+                     mood: str = "", mood_reason: str = "",
+                     runtime: dict = None) -> str:
     """Stručný VÝČET dnešní Hansovy činnosti z deníku (fakta, ne vyprávění).
 
     Proč: na „jak se máš?" / „co jsi dnes dělal?" model dosud odpovídal z ničeho
@@ -1550,6 +1551,24 @@ def self_state_facts(db_path: str, max_items: int = 6,
             except Exception:
                 pass
     head = []
+    # HANS_SELF_STATE_AWAKE_V1 (7.8.) — PROVOZNÍ STAV jako první fakt.
+    # Bez něj si model režim vymýšlel: 7.8. 10:52 tvrdil „Jsem v režimu
+    # spánku, sleduji pouze bezpečnostní kamery", ačkoli spánek skončil
+    # v 09:00 a hlídání bylo vypnuté. Stav je deterministicky zjistitelný —
+    # tak ať ho čte, místo aby vyprávěl.
+    if runtime:
+        _st = []
+        if runtime.get("sleeping") is not None:
+            _st.append("spím (noční režim)" if runtime["sleeping"]
+                       else "jsem vzhůru, v běžném provozu")
+        if runtime.get("vision") is not None:
+            _st.append("kamerou vidím" if runtime["vision"]
+                       else "kameru mám vypnutou")
+        if runtime.get("guard") is not None:
+            _st.append("hlídací režim je zapnutý" if runtime["guard"]
+                       else "hlídací režim je vypnutý")
+        if _st:
+            head.append("teď: " + ", ".join(_st))
     if mood:
         head.append("nálada: %s%s" % (
             mood, (" (důvod: %s)" % mood_reason) if mood_reason else ""))
@@ -1564,4 +1583,9 @@ def self_state_facts(db_path: str, max_items: int = 6,
             + "\n\nKdyž se ptá, jak se mám nebo co jsem dělal: odpověz 2–4 větami, "
               "řekni jak se cítím a PROČ, a jmenuj DVĚ KONKRÉTNÍ věci z dneška "
               "(téma studia, název díla, co jsem četl). Žádné obecné fráze "
-              "typu „plním službu\" — ty nic neříkají.")
+              "typu „plním službu\" — ty nic neříkají."
+              # HANS_SELF_STATE_AWAKE_V1 — bez téhle věty model řádek „teď:"
+              # přečetl, ale stejně dodal vlastní verzi režimu.
+              "\nO SVÉM REŽIMU (spánek, kamera, hlídání) mluv POUZE podle "
+              "řádku „teď:\" výše. Nikdy netvrď, že něco přepínáš nebo "
+              "jsi přepnul — sám to udělat neumíš, děje se to na povel.")
