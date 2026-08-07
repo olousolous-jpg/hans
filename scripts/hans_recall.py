@@ -1589,3 +1589,126 @@ def self_state_facts(db_path: str, max_items: int = 6,
               "\nO SVÉM REŽIMU (spánek, kamera, hlídání) mluv POUZE podle "
               "řádku „teď:\" výše. Nikdy netvrď, že něco přepínáš nebo "
               "jsi přepnul — sám to udělat neumíš, děje se to na povel.")
+
+
+# ── HANS_DAY_AT_HOME_V1 (7.8.) — „co se dnes dělo v domě?" ───────────────────
+# Nález C5: dotaz na DNEŠEK zpětně vracel AKTUÁLNÍ stav („na TV hraje X,
+# vidím tu Y") — správná odpověď na jinou otázku. Hans neměl kam takový dotaz
+# poslat: `night_summary` je až noční a je o něm samém, ne o dění v domě.
+#
+# ⚠️ Fakta se sbírají TADY, aby existoval JEDEN zdroj pravdy — `_write_night_
+# summary` v `hans_routine` dělal totéž vlastním SQL. Druhá kopie by se časem
+# rozešla (viz pravidlo „protáhni existující mechanismus" v CLAUDE.md).
+def day_facts(db_path: str, date_str: Optional[str] = None) -> dict:
+    """Fakta o jednom dni z deníku. Čistě SQL, žádný LLM, deferral-safe.
+
+    Vrací dict s klíči: date, n_events, n_dialogs, types, people (se
+    začátkem/koncem přítomnosti), reads, takeaways, films, moments.
+    """
+    import datetime as _dt
+    day = date_str or _dt.datetime.now().strftime("%Y-%m-%d")
+    out = {"date": day, "n_events": 0, "n_dialogs": 0, "types": [],
+           "people": [], "reads": [], "takeaways": [], "films": [],
+           "moments": []}
+    conn = None
+    try:
+        conn = _ro(db_path)
+        D = "date(ts,'unixepoch','localtime')=?"
+
+        def q(sql):
+            try:
+                return conn.execute(sql, (day,)).fetchall()
+            except Exception:
+                return []
+
+        out["n_events"] = (q(f"SELECT COUNT(*) FROM diary WHERE {D}") or [[0]])[0][0]
+        out["n_dialogs"] = (q("SELECT COUNT(*) FROM diary WHERE "
+                              f"event_type='teddy_dialog' AND {D}") or [[0]])[0][0]
+        out["types"] = [(r[0], r[1]) for r in q(
+            f"SELECT event_type, COUNT(*) FROM diary WHERE {D} "
+            "GROUP BY event_type ORDER BY COUNT(*) DESC LIMIT 5")]
+        # Osoby VČETNĚ času — „co se dělo" je hlavně kdo tu byl a kdy.
+        out["people"] = [(r[0], r[1], r[2]) for r in q(
+            "SELECT title, MIN(ts), MAX(ts) FROM diary WHERE "
+            f"event_type='person_seen' AND {D} AND title NOT IN "
+            "('','Unknown','?','unknown_person') GROUP BY title ORDER BY MIN(ts)")]
+        out["reads"] = [r[0] for r in q(
+            f"SELECT DISTINCT title FROM diary WHERE event_type='web_read' AND {D} "
+            "AND title<>'' ORDER BY ts DESC LIMIT 4")]
+        out["takeaways"] = [r[0] for r in q(
+            "SELECT coalesce(data,note) FROM diary WHERE "
+            f"event_type='reading_takeaway' AND {D} AND coalesce(data,note)<>'' "
+            "ORDER BY ts DESC LIMIT 2")]
+        out["films"] = [r[0] for r in q(
+            "SELECT DISTINCT title FROM diary WHERE event_type IN "
+            f"('kodi_playing','movie_opinion') AND {D} AND title<>'' "
+            "ORDER BY ts DESC LIMIT 3")]
+        out["moments"] = [r[0] for r in q(
+            "SELECT coalesce(NULLIF(note,''),data) FROM diary WHERE "
+            f"COALESCE(importance,0)>=6 AND {D} AND "
+            "coalesce(NULLIF(note,''),data)<>'' AND event_type NOT IN "
+            "('human_chat','night_summary') ORDER BY importance DESC, ts DESC LIMIT 3")]
+    except Exception as e:
+        _log.debug("day_facts: %s", e)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return out
+
+
+def day_fact_lines(f: dict, config: dict = None) -> list:
+    """`day_facts` → české věty pro LLM grounding i pro deterministický výpis.
+
+    Jména se zobrazují přes `cz_names.display_name` — jinak by v textu byla
+    tak, jak jsou klíče v konfiguraci (malá písmena, bez diakritiky).
+    """
+    import time as _t
+
+    def _nm(n):
+        # HANS_DAY_AT_HOME_GENDER_V1 (7.8.) — jméno + ROD. Bez rodu hlasový
+        # krok skloňoval ženská jména jako mužská („pan" u ženy);
+        # týž fix jako HANS_SELF_INSIGHT_GENDER_V1 u vhledů.
+        try:
+            from scripts import cz_names
+            disp = cz_names.display_name(n, config) or n
+            g = cz_names.person_gender(n, config)
+            if g == "žena":
+                return "paní " + disp
+            if g == "muž":
+                return "pan " + disp
+            return disp
+        except Exception:
+            return n
+
+    def _hm(ts):
+        return _t.strftime("%H:%M", _t.localtime(ts))
+
+    lines = []
+    if f.get("people"):
+        parts = []
+        for name, t0, t1 in f["people"]:
+            parts.append("%s (%s–%s)" % (_nm(name), _hm(t0), _hm(t1))
+                         if t1 - t0 > 300 else "%s (%s)" % (_nm(name), _hm(t0)))
+        lines.append("V domě jsem dnes viděl: " + ", ".join(parts) + ".")
+    elif f.get("n_events"):
+        # Jen když se ten den VŮBEC něco dělo. Na úplně prázdném dni musí
+        # zůstat prázdný seznam, jinak by `_write_night_summary` považoval
+        # fakta za neprázdná a nechal model psát reflexi o ničem (dřív spadl
+        # na statistiku) — regrese chycená testem na dni bez záznamů.
+        lines.append("Dnes jsem v domě nikoho neviděl.")
+    if f.get("films"):
+        lines.append("Na televizi běželo: " + ", ".join(f["films"]) + ".")
+    if f.get("moments"):
+        lines.append("Výrazné chvíle dne: "
+                     + " / ".join(m.strip()[:180] for m in f["moments"]))
+    if f.get("reads"):
+        lines.append("Sám jsem četl: " + ", ".join(f["reads"]) + ".")
+    if f.get("takeaways"):
+        lines.append("Z četby mě zaujalo: "
+                     + " / ".join(t.strip()[:180] for t in f["takeaways"]))
+    if f.get("n_dialogs"):
+        lines.append("Rozhovorů s Koláčem: %d." % f["n_dialogs"])
+    return lines

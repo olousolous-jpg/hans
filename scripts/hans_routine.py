@@ -2479,31 +2479,21 @@ class HansRoutine:
             else:
                 today = _now.strftime("%Y-%m-%d")
 
-            def _q(sql):
-                try:
-                    return db.execute(sql, (today,)).fetchall()
-                except Exception:
-                    return []
-            D = "date(ts,'unixepoch','localtime')=?"
-
-            n_events = (_q(f"SELECT COUNT(*) FROM diary WHERE {D}") or [[0]])[0][0]
-            n_dialogs = (_q(f"SELECT COUNT(*) FROM diary WHERE event_type='teddy_dialog' AND {D}") or [[0]])[0][0]
-            types = _q(f"SELECT event_type, COUNT(*) FROM diary WHERE {D} "
-                       "GROUP BY event_type ORDER BY COUNT(*) DESC LIMIT 5")
-            reads = [r[0] for r in _q(f"SELECT DISTINCT title FROM diary WHERE event_type='web_read' AND {D} AND title<>'' ORDER BY ts DESC LIMIT 4")]
-            people = [r[0] for r in _q(f"SELECT DISTINCT title FROM diary WHERE event_type='person_seen' AND {D} AND title NOT IN ('','Unknown','?')")]
-            takeaways = [r[0] for r in _q(f"SELECT coalesce(data,note) FROM diary WHERE event_type='reading_takeaway' AND {D} AND coalesce(data,note)<>'' ORDER BY ts DESC LIMIT 2")]
-            films = [r[0] for r in _q(f"SELECT DISTINCT title FROM diary WHERE event_type IN ('kodi_playing','movie_opinion') AND {D} AND title<>'' ORDER BY ts DESC LIMIT 3")]
-            moments = [r[0] for r in _q(f"SELECT coalesce(NULLIF(note,''),data) FROM diary WHERE COALESCE(importance,0)>=6 AND {D} AND coalesce(NULLIF(note,''),data)<>'' AND event_type NOT IN ('human_chat','night_summary') ORDER BY importance DESC, ts DESC LIMIT 3")]
             db.close()
+            # HANS_DAY_FACTS_SHARED_V1 (7.8.) — sběr faktů dne žije v
+            # `hans_recall.day_facts`, aby ho sdílelo noční shrnutí i chatový
+            # `/dnes` (HANS_DAY_AT_HOME_V1). Dřív tu bylo vlastní SQL; dvě
+            # kopie nad týmž dnem by se časem rozešly.
+            from scripts.hans_recall import (day_facts as _day_facts,
+                                             day_fact_lines as _day_lines)
+            _f = _day_facts(self._diary_path, today)
+            n_events = _f["n_events"]
+            n_dialogs = _f["n_dialogs"]
+            types = _f["types"]
+            reads = _f["reads"]
 
             stats = f"({n_events} událostí, {n_dialogs} dialogů s Kolačem)"
-            facts = []
-            if people:    facts.append("Dnes tu byli: " + ", ".join(dict.fromkeys(people)) + ".")
-            if reads:     facts.append("Četl jsem: " + ", ".join(reads) + ".")
-            if takeaways: facts.append("Z četby mě zaujalo: " + " / ".join(t.strip()[:180] for t in takeaways))
-            if films:     facts.append("Na obrazovce běželo: " + ", ".join(films) + ".")
-            if moments:   facts.append("Výrazné chvíle dne: " + " / ".join(m.strip()[:180] for m in moments))
+            facts = _day_lines(_f, self.config)
 
             reflective = self._night_reflection(facts) if facts else None
             if reflective:

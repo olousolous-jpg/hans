@@ -2384,6 +2384,75 @@ register(
 )
 
 
+# ─── /dnes — co se dnes dělo v domě (HANS_DAY_AT_HOME_V1) ───────────────────
+def _cmd_dnes(handler, name, args) -> str:
+    """Shrnutí dneška z deníku Hansovým hlasem. Fakta deterministicky,
+    hlas je jen formuluje; bez mozku se vypíšou fakta holá."""
+    cfg = getattr(handler, "config", {}) or {}
+    from scripts.hans_recall import day_facts, day_fact_lines
+    f = day_facts(_recall_db(handler))
+    lines = day_fact_lines(f, cfg)
+    if not f.get("n_events"):
+        return "K dnešku nemám v deníku zatím žádný záznam, pane."
+    plain = NL_RUNTIME.join("• " + l for l in lines)
+
+    # Bez mozku (herní mód / PC dole) NEČEKEJ a vrať fakta holá —
+    # deferral-safe, vzor `_night_reflection` → statistika.
+    try:
+        from scripts.ollama_client import brain_available
+        if not brain_available(cfg):
+            return "Dnešek podle mého deníku, pane:" + NL_RUNTIME + plain
+    except Exception:
+        pass
+    try:
+        from scripts.ollama_client import ollama_generate
+        from scripts.hans_persona import persona_core
+        try:
+            core = persona_core(cfg, with_address=False)
+        except Exception:
+            core = ""
+        model = (cfg.get("models", {}) or {}).get("dialog", "hans-czech:latest")
+        system = (core + "\n\n" if core else "") + (
+            "Pán domu se ptá, co se dnes v domě dělo. Odpověz souvisle "
+            "(3-5 vět, první osoba, tvým hlasem) — kdo tu byl a kdy, co "
+            "běželo na televizi, co stálo za zmínku. Vyjdi POUZE z faktů "
+            "níže; co v nich není, se nestalo — nic si nepřimýšlej a nic "
+            "nedomýšlej o důvodech. Žádný nadpis, žádné uvozovky, žádný "
+            "výčet s odrážkami.\n"
+            # HANS_DAY_AT_HOME_EXACT_V1 (7.8.) — hlasový krok komolil PŘESNÁ
+            # data: „10:03–10:15" přepsal na „mezi desátou minutou třetí
+            # a čtvrtou minutou" a počet 23 na „dvacet čtyři krát". Persona
+            # smí formulovat, ale ne přepočítávat.
+            "ČASY A ČÍSLA opiš PŘESNĚ tak, jak jsou ve faktech (např. "
+            "„10:03–10:15\", „23\") — nepřepisuj je slovy ani nezaokrouhluj. "
+            "Oslovení „pan/paní\" u jmen zachovej, jak je uvedeno.")
+        out = ollama_generate(
+            model, "FAKTA DNEŠNÍHO DNE:\n" + NL_RUNTIME.join(lines)
+            + "\n\nShrň to pánovi.",
+            system=system, config=cfg, timeout=90)
+        txt = (out or "").strip().strip('"')
+        if len(txt) >= 60:
+            return txt[:1200]
+    except Exception as e:
+        _log.warning("/dnes: hlasový krok selhal (%s) — vracím fakta", e)
+    return "Dnešek podle mého deníku, pane:" + NL_RUNTIME + plain
+
+
+register(
+    "dnes",
+    slash_aliases=["dnes", "dnesek", "den"],
+    nl_patterns=[
+        r"co\s+se\s+(dnes|dneska|d[ňn]es)\w*\s+(d[ěe]lo|stalo|ud[áa]lo)",
+        r"co\s+se\s+(d[ěe]lo|stalo|ud[áa]lo)\s+(dnes|dneska)",
+        r"co\s+(bylo|se\s+d[ěe]lo)\s+(dnes\s+)?(doma|v\s+dom[ěe])",
+        r"jak[ýy]\s+byl\s+(dnes(n[íi])?)?\s*den",
+        r"shr[nň]\s+(mi\s+)?(dnes(ek|n[íi]\s+den)?)",
+    ],
+    handler=_cmd_dnes,
+    help_text="Co se dnes dělo v domě (z deníku): co se dnes dělo?",
+)
+
+
 # ─── /rezim — vlastní provozní stav (HANS_REZIM_SHORTCIRCUIT_V1) ────────────
 def _cmd_rezim(handler, name, args) -> str:
     """Spím/bdím + hlídání — přímo ze stavu, ŽÁDNÝ LLM.
