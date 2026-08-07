@@ -1766,6 +1766,37 @@ register(
 
 
 # ─── /smer — vlastní směr / aspirace (HANS_DIRECTION_V1) ─────────────────────
+_SMER_NL = [
+    r"jak[ýy]\s+m[áa][sš]\s+sm[eě]r",
+    r"kam\s+sm[eě][rř]uje[sš]",
+    r"co\s+chce[sš]\s+d[eě]lat\s+d[aá]l",
+    r"(?:tv[uů]j|m[uů]j)\s+sm[eě]r",
+    r"k\s+[cč]emu\s+sm[eě][rř]uje[sš]",
+]
+
+
+def _smer_is_custom(sub: str) -> bool:
+    """HANS_DIRECTION_NL_ARG_GUARD_V1 (6.8.) — je `sub` opravdu ZADÁNÍ vlastního
+    směru, nebo jen otázka, kterou sem poslala NL shoda?
+
+    `parse_command` u NL vrací celou větu jako args (u `/vytvor`/`/namaluj` je
+    to správně — vzory jsou rozkazy), jenže vzory `/smer` jsou OTÁZKY. Věta
+    „v úvaze kam směřuješ říkáš…? " se tak uložila jako nový směr a PŘEBILA
+    ten skutečný (doloženo 6.8., směr z 2.8. skončil jako superseded).
+    Zadání směru proto musí být oznamovací věta, která sama nespustila zdejší
+    NL vzor. Slash s takovým textem propadne na výpis — to je u otázky
+    „kam směřuješ?" i tak správná odpověď.
+    """
+    s = (sub or "").strip()
+    if not s or s.endswith("?"):
+        return False
+    fold = _fold_diacritics(s)
+    for p in _SMER_NL:
+        if re.search(p, s, re.IGNORECASE) or re.search(p, fold, re.IGNORECASE):
+            return False
+    return True
+
+
 def _cmd_smer(handler, name, args) -> str:
     """/smer — aktivní směr + čekající návrh; /smer schválit|ne; /smer teď =
     zvaž směr na pozadí; /smer <text> = zadej vlastní směr."""
@@ -1812,8 +1843,9 @@ def _cmd_smer(handler, name, args) -> str:
         return ("Zamýšlím se nad svým směrem — ohlédnu se za studiem a tvorbou. "
                 "Když z toho vzejde záměr, dám vědět (chvíli to potrvá).")
 
-    # zadat vlastní směr (uživatelem autorizovaný → rovnou aktivní)
-    if sub and low not in {"stav", "status"}:
+    # zadat vlastní směr (uživatelem autorizovaný → rovnou aktivní).
+    # HANS_DIRECTION_NL_ARG_GUARD_V1: jen oznamovací věta, ne otázka z NL shody.
+    if sub and low not in {"stav", "status"} and _smer_is_custom(sub):
         pid = st.propose(sub, "zadáno uživatelem", "", "user")
         st.approve(pid)
         return "Nastaven tvůj směr: „%s\"" % sub
@@ -1852,13 +1884,7 @@ def _cmd_smer(handler, name, args) -> str:
 register(
     "smer",
     slash_aliases=["smer", "směr", "smetr", "direction", "aspirace"],
-    nl_patterns=[
-        r"jak[ýy]\s+m[áa][sš]\s+sm[eě]r",
-        r"kam\s+sm[eě][rř]uje[sš]",
-        r"co\s+chce[sš]\s+d[eě]lat\s+d[aá]l",
-        r"(?:tv[uů]j|m[uů]j)\s+sm[eě]r",
-        r"k\s+[cč]emu\s+sm[eě][rř]uje[sš]",
-    ],
+    nl_patterns=_SMER_NL,
     handler=_cmd_smer,
     help_text="Vlastní směr/aspirace: /smer [schválit|ne|teď|<vlastní text>]",
 )
