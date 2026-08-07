@@ -99,6 +99,15 @@ class HansIdle:
                     _rt.study_catchup_async()
             except Exception as _e:
                 _log.debug("brain_up study_catchup: %s", _e)
+            # HANS_REFLECTION_BRAIN_UP_CATCHUP_V1 — večerní reflexe vypadává ze
+            # stejného důvodu jako studium: okno je noční, ale PC v něm bývá
+            # vypnuté. Na naběhnutí mozku dojeď včerejšek.
+            try:
+                _rt = getattr(self, '_routine', None)
+                if _rt is not None and hasattr(_rt, 'reflection_catchup_async'):
+                    _rt.reflection_catchup_async()
+            except Exception as _e:
+                _log.debug("brain_up reflection_catchup: %s", _e)
             # HANS_TELEGRAM_BRAIN_NOTIFY_V1 — mozek online: dej vědět na
             # Telegram, když uživatel nedávno psal (pending), ať ví, že
             # může psát naplno. BEZ WOL.
@@ -202,7 +211,7 @@ class HansIdle:
             _log.debug('routine curiosity wiring: %s', _cwe)
         # SEVERKA_PROACTIVE_NOTIFY_V1 — Hans sám oznámí (Telegram) Severčin návrh
         # identity. Čte self.chat.telegram až při volání (chat se drátuje později).
-        def _proactive_notify(text):
+        def _proactive_notify(text, direct=False):
             # HANS_NOTIFY_DIAG_V1 (6.8.) — dřív tahle funkce TIŠE nic neudělala,
             # když most chyběl nebo byl vypnutý, a výjimky šly do debug logu.
             # Volající pak hlásil „odesláno", ačkoli zpráva nikam nedorazila
@@ -221,8 +230,16 @@ class HansIdle:
                                  'zpráva NEODESLÁNA: %.60s',
                                  type(tg).__name__, text)
                     return False
-                # TELEGRAM_QUIET_HOURS_V1 — Severka běží v noci → odloží do 9:00
-                _send = getattr(tg, 'send_proactive', tg.send)
+                # TELEGRAM_QUIET_HOURS_V1 — Severka běží v noci → odloží do 9:00.
+                # HANS_NOTIFY_DIRECT_V1 (7.8.) — ALE `direct=True` znamená, že
+                # tohle není Hansův nápad, nýbrž VÝSLEDEK toho, oč uživatel právě
+                # požádal a na co čeká. Doloženo 6.8. 22:38: omluva za nepovedený
+                # obraz (žádost ve 22:33) šla přes `send_proactive` → tiché hodiny
+                # ji odložily do 9:00 → uživatel se ve 22:42 ptal sám. Paměť
+                # [[telegram-quiet-hours]] to říká přímo: proaktivní až po 9:00,
+                # ODPOVĚDI UŽIVATELI VŽDY HNED. Tiché okno zůstává na Severce
+                # a proaktivitě, kde dává smysl.
+                _send = tg.send if direct else getattr(tg, 'send_proactive', tg.send)
                 ok = _send(text)
                 if ok is False:
                     _log.warning('proactive_notify: most odmítl odeslat '

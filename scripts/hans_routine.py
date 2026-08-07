@@ -286,7 +286,11 @@ class HansRoutine:
         self._distillation_running = False   # idempotence — jednou denně
         self._saved_tilt = None        # poloha před spánkem (pro návrat)
         self._saved_tracking = None    # tracking stav před spánkem
-        self._sleep_started_ts = None  # HANS_MORNING_HEALTH_V1 — kdy usnul (okno pro ranní scan logů)
+        # HANS_MORNING_HEALTH_V1 — kdy usnul (okno pro ranní scan logů).
+        # ⚠️ HANS_SLEEP_TS_PERSIST_V1: `_load_routine_state()` běží UŽ na ř. 172,
+        # takže tvrdé `= None` by načtenou hodnotu přepsalo a restart v noci by
+        # okno zase zkrátil. Proto jen default, když nic načteno nebylo.
+        self._sleep_started_ts = getattr(self, "_sleep_started_ts", None)
         # F=3: drátování _tts oživilo by komentáře při přechodu fází —
         # vědomě je potlačujeme, dokud se nedohodneme jinak.
         self._phase_comments_enabled = bool(cfg.get('phase_comments', False))
@@ -540,6 +544,8 @@ class HansRoutine:
             self._last_hygiene_date = s.get("last_hygiene_date", "")  # HANS_MEMORY_HYGIENE_V1
             self._last_pc_shutdown_date = s.get("last_pc_shutdown_date", "")  # HANS_PC_NIGHT_SHUTDOWN
             self._last_analytics_wake_date = s.get("last_analytics_wake_date", "")  # HANS_PC_NIGHT_ANALYTICS_WAKE
+            # HANS_SLEEP_TS_PERSIST_V1 — restart v noci nesmí zkrátit ranní scan
+            self._sleep_started_ts = s.get("sleep_started_ts") or None
         except FileNotFoundError:
             pass
         except Exception as _e:
@@ -570,6 +576,8 @@ class HansRoutine:
                     "last_hygiene_date": self._last_hygiene_date,  # HANS_MEMORY_HYGIENE_V1
                     "last_pc_shutdown_date": self._last_pc_shutdown_date,  # HANS_PC_NIGHT_SHUTDOWN
                     "last_analytics_wake_date": self._last_analytics_wake_date,  # HANS_PC_NIGHT_ANALYTICS_WAKE
+                    # HANS_SLEEP_TS_PERSIST_V1 — okno noci musí přežít restart
+                    "sleep_started_ts": self._sleep_started_ts,
                 }, f)
         except Exception as _e:
             _log.warning("routine_state: zapis selhal: %s", _e)
@@ -927,6 +935,23 @@ class HansRoutine:
                 self._distillation_running = False
         threading.Thread(target=_wrap, daemon=True).start()
 
+    def _sleep_window_start(self) -> float:
+        """HANS_SLEEP_TS_PERSIST_V1 — začátek AKTUÁLNÍHO spánkového okna.
+
+        Spánek je čistě hodinový (`sleep_start_hour`), takže hranici lze
+        spočítat místo držení dalšího stavu: po `sleep_start_hour` začala
+        dnes, jinak včera. Slouží k poznání, jestli je uložená časovka
+        usnutí z TÉHLE noci, nebo je to zapomenuté razítko z minulé —
+        bez toho by se okno ranního scanu den ode dne natahovalo.
+        """
+        from datetime import timedelta as _td
+        now = datetime.now()
+        start_h = int(self.config.get("sleep_start_hour", 23))
+        base = now.replace(hour=start_h, minute=0, second=0, microsecond=0)
+        if now.hour < start_h:
+            base -= _td(days=1)
+        return base.timestamp()
+
     def set_manual_sleep(self, state: bool):
         """Manuální override z chat /sleep. Toggle proběhne ve volajícím.
         Override platí přes okno a expiruje na opačné hraně přirozeně."""
@@ -942,9 +967,18 @@ class HansRoutine:
             # SLEEP_FLAG_EARLY_V1 — _sleeping=True PŘED akcemi, aby settery viděly True
             self._sleeping = True
             # HANS_MORNING_HEALTH_V1 — zaznamenej čas usnutí (okno pro ranní
-            # sebe-kontrolu logů; hans_idle scanuje od této chvíle do probuzení)
+            # sebe-kontrolu logů; hans_idle scanuje od této chvíle do probuzení).
+            # HANS_SLEEP_TS_PERSIST_V1 (7.8.) — zapiš JEN na přechodu bdění→spánek.
+            # Tahle metoda se volá i při každém restartu v noci a při ručním
+            # `/sleep`; dřív se časovka pokaždé přepsala na „teď" → ranní scan
+            # prošel místo celé noci jen posledních pár minut a hlásil „0 chyb"
+            # (doloženo 5.–7.8.: okna 11 / 20 / 90 min).
             import time as _t_mh
-            self._sleep_started_ts = _t_mh.time()
+            _prev_ts = self._sleep_started_ts
+            if not _prev_ts or _prev_ts < self._sleep_window_start():
+                # razítko je z minulé noci (nebo žádné) → tahle noc začíná teď
+                self._sleep_started_ts = _t_mh.time()
+                self._save_routine_state()
             _log.info('SLEEP: aktivuji (TTS off + kamera nahoru)')
             # 1) Zapamatuj polohu serva + tracking stav
             try:
@@ -1007,6 +1041,10 @@ class HansRoutine:
             # SLEEP_FLAG_EARLY_V1 — self._sleeping=True přesunut na začátek if-active
         else:
             _log.info('SLEEP: deaktivuji (probuzení)')
+            # HANS_SLEEP_TS_PERSIST_V1 — časovku usnutí tu ZÁMĚRNĚ NEMAŽEME:
+            # `_morning_health_check()` a `_morning_lessons_check()` běží až PO
+            # `routine.tick()` (hans_idle:1053), takže by si přečetly prázdno.
+            # O zneplatnění se stará hranice okna při dalším usnutí.
             # 1) TTS zpět
             try:
                 if self._tts is not None:
@@ -1152,6 +1190,82 @@ class HansRoutine:
                 except Exception:
                     pass
 
+    def _brain_up(self) -> bool:
+        """HANS_REFLECTION_BRAIN_UP_CATCHUP_V1 — je mozek k dispozici?
+
+        Bez tohohle gate mlátila večerní reflexe do vypnutého PC každý tick
+        (7.8.: 38 pokusů mezi 23:07 a 23:59, každý s WARNINGem). Stejný vzorec
+        jako `HANS_NIGHT_DRAIN_BRAIN_GATE_V1` — když mozek chybí, mlč a zkus
+        to příště. Fail-open: když se stav nedá zjistit, pokus se o to.
+        """
+        try:
+            from scripts.ollama_client import brain_available
+            return bool(brain_available(self.config))
+        except Exception:
+            return True
+
+    def _reflection_written(self, date_str: str) -> bool:
+        """Existuje už reflexe za daný den? Ptáme se na TITULEK, ne na `ts` —
+        `_write_to_diary` zapisuje čas ZÁPISU, takže dohnaná reflexe za včerejšek
+        má dnešní `ts` a filtr přes `date(ts)` by ji nenašel."""
+        import sqlite3 as _sql
+        try:
+            db = _sql.connect(self._diary_path, timeout=5.0)
+            row = db.execute(
+                "SELECT 1 FROM diary WHERE event_type='evening_reflection' "
+                "AND title LIKE ? LIMIT 1", ("%" + date_str + "%",)).fetchone()
+            db.close()
+            return row is not None
+        except Exception as _e:
+            _log.debug("reflection_written: %s", _e)
+            return False
+
+    def _reflection_catchup(self):
+        """HANS_REFLECTION_BRAIN_UP_CATCHUP_V1 — dojeď VČEREJŠÍ reflexi.
+
+        Večerní okno (22:00–23:59) je krátké a kolem 23:00 mizí mozek s PC.
+        Reflexe proto nesmí viset jen na něm: ráno, jakmile je mozek zpět,
+        se dopíše za včerejšek. Klíč `_last_reflection_date` se nastaví na
+        VČEREJŠEK, takže dnešní noční reflexe (`!= today`) zůstává nedotčená.
+        Jen jeden den zpět — reflexe stará dva dny už nemá komu co říct.
+        """
+        from datetime import timedelta as _td
+        try:
+            if self._reflection is None:
+                return
+            now = datetime.now()
+            if now.hour >= self._night_hour:
+                return                      # večerní okno běží, patří nočnímu ticku
+            target = (now - _td(days=1)).strftime("%Y-%m-%d")
+            if self._last_reflection_date == target:
+                return
+            if self._reflection_written(target):
+                self._last_reflection_date = target
+                self._save_routine_state()
+                return
+            if not (self._brain_up() and self._chat_quiet_ok()):
+                return
+            result = self._reflection.run(target_date=target)
+            if not result:
+                _log.debug("Večerní reflexe (catchup %s): odložena", target)
+                return
+            self._last_reflection_date = target
+            self._save_routine_state()
+            _log.info("Večerní reflexe (catchup za %s): zapsána (%d znaků)",
+                      target, len(result))
+            try:
+                from scripts.hans_schedule import mark as _sched_mark
+                _sched_mark("evening_reflection", True)
+            except Exception:
+                pass
+        except Exception as _e:
+            _log.warning("Večerní reflexe (catchup) selhala: %s", _e)
+
+    def reflection_catchup_async(self):
+        """Neblokující obal (volá se z brain_up callbacku)."""
+        import threading
+        threading.Thread(target=self._reflection_catchup, daemon=True).start()
+
     def _chat_quiet_ok(self) -> bool:
         """REFLECTION_QUIET_GATE_V1 — True když posledních reflection_quiet_min
         minut nikdo nechatoval ANI nebyl přítomen (jinak by noční analytika
@@ -1194,6 +1308,16 @@ class HansRoutine:
         self._maybe_calendar_sync()
         # HANS_NOTIFY_QUEUE_V1 — odešli, co do fronty zapsal skript zvenčí.
         self._drain_notify_queue()
+        # HANS_REFLECTION_BRAIN_UP_CATCHUP_V1 — dojeď VČEREJŠÍ reflexi, když
+        # večerní okno propásla (PC bývá po 23:00 vypnuté). ⚠️ Patří sem, do
+        # tick(), NE do `_run_night_tasks` — ten běží pod `if self.is_night`,
+        # takže ráno by se catchup nikdy nespustil (chyceno živým testem 7.8.).
+        # Gate (mimo večerní okno / dnes už hotovo / mozek / klid) je uvnitř
+        # a po prvním úspěchu se vrací hned na paměťovém příznaku.
+        try:
+            self._reflection_catchup()
+        except Exception as _re:
+            _log.debug("reflection catchup v ticku: %s", _re)
         # NIGHT_WORKER_THREAD_V1 — noční LLM analytika se sem UŽ NEVOLÁ; běží
         # ve vlastním vlákně (_night_worker_loop). Zaseklá Ollama tak
         # neblokuje tento tick ani volajícího (proaktivita/film/autoplay).
@@ -1224,8 +1348,15 @@ class HansRoutine:
                 return
             kept = []
             for ln in lines:
+                direct = False
                 try:
-                    txt = (json.loads(ln) or {}).get("text") or ""
+                    _rec = json.loads(ln) or {}
+                    txt = _rec.get("text") or ""
+                    # HANS_NOTIFY_DIRECT_V1 (7.8.) — `direct` = tohle NENÍ Hansův
+                    # nápad, ale VÝSLEDEK toho, oč uživatel právě požádal a na co
+                    # čeká. Tiché hodiny takovou zprávu odložily do 9:00 (doloženo
+                    # 6.8. 22:38 u nepovedeného obrazu) → slib zase visel.
+                    direct = bool(_rec.get("direct"))
                 except Exception:
                     txt = ln           # holý text taky bereme
                 if not txt:
@@ -1235,7 +1366,13 @@ class HansRoutine:
                     # chybí / je vypnutý / odmítl (tiché hodiny). Dřív se tu
                     # návratová hodnota ignorovala → fronta se vyprázdnila
                     # a zpráva se ZTRATILA, přestože log hlásil „odesláno".
-                    if self._notifier(txt) is False:
+                    # HANS_NOTIFY_DIRECT_V1 — starší notifier `direct` neumí;
+                    # pak pošli postaru (zpráva je důležitější než příznak).
+                    try:
+                        _sent = self._notifier(txt, direct=direct)
+                    except TypeError:
+                        _sent = self._notifier(txt)
+                    if _sent is False:
                         _log.warning("HANS_NOTIFY_QUEUE_V1: neodesláno — "
                                      "nechávám ve frontě na další tick")
                         kept.append(ln)
@@ -1713,10 +1850,13 @@ class HansRoutine:
             # REFLECTION_PREMIDNIGHT_ONLY_V1 - jen vecer pred pulnoci (hour>=night_hour);
             # po 00:00 today flipne a guard by firnul reflexi pro sotva zacaty
             # novy den (thin data -> konfabulace). Mirror gate u relationship refl.
+            # HANS_REFLECTION_BRAIN_UP_CATCHUP_V1 — `_brain_up()` PŘED pokusem:
+            # bez něj se do vypnutého PC mlátilo každý tick (38× za hodinu).
             if (self._reflection is not None
                     and self._last_reflection_date != today
                     and datetime.now().hour >= self._night_hour
-                    and self._chat_quiet_ok()):  # REFLECTION_QUIET_GATE_V1
+                    and self._chat_quiet_ok()      # REFLECTION_QUIET_GATE_V1
+                    and self._brain_up()):
                 try:
                     # G5G_VERIFY_IN_NIGHTTICK_V1 — ověř fakta i v noční
                     # automatice (stejně jako /denik). Log-only (G5E).
@@ -1730,6 +1870,11 @@ class HansRoutine:
                         self._save_routine_state()  # ROUTINE_STATE_PERSIST_V1
                         _log.info("Večerní reflexe: zapsána (%d znaků)",
                                   len(result))
+                        try:
+                            from scripts.hans_schedule import mark as _sched_mark
+                            _sched_mark("evening_reflection", True)
+                        except Exception:
+                            pass
                     else:
                         _log.info("Večerní reflexe: odložena "
                                   "(Ollama nedostupná, zkusím znovu)")

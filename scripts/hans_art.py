@@ -1924,6 +1924,9 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
                              "svému mozku). Zkusím to znovu; kdyby to "
                              "spěchalo, řekněte a pustím se do toho hned."
                              % title),
+                    # HANS_NOTIFY_DIRECT_V1 — uživatel na obraz ČEKÁ; tiché hodiny
+                    # tuhle omluvu jednou odložily do 9:00 a slib zase visel.
+                    "direct": True,
                     "ts": _tm.time()}, ensure_ascii=False) + "\n")
         except Exception as _ne:
             _log.debug("art: notifikace o odloženém renderu: %s", _ne)

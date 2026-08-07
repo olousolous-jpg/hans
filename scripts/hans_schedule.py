@@ -45,6 +45,11 @@ _SEED = [
     # Ranní reflexe (souhrn co bylo, kam dál) — na začátku fáze morning ~6:00.
     ("morning_reflection", "daily", None, 6, 30 * 3600,
      "Ranní reflexe: shrnutí noci, plán dne"),
+    # Večerní reflexe dne — 1× za noc ve 22:00+ (HANS_REFLECTION_BRAIN_UP_CATCHUP_V1).
+    # Doloženo 7.8.: vypadla 2 dny po sobě a NIKDO to neohlásil, protože tu
+    # rutina chyběla. 30h gap = jeden vynechaný den se ozve hned ráno.
+    ("evening_reflection", "daily", None, 22, 30 * 3600,
+     "Večerní reflexe dne (shrnutí dne, postoje, tendence)"),
     # Studium — jeden tick á cca 30 min (idle OODA vybere study slot).
     ("study_tick", "periodic", 30 * 60, None, 4 * 3600,
      "Studijní tick: postup v aktivním study_program"),
