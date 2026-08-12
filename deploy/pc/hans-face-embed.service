@@ -1,0 +1,21 @@
+[Unit]
+Description=Hans face embedding (ArcFace r50 float, CPU)
+After=network-online.target
+
+[Service]
+Type=simple
+# ZÁMĚRNĚ CPU: na GPU by služba soupeřila o VRAM s Ollamou a ComfyUI a musela
+# by hlídat herní mód. Na CPU běží i během hraní — viz hlavička skriptu.
+Environment=FACE_MODEL=%h/hans/w600k_r50.onnx
+Environment=FACE_PORT=8765
+Environment=FACE_THREADS=8
+Environment=ORT_PROVIDER=CPU
+ExecStart=/usr/bin/python3 %h/hans/hans-face-embed.py
+Restart=on-failure
+RestartSec=10
+# služba nesmí ukousnout stroj, když se sejde s hrou
+Nice=10
+CPUWeight=50
+
+[Install]
+WantedBy=default.target

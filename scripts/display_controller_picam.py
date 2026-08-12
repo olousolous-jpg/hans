@@ -319,6 +319,8 @@ class PicamDisplayController:
         identities      = []
         hailo_results   = None  # PERSISTENT_UNKNOWN_METHOD_V1: init before loop
         frame_idx       = 0
+        import logging as _lg_perf
+        _log_perf = _lg_perf.getLogger("perf")  # FPS_TELEMETRY_V1
         fps_t           = time.time()
         fps_cnt         = 0
         fps             = 0
@@ -444,6 +446,25 @@ class PicamDisplayController:
                 fps     = fps_cnt
                 fps_cnt = 0
                 fps_t   = now
+                # FPS_TELEMETRY_V1: 1× za 10 s do logu, ať jde měřit před/po.
+                # S počtem obličejů — zátěž 1 vs 2 osoby se liší a bez toho
+                # by čísla nebyla srovnatelná.
+                try:
+                    self._fps_hist = getattr(self, "_fps_hist", [])
+                    self._fps_hist.append((fps, len(self._pipeline_boxes)
+                                           if hasattr(self, "_pipeline_boxes")
+                                           else 0))
+                    if len(self._fps_hist) >= 10:
+                        _f = [h[0] for h in self._fps_hist]
+                        _n = [h[1] for h in self._fps_hist]
+                        _f_sorted = sorted(_f)
+                        _log_perf.info(
+                            "fps med=%d min=%d max=%d | obliceju prum=%.1f",
+                            _f_sorted[len(_f_sorted) // 2], min(_f), max(_f),
+                            sum(_n) / len(_n))
+                        self._fps_hist = []
+                except Exception:
+                    pass
 
             # Clear gesture label + bbox after timeout
             # Fist během nahrávání: timeout ignoruj — stop jen přes druhý fist
@@ -504,6 +525,7 @@ class PicamDisplayController:
             if frame_idx % DETECT_EVERY == 0 and not self._vision_paused:  # SLEEP_VISION_OFF_V1 — recognition gate (framy tečou dál, jen detekce stojí)
                 _ctx = self._pipeline.detect_faces(_ctx, main_frame, lores_frame)
                 hailo_results = _ctx.hailo_results
+                self._pipeline_boxes = _ctx.boxes  # FPS_TELEMETRY_V1
                 if hailo_results is not None:
                     # Unpack Hailo state → lokály (voting block je čte)
                     boxes           = _ctx.boxes
@@ -1265,8 +1287,30 @@ class PicamDisplayController:
         database_manager = self.database_manager
         openwebui_chat = self.openwebui_chat
 
-        self.hailo   = HailoClient()
+        # FACE_LANDMARKS_WIRE_V1: landmarky umí jen scrfd server;
+        # personface běží na starém protokolu (3-tice).
+        self.hailo   = HailoClient(
+            want_landmarks=(self.config.get("hailo_server", {})
+                            .get("mode", "scrfd") == "scrfd"))
         self.face_db = FaceDB(database_manager, config=config)
+        # FACE_HARVEST_V1: průběžný sběr obličejů pro pozdější
+        # dávkové označení (řeší galerie z jediného sezení, aniž by
+        # kdokoli musel stát před kamerou). Default vypnuto.
+        try:
+            from scripts.face_harvest import FaceHarvester
+            self._harvester = FaceHarvester(config)
+        except Exception as _e:
+            print(f"[FaceHarvest] init selhal: {_e}")
+            self._harvester = None
+
+        # BODY_HARVEST_V1: sběr výřezů TRUPU pro ReID na dálku. Vlastní brána
+        # (ta z face_harvestu zahazuje neostré = právě vzdálené vzorky).
+        try:
+            from scripts.body_harvest import BodyHarvest
+            self._body_harvester = BodyHarvest(config)
+        except Exception as _e:
+            print(f"[BodyHarvest] init selhal: {_e}")
+            self._body_harvester = None
 
         # Persistent unknown tracker — pasivni enrollment
         from scripts.persistent_unknown_tracker import PersistentUnknownTracker
@@ -2341,7 +2385,15 @@ class PicamDisplayController:
         return new_map
 
     @staticmethod
-    def _aligned_crop(frame, box, H, W, bw, bh):
+    def _aligned_crop(frame, box, H, W, bw, bh, lm=None):
+        # FACE_LANDMARKS_ALIGN_V1: se skutečnými landmarky zarovnej podle
+        # nich; pevné poměry boxu níž jsou jen fallback (u natočené tváře
+        # tvář křiví — viz měření v data/BACKLOG.md).
+        if lm is not None:
+            from scripts.async_recognizer import aligned_crop_lm
+            _c = aligned_crop_lm(frame, lm)
+            if _c is not None:
+                return _c
         try:
             from scripts.async_recognizer import _ARCFACE_REF
             x1,y1,x2,y2 = box

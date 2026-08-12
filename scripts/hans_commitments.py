@@ -424,8 +424,13 @@ def open_commitments(diary_db_path: str, person: Optional[str] = None,
 
 def unannounced_commitments(diary_db_path: str,
                             limit: int = 5) -> List[tuple]:
-    """HANS_COMMIT_ANNOUNCE_V1 — [(id, person, text), …] otevřených slibů, o
-    kterých Hans ještě NEDAL vědět (announced=0). Nejstarší napřed."""
+    """HANS_COMMIT_ANNOUNCE_V1 — [(id, person, text, cond), …] otevřených
+    slibů, o kterých Hans ještě NEDAL vědět (announced=0). Nejstarší napřed.
+
+    COMMIT_COND_V1: `cond` je podmínka, kdy se smí připomenout. Prázdno =
+    kdykoli je dotyčný vidět. `alone` = jen když je v místnosti SÁM — některá
+    připomínka dává smysl jen o samotě (např. měření rozpoznávání, které víc
+    lidí naráz znehodnotí)."""
     try:
         db = sqlite3.connect("file:%s?mode=ro" % diary_db_path, uri=True,
                              timeout=5.0)
@@ -433,7 +438,8 @@ def unannounced_commitments(diary_db_path: str,
         return []
     try:
         return db.execute(
-            "SELECT id, person, text FROM commitments WHERE status='open' "
+            "SELECT id, person, text, COALESCE(cond,'') FROM commitments "
+            "WHERE status='open' "
             "AND announced=0 ORDER BY created_ts ASC LIMIT ?",
             (limit,)).fetchall()
     except Exception:

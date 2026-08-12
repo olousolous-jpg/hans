@@ -259,6 +259,91 @@ def probe_schedule(config: dict) -> dict:
         return {"status": UNKNOWN, "detail": str(e)[:80], "stale": []}
 
 
+def probe_pc_reboots(config: dict) -> dict:
+    """PC_REBOOT_WATCH_V1 — restartuje se PC častěji, než má?
+
+    PROČ (uživatel 12.8.): zapnuli jsme na PC hardwarový watchdog (`sp5100_tco`)
+    kvůli nočnímu zamrznutí. Jenže implementace watchdogu bývá na některých
+    deskách vadná a umí resetovat BEZ PŘÍČINY — a takový planý reset by jinak
+    nikdo nezaznamenal, protože stroj se vždycky vrátí.
+
+    ⚠️ PROČ NE `brain_down`: ten je zašuměný. Měřeno na 292 spárovaných
+    výpadcích — medián 3 denně, z toho 129 kratších než 2 minuty (výpadky
+    Ollamy, ne restarty stroje). Ani počet, ani délka výpadku mozku restart
+    desky nerozliší. **Jednoznačný je počet BOOTŮ**, a ten se dá přečíst
+    přímo z PC.
+
+    Bere se `journalctl --list-boots`, kde je u každého bootu první i poslední
+    záznam → naráz vyjde POČET bootů za 24 h i jejich DÉLKA.
+    Normálně jsou 2 (buzení ve 3:00 na analytiku + ranní), takže:
+      • víc než `max_boots_24h` (výchozí 4)  → něco stroj restartuje
+      • boot kratší než 5 minut             → nabootoval a hned umřel
+        (přesně signatura noci 12.8.: boot v 03:01:05, konec v 03:01:19)
+
+    Status WARN — hlásí, NEspouští heal. Restartovat PC kvůli tomu, že se
+    restartuje, by bylo směšné.
+
+    Dotaz jde přes SSH, takže se drží cache (`_reboot_cache`) a ptá se
+    nanejvýš jednou za hodinu — health check běží mnohem častěji.
+    """
+    import time as _t
+    global _reboot_cache
+    now = _t.time()
+    if _reboot_cache and now - _reboot_cache[0] < 3600:
+        return _reboot_cache[1]
+    try:
+        from scripts import pc_remote
+        if not pc_remote.enabled(config):
+            return {"status": UNKNOWN, "detail": "pc_remote vypnut"}
+        out = pc_remote.run(
+            config, "journalctl --list-boots --no-pager 2>/dev/null | tail -12",
+            timeout=15)
+        if not out:
+            # PC spí — to není chyba, jen o něm teď nic nevíme
+            return {"status": UNKNOWN, "detail": "PC nedostupné"}
+
+        import re
+        from datetime import datetime as _dt
+        pat = re.compile(r"([A-Z][a-z]{2}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})")
+        recent, short = 0, []
+        for line in str(out).splitlines():
+            times = pat.findall(line)
+            if len(times) < 2:
+                continue
+            try:
+                t0 = _dt.strptime(times[0][4:], "%Y-%m-%d %H:%M:%S")
+                t1 = _dt.strptime(times[1][4:], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+            age_h = (now - t0.timestamp()) / 3600.0
+            if 0 <= age_h <= 24:
+                recent += 1
+                mins = (t1 - t0).total_seconds() / 60.0
+                if mins < 5:
+                    short.append(round(mins, 1))
+
+        cfg = _cfg(config)
+        mx = int(cfg.get("max_boots_24h", 4))
+        if short:
+            res = {"status": WARN, "boots_24h": recent, "short": short,
+                   "detail": f"PC nabootovalo a do {short[0]} min umřelo "
+                             f"({len(short)}× za 24 h) — zamrznutí nebo planý reset"}
+        elif recent > mx:
+            res = {"status": WARN, "boots_24h": recent, "short": [],
+                   "detail": f"PC se za 24 h restartovalo {recent}× (běžně 2) "
+                             f"— podezření na planý reset watchdogu"}
+        else:
+            res = {"status": OK, "boots_24h": recent, "short": [],
+                   "detail": f"{recent} bootů za 24 h (normál)"}
+        _reboot_cache = (now, res)
+        return res
+    except Exception as e:
+        return {"status": UNKNOWN, "detail": str(e)[:80]}
+
+
+_reboot_cache = None
+
+
 # ── agregace ─────────────────────────────────────────────────────────────────
 def probe_all(config: dict) -> dict:
     """Proboduje všechny závislosti. Vrací {service: {status, detail, ...}}.
@@ -272,6 +357,7 @@ def probe_all(config: dict) -> dict:
         "pc": probe_pc,
         "disk": probe_disk,
         "schedule": probe_schedule,  # HANS_SCHEDULE_V1 (behaviorální)
+        "pc_reboots": probe_pc_reboots,  # PC_REBOOT_WATCH_V1 (planý reset watchdogu)
     }
     only = _cfg(config).get("probes")  # volitelně podmnožina
     out = {}
@@ -372,12 +458,28 @@ def _schedule_sentence(health: dict) -> str:
         len(stale), stale[0]['name'], stale[0]['late_s'] / 3600)
 
 
+def _reboot_sentence(health: dict) -> str:
+    """PC_REBOOT_WATCH_V1 — planý reset se pozná jen tím, že si ho někdo všimne."""
+    r = (health or {}).get("pc_reboots") or {}
+    if r.get("status") != WARN:
+        return ""
+    if r.get("short"):
+        return ("Počítač po zapnutí do %s minuty spadl (%d× za den) — "
+                "buď zamrzá, nebo ho zbytečně resetuje watchdog."
+                % (r["short"][0], len(r["short"])))
+    return ("Počítač se za den restartoval %dkrát, obvykle stačí dvakrát — "
+            "možná plane spouští watchdog." % r.get("boots_24h", 0))
+
+
 def summary_sentence(health: dict, healed: list) -> str:
     """Krátká věta pro Hansovo surfacing (1. osoba, upřímně)."""
     bad = degraded_services(health)
     sched = _schedule_sentence(health)
+    reb = _reboot_sentence(health)      # PC_REBOOT_WATCH_V1
+    if reb:
+        sched = (sched + " " + reb).strip()
     if not bad:
-        return sched  # čistá dependency, jen rozvrh (nebo prázdno)
+        return sched  # čistá dependency, jen rozvrh/restarty (nebo prázdno)
     labels = {"ollama": "můj mozek (Ollama)", "comfyui": "malování (ComfyUI)",
               "kodi": "televize (Kodi)", "stt": "sluch (přepis řeči)",
               "pc": "počítač", "disk": "místo na disku"}

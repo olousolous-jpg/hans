@@ -95,6 +95,10 @@ log = logging.getLogger(__name__)
 EMBED_MAGIC = b'\xEB\xED\xFE\xED'   # Mode 2: embed only
 OBJ_MAGIC   = b'\x0B\x1E\xC7\xD0'  # Mode 3: object detection
 HAND_MAGIC  = b'\xAA\xBB\xCC\xDD'  # Mode 4: hand landmarks
+# FACE_LANDMARKS_WIRE_V1 — Mode 1b: detect+embed a NAVÍC pošli 5-bodové
+# SCRFD landmarky. Vlastní magic (ne změna mode 1), aby starý klient
+# i personface server bez landmarků fungovaly beze změny.
+FACE_LM_MAGIC = b'\xFA\xCE\x1A\x0D'  # Mode 1b: detect+embed+landmarks
 GESTURE_SOCK = "/tmp/gesture.sock"   # dedicated gesture socket
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -164,6 +168,10 @@ LABEL_PERSON = 1
 log.info("Lores resolution from config: %dx%d", LORES_W, LORES_H)
 
 # ── SCRFD constants ───────────────────────────────────────────────────────────
+# HAILO_SKIP_SERVER_EMBED_V1: klient si dělá vlastní HQ embedding
+# z main_frame a serverový vždy přepíše → počítat ho je čirá ztráta
+# (~81 ms/s NPU). Zapnout zpět = config hailo.server_embed: true.
+SERVER_EMBED = bool(_CFG.get("hailo", {}).get("server_embed", False))
 SCRFD_STRIDES   = [8, 16, 32]
 SCRFD_MIN_SIZES = [[16, 32], [64, 128], [256, 512]]
 SCRFD_LAYERS = {
@@ -236,6 +244,56 @@ def _unletterbox_boxes(boxes: np.ndarray) -> np.ndarray:
     return b
 
 
+def _unletterbox_pts(pts: np.ndarray) -> np.ndarray:
+    """SCRFD_LM_DECODE_FIX_V1: body z letterboxed prostoru do lores.
+
+    Záměrně BEZ clipu — oříznutý landmark by se tiše posunul a pokazil
+    zarovnání; radši ať vyjede z rámu a chytne ho kontrola věrohodnosti.
+    """
+    if len(pts) == 0:
+        return pts
+    scale, pad_left, pad_top = _get_letterbox_params(LORES_W, LORES_H)
+    p = pts.copy()
+    p[..., 0] = (p[..., 0] * DET_W - pad_left) / (scale * LORES_W)
+    p[..., 1] = (p[..., 1] * DET_H - pad_top)  / (scale * LORES_H)
+    return p
+
+
+def lm_plausible(lm, box) -> bool:
+    """FACE_LM_SANITY_V1: sedí 5 bodů na tvář v tomhle boxu?
+
+    Zkolabované landmarky (bug SCRFD_LM_DECODE_FIX_V1) vyrobí zarovnání
+    přiblížené na oko a NIKDE to nezahlásí — chyba je čistě geometrická,
+    embedding se spočítá vesele dál. Tahle brána to zachytí a pošle
+    volajícího na starý (horší, ale rozumný) crop.
+    """
+    try:
+        if lm is None or not np.any(lm):
+            return False
+        p = np.asarray(lm, np.float32).reshape(5, 2)
+        if not np.all(np.isfinite(p)):
+            return False
+        bw = float(box[2] - box[0]); bh = float(box[3] - box[1])
+        if bw <= 0 or bh <= 0:
+            return False
+        eye = float(np.hypot(*(p[1] - p[0])))
+        # zdravé oči/šířka ≈ 0.35–0.45; kolaps dával 0.02
+        if not (0.15 * bw <= eye <= 0.95 * bw):
+            return False
+        # body musí ležet v boxu roztaženém o 40 % (natočená tvář
+        # může mít oko těsně u hrany)
+        mx = 0.40 * bw; my = 0.40 * bh
+        if (p[:, 0].min() < box[0] - mx or p[:, 0].max() > box[2] + mx or
+                p[:, 1].min() < box[1] - my or p[:, 1].max() > box[3] + my):
+            return False
+        # oči musí být nad ústy
+        if not (p[0, 1] < p[3, 1] and p[1, 1] < p[4, 1]):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def _unletterbox_y(y: float) -> float:
     """Unletterbox a single normalised Y coordinate."""
     scale, _, pad_top = _get_letterbox_params(LORES_W, LORES_H)
@@ -244,7 +302,13 @@ def _unletterbox_y(y: float) -> float:
 
 # ── SCRFD decode ──────────────────────────────────────────────────────────────
 def decode_scrfd(outputs):
-    all_boxes = []; all_scores = []
+    # SCRFD_LM_DECODE_FIX_V1: landmarky se dekódují TADY, ve stejném
+    # průchodu jako boxy — stejná score maska, stejný stride, stejné
+    # pořadí řádků. Dřív se hledaly zvlášť heuristikou "nejbližší kotva"
+    # přes vstack všech stridů → pro velký obličej trefila hustou
+    # stride-8 mřížku (pozadí, nulové delty) → landmarky zkolabovaly
+    # do bodu a zarovnaný crop byl přiblížený na oko.
+    all_boxes = []; all_scores = []; all_lms = []
     for stride in SCRFD_STRIDES:
         sk, bk = SCRFD_LAYERS[stride]
         if sk not in outputs or bk not in outputs: continue
@@ -261,14 +325,32 @@ def decode_scrfd(outputs):
         y2 = (cy + bs[:, 3] * stride) / DET_H
         all_boxes.append(np.stack([x1, y1, x2, y2], 1))
         all_scores.append(ss)
+        # Landmarky téhož stridu, týmž klíčem (mask) → indexy sedí.
+        lk = SCRFD_LM_LAYERS.get(stride)
+        n_sel = int(mask.sum())
+        if lk and lk in outputs:
+            lm = np.array(outputs[lk], np.float32).reshape(-1, 10)[mask]
+            lm = lm.reshape(-1, 5, 2)
+            pts = np.empty_like(lm)
+            pts[:, :, 0] = (cx[:, None] + lm[:, :, 0] * stride) / DET_W
+            pts[:, :, 1] = (cy[:, None] + lm[:, :, 1] * stride) / DET_H
+            all_lms.append(pts)
+        else:
+            # vrstva chybí → nuly, ať zůstane zarovnání indexů s boxy
+            all_lms.append(np.zeros((n_sel, 5, 2), np.float32))
     if not all_boxes:
-        return np.empty((0, 4), np.float32), np.empty((0,), np.float32)
-    return np.clip(np.vstack(all_boxes), 0, 1), np.concatenate(all_scores)
+        return (np.empty((0, 4), np.float32), np.empty((0,), np.float32),
+                np.empty((0, 5, 2), np.float32))
+    return (np.clip(np.vstack(all_boxes), 0, 1),
+            np.concatenate(all_scores),
+            np.vstack(all_lms))
 
 
-def nms_filter(boxes, scores, thresh=None):
+def nms_filter(boxes, scores, lms=None, thresh=None):
+    # SCRFD_LM_DECODE_FIX_V1: landmarky projdou stejnými keep indexy
     if thresh is None: thresh = SCRFD_NMS_THRESH
-    if len(boxes) == 0: return boxes, scores
+    if len(boxes) == 0:
+        return (boxes, scores) if lms is None else (boxes, scores, lms)
     order = np.argsort(scores)[::-1]; keep = []
     while len(order):
         i = order[0]; keep.append(i)
@@ -284,7 +366,9 @@ def nms_filter(boxes, scores, thresh=None):
         iou = inter / (ai + ar - inter + 1e-6)
         order = order[1:][iou < thresh]
     k = np.array(keep, np.int32)
-    return boxes[k], scores[k]
+    if lms is None:
+        return boxes[k], scores[k]
+    return boxes[k], scores[k], lms[k]
 
 
 # ── Face alignment ────────────────────────────────────────────────────────────
@@ -937,6 +1021,13 @@ def handle_client(conn, engine: CombinedEngine, lock: threading.Lock):
                 continue
 
             # ── Mode 1: detect + embed (face) ─────────────────────────────
+            # FACE_LANDMARKS_WIRE_V1: magic jen přepne odpověď na variantu
+            # s landmarky; za ním jde normální mode-1 hlavička.
+            want_lm = False
+            if hdr == FACE_LM_MAGIC:
+                want_lm = True
+                hdr = recv_exact(conn, 4)
+                if hdr is None: break
             size = struct.unpack(">I", hdr)[0]
             if size == fb_lores:
                 raw = recv_exact(conn, size)
@@ -959,58 +1050,38 @@ def handle_client(conn, engine: CombinedEngine, lock: threading.Lock):
             try:
                 with lock:
                     det_raw = engine.run_detect(frame)
-                boxes, scores = decode_scrfd(det_raw)
-                boxes, scores = nms_filter(boxes, scores)
+                boxes, scores, lms = decode_scrfd(det_raw)
+                boxes, scores, lms = nms_filter(boxes, scores, lms)
                 if lores:
                     boxes = _unletterbox_boxes(boxes)
+                    lms   = _unletterbox_pts(lms)
                 N = len(boxes)
                 if N: log.info("Faces: %d  scores=%s", N, scores.round(2).tolist())
                 if N == 0:
                     conn.sendall(struct.pack(">I", 0)); continue
 
-                # ── Landmarks ─────────────────────────────────────────────
+                # ── Landmarks (SCRFD_LM_DECODE_FIX_V1) ────────────────────
+                # Už dekódované v decode_scrfd ve stejném pořadí jako boxy.
+                # Zbývá jen zahodit nevěrohodné (FACE_LM_SANITY_V1).
                 lm_list = [None] * N
-                try:
-                    all_lm = []; all_an = []
-                    for stride in SCRFD_STRIDES:
-                        lk = SCRFD_LM_LAYERS[stride]
-                        bk = SCRFD_LAYERS[stride][1]
-                        if lk not in det_raw or bk not in det_raw: continue
-                        all_lm.append(np.array(det_raw[lk], np.float32).reshape(-1, 10))
-                        all_an.append(_ANCHORS[stride])
-                    if all_lm:
-                        all_lm = np.vstack(all_lm)
-                        all_an = np.vstack(all_an)
-                        scale, pad_left, pad_top = _get_letterbox_params(LORES_W, LORES_H)
-                        for fi, box in enumerate(boxes):
-                            cx = (box[0] + box[2]) / 2
-                            cy = (box[1] + box[3]) / 2
-                            acx = all_an[:, 0] / DET_W
-                            acy = all_an[:, 1] / DET_H
-                            best = int(np.argmin((acx - cx) ** 2 + (acy - cy) ** 2))
-                            sz   = all_an[best, 2]
-                            st   = 8 if sz <= 32 else (16 if sz <= 128 else 32)
-                            deltas = all_lm[best].reshape(5, 2)
-                            pts = np.zeros((5, 2), np.float32)
-                            for k in range(5):
-                                pts[k, 0] = (all_an[best, 0] + deltas[k, 0] * st) / DET_W
-                                pts[k, 1] = (all_an[best, 1] + deltas[k, 1] * st) / DET_H
-                            pts = np.clip(pts, 0, 1)
-                            if lores:
-                                # Unletterbox landmark coords back to lores space
-                                pts[:, 0] = np.clip(
-                                    (pts[:, 0] * DET_W - pad_left) / (scale * LORES_W),
-                                    0.0, 1.0)
-                                pts[:, 1] = np.clip(
-                                    (pts[:, 1] * DET_H - pad_top) / (scale * LORES_H),
-                                    0.0, 1.0)
-                            lm_list[fi] = pts
-                except Exception:
-                    pass
+                _lm_bad = 0
+                for _i in range(N):
+                    _p = lms[_i] if _i < len(lms) else None
+                    if lm_plausible(_p, boxes[_i]):
+                        lm_list[_i] = np.asarray(_p, np.float32)
+                    else:
+                        _lm_bad += 1
+                if _lm_bad:
+                    log.warning("Landmarks nevěrohodné u %d/%d tváří "
+                                "— fallback na crop z boxu", _lm_bad, N)
 
                 # ── ArcFace embeddings ─────────────────────────────────────
+                # HAILO_SKIP_SERVER_EMBED_V1: v režimu s landmarky si embedding
+                # dělá klient sám z main_frame (ostřejší crop) → tady se
+                # počítat nemusí. Formát odpovědi zůstává stejný (nuly).
                 embs = np.zeros((N, ARCFACE_DIM), np.float32)
-                for i, box in enumerate(boxes):
+                _skip_embed = want_lm and not SERVER_EMBED
+                for i, box in enumerate([] if _skip_embed else boxes):
                     fc = None
                     if lm_list[i] is not None:
                         try:
@@ -1028,6 +1099,15 @@ def handle_client(conn, engine: CombinedEngine, lock: threading.Lock):
                 conn.sendall(boxes.tobytes())
                 conn.sendall(embs.tobytes())
                 conn.sendall(labels.tobytes())
+                # FACE_LANDMARKS_WIRE_V1: N×5×2 float32 ve stejném
+                # normalizovaném prostoru jako boxy. Chybějící landmarky
+                # = samé nuly (klient si to přeloží na None).
+                if want_lm:
+                    lm_arr = np.zeros((N, 5, 2), np.float32)
+                    for _i, _lm in enumerate(lm_list):
+                        if _lm is not None:
+                            lm_arr[_i] = _lm
+                    conn.sendall(lm_arr.tobytes())
 
             except Exception as e:
                 import traceback

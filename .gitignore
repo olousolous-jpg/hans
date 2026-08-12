@@ -31,6 +31,9 @@ archive/
 
 # Velké HW modely (HEF pro Hailo) — distribuují se mimo git
 resources/*.hef
+# velké modely (ONNX pro PC embedder) — NESMÍ do veřejného repa
+resources/*.onnx
+resources/*.zip
 
 # Vývojový handoff — plný soukromých dat (jména/IP/historie domácnosti).
 # NEpatří na veřejný GitHub (drž lokálně / privátně).

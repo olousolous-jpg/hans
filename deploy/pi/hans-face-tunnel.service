@@ -1,0 +1,29 @@
+[Unit]
+Description=SSH tunel k PC embedding službě (hans-face-embed)
+After=network-online.target
+# PROČ TUNEL A NE OTEVŘENÝ PORT:
+#   Na PC běží firewalld i OpenSnitch. Otevřít port by znamenalo sudo pravidlo
+#   + odklikávat OpenSnitch, a hlavně vystavit službu BEZ OVĚŘOVÁNÍ do sítě.
+#   Tunel jde ven z Pi přes už povolené SSH, takže na PC není potřeba měnit nic.
+# Lokální konec je schválně na 127.0.0.1 — na Pi se port nikam nevystavuje.
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -NT \
+  -o BatchMode=yes \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=20 \
+  -o ServerAliveCountMax=3 \
+  -o ConnectTimeout=10 \
+  -o StrictHostKeyChecking=accept-new \
+  -i %h/.ssh/hans_pc \
+  -L 127.0.0.1:8765:127.0.0.1:8765 \
+  UZIVATEL@192.168.1.10   # <- doplnit vlastniho uzivatele a IP pocitace
+Restart=always
+RestartSec=30
+# PC se v noci vypíná (pc_night_shutdown) a tunel bude hodiny padat. Bez tohohle
+# by systemd po pár pokusech přestal zkoušet a ráno by tunel nenaskočil sám.
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=default.target

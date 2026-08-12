@@ -33,6 +33,53 @@ _ARCFACE_REF = np.array([
 _SLOT_TIMEOUT = 4.0
 
 
+def lm_of(result):
+    """FACE_LANDMARKS_ALIGN_V1: landmarky z hailo_results položky.
+
+    Snese 3-tice (starý protokol / personface server) i 4-tice.
+    """
+    try:
+        return result[3] if len(result) > 3 else None
+    except Exception:
+        return None
+
+
+def aligned_crop_lm(frame, lm, size=None):
+    """Zarovnání na ArcFace referenci ze SKUTEČNÝCH SCRFD landmarků.
+
+    Tohle je ta pravá varianta — stejná matematika, jakou dělá
+    hailo_inference_server.align_face() pro mode-1 embedding.
+    Falešná varianta (pevné poměry boxu) zůstává jen jako fallback,
+    když server landmarky nedodá.
+    """
+    if lm is None or frame is None:
+        return None
+    try:
+        # FACE_LM_SANITY_V1: druhá obrana — kdyby přes drát přišly
+        # zkolabované body, radši starý crop než výřez oka.
+        _p = np.asarray(lm, dtype=np.float32).reshape(5, 2)
+        if not np.all(np.isfinite(_p)) or not np.any(_p):
+            return None
+        _sx = float(_p[:, 0].max() - _p[:, 0].min())
+        _sy = float(_p[:, 1].max() - _p[:, 1].min())
+        if _sx < 1e-3 or _sy < 1e-3:
+            return None
+        out = size or ARCFACE_SIZE
+        H, W = frame.shape[:2]
+        pts = np.asarray(lm, dtype=np.float32).reshape(5, 2).copy()
+        pts[:, 0] *= W
+        pts[:, 1] *= H
+        M, _ = cv2.estimateAffinePartial2D(
+            pts, _ARCFACE_REF, method=cv2.LMEDS)
+        if M is None:
+            return None
+        return cv2.warpAffine(frame, M, (out, out),
+                              flags=cv2.INTER_LINEAR,
+                              borderMode=cv2.BORDER_REPLICATE)
+    except Exception:
+        return None
+
+
 def _iou(a: list, b: list) -> float:
     """Intersection-over-Union for two normalised [x1,y1,x2,y2] boxes."""
     ix1 = max(a[0], b[0]); iy1 = max(a[1], b[1])
@@ -160,6 +207,27 @@ class AsyncRecognizer:
 
         # Direct TTS reference for fallback greeting (bypasses chat handler)
         self.tts_speaker = None  # set by PicamDisplayController after init
+
+        # PC_EMBED_V1 — float embedding z PC pro finální rozhodnutí.
+        # Hailo embedding se počítá dál: slouží jako levný vrátný
+        # (negativní galerie) a jako povinný fallback, když PC nejede.
+        self._pc = None
+        # PC_VOTE_TELEMETRY_V1: kdo reálně rozhoduje. Bez tohohle se „běží PC"
+        # nedá dokázat — počítadlo na serveru míchá produkci s testy a nula může
+        # znamenat „nikdo před kamerou" stejně dobře jako „mrtvá cesta".
+        self._pc_stat = {"pc": 0, "hailo": 0, "t": 0.0}
+        # VOTE_PC_SCALE_V1: hlasování ve frame_pipeline musí vědět, na jaké
+        # škále je arc_conf — float skóre z PC mají jiné rozložení než int8.
+        self.used_pc = False
+        self._pc_min_area = float(
+            (self.config.get('pc_embed', {}) or {}).get('min_face_area', 0.0015))
+        try:
+            from scripts.pc_embed import PCEmbedder
+            self._pc = PCEmbedder(self.config)
+            if self._pc.enabled:
+                print('[AsyncRecognizer] PC embedding zapnut')
+        except Exception as _e:
+            print(f'[AsyncRecognizer] PC embedding nedostupný: {_e}')
 
         self._face_prep = _FacePreprocessor(self.config)
         # Filtr mikro-detekcí — boxy menší než min_face_area se neposílají
@@ -293,6 +361,7 @@ class AsyncRecognizer:
                         face_indices.append(fi)
                 # TODO: filter by gesture label when gesture detection is added
                 hq_embs = {}
+                crops_by_idx = {}      # PC_EMBED_V1: crop k odeslání na PC
 
                 # ── HQ Mode-2 embeddings ───────────────────────────────────
                 # DETECT_DEDUP_EMBED_V1: obličeje, které už detect_faces hi-res
@@ -305,9 +374,16 @@ class AsyncRecognizer:
                     crops = []
                     for fi in _to_embed:
                         box  = hailo_results[fi][0]
-                        crop = self._aligned_crop(main_frame, box)
+                        # FACE_LANDMARKS_ALIGN_V1: skutečné landmarky mají
+                        # přednost, pevné poměry boxu až jako fallback.
+                        crop = aligned_crop_lm(
+                            main_frame, lm_of(hailo_results[fi]))
+                        if crop is None:
+                            crop = self._aligned_crop(main_frame, box)
                         if crop is None:
                             crop = self._padded_crop(main_frame, box)
+                        if crop is not None:
+                            crops_by_idx[fi] = crop   # PC_EMBED_V1
                         crops.append(crop if crop is not None
                                      else np.zeros((ARCFACE_SIZE, ARCFACE_SIZE, 3),
                                                    np.uint8))
@@ -322,6 +398,53 @@ class AsyncRecognizer:
                     except Exception:
                         pass
 
+                # PC_EMBED_V1: dávkově doptat PC na float embeddingy.
+                #
+                # ⚠️ OPRAVA 11.8.: cropy se dřív sbíraly jen ve větvi `_to_embed`,
+                # jenže ta je v praxi PRÁZDNÁ — frame_pipeline zaembedduje všechny
+                # obličeje sám (hq_zoom.trigger_area 0.1 nikdo nepřekročí), takže
+                # `skip_embed_idx` pokryje vše. PC tím pádem nikdy nic nedostal.
+                # Crop je levný (jedna warpAffine), takže ho spočítáme pro VŠECHNY
+                # obličeje; drahý byl jen Hailo embedding, a ten zůstává přeskočený.
+                pc_embs = {}
+                if self._pc is not None and self._pc.available and main_frame is not None:
+                    _idx, _cr = [], []
+                    # ⚠️ NE `face_indices` — ten filtruje na min_face_area 0.005,
+                    # jenže reálné tváře mají 0.0028–0.0045, takže by sem nespadlo
+                    # skoro nic a rozhodovalo by dál Hailo. Hlavní smyčka jede přes
+                    # VŠECHNY detekce, takže PC větev musí taky. Dolní mez 0.0015
+                    # je změřená hranice, pod kterou rostou záměny.
+                    for fi in range(len(hailo_results)):
+                        _b = hailo_results[fi][0]
+                        if (_b[2]-_b[0])*(_b[3]-_b[1]) < self._pc_min_area:
+                            continue
+                        _c = crops_by_idx.get(fi)
+                        if _c is None:
+                            box = hailo_results[fi][0]
+                            _c = aligned_crop_lm(main_frame, lm_of(hailo_results[fi]))
+                            if _c is None:
+                                _c = self._aligned_crop(main_frame, box)
+                            if _c is None:
+                                _c = self._padded_crop(main_frame, box)
+                        if _c is not None:
+                            _idx.append(fi); _cr.append(_c)
+                    if _cr:
+                        _out = self._pc.embed(_cr)
+                        if _out is not None:
+                            pc_embs = {i: e for i, e in zip(_idx, _out)}
+                self.used_pc = bool(pc_embs)   # VOTE_PC_SCALE_V1
+
+                # PC_VOTE_TELEMETRY_V1: jednou za minutu shrnout, kdo rozhodoval
+                _now = time.time()
+                if _now - self._pc_stat["t"] > 60.0:
+                    if self._pc_stat["pc"] or self._pc_stat["hailo"]:
+                        import logging as _lg
+                        _lg.getLogger("async_recognizer").info(
+                            "rozhodnutí za minutu: PC %d, Hailo %d",
+                            self._pc_stat["pc"], self._pc_stat["hailo"])
+                        self._pc_stat["pc"] = self._pc_stat["hailo"] = 0
+                    self._pc_stat["t"] = _now
+
                 all_names = self.face_db.list_faces()
 
                 # ── Prune stale slots ──────────────────────────────────────
@@ -333,7 +456,8 @@ class AsyncRecognizer:
                 # ── Match each detection to an identity slot ───────────────
                 used_slots: set = set()
 
-                for det_idx, (box, emb, label) in enumerate(hailo_results):
+                for det_idx, (box, emb, label, *_lm) in enumerate(
+                        hailo_results):
                     boxes.append(box)
                     labels_out.append(LABEL_FACE)  # always face in scrfd mode
 
@@ -348,7 +472,15 @@ class AsyncRecognizer:
                     use_emb = raw_emb
 
                     try:
-                        raw_name, raw_conf = self.face_db.identify(use_emb)
+                        # PC_EMBED_V1: má-li tenhle obličej float embedding
+                        # z PC, rozhoduje ten; jinak beze změny Hailo.
+                        _pe = pc_embs.get(det_idx)
+                        if _pe is not None:
+                            raw_name, raw_conf = self.face_db.identify_pc(_pe)
+                            self._pc_stat["pc"] += 1          # PC_VOTE_TELEMETRY_V1
+                        else:
+                            raw_name, raw_conf = self.face_db.identify(use_emb)
+                            self._pc_stat["hailo"] += 1
                     except Exception:
                         raw_name, raw_conf = "Unknown", 0.0
 

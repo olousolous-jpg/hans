@@ -41,6 +41,89 @@ class FaceDB:
         self._arcface_thresh = float(rt.get("arcface_thresh", 0.55))
         self._margin         = float(rt.get("margin",         _MARGIN))
         self._min_norm       = float(rt.get("min_norm",        _MIN_NORM))
+        # FACE_SCORE_TOPK_V1
+        self._score_mode  = str(rt.get("score_mode", "top_k")).lower()
+        self._score_top_k = int(rt.get("score_top_k", 3))
+        # PC_EMBED_V1: float embedding má jiné rozložení skóre než int8,
+        # takže vlastní margin (změřeno: 0.04 je optimum, 0.06 ubírá ~7 p.b.)
+        self._pc_margin = float(rt.get("pc_margin", 0.04))
+        self._pc_vote2_w = float(rt.get("pc_vote2_weight", 0.30))
+        # FACE_NEGATIVES_V1 — falešné detekce (SCRFD bere kulatou mřížku
+        # ventilátoru jako obličej: 445 falešných detekcí za 2 h). Negativní
+        # galerie se skóruje jako další "osoba"; když vyhraje, vrací se
+        # Unknown. Zabrání to unknown_person/worried z neživých objektů.
+        # PC_EMBED_V1: druhá galerie pro FLOAT embeddingy z PC.
+        # Embeddingy z různých modelů jsou neporovnatelné → dvě galerie,
+        # ale obě postavené z TÝCHŽ označených cropů ze sběru.
+        self._pc_gal = None
+        self._pc_neg = None
+        try:
+            import pickle as _pk
+            with open(rt.get('pc_gallery',
+                             'data/known_faces_pc.pkl'), 'rb') as _f:
+                _g = _pk.load(_f)
+            self._pc_gal = {}
+            for _n, _v in _g.items():
+                _m = np.array(_v, dtype=np.float32)
+                self._pc_gal[_n] = _m / (
+                    np.linalg.norm(_m, axis=1, keepdims=True) + 1e-9)
+            try:
+                with open(rt.get('pc_negatives',
+                                 'data/known_faces_pc_negative.pkl'), 'rb') as _f:
+                    _nn = np.array(_pk.load(_f), dtype=np.float32)
+                self._pc_neg = _nn / (
+                    np.linalg.norm(_nn, axis=1, keepdims=True) + 1e-9)
+            except FileNotFoundError:
+                pass
+            # FACEDB_INIT_LOG_V1: do system.log — stdout služby se nikam neukládá
+            import logging as _lg
+            _lg.getLogger("face_db").info(
+                "PC galerie: %s", {k: len(v) for k, v in self._pc_gal.items()})
+        except FileNotFoundError:
+            pass
+        except Exception as _e:
+            print(f'[FaceDB] PC galerie nenačtena: {_e}')
+
+        # PC_VOTE2_V1: druhý hlas nad TÝMIŽ float embeddingy, jen jinak
+        # agregovanými — pózové centroidy místo top-k. Změřeno 11.8.:
+        #   1 hlas  67.4 % / 5.8 % záměn
+        #   2 hlasy 66.8 % / 3.5 % záměn   ← záměny o 40 % dolů
+        #   3 hlasy 66.8 % / 3.2 %          ← nevyplatí se
+        # Úspěšnost nezvedne, ale sráží CHYBNÁ JMÉNA — a ta jsou horší než „nevím".
+        self._pc_cent = None
+        try:
+            import pickle as _pk
+            with open(rt.get('pc_clusters',
+                             'data/known_faces_pc_clusters.pkl'), 'rb') as _f:
+                _c = _pk.load(_f)
+            self._pc_cent = {}
+            for _n, _v in _c.items():
+                _m = np.array(_v, dtype=np.float32)
+                self._pc_cent[_n] = _m / (
+                    np.linalg.norm(_m, axis=1, keepdims=True) + 1e-9)
+            import logging as _lg
+            _lg.getLogger("face_db").info(
+                "PC centroidy (2. hlas): %s",
+                {k: len(v) for k, v in self._pc_cent.items()})
+        except FileNotFoundError:
+            pass
+        except Exception as _e:
+            print(f'[FaceDB] PC centroidy nenačteny: {_e}')
+
+        self._negatives = None
+        if bool(rt.get("use_negatives", True)):
+            try:
+                import pickle as _pk
+                with open(rt.get("negatives_path",
+                                 "data/known_faces_negative.pkl"), "rb") as _f:
+                    _neg = np.array(_pk.load(_f), dtype=np.float32)
+                _n = np.linalg.norm(_neg, axis=1, keepdims=True)
+                self._negatives = _neg / (_n + 1e-9)
+                print(f"[FaceDB] negativní galerie: {len(self._negatives)} vzorků")
+            except FileNotFoundError:
+                pass
+            except Exception as _e:
+                print(f"[FaceDB] negativní galerie nenačtena: {_e}")
         self._debug          = self.config.get("debug", False)
 
         # Cache: {name: (normalised_matrix, mean_vector)} invalidated on add/reload
@@ -267,17 +350,72 @@ class FaceDB:
                       embeddings: list, name: str = "") -> float:
         """
         Score a single person against query_norm.
-        Uses cached normalised matrix and mean vector.
-        Final score = 0.6 * mean_sim + 0.4 * max_sample_sim
+
+        FACE_SCORE_TOPK_V1: výchozí režim = průměr k NEJLEPŠÍCH vzorků.
+        Globální `mean` přes pózově rozmanitou galerii je špatný reprezentant
+        (průměr rozbíhavých vektorů je krátký vektor, který nesedí na nic).
+        Změřeno na reálné sadě: 50 % → 86 % správně při margin 0.06.
+
+        Režim `legacy` vrací původní 0.6·mean + 0.4·max (config
+        recognition_tuning.score_mode).
         """
         mat, mean_vec = self._get_cached(name, embeddings)
         if mat is None:
             return 0.0
 
-        sims     = mat @ query_norm
-        max_sim  = float(np.max(sims))
-        mean_sim = float(np.dot(mean_vec, query_norm))
-        return 0.6 * mean_sim + 0.4 * max_sim
+        sims = mat @ query_norm
+
+        if self._score_mode == "legacy":
+            max_sim  = float(np.max(sims))
+            mean_sim = float(np.dot(mean_vec, query_norm))
+            return 0.6 * mean_sim + 0.4 * max_sim
+
+        k = min(self._score_top_k, len(sims))
+        if k <= 0:
+            return float(np.max(sims))
+        # np.partition je levnější než plný sort (galerie má až 80 vzorků)
+        top = np.partition(sims, -k)[-k:]
+        return float(np.mean(top))
+
+    def identify_pc(self, embedding) -> tuple[str, float]:
+        """PC_EMBED_V1: rozhodnutí z FLOAT embeddingu proti PC galerii.
+
+        Stejné pravidlo jako u Hailo cesty (top-k + margin), jen jiná
+        galerie. Nevrací nic natvrdo — když PC galerie chybí, vrací
+        Unknown a volající si poradí Hailo cestou.
+        """
+        if not self._pc_gal:
+            return 'Unknown', 0.0
+        q = self._normalise(embedding)
+        if q is None:
+            return 'Unknown', 0.0
+        k = self._score_top_k
+
+        def _sc(m):
+            s = m @ q
+            kk = min(k, len(s))
+            return float(np.mean(np.partition(s, -kk)[-kk:]))
+
+        if self._pc_neg is not None and len(self._pc_neg):
+            neg = _sc(self._pc_neg)
+        else:
+            neg = -9.0
+        scores = {n: _sc(m) for n, m in self._pc_gal.items()}
+        # PC_VOTE2_V1: přimíchat pózový hlas (váhy 0.7/0.3 = změřené optimum)
+        if self._pc_cent:
+            _w = self._pc_vote2_w
+            for _n in list(scores):
+                _C = self._pc_cent.get(_n)
+                if _C is not None:
+                    scores[_n] = (1.0 - _w) * scores[_n] + _w * float((_C @ q).max())
+        if not scores or neg >= max(scores.values()):
+            return 'Unknown', 0.0
+        srt = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        best, bs = srt[0]
+        second = srt[1][1] if len(srt) > 1 else 0.0
+        if bs - second < self._pc_margin:
+            return 'Unknown', 0.0
+        return best, round(bs, 2)
 
     def _match(self, embedding: np.ndarray,
                db: dict) -> tuple[str, float]:
@@ -297,6 +435,18 @@ class FaceDB:
 
         if not scores:
             return "Unknown", 0.0
+
+        # FACE_NEGATIVES_V1: falešná detekce nesmí dostat jméno. Skóruje se
+        # stejným pravidlem jako osoby — když je dotaz podobnější objektu než
+        # komukoli z domácnosti, je to objekt.
+        if self._negatives is not None and len(self._negatives):
+            sims = self._negatives @ query
+            k = min(self._score_top_k, len(sims))
+            neg = float(np.mean(np.partition(sims, -k)[-k:]))
+            if scores and neg >= max(scores.values()):
+                if self._debug:
+                    print(f"[FaceDB] → REJECT (falešná detekce, neg={neg:.3f})")
+                return "Unknown", 0.0
 
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         best_name, best_score   = sorted_scores[0]

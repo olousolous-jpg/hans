@@ -641,7 +641,13 @@ class HansIdle:
             return
         # jen sliby PŘÍTOMNÝCH osob (r = (id, person, text))
         present = {_norm(n) for n in known}
-        mine = [r for r in rows if _norm(r[1]) in present]
+        # COMMIT_COND_V1 — připomínka s podmínkou `alone` se ozve, JEN když je
+        # dotyčný v místnosti sám. Připomínka v nevhodnou chvíli je horší než
+        # žádná: měření rozpoznávání se dá udělat jen s jedním člověkem doma
+        # (s víc lidmi chybí ground truth — doloženo 11.8.).
+        mine = [r for r in rows
+                if _norm(r[1]) in present
+                and not (len(r) > 3 and r[3] == 'alone' and len(present) != 1)]
         if not mine:
             return  # sliby patří někomu, kdo tu teď není → počká na něj
         ids = [r[0] for r in mine]

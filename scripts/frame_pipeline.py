@@ -108,14 +108,17 @@ class FramePipeline:
                 # per obličej = N socket round-tripů + N NPU dispatchů v main loopu).
                 _hq_idx = []
                 _hq_crops = []
-                for _i, (box, emb, lbl) in enumerate(ctx.hailo_results):
+                # FACE_LANDMARKS_ALIGN_V1: 4. prvek = landmarky (může chybět)
+                from scripts.async_recognizer import lm_of as _lm_of
+                for _i, (box, emb, lbl, *_r) in enumerate(ctx.hailo_results):
                     if lbl == LABEL_FACE and _box_area(box) < thresh:
                         # Aligned crop (same path as enrollment) — kompatibilita
                         # HQ zoom embeddingů se vzorky v known_faces.pkl.
                         _bw = box[2] - box[0]
                         _bh = box[3] - box[1]
                         hq_crop = self.ctrl._aligned_crop(
-                            main_frame, box, _H, _W, _bw, _bh)
+                            main_frame, box, _H, _W, _bw, _bh,
+                            lm=_lm_of(ctx.hailo_results[_i]))
                         if hq_crop is None:
                             hq_crop = _hq_crop(
                                 main_frame, box, padding,
@@ -140,7 +143,7 @@ class FramePipeline:
                         _crop_by_idx[_i] = _hq_crops[_k]
                 # indexy hi-res embeddované zde → async je přeskočí (dedup)
                 ctx.hq_embedded_idx = set(_emb_by_idx.keys())
-                for _i, (box, emb, lbl) in enumerate(ctx.hailo_results):
+                for _i, (box, emb, lbl, *_r) in enumerate(ctx.hailo_results):
                     if _i in _emb_by_idx:
                         emb = _emb_by_idx[_i]
                         ctx.zoom_boxes.append(box)
@@ -154,7 +157,9 @@ class FramePipeline:
                             'name': _nm,
                             'area': _box_area(box),
                         }
-                    hq_results.append((box, emb, lbl))
+                    # landmarky (_r) MUSÍ přežít přepis, jinak je async
+                    # recognizer už nedostane a spadne na fallback
+                    hq_results.append((box, emb, lbl, *_r))
                 ctx.hailo_results = hq_results
 
         return ctx
@@ -211,7 +216,7 @@ class FramePipeline:
         # per-track weighted voting + cluster DB
         self.ctrl._active_tracks = self.ctrl._assign_track_ids(
             ctx.boxes, self.ctrl._active_tracks)
-        for i, (box, emb, lbl) in enumerate(ctx.hailo_results):
+        for i, (box, emb, lbl, *_r) in enumerate(ctx.hailo_results):
             if lbl != LABEL_FACE:
                 continue
             tid = self.ctrl._active_tracks.get(self.ctrl._box_key(box))
@@ -219,6 +224,22 @@ class FramePipeline:
                 continue
             _c = (ctx.zoom_pip_slots[i]['crop']
                   if i in ctx.zoom_pip_slots else None)
+            # FACE_HARVEST_V1: nabídnout vzorek ke sběru. Bere se
+            # NEupravený zarovnaný crop (_hq_crops), ne enhanced —
+            # ať jde předzpracování později přeměřit na týchž datech.
+            _hv = getattr(self.ctrl, '_harvester', None)
+            if _hv is not None and _c is not None:
+                _gn, _gc = (ctx.identities[i]
+                            if i < len(ctx.identities) else (None, 0.0))
+                _hv.offer(tid, _c, emb, box, _gn, _gc)
+            # BODY_HARVEST_V1: tělo se odvozuje z boxu obličeje nad CELÝM
+            # snímkem — proto tady, kde main_frame ještě je, a mimo podmínku
+            # `_c is not None` (výřez tváře pro trup nepotřebujeme).
+            _bh = getattr(self.ctrl, '_body_harvester', None)
+            if _bh is not None and main_frame is not None:
+                _bn, _bc = (ctx.identities[i]
+                            if i < len(ctx.identities) else (None, 0.0))
+                _bh.offer(tid, main_frame, box, _bn, _bc)
             track = self.ctrl._track_mgr.update(tid, emb, _c)
             if track.ready():
                 w_emb = track.weighted_embedding()
@@ -237,7 +258,13 @@ class FramePipeline:
                 # CLUSTER_RESCUE_V1 — prahy z configu; cluster rescue (arc slabý)
                 # má nižší práh + margin guard (jednoznačně jedna osoba).
                 _rt = self.ctrl.config.get('recognition_tuning', {})
-                _thresh = float(_rt.get('vote_thresh', 0.65))
+                # VOTE_PC_SCALE_V1: `vote_thresh` 0.65 je laděný na Hailo int8.
+                # Float skóre z PC jsou jinde — naměřeno 11.8.: správné odpovědi
+                # měly medián 0.59, takže se 35 % SPRÁVNÝCH verdiktů zahazovalo
+                # (862 z 2488) jen kvůli špatné škále prahu.
+                _used_pc = bool(getattr(recognizer, 'used_pc', False))
+                _thresh = float(_rt.get('vote_thresh_pc', 0.50)) if _used_pc \
+                    else float(_rt.get('vote_thresh', 0.65))
                 _resc_t = float(_rt.get('cluster_rescue_thresh', 0.58))
                 _resc_m = float(_rt.get('cluster_rescue_margin', 0.06))
                 _cluster_rescue = (not c_unknown and c_conf >= _resc_t
@@ -247,6 +274,33 @@ class FramePipeline:
                         # Oba shodne -> jisty vysledek
                         final_name = arc_name
                         final_conf = round(min(1.0, (arc_conf + c_conf) / 2 * 1.2), 3)
+                    elif _used_pc:
+                        # VOTE_NO_CROSS_SCALE_V1 (11.8. večer): při neshodě NESMÍ
+                        # Hailo cluster přebít rozhodnutí z PC.
+                        # `arc_conf >= c_conf` porovnávalo DVĚ NESOUMĚŘITELNÉ ŠKÁLY:
+                        # cluster hlásí 1-vzdálenost (typicky 0.45-0.56), zatímco
+                        # float skóre z PC padá večer k ~0.32, protože galerie je
+                        # stavěná z denního světla. Číselně tak slabší hlas VŽDY
+                        # přebil silnější. VŠIMNUTO si toho naživo 11.8. večer
+                        # (319 přepsaných rozhodnutí za 5 minut), ale POZOR:
+                        # tehdejší závěr „cluster vyrábí falešná jména" se
+                        # NEPOTVRDIL — doma byli všichni tři, takže obě jména
+                        # mohla být správná. Důvod téhle větve je STRUKTURÁLNÍ
+                        # (nesouměřitelné škály + cluster je změřeně slabší),
+                        # ne ta pozorovaná čísla. Kdo má na neshodě častěji
+                        # pravdu, ZMĚŘENO NENÍ — z uloženého sběru to nejde
+                        # (brána propustí <1 % detekcí a sporné případy v datech
+                        # nejsou); rozhodne až řízené sezení s jedním člověkem.
+                        # Cluster navíc stojí na int8 embeddinzích, které lidi
+                        # rozlišit NEUMÍ (změřeno 10.-11.8.), a jako třetí hlas
+                        # přidal jen 0.3 b.
+                        # Zůstává mu jen role záchrany, když arc mlčí (níž).
+                        if arc_conf >= _thresh:
+                            final_name = arc_name
+                            final_conf = round(arc_conf * 0.7, 3)
+                        else:
+                            final_name = '?'   # radši „nevím" než cizí jméno
+                            final_conf = 0.0
                     else:
                         # Ruzna jmena -> nejistota, vezmi lepsi
                         if arc_conf >= c_conf and arc_conf >= _thresh:
@@ -276,7 +330,10 @@ class FramePipeline:
                     if arc_name == c_name:
                         _vote_decision = "agree+boost"
                     else:
-                        if arc_conf >= c_conf and arc_conf >= _thresh:
+                        if _used_pc:
+                            _vote_decision = ("arc_wins" if arc_conf >= _thresh
+                                              else "pc_disagree_low")
+                        elif arc_conf >= c_conf and arc_conf >= _thresh:
                             _vote_decision = "arc_wins"
                         elif c_conf >= _thresh:
                             _vote_decision = "cluster_wins"

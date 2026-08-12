@@ -26,7 +26,9 @@
     "batch_size": 1,
     "force_writable": true,
     "scrfd_score_thresh": 0.45,
-    "scrfd_nms_thresh": 0.45
+    "scrfd_nms_thresh": 0.45,
+    "server_embed": false,
+    "_server_embed_note": "HAILO_SKIP_SERVER_EMBED_V1: false = server v mode 1 NEpočítá ArcFace embedding (klient si dělá vlastní HQ embedding z main_frame a ten serverový vždy přepíše) — ušetří ~81 ms/s NPU. true = původní chování; obličeje pod min_face_area pak jdou identifikovat i z lores embeddingu (dá to ale jméno jen ve ~2 % případů)."
   },
   "greeting": {
     "system_prompt": "Jmenuješ se {name} a vždy odpovídáš jako {name}. Jsi tichý anglický majordomus z devatenáctého století. Vyjadřuješ se stručně, formálně a s důstojností. Nikdy nepoužíváš moderní výrazy. Nikdy nepoužíváš emoji, smajlíky ani žádné Unicode symboly. Píšeš pouze čistý text bez jakýchkoliv speciálních znaků. Mluvíš česky. Jsi mužského rodu. Při oslovení muže používej vokativ: Stando (ne Standa). Při oslovení ženy používej vokativ: Jano (ne Jana). Nikdy nepoužívej nominativ jako oslovení. Nikdy neopakuj jméno na konci věty.",
@@ -37,8 +39,8 @@
   },
   "recognition_tuning": {
     "_comment": "Tune without touching code. Restart app after changes.",
-    "arcface_thresh": 0.42,
-    "margin": 0.12,
+    "arcface_thresh": 0.6,
+    "margin": 0.06,
     "min_norm": 0.25,
     "ema_alpha": 0.4,
     "ema_thresh": 0.25,
@@ -46,7 +48,7 @@
     "ema_headroom": 0.02,
     "iou_match": 0.35,
     "max_samples_per_person": 80,
-    "_max_samples_note": "Max vzorků na osobu. Příliš mnoho identických vzorků degraduje průměrný embedding. 30-50 různorodých vzorků je optimální.",
+    "_max_samples_note": "80 = ZÁMĚRNĚ vyrovnaný strop pro všechny osoby (8.8. večer). Při top-3 skórování se VĚTŠÍ galerie chová jako MAGNET — osoba se 160 vzorky přetahovala osobu s 84 vzorky ve 30 %% framů. Strop drží galerie srovnatelné. Zvyšovat až AŽ BUDOU MÍT VŠICHNI stejné pokrytí (2 sezení: ráno + večer), a pak přeměřit záměny u VŠECH osob, ne jen u té přidávané.",
     "min_sample_diversity": 0.1,
     "_diversity_note": "Min kosínová vzdálenost mezi vzorky (0-1). 0.05 = odmítne vzorky které jsou z 95%+ stejné jako existující. Zvyš na 0.10 pro přísnější filtrování duplicit.",
     "track_stale_s": 2,
@@ -58,7 +60,14 @@
     "vote_thresh": 0.65,
     "cluster_rescue_thresh": 0.65,
     "cluster_rescue_margin": 0.12,
-    "_cluster_rescue_note": "CLUSTER_RESCUE_V1: cluster zachrani off-angle identitu kdyz arc slaby. rescue_thresh=min conf (sim), rescue_margin=min odstup nejblizsi vs 2. osoby (pojistka proti zamene). vote_thresh=brana ostatnich vetvi fuze."
+    "_cluster_rescue_note": "CLUSTER_RESCUE_V1: cluster zachrani off-angle identitu kdyz arc slaby. rescue_thresh=min conf (sim), rescue_margin=min odstup nejblizsi vs 2. osoby (pojistka proti zamene). vote_thresh=brana ostatnich vetvi fuze.",
+    "score_mode": "top_k",
+    "score_top_k": 3,
+    "_score_note": "FACE_SCORE_TOPK_V1 (8.8.): score_mode=top_k → skóre osoby = průměr score_top_k nejlepších vzorků. 'legacy' = původní 0.6*mean+0.4*max. Margin snížen 0.12 → 0.06: margin byl VÁZANÁ podmínka (práh 0.30/0.35/0.42 dává identický výsledek). Změřeno leave-one-out na reálné sadě: 50 % → 86 % správně, záměny 0.0 % → 0.3 %. margin 0.04 dá 90.8 % ale 0.7 % záměn — nasazen konzervativní bod. POZOR: měřeno na 2 osobách ze stejné session; s třetí osobou přeměřit, záměny mohou růst.",
+    "_arcface_thresh_note": "DOČASNĚ 0.42 → 0.60 (8.8. večer). Galerie obsahuje jen dvě osoby (obě s opraveným zarovnáním); vzorky třetí osoby jsou staré a odložené, přeenrolluje se 9.8. večer. Se dvěma osobami se margin překonává snadněji → víc sebejistých a tím i špatných rozhodnutí (u jedné osoby 9 % → 15 % záměn). Práh 0.60 to vrací na 8 % a hlavně zajistí, že chybějící osoba bude po návratu poctivě Unknown místo aby dostala cizí jméno. PO přeenrollování všech tří PŘEMĚŘIT a vrátit na hodnotu, která vyjde (dřív 0.42 byla prokazatelně nepodstatná — vázala vždy margin).",
+    "pc_margin": 0.04,
+    "pc_gallery": "data/known_faces_pc.pkl",
+    "pc_negatives": "data/known_faces_pc_negative.pkl"
   },
   "enrollment": {
     "enrollment_frames": 30,
@@ -168,15 +177,16 @@
     "_menu_mode_note": "HANS_MENU_V1: true = start s menu oknem, preview vypnuté (zapíná se tlačítkem/enrollem); false = legacy preview po startu"
   },
   "camera": {
-    "main_width": 1536,
-    "main_height": 864,
+    "main_width": 2304,
+    "main_height": 1296,
     "lores_width": 1280,
     "lores_height": 720,
-    "high_res_width": 1536,
-    "high_res_height": 864,
+    "high_res_width": 2304,
+    "high_res_height": 1296,
     "framerate": 40,
     "buffer_count": 1,
-    "rotation": 0
+    "rotation": 0,
+    "_res_note": "Hlavní proud 1536x864 → 2304x1296 (10.8.). HQ výřez pro ArcFace se bere z hlavního proudu, takže vyšší rozlišení = víc pixelů na tvář: z 50px tváře je 75px. IMX708 zvládne 2304x1296 až 56 fps (běžíme na 40), platí se propustností paměti a CPU. ⚠️ NEŘEŠÍ hlavní problém (embedding kóduje podmínky, ne identitu) — pomůže jen VZDÁLENÝM tvářím. Lores 1280x720 pro detekci beze změny. ⏳ Vyhodnotit 11.8. spolu s přechodem na manuální ostření: velikost tváří, ostrost, FPS."
   },
   "features": {
     "servo_tracking": true,
@@ -396,9 +406,9 @@
     }
   },
   "_camera_presets_note": "Per-model resolution defaults applied by the GUI when camera_model changes. You can override individually in the camera block.",
-  "autofocus_mode": "triggered",
-  "_autofocus_mode_note": "v3 Wide autofocus behaviour. 'triggered' = focus once when face appears then lock (recommended, no hunting). 'continuous' = refocus every frame (may cause blur during recognition).",
-  "autofocus_lens_position": 0.67,
+  "autofocus_mode": "manual",
+  "_autofocus_mode_note": "Změněno triggered → manual, lens 0.67 → 1.0 (10.8.). LensPosition je v dioptriích (1/metr), takže 1.0 = zaostřeno na 1 m. Při ohnisku 2.75 mm a f/2.2 vychází hyperfokál ~0.9 m → ostré zhruba od 0.5 m do nekonečna, tedy CELÝ pokoj naráz. Režim 'triggered' zaostřoval na první nalezenou tvář, takže když někdo seděl u monitoru, zbytek pokoje byl mimo. Změřeno: ostrost v původním rozlišení má vrchol u tváří 60–90 px a klesá k blízkým (120–160 px) → kamera byla zaostřená doprostřed pokoje a BLÍZKÉ tváře byly rozostřené víc než vzdálené. Cena: blízké tváře o něco měkčí; zisk: konzistence napříč pokojem a žádné přeostřování uprostřed průchodu. ⏳ Po dni sběru ověřit ostrost podle vzdálenosti.",
+  "autofocus_lens_position": 1.0,
   "_autofocus_lens_note": "Used when autofocus_mode=manual. Diopters = 1/distance_metres. 0.0=infinity  1.0=1m  2.0=0.5m  3.0=0.33m",
   "hdr_mode": 3,
   "_hdr_mode_note": "HdrMode pro Camera Module v3. 0=Off, 1=MultiExposureUnmerged, 2=MultiExposure(halvFPS), 3=SingleExposure(doporuceno), 4=Night. Pouze pro camera_model=v3_wide.",
@@ -448,8 +458,9 @@
     "gamma_fixed": 1.2,
     "gamma_threshold": 100,
     "_gamma_thresh_note": "Gamma se aktivuje jen kdyz prumerny jas cropu < tato hodnota.",
-    "clahe_crop": true,
-    "clahe_crop_clip": 1.5
+    "clahe_crop": false,
+    "clahe_crop_clip": 1.5,
+    "_clahe_crop_note": "FACE_CLAHE_CROP_OFF_V1 (8.8.): VYPNUTO na základě měření. CLAHE na cropu zesiluje lokální kontrast VČETNĚ šumu a normalizuje každý crop zvlášť → tatáž tvář v jiném světle dostane jinou úpravu = ničí identitu. Změřeno leave-one-out na reálné sadě (2 osoby, HDR): s CLAHE 83.0 % správně a 1.0 % záměn, bez CLAHE 86.6 % a 0.3 % záměn. Vyšší clip horší monotónně (2.0 → 81.0 %, 3.0 → 80.1 %). Gamma ponechána (pomáhá, má práh gamma_threshold). Pozn.: CLAHE nemá jasovou bránu, aplikovala se VŽDY — dávalo smysl před HDR, teď jsou tváře dost světlé. clahe_lores (před detekcí) NEMĚŘENO, ponecháno."
   },
   "autofocus": {
     "retrigger_s": 4,
@@ -1098,7 +1109,9 @@
     "_note": "HANS_HEALTH_V1: zivy watchdog zavislosti (Ollama/ComfyUI/Kodi/STT/PC/disk). Ollama probe = realna inference (odhali wedge, ktery /api/tags nepozna). Self-heal: 2x po sobe WEDGED -> restart Ollamy na PC pres SSH (vyzaduje NOPASSWD sudoers: '<user> ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ollama'). DOWN (PC spi) se neheal-uje.",
     "self_heal_comfyui": true,
     "comfyui_restart_cmd": "systemctl --user restart comfyui",
-    "_self_heal_comfyui_note": "HANS_COMFY_WEDGE_V1 - ComfyUI je systemd USER sluzba, restart NEPOTREBUJE sudo (na rozdil od Ollamy). Spousti se JEN na status WEDGED."
+    "_self_heal_comfyui_note": "HANS_COMFY_WEDGE_V1 - ComfyUI je systemd USER sluzba, restart NEPOTREBUJE sudo (na rozdil od Ollamy). Spousti se JEN na status WEDGED.",
+    "max_boots_24h": 4,
+    "_max_boots_note": "PC_REBOOT_WATCH_V1 (12.8.): kolik bootů PC za 24 h je ještě normální. Běžně 2 (buzení ve 3:00 na analytiku + ranní). Víc = něco stroj restartuje — hlídá se kvůli tomu, že hardwarový watchdog (sp5100_tco, zapnut 12.8. po nočním zamrznutí) umí na některých deskách resetovat bez příčiny. Status WARN, NEspouští heal."
   },
   "toolscout": {
     "enabled": false,
@@ -1178,5 +1191,64 @@
     "_note": "HANS_INTENT_PC_V1 (5.8.) - klasifikace jede na hans-czech NA PC (drive mini model na Pi). Zmereno: routing prikazu 18/18 vs 11/16, dotaz na zdroj 15/15 vs 9/15, a 2x rychleji (1,0-1,2 s vs 2,7 s). Obava 'musi to jet i s vypnutym PC' na CHAT cestu neplati - kdyz je mozek dole, Hans neodpovida tak jako tak. hans-czech je uz rezidentni, takze klasifikace nestoji ani GB VRAM navic. NOCNI cesty (overovani nalezu) na Pi zustavaji. !! keep_alive MUSI byt -1: jina hodnota by rezidentnimu modelu prepsala keep_alive a shodila ho z VRAM. use_llm=false = zpet jen regexy.",
     "cmd_route": true,
     "_cmd_route_note": "HANS_CMD_LLM_ROUTE_V1 - kdyz regexy (nl_patterns) minou, model rozhodne, jestli veta zada o nektery CTECI vypis (/studium, /cetl, /zdravi...). Allowlist je vycet, ne odvozeni z registru: novy prikaz se nezaradi sam a MUTUJICI prikazy (zapomen, hlidej, enroll) tam nepatri - model muze hadat a hadani nesmi neco smazat. Args se predavaji prazdne. false = jen regexy."
+  },
+  "face_harvest": {
+    "enabled": false,
+    "_note": "FACE_HARVEST_V1 (8.8.): průběžný sběr obličejů přes den pro pozdější DÁVKOVÉ označení (uživatel označuje SESSION, ne jednotlivé snímky, a klidně s několikadenním zpožděním). Řeší největší změřenou ztrátu: galerie z jednoho sezení dává živě ~24 %, leave-one-out nad toutéž session 86 %. ZAPNOUT až po dokončení migrace galerií (všichni s opraveným zarovnáním), ne dřív — jinak sbírá data v provizoriu.",
+    "dir": "data/harvest",
+    "interval_s": 2.0,
+    "_interval_note": "Min. sekund mezi uloženými vzorky jednoho tracku.",
+    "session_gap_s": 60.0,
+    "_session_note": "Po tolika sekundách bez tracku začíná nová session. Session = jedno rozhodnutí při označování.",
+    "min_face_area": 0.0015,
+    "_area_note": "Změřeno 8.8.: rozpoznávání funguje i na 52×52 px (0.0015) s 90 % úspěšností; níž rostou záměny.",
+    "min_face_brightness": 35.0,
+    "_bright_note": "Jas se měří na STŘEDU cropu, ne na celém — vypálené okno v pozadí jinak vytáhne průměr nahoru i u černé tváře.",
+    "min_sharpness": 15.0,
+    "diversity": 0.25,
+    "_diversity_note": "Zvýšeno 0.15 → 0.25 (10.8.). Při 0.15 se zahazovalo až nad podobností 0.85, takže z jednoho stání prošlo 66 near-duplicit (soudržnost 0.800) — jedna póza, galerii nerozšíří a jen přidá klikání. Změřeno na reálných datech: 0.15 nechá 93 % snímků, 0.25 nechá 60 %. Zahazují se ty nejpodobnější, tedy nic, co by přineslo novou pózu.",
+    "max_per_session": 40,
+    "max_per_day": 3000,
+    "_rotace_note": "ŽÁDNÁ agresivní rotace: označení chodí se zpožděním hodin až dnů, data se nesmí ztratit dřív. ~300 vzorků/den ≈ 2.4 MB/den ≈ 70 MB/měsíc.",
+    "_stav_note": "ZAPNUTO 9.8. večer. Sbírá se i v době, kdy je jedna osoba MIMO galerii (přeenrollování se odkládá kvůli světlu) — data tím netrpí, cropy a embeddingy jsou platné vždy. Ovlivněno je jen políčko 'guess'. ⚠️ Chybějící osoba dostane cizí tip ve ~22 % framů (změřeno 8.8.) → při označování NEODKLIKÁVAT tipy naslepo, dívat se na snímky.",
+    "_max_day_note": "Zvýšeno 400 → 1200 (9.8.): strop 400 se vyčerpal za 20 minut. Kdyby padl v poledne, přišli bychom o VEČERNÍ data — a pokrytí různých denních dob je celý smysl sběru. 1200 vzorků ≈ 7 MB/den ≈ 200 MB/měsíc, na 82 GB volných bez problému. Skutečné omezení dělá interval_s + diversity, ne tenhle strop.",
+    "max_per_hour": 300,
+    "_max_note": "HODINOVÝ strop 150 je hlavní regulátor (9.8.). Denní strop má špatný tvar — vyčerpá se dopoledne a o VEČERNÍ data přijdeme, přitom pokrytí různých denních dob je celý smysl sběru. max_per_day 3000 je jen pojistka. Úplně bez stropu to NEJDE: shlukování při čtení je O(n²) — 3000 snímků v jednom časovém bloku = 36 MB matice, 12000 = 576 MB a 8 s. Ochrany v load_sessions: jen posledních 14 dní + prořeďování bloků nad 1500 snímků (na disku zůstane vše).",
+    "recent_memory": 300,
+    "_multi_note": "Nastaveno pro VÍC OSOB naráz (10.8.). max_per_hour 150 → 300: strop je GLOBÁLNÍ, takže tři lidé by se o 150 dělili po padesáti. recent_memory: filtr rozmanitosti se držel jen per track, jenže track se tříští (38 ID na 222 snímků, medián 2) → 63 % snímků mělo jinde skoro dvojče. Globální paměť posledních 300 přijatých vzorků duplicity chytne i přes změnu track ID.",
+    "_stopped_note": "VYPNUTO 12.8. po dosbírání ranního světla (na pokyn uživatele — doma nikdo). Nasbíráno celkem 6356 vzorků, z toho 949 čeká na označení na /harvest. ZNOVU ZAPNOUT, až se rozpoznávání zhorší: galerie jsou zmrazené v letních podmínkách a v prosinci je tma od čtyř — a právě na podmínkách ten model stojí. Po doznačení přestavět galerie: tools/build_pc_gallery.py --write, build_pc_clusters.py --write, rebuild_cluster_db.py --write"
+  },
+  "pc_embed": {
+    "enabled": true,
+    "_note": "PC_EMBED_V1 (11.8.): float ArcFace r50 na PC přes SSH tunel. Den-holdout (galerie 9.+10.8., dotazy 11.8.): Hailo int8 46 % správně / 14 % záměn, PC float 73 % / 7 %. Zisk +26 p.b. a poloviční záměny. FALLBACK NA HAILO JE POVINNÝ — PC se v noci vypíná. Vypnutí: enabled=false (Hans pak jede jako dřív).",
+    "url": "http://127.0.0.1:8765/embed",
+    "timeout_s": 2.0,
+    "_timeout_note": "Krátký schválně: radši hned Hailo než čekat na mrtvý PC.",
+    "fail_before_open": 3,
+    "cooldown_s": 60.0,
+    "_cooldown_note": "Po 3 chybách se 60 s nezkouší — v noci by se jinak log i main loop zbytečně zatěžovaly opakovanými pokusy."
+  },
+  "body_harvest": {
+    "enabled": false,
+    "_note": "BODY_HARVEST_V1 (11.8.): sběr podkladů pro ReID na dálku. ZAMÍTNUTO geometrické odvození trupu z boxu obličeje — lidé tu sedí a polo-leží, takže se tělo netáhne dolů ale do strany; obdélník pod bradou nabíral postel a pozadí a kontrolní výřez spadl na tytéž natažené nohy (ověřeno pohledem na celé snímky). NELADIT torso_* konstanty, vada je v předpokladu, ne v číslech. Místo toho: ukládá se CELÝ zmenšený snímek + boxy a jména tváří (faces.jsonl); detektor osob se pustí offline na PC, kde nestojí Hailo context. Data jsou modelově neutrální = jedno dopoledne s holkami doma stačí nasbírat jednou.",
+    "root": "data/body",
+    "control": true,
+    "_control_note": "Negativní kontrola — ke každému trupu se uloží stejně velký výřez POZADÍ vedle člověka (*_bg.jpg). Námitka uživatele 11.8.: výřez je z velké části pozadí a to je pro dané místo konstantní → měření by mohlo vyjít skvěle, i kdyby rozlišovalo POUZE MÍSTO V POKOJI. Když kontrola pozná lidi stejně dobře jako trup, nápad padá. Po dokončení měření vypnout (zdvojnásobuje zápis).",
+    "interval_s": 2.0,
+    "max_per_hour": 600,
+    "min_face_area": 0.0004,
+    "torso_half_width": 1.6,
+    "torso_top": 0.15,
+    "torso_height": 3.0,
+    "_geom_note": "Trup = obdélník pod bradou: 3.2× šířka tváře, 3× výška tváře. Škáluje se velikostí hlavy a přeškaluje na 128×256, takže výška ani proporce postavy se NEPŘENÁŠEJÍ — identita může být jen v pixelech (oblečení, vlasy na ramenou).",
+    "max_clip": 0.35,
+    "jpeg_quality": 90,
+    "save_frames": true,
+    "frame_width": 2304,
+    "frame_interval_s": 3.0,
+    "debug_full": 0,
+    "_privacy_note": "Ukládá se CELÝ POKOJ, ne jen obličeje. Lokální (data/ je v .gitignore), nic neodchází ven. Po dokončení měření složku data/body smazat.",
+    "_res_note": "Plné rozlišení hlavního proudu (bez zmenšení). Odhad 4 h dopoledne ~1.4 GB při 81 GB volných — nemá smysl škudlit na jediném dopoledni, kdy jsou holky doma. Vzdálená tvář si tak udrží ~75 px a detektor osob i ReID model dostanou maximum.",
+    "_stopped_note": "VYPNUTO 11.8. na pokyn uživatele: *„pokud bude detekce jen obličejů dostatečná, asi celé tělo dělat nemusíme. Holkám by se asi nelíbilo, že do detekce dostane komplet celá postava.\"* Není to technický nález — je to ROZHODNUTÍ O SOUKROMÍ ČLENŮ DOMÁCNOSTI, kteří u toho nejsou. Nasbíraná data smazána. Kód zůstává, ale NEZAPÍNAT bez výslovného souhlasu — a to platí i pro jakoukoli variantu ReID podle postavy, ne jen pro ukládání snímků: námitka mířila na to, že se celá postava vůbec DOSTANE DO DETEKCE, ne jen na to, že se ukládá."
   }
 }

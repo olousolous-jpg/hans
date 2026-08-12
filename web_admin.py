@@ -181,6 +181,83 @@ def video_enroll_start(body: _VideoEnrollBody):
     except Exception as e:
         raise HTTPException(500, str(e))
 
+# ── FACE_HARVEST_WEB_V1 — označování nasbíraných obličejů ────────────────
+# Skupiny jsou NÁVRH, ne pravda (embedding odliší dva lidi jen s malým
+# odstupem), proto stránka: ukazuje ROZPTÝLENÝ vzorek náhledů přes celou
+# skupinu (ne prvních N), umí skupinu ROZDĚLIT, a tip nabízí jako nápovědu,
+# ne jako předvolbu k odklepnutí.
+HARVEST_DIR = Path("data/harvest")
+
+
+@app.get("/harvest", response_class=HTMLResponse)
+async def harvest_page(request: Request):
+    # stejný vzor jako index: Jinja2Templates je sice importované, ale nikde
+    # instancované — HTML se čte přímo
+    return HTMLResponse((TEMPLATES_DIR / "harvest.html").read_text(encoding="utf-8"))
+
+
+@app.get("/api/harvest/groups")
+async def harvest_groups(limit: int = 60):
+    from scripts.face_harvest import known_names, load_sessions
+    gs = load_sessions()[:limit]
+    for g in gs:
+        f = g["files"]
+        # rozptýlený vzorek přes CELOU skupinu — kdyby se do ní vloudil
+        # druhý člověk, na prvních 12 snímcích by nemusel být vidět
+        idx = sorted({round(i * (len(f) - 1) / 11) for i in range(12)}) if len(f) > 12 \
+            else list(range(len(f)))
+        g["nahledy"] = [f[i] for i in idx]
+    return {"skupiny": gs, "jmena": known_names(),
+            "celkem": sum(g["pocet"] for g in gs)}
+
+
+@app.get("/api/harvest/img/{day}/{fname}")
+async def harvest_img(day: str, fname: str):
+    if "/" in day or "/" in fname or ".." in day or ".." in fname:
+        raise HTTPException(400, "bad path")
+    p = HARVEST_DIR / day / fname
+    if not p.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(str(p), media_type="image/jpeg")
+
+
+@app.post("/api/harvest/label")
+async def harvest_label(payload: dict):
+    from scripts.face_harvest import set_label_files
+    day = payload.get("day"); files = payload.get("files") or []
+    label = (payload.get("label") or "").strip()
+    if not day or not files or not label:
+        raise HTTPException(400, "chybí day/files/label")
+    # kontrola úkliku — neblokuje, jen se zeptá (potvrzeno=true ji přeskočí)
+    if not payload.get("potvrzeno"):
+        from scripts.face_harvest import check_label
+        chk = check_label(day, files, label)
+        if not chk.get("ok"):
+            return {"ok": False, "potvrdit": True, "warn": chk["warn"],
+                    "navrh": chk.get("navrh"), "skore": chk.get("skore")}
+    n = set_label_files(day, files, label)
+    return {"ok": True, "oznaceno": n, "label": label}
+
+
+@app.post("/api/harvest/delete")
+async def harvest_delete(payload: dict):
+    from scripts.face_harvest import delete_samples
+    day = payload.get("day"); files = payload.get("files") or []
+    if not day or not files:
+        raise HTTPException(400, "chybí day/files")
+    return {"ok": True, "smazano": delete_samples(day, files)}
+
+
+@app.post("/api/harvest/split")
+async def harvest_split(payload: dict):
+    from scripts.face_harvest import split_group
+    day = payload.get("day"); files = payload.get("files") or []
+    if not day or not files:
+        raise HTTPException(400, "chybí day/files")
+    parts = split_group(day, files, int(payload.get("k", 2)))
+    return {"ok": True, "casti": parts}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     html = (TEMPLATES_DIR / "index.html").read_text(encoding="utf-8")

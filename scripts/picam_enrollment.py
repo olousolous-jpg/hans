@@ -347,8 +347,12 @@ class EnrollmentManager:
         TARGET_BOX_V1: pokud je target_box dán (normalizovaný [x1,y1,x2,y2]),
         vybere se bbox s nejvyšším IOU. Jinak fallback na max(area).
         """
-        face_boxes = [r[0] for r in self.ctrl.hailo.infer(lores_frame)
-                      if r[2] == LABEL_FACE]
+        # FACE_LANDMARKS_ALIGN_V1: drž si celé výsledky, ne jen boxy —
+        # enrollment musí zarovnávat týmž způsobem jako dotaz, jinak se
+        # galerie a živé embeddingy rozejdou.
+        _res = [r for r in self.ctrl.hailo.infer(lores_frame)
+                if r[2] == LABEL_FACE]
+        face_boxes = [r[0] for r in _res]
         if not face_boxes or main_frame is None:
             return None, None
 
@@ -378,7 +382,14 @@ class EnrollmentManager:
         bw, bh = x2 - x1, y2 - y1
 
         # Aligned crop nejdřív
-        crop = self.ctrl._aligned_crop(main_frame, best_fb, H, W, bw, bh)
+        from scripts.async_recognizer import lm_of as _lm_of
+        _best_lm = None
+        for _r in _res:
+            if _r[0] is best_fb or list(_r[0]) == list(best_fb):
+                _best_lm = _lm_of(_r)
+                break
+        crop = self.ctrl._aligned_crop(main_frame, best_fb, H, W, bw, bh,
+                                      lm=_best_lm)
         if crop is None:
             # Fallback — padded crop
             pad = 0.10

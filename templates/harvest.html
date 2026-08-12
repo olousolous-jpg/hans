@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hans — označení tváří</title>
+<style>
+  :root{--bg:#1e1e2e;--bg2:#2a2a3e;--bg3:#313145;--fg:#cdd6f4;--fg2:#a6adc8;
+        --acc:#89b4fa;--grn:#a6e3a1;--red:#f38ba8;--org:#fab387}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:10;background:var(--bg2);
+         padding:12px 14px;border-bottom:1px solid #45475a}
+  h1{margin:0;font-size:17px}
+  .sub{color:var(--fg2);font-size:13px;margin-top:3px}
+  .wrap{padding:12px;max-width:1100px;margin:0 auto}
+  .grp{background:var(--bg2);border:1px solid #45475a;border-radius:10px;
+       padding:12px;margin-bottom:14px}
+  .hd{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;margin-bottom:9px}
+  .cas{font-weight:600}
+  .pocet{color:var(--fg2);font-size:13px}
+  .tip{color:var(--org);font-size:13px}
+  .tip b{color:var(--org)}
+  .thumbs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:11px}
+  .th{position:relative;width:74px;height:74px}
+  .th img{width:74px;height:74px;object-fit:cover;border-radius:5px;
+          border:1px solid #45475a;cursor:pointer;display:block}
+  .th img:hover{border-color:var(--acc)}
+  .th .del{position:absolute;top:-5px;right:-5px;width:21px;height:21px;
+           border-radius:50%;border:1px solid #6e3d48;background:#4a2c34;
+           color:var(--red);font-size:13px;line-height:1;padding:0;
+           cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .th .del:hover{background:var(--red);color:#1e1e2e}
+  .th.gone{opacity:.25;pointer-events:none}
+  .btns{display:flex;flex-wrap:wrap;gap:6px}
+  button{font:inherit;padding:8px 13px;border-radius:7px;border:1px solid #45475a;
+         background:var(--bg3);color:var(--fg);cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  .jmeno{background:#2c4a6e;border-color:#3d6a9e}
+  .neni{background:#4a2c34;border-color:#6e3d48}
+  .split{background:#4a3f2c;border-color:#6e5c3d}
+  .done{opacity:.45;pointer-events:none}
+  .msg{padding:10px 12px;border-radius:8px;margin-bottom:12px;display:none}
+  .ok{background:#2c4a34;color:var(--grn)}
+  .err{background:#4a2c34;color:var(--red)}
+  .empty{color:var(--fg2);text-align:center;padding:40px 10px}
+  dialog{background:var(--bg2);color:var(--fg);border:1px solid #45475a;
+         border-radius:10px;padding:16px;max-width:92vw}
+  dialog input{font:inherit;padding:8px;border-radius:6px;border:1px solid #45475a;
+               background:var(--bg3);color:var(--fg);width:220px}
+  #big{position:fixed;inset:0;background:#000c;display:none;z-index:50;
+       align-items:center;justify-content:center;padding:16px}
+  #big img{max-width:96vw;max-height:92vh;image-rendering:pixelated;border-radius:6px}
+  .pozn{color:var(--fg2);font-size:12.5px;margin:10px 0 16px;line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <h1>Označení nasbíraných tváří</h1>
+  <div class="sub" id="stav">načítám…</div>
+</header>
+
+<div class="wrap">
+  <div class="pozn">
+    Skupiny jsou jen <b>návrh</b> — systém je poskládal podle podoby a času, ale
+    dva lidé se občas splynou. Náhledy jsou rozprostřené přes celou skupinu:
+    <b>projeď je očima</b>, a když v jedné uvidíš dva různé lidi, dej
+    <b>Rozdělit</b>. Hansův tip je nápověda, ne hotová odpověď.
+    Kliknutím na náhled se zvětší.
+    <br><br>
+    <b>⚠️ Profily a natočené hlavy NEMAŽ.</b> Vypadají k ničemu, ale galerie je
+    potřebuje — bez nich tě systém nepozná pokaždé, když se nedíváš do kamery.
+    Změřeno: galerie s profily <b>86 %</b> správně a 0,3 % záměn, bez nich
+    <b>79 %</b> a 3,3 % záměn. Křížkem vyřazuj jen to, co <b>není obličej</b>
+    (nábytek, ventilátor, fotka na zdi).
+  </div>
+  <div id="msg" class="msg"></div>
+  <div id="list"></div>
+</div>
+
+<div id="big"><img id="bigimg" alt=""></div>
+
+<dialog id="dlg">
+  <div style="margin-bottom:9px">Jméno osoby:</div>
+  <input id="dlgin" autocomplete="off" placeholder="např. deda">
+  <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+    <button onclick="document.getElementById('dlg').close()">Zrušit</button>
+    <button class="jmeno" onclick="dlgOk()">Uložit</button>
+  </div>
+</dialog>
+
+<script>
+let JMENA = [], GRP = [], dlgTarget = null;
+
+function msg(t, cls) {
+  const m = document.getElementById('msg');
+  m.textContent = t; m.className = 'msg ' + cls; m.style.display = 'block';
+  setTimeout(() => { m.style.display = 'none'; }, 4000);
+}
+
+async function nacti() {
+  const r = await fetch('/api/harvest/groups');
+  const d = await r.json();
+  JMENA = d.jmena || []; GRP = d.skupiny || [];
+  document.getElementById('stav').textContent =
+    GRP.length ? `${GRP.length} skupin k označení · ${d.celkem} snímků`
+               : 'vše označeno';
+  kresli();
+}
+
+function kresli() {
+  const L = document.getElementById('list');
+  if (!GRP.length) { L.innerHTML = '<div class="empty">Nic k označení. 🎉</div>'; return; }
+  L.innerHTML = '';
+  GRP.forEach((g, gi) => {
+    const el = document.createElement('div');
+    el.className = 'grp'; el.id = 'g' + gi;
+    const cas = g.first.slice(11, 16) + '–' + g.last.slice(11, 16);
+    const den = g.day;
+    const thumbs = (g.nahledy || g.files).map(f =>
+      `<div class="th" data-f="${f}">
+         <img loading="lazy" src="/api/harvest/img/${den}/${f}" alt="">
+         <button class="del" title="vyřadit tenhle snímek (ventilátor, zátylek…)"
+                 onclick="smaz(event,${gi},'${f}')">✕</button>
+       </div>`).join('');
+    const btns = JMENA.map(n =>
+      `<button class="jmeno" onclick="oznac(${gi},'${n}')">${n}</button>`).join('');
+    el.innerHTML =
+      `<div class="hd"><span class="cas">${den} ${cas}</span>
+         <span class="pocet">${g.pocet} snímků</span>
+         ${g.tip ? `<span class="tip">Hans tipuje: <b>${g.tip}</b></span>` : ''}</div>
+       <div class="thumbs">${thumbs}</div>
+       <div class="btns">${btns}
+         <button onclick="jinyDlg(${gi})">někdo jiný…</button>
+         <button class="neni" onclick="oznac(${gi},'neni_tvar')">není tvář</button>
+         <button class="split" onclick="rozdel(${gi})">rozdělit</button>
+       </div>`;
+    el.querySelectorAll('.thumbs img').forEach(im => {
+      im.onclick = () => {
+        document.getElementById('bigimg').src = im.src;
+        document.getElementById('big').style.display = 'flex';
+      };
+    });
+    el.querySelector('.hd').insertAdjacentHTML('beforeend',
+      `<span class="pocet" id="p${gi}"></span>`);
+    L.appendChild(el);
+  });
+}
+
+document.getElementById('big').onclick = e => { e.currentTarget.style.display = 'none'; };
+
+function jinyDlg(gi) {
+  dlgTarget = gi;
+  const d = document.getElementById('dlg');
+  document.getElementById('dlgin').value = '';
+  d.showModal(); document.getElementById('dlgin').focus();
+}
+function dlgOk() {
+  const v = document.getElementById('dlgin').value.trim().toLowerCase();
+  document.getElementById('dlg').close();
+  if (v) oznac(dlgTarget, v);
+}
+
+// Vyřadí JEDEN snímek ze skupiny (falešná detekce). Musí vypadnout i ze
+// seznamu `files`, jinak by ho následné označení skupiny stejně uložilo.
+async function smaz(ev, gi, file) {
+  ev.stopPropagation();
+  const g = GRP[gi];
+  const box = ev.target.closest('.th');
+  box.classList.add('gone');
+  const r = await fetch('/api/harvest/delete', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({day: g.day, files: [file]})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    g.files = g.files.filter(f => f !== file);
+    g.nahledy = (g.nahledy || []).filter(f => f !== file);
+    g.pocet = g.files.length;
+    setTimeout(() => box.remove(), 150);
+    const p = document.getElementById('p' + gi);
+    if (p) p.textContent = `· zbývá ${g.pocet}`;
+    if (!g.pocet) { GRP.splice(gi, 1); kresli(); msg('Skupina vyprázdněna', 'ok'); }
+  } else { box.classList.remove('gone'); msg('Nepodařilo se vyřadit', 'err'); }
+}
+
+async function oznac(gi, label, potvrzeno) {
+  const g = GRP[gi];
+  const el = document.getElementById('g' + gi);
+  el.classList.add('done');
+  const r = await fetch('/api/harvest/label', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({day: g.day, files: g.files, label: label,
+                          potvrzeno: !!potvrzeno})
+  });
+  const d = await r.json();
+  if (d.ok) { msg(`Označeno ${d.oznaceno} snímků jako „${label}“`, 'ok'); nacti(); return; }
+  if (d.potvrdit) {
+    // pojistka proti úkliku — 10.8. bylo takhle 66 snímků označeno cizím jménem
+    el.classList.remove('done');
+    const sk = d.skore ? '\n\n' + Object.entries(d.skore)
+      .map(([k, v]) => `${k}: ${v}`).join('   ') : '';
+    if (confirm('⚠️ ' + d.warn + sk)) oznac(gi, label, true);
+    else if (d.navrh && confirm(`Uložit tedy jako „${d.navrh}“?`)) oznac(gi, d.navrh, true);
+    return;
+  }
+  el.classList.remove('done'); msg('Chyba při ukládání', 'err');
+}
+
+async function rozdel(gi) {
+  const g = GRP[gi];
+  const r = await fetch('/api/harvest/split', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({day: g.day, files: g.files, k: 2})
+  });
+  const d = await r.json();
+  if (!d.ok || d.casti.length < 2) { msg('Rozdělit se nepodařilo (málo snímků)', 'err'); return; }
+  const nove = d.casti.map(files => ({
+    day: g.day, files: files, pocet: files.length,
+    first: g.first, last: g.last, tip: g.tip,
+    nahledy: files.length > 12
+      ? [...new Set(Array.from({length: 12}, (_, i) =>
+          files[Math.round(i * (files.length - 1) / 11)]))]
+      : files
+  }));
+  GRP.splice(gi, 1, ...nove);
+  kresli();
+  msg(`Rozděleno na ${nove.length} skupiny — zkontroluj a označ zvlášť`, 'ok');
+}
+
+nacti();
+setInterval(() => { if (!document.getElementById('dlg').open) nacti(); }, 120000);
+</script>
+</body>
+</html>

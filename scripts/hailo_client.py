@@ -28,6 +28,9 @@ ARCFACE_SIZE = 112
 
 # Mode 2 magic — must match hailo_inference_server.py
 EMBED_MAGIC = b'\xEB\xED\xFE\xED'
+# FACE_LANDMARKS_WIRE_V1 — Mode 1b: jako mode 1, ale odpověď nese navíc
+# N×5×2 float32 landmarků. Zapíná se jen pro scrfd server.
+FACE_LM_MAGIC = b'\xFA\xCE\x1A\x0D'
 
 # Label values
 LABEL_FACE   = 0
@@ -37,11 +40,14 @@ LABEL_PERSON = 1
 class HailoClient:
     """Thread-safe Unix-socket client for the Hailo inference server."""
 
-    def __init__(self):
+    def __init__(self, want_landmarks: bool = False):
         self._sock      = None
         self._lock      = threading.Lock()
         self._connected = False
         self._fail_cnt  = 0
+        # FACE_LANDMARKS_WIRE_V1: když True, infer() vrací 4-tice
+        # (box, emb, label, landmarks|None) místo 3-tic.
+        self._want_lm   = bool(want_landmarks)
 
     # ── Connection ────────────────────────────────────────────────────────
 
@@ -85,6 +91,8 @@ class HailoClient:
                         return []
                 try:
                     data = frame_480.tobytes()
+                    if self._want_lm:
+                        self._sock.sendall(FACE_LM_MAGIC)
                     self._sock.sendall(struct.pack(">I", len(data)))
                     self._sock.sendall(data)
 
@@ -110,6 +118,17 @@ class HailoClient:
                         raise ConnectionError("no labels")
                     labels = np.frombuffer(raw_labels, dtype=np.uint8)
 
+                    if self._want_lm:
+                        raw_lm = self._recv_exact(n * 5 * 2 * 4)
+                        if not raw_lm:
+                            raise ConnectionError("no landmarks")
+                        lms = np.frombuffer(
+                            raw_lm, dtype=np.float32).reshape(n, 5, 2)
+                        # samé nuly = server landmarky pro tu tvář nemá
+                        lm_out = [None if not np.any(l) else l.copy()
+                                  for l in lms]
+                        return list(zip(boxes.tolist(), embs,
+                                        labels.tolist(), lm_out))
                     return list(zip(boxes.tolist(), embs, labels.tolist()))
 
                 except Exception as e:

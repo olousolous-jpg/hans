@@ -170,7 +170,8 @@ class PersistentUnknownTracker:
 
         # Najdi neznámé tváře s track_id
         unknown_faces = []
-        for i, (box, (name, conf), (_, emb, lbl)) in enumerate(
+        # FACE_LANDMARKS_ALIGN_V1: hailo_results může nést i landmarky
+        for i, (box, (name, conf), (_, emb, lbl, *_r)) in enumerate(
                 zip(boxes, identities, hailo_results)):
             area = (box[2]-box[0]) * (box[3]-box[1])
             norm = np.linalg.norm(np.array(emb, dtype=np.float32)) if emb is not None else 0
