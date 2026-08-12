@@ -127,8 +127,17 @@ def main():
         bak.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(outp, bak)
         print(f"záloha: {bak}")
+    # GALLERY_PROVENANCE_V1 — bez tohohle se za čtyři měsíce nepozná,
+    # že galerie stojí na letním světle a proto v zimě selhává.
+    from scripts.face_harvest import source_meta
+    allrows = [r for sub in data.values() for r in sub]
+    out_obj = dict(cent)
+    out_obj["_meta"] = source_meta(allrows, "build_pc_clusters.py", a.per_person)
+    print("  původ: vzorky %s–%s, cfg %s"
+          % (out_obj["_meta"]["vzorky_od"], out_obj["_meta"]["vzorky_do"],
+             ",".join(out_obj["_meta"]["cfg"])[:40]))
     with open(outp, "wb") as f:
-        pickle.dump(cent, f)
+        pickle.dump(out_obj, f)
     print(f"\nuloženo → {outp}")
     return 0
 

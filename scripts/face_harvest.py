@@ -76,6 +76,8 @@ class FaceHarvester:
         # překryv) je přeskakování ID ještě častější.
         from collections import deque as _dq
         self._recent = _dq(maxlen=int(cfg.get("recent_memory", 300)))
+        # HARVEST_CAPTURE_SETTINGS_V1 — za jakých podmínek vzorky vznikly
+        self._cap_id, self._cap = self._capture_settings(config or {})
         self._max_day = int(cfg.get("max_per_day", 3000))   # jen pojistka
         self._hour = None
         self._hour_count = 0
@@ -229,6 +231,10 @@ class FaceHarvester:
             "ostrost": round(sharp, 1),
             "emb": base64.b64encode(e.astype(np.float16).tobytes()).decode("ascii"),
             "label": None,          # doplní uživatel při označování
+            # HARVEST_CAPTURE_SETTINGS_V1: otisk podmínek snímání. Plné znění
+            # v data/harvest/capture_settings.jsonl — díky tomu jde poznat,
+            # že dvě sady vznikly za různých podmínek a nejsou srovnatelné.
+            "cfg": self._cap_id,
         }
         try:
             self._q.put_nowait((self._day, f"{st['id']}_{st['saved']:03d}.jpg",
@@ -256,6 +262,58 @@ class FaceHarvester:
             self._rej = {}
         return None
 
+    def _capture_settings(self, config: dict):
+        """Otisk podmínek snímání + jejich zápis do capture_settings.jsonl.
+
+        Bere jen to, co MĚNÍ VÝSLEDEK a přitom se v čase mění: HDR,
+        rozlišení, model kamery a předzpracování. Expozice a gain se
+        záměrně neberou — mění se každým snímkem a jejich dopad už nese
+        pole `jas`; tady jde o to, aby šlo poznat NESROVNATELNÉ SADY.
+        """
+        import hashlib
+        cam = config.get("camera", {}) or {}
+        rt = config.get("recognition_tuning", {}) or {}
+        s = {
+            "hdr": int(config.get("hdr_mode", 0))
+                   if config.get("camera_model") == "v3_wide" else 0,
+            "camera_model": config.get("camera_model", "?"),
+            "main": "%sx%s" % (cam.get("main_width"), cam.get("main_height")),
+            "lores": "%sx%s" % (cam.get("lores_width"), cam.get("lores_height")),
+            "framerate": cam.get("framerate"),
+            "rotation": cam.get("rotation", 0),
+            "clahe_crop": bool(rt.get("clahe_crop", False)),
+            "clahe_lores": bool(rt.get("clahe_lores", False)),
+            "gamma": bool(rt.get("gamma_correction", True)),
+            "min_face_area": self._min_area,
+            "min_sharpness": self._min_sharp,
+            "diversity": self._diversity,
+        }
+        cap_id = hashlib.sha1(
+            json.dumps(s, sort_keys=True).encode("utf-8")).hexdigest()[:8]
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            p = self._dir / "capture_settings.jsonl"
+            known = set()
+            if p.is_file():
+                for line in open(p, encoding="utf-8"):
+                    try:
+                        known.add(json.loads(line).get("cfg"))
+                    except Exception:
+                        pass
+            # nový řádek jen při ZMĚNĚ podmínek, ne při každém restartu
+            if cap_id not in known:
+                rec = dict(s)
+                rec["cfg"] = cap_id
+                rec["od"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with open(p, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                log.info("nové podmínky snímání cfg=%s: HDR=%s %s %s",
+                         cap_id, s["hdr"], s["main"],
+                         "CLAHE" if s["clahe_crop"] else "bez CLAHE")
+        except Exception as e:
+            log.debug("capture_settings zápis: %s", e)
+        return cap_id, s
+
     def _writer(self):
         while True:
             item = self._q.get()
@@ -272,6 +330,33 @@ class FaceHarvester:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             except Exception as e:
                 log.warning("zápis vzorku selhal: %s", e)
+
+
+def source_meta(rows: list, tool: str, per_person: int) -> dict:
+    """GALLERY_PROVENANCE_V1 — z čeho a kdy galerie vznikla.
+
+    PROČ: galerie je zmrazený obraz podmínek, ve kterých vznikla — a na
+    podmínkách celé rozpoznávání stojí (embedding kóduje spíš je než identitu).
+    Bez tohohle se za čtyři měsíce nepozná, že galerie je z letního světla
+    a proto v prosinci selhává. Nese i otisky `cfg`, takže je vidět, jestli
+    vzorky vůbec vznikly za srovnatelných podmínek.
+    """
+    from datetime import datetime as _dt
+    times = sorted(r.get("time", "") for r in rows if r.get("time"))
+    cfgs = sorted({r.get("cfg") for r in rows if r.get("cfg")})
+    per = {}
+    for r in rows:
+        per[r.get("label")] = per.get(r.get("label"), 0) + 1
+    return {
+        "postaveno": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "nastroj": tool,
+        "zdroj": "data/harvest",
+        "vzorky_od": times[0][:10] if times else "?",
+        "vzorky_do": times[-1][:10] if times else "?",
+        "k_dispozici": per,
+        "na_osobu": per_person,
+        "cfg": cfgs or ["neznamo (sada z doby pred HARVEST_CAPTURE_SETTINGS_V1)"],
+    }
 
 
 # ── čtení pro označovací UI ──────────────────────────────────────────────

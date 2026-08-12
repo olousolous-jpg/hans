@@ -62,8 +62,20 @@ class FaceDB:
             with open(rt.get('pc_gallery',
                              'data/known_faces_pc.pkl'), 'rb') as _f:
                 _g = _pk.load(_f)
+            # GALLERY_PROVENANCE_V1 — klíče s podtržítkem nejsou osoby,
+            # ale metadata (kdy a z čeho galerie vznikla). Bez tohohle by
+            # np.array(dict) vyhodilo výjimku a galerie by se TIŠE nenačetla.
+            _pm = _g.pop("_meta", None)
+            if _pm:
+                import logging as _lg2
+                _lg2.getLogger("face_db").info(
+                    "galerie postaveny %s ze vzorků %s–%s (cfg %s)",
+                    _pm.get("postaveno"), _pm.get("vzorky_od"),
+                    _pm.get("vzorky_do"), ",".join(_pm.get("cfg", []))[:40])
             self._pc_gal = {}
             for _n, _v in _g.items():
+                if str(_n).startswith("_"):
+                    continue
                 _m = np.array(_v, dtype=np.float32)
                 self._pc_gal[_n] = _m / (
                     np.linalg.norm(_m, axis=1, keepdims=True) + 1e-9)
@@ -96,8 +108,20 @@ class FaceDB:
             with open(rt.get('pc_clusters',
                              'data/known_faces_pc_clusters.pkl'), 'rb') as _f:
                 _c = _pk.load(_f)
+            # GALLERY_PROVENANCE_V1 — klíče s podtržítkem nejsou osoby,
+            # ale metadata (kdy a z čeho galerie vznikla). Bez tohohle by
+            # np.array(dict) vyhodilo výjimku a galerie by se TIŠE nenačetla.
+            _pm = _c.pop("_meta", None)
+            if _pm:
+                import logging as _lg2
+                _lg2.getLogger("face_db").info(
+                    "centroidy postaveny %s ze vzorků %s–%s (cfg %s)",
+                    _pm.get("postaveno"), _pm.get("vzorky_od"),
+                    _pm.get("vzorky_do"), ",".join(_pm.get("cfg", []))[:40])
             self._pc_cent = {}
             for _n, _v in _c.items():
+                if str(_n).startswith("_"):
+                    continue
                 _m = np.array(_v, dtype=np.float32)
                 self._pc_cent[_n] = _m / (
                     np.linalg.norm(_m, axis=1, keepdims=True) + 1e-9)
