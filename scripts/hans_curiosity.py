@@ -683,6 +683,18 @@ class HansCuriosity:
             except Exception as e:
                 _log.warning("Diary store error: %s", e)
 
+        # HANS_SOURCE_URL_V1 — dopsat ODKAZ ke zrovna uloženému záznamu.
+        # `ReadResult.url` existoval odjakživa, ale při zápisu se zahazoval →
+        # Hans přečetl článek a pak nedokázal říct, odkud to má (doloženo
+        # 12.8.: „odkud jsi vlastně čerpal?" → výpis rozhovorů místo zdroje).
+        # Píše se UPDATE podle `ts`, aby se nemusel měnit kontrakt
+        # `_diary_writer` (používá ho víc volajících).
+        # ⚠️ NEPÁROVAT PODLE `result.fetched_at` — `_log_entry` zapisuje
+        # `time.time()` v okamžiku zápisu, ne čas stažení, takže se UPDATE
+        # nikdy netrefí (ověřeno naživo). Páruje se přes NEJNOVĚJŠÍ řádek
+        # se stejným titulkem.
+        self._store_source_url(_wr_title, getattr(result, "url", ""))
+
         # HANS_READ_RAG_V1 — přečtený článek do čtenářské paměti (RAG hans_cetba),
         # ať si ho Hans VYBAVÍ v běžném rozhovoru („co víš o X"). Dřív se do RAG
         # ukládalo jen studium → ruční/curiosity čtení bylo „write-only" (v deníku,
@@ -729,6 +741,26 @@ class HansCuriosity:
         _th.Thread(target=self._catchup_pending, daemon=True,
                    name='HansCatchup').start()
 
+    def _store_source_url(self, title: str, url: str) -> None:
+        """HANS_SOURCE_URL_V1 — dopíše odkaz k právě uloženému čtení.
+
+        `ReadResult.url` existoval odjakživa, ale při zápisu se zahazoval →
+        Hans přečetl článek a pak nedokázal říct, odkud to má (doloženo 12.8.:
+        „odkud jsi vlastně čerpal?" → výpis rozhovorů místo zdroje).
+        """
+        if not url or not title:
+            return
+        try:
+            cx = sqlite3.connect(self._diary_path)
+            cx.execute(
+                "UPDATE diary SET source_url=? WHERE id=("
+                "  SELECT id FROM diary WHERE event_type='web_read' AND title=?"
+                "  ORDER BY ts DESC LIMIT 1)", (url, title))
+            cx.commit()
+            cx.close()
+        except Exception as e:
+            _log.debug("source_url zápis: %s", e)
+
     def _store_pending(self, result: ReadResult):
         """HANS_DEFERRED_SUMMARY_V1 — ulož čtení, u kterého mozek nestihl
         vyrobit poznatek. Do deníku jde NEUTRÁLNÍ marker (ne raw text) a do
@@ -752,6 +784,7 @@ class HansCuriosity:
         try:
             if self._diary_writer:
                 self._diary_writer("web_read", _title, data=payload, note=marker)
+                self._store_source_url(_title, getattr(result, "url", ""))
             else:
                 conn = sqlite3.connect(self._diary_path)
                 conn.execute(

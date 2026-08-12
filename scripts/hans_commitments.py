@@ -51,6 +51,33 @@ def _parse_due(phrase: str, ref_ts: Optional[float] = None) -> float:
     def _eod(d):
         return d.replace(hour=20, minute=0, second=0, microsecond=0).timestamp()
 
+    # HANS_REMINDER_CLOCK_V1 — KONKRÉTNÍ HODINA má přednost před „dnes/zítra".
+    # Bez tohohle spadlo „dnes v 17:00" na větev „dnes" = 20:00, tedy o tři
+    # hodiny vedle. Doloženo 12.8.: uživatel chtěl připomenout měření v 17:00.
+    mt = re.search(r"\bv\s+(\d{1,2})(?:[:.](\d{2}))?\b", p)
+    if mt:
+        hh = int(mt.group(1))
+        mm = int(mt.group(2) or 0)
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            base = ref
+            if "zitra" in p or "zítra" in p:
+                base = ref + _dt.timedelta(days=1)
+            elif "pozitri" in p or "pozítří" in p:
+                base = ref + _dt.timedelta(days=2)
+            cand = base.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            # „v 8" večer už nedává smysl → ber zítřek, ne minulost
+            if cand <= ref:
+                cand += _dt.timedelta(days=1)
+            return cand.timestamp()
+    m = re.search(r"za\s+(\d+)\s+hodin", p)
+    if m:
+        return (ref + _dt.timedelta(hours=int(m.group(1)))).timestamp()
+    if re.search(r"za\s+hodinu", p):
+        return (ref + _dt.timedelta(hours=1)).timestamp()
+    m = re.search(r"za\s+(\d+)\s+minut", p)
+    if m:
+        return (ref + _dt.timedelta(minutes=int(m.group(1)))).timestamp()
+
     m = re.search(r"za\s+(\d+)\s+d(?:en|ny|ní|nu|nů|ne)", p)
     if m:
         return _eod(ref + _dt.timedelta(days=int(m.group(1))))
@@ -386,6 +413,54 @@ _Q = re.compile(
     r"sliboval\s+jsi|co\s+jsi\s+(mi\s+)?sliboval|tv[éeoá]\w*\s+slib|"
     r"na\s+co\s+jsi\s+zapomn|co\s+jsi\s+mi\s+měl|dlužíš\s+mi|"
     r"co\s+mi\s+dlužíš|\bsliby\b", re.I)
+
+
+def add_reminder(diary_db_path: str, person: str, text: str,
+                 when_phrase: str = "") -> tuple[bool, str]:
+    """HANS_REMINDER_ADD_V1 — založ připomínku NA ŽÁDOST UŽIVATELE.
+
+    Dosud uměl Hans jen sbírat SVÉ VLASTNÍ sliby z rozhovoru; požadavek
+    „připomeň mi X v 17:00" se vyhodnotil jako DOTAZ na kalendář a nikam se
+    neuložil (doloženo 12.8. 09:29 — a odpověď zněla věcně, takže uživatel
+    mohl věřit, že je nastaveno).
+
+    Doručení řeší už existující `timed_reminders_due` + `_timed_reminders_check`
+    v `hans_idle` — proto musí sedět kontrakt: status='open', kind='reminder',
+    reported=0, due_ts>0. Nic nového se nestaví.
+
+    Vrací (uspěch, věta pro uživatele).
+    """
+    txt = (text or "").strip()
+    if not txt:
+        return False, "Nevím, co si mám poznamenat, pane."
+    due = _parse_due(when_phrase or txt)
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        _init(db)                      # ⚠️ bere SPOJENÍ, ne cestu
+        now = time.time()
+        db.execute(
+            "INSERT INTO commitments (person, text, text_norm, status, "
+            "source_ts, created_ts, due_ts, due_text, announced, topic, kind, "
+            "reported, tries) VALUES (?,?,?,'open',?,?,?,?,1,'',?,0,0)",
+            (person or "", txt, _norm(txt), now, now, due,
+             (when_phrase or "").strip()[:60], "reminder"))
+        db.commit()
+        db.close()
+    except Exception as e:
+        log.warning("add_reminder selhalo: %s", e)
+        return False, "Poznamenat si to se mi teď nepovedlo, pane."
+
+    if due > 0:
+        import datetime as _d
+        kdy = _d.datetime.fromtimestamp(due)
+        dnes = _d.datetime.now().date()
+        kdy_txt = ("dnes v %H:%M" if kdy.date() == dnes else
+                   ("zítra v %H:%M" if (kdy.date() - dnes).days == 1
+                    else "%d.%m. v %H:%M"))
+        return True, ("Poznamenáno, pane — připomenu %s."
+                      % kdy.strftime(kdy_txt))
+    return True, ("Poznamenáno, pane. Termín jsem z toho nevyčetl, "
+                  "tak to připomenu, až vás uvidím.")
 
 
 def is_commitment_query(text: str) -> bool:

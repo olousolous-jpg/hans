@@ -35,6 +35,31 @@ log = logging.getLogger(__name__)
 _YES = {"ano", "jo", "jasně", "jasan", "pusť", "pust", "spusť", "spust",
         "dej", "davej", "dávej", "ok", "okej", "tak jo", "prosím", "prosim",
         "sure", "yes", "můžeš", "muzes", "do toho", "platí", "plati", "beru"}
+# PC_SHUTDOWN_DEFER_V1 — TŘETÍ odpověď na potvrzení: „ne teď, ale až dodělá".
+# Doloženo 11.8. 23:07: „ne, můžeš vypnout až doděláš co je rozpracováno" se
+# vyhodnotilo jako nový požadavek (začíná „ne" a má 8 slov) a propadlo do chatu.
+# Proto se hledá VZOR KDEKOLI ve větě, ne krátká odpověď — formulace odložení
+# je z podstaty delší než „ano"/„ne".
+# HANS_AGENT_ACTION_VERBS_V1 (12.8.) — brána znala slovesa MLUVENÍ (popis,
+# řekni, ukaž, pověz), ale ne slovesa KONÁNÍ — přitom agent je právě od akcí.
+# Změřeno na 465 reálných zprávách: doplnění pustí 77 dalších a VŠECH 77 jsou
+# skutečné povely, ani jeden běžný hovor. Většinu z nich stejně odchytí dřív
+# `parse_command` (běží PŘED agentem), takže reálný dopad je malý a bezpečný —
+# jde hlavně o povely, na které chatový příkaz není (připomeň, probuď, běž).
+_ACTION_VERBS = {
+    "vypni", "zapni", "namaluj", "nakresli", "probud", "probuď",
+    "pripomen", "připomeň", "zkus", "pust", "pusť", "spust", "spusť",
+    "otevri", "otevři", "zavri", "zavři", "jdi", "bez", "běž",
+    "hlidej", "hlídej", "nastav", "posli", "pošli", "zjisti", "najdi",
+    "zapamatuj", "uloz", "ulož", "prestan", "přestaň", "poznamenej",
+}
+
+_LATER_PAT = re.compile(
+    r"a[žz]\s+(to\s+)?(dod[ěe]l[áa]|dokon[čc][íi]|skon[čc][íi]|dojede|"
+    r"bude[šs]\s+hotov|bude\s+hotov[oý]?|p[řr]estane)"
+    r"|po\s+dokon[čc]en[íi]|a[žz]\s+to\s+dob[ěe]hne"
+    r"|a[žz]\s+dod[ěe]l[áa][šs]|a[žz]\s+skon[čc][íi][šs]", re.I)
+
 _NO = {"ne", "nech", "nechci", "nemusíš", "nemusis", "raději ne", "radeji ne",
        "zruš", "zrus", "ne díky", "ne diky", "nedávej", "nedavej", "no",
        "later", "teď ne", "ted ne", "ne teď", "ne ted"}
@@ -485,6 +510,23 @@ def _run_add_note(handler, args) -> str:
     text = (args.get("text") or "").strip()
     if len(text) < 2:
         return "Co mám poznamenat, pane?"
+    # HANS_REMINDER_ADD_V1 — nese-li žádost ČAS, není to poznámka, ale
+    # PŘIPOMÍNKA. Řeší se uvnitř add_note ZÁMĚRNĚ: druhá akce s překrývajícími
+    # nápovědami („připomeň" je v hints obou) by nutila router rozhodovat mezi
+    # dvěma skoro stejnými volbami a mýlil by se. Takhle rozhoduje DATA —
+    # buď z textu vyjde termín, nebo ne — a splést se nemá kde.
+    # Doloženo 12.8. 09:29: „připomeň mi, že mám provést měření dnes v 17:00"
+    # skončilo jako odpověď o prázdném kalendáři a NIC se neuložilo.
+    try:
+        from scripts.hans_commitments import _parse_due, add_reminder
+        if _parse_due(text) > 0:
+            ok, say = add_reminder(_diary_path(handler),
+                                   getattr(handler, "_last_person", "") or "",
+                                   text, when_phrase=text)
+            if ok:
+                return say
+    except Exception as _re:
+        log.warning("add_reminder v add_note selhalo: %s", _re)
     try:
         import sqlite3
         db = sqlite3.connect(_diary_path(handler))
@@ -520,44 +562,21 @@ def _run_pc_shutdown(handler, args) -> str:
 
 def _shutdown_confirm_text(handler) -> str:
     """HANS_SHUTDOWN_CONTEXT_V1 — potvrzení vypnutí PC s GROUNDED stavem, ať
-    uživatel ví, co vypnutím ukončí. KLÍČOVÉ: vytížení GPU/CPU NEPLETE s hrou —
-    v neherním režimu grafiku i procesor zatěžuje Hansova VLASTNÍ LLM (chat,
-    ranní analytika `num_gpu:0` na CPU, malování), NE hra. Hru pozná jen HERNÍ
-    MÓD (flag), nikdy ne telemetrie."""
+    uživatel ví, co vypnutím ukončí.
+
+    Stav se ptá `pc_deferred_shutdown.pc_busy` — JEDNA pravda pro potvrzení
+    i pro odložené vypnutí, aby si ty dvě cesty neodporovaly (dřív měla každá
+    vlastní práh a obě na TEPLOTU, která skutečnou práci míjela).
+    """
     cfg = getattr(handler, "config", {}) or {}
-    notes = []
-    game = False
     try:
-        from scripts.ollama_client import game_mode_on
-        game = bool(game_mode_on())
+        from scripts.pc_deferred_shutdown import pc_busy
+        busy, why = pc_busy(cfg)
     except Exception:
-        pass
-    if game:
-        notes.append("je zapnutý herní mód (nejspíš běží hra)")
-    try:
-        from scripts import pc_remote
-        t = pc_remote.telemetry(cfg) or {}
-        # AKTIVITU pozná TEPLOTA (aktivní výpočet), NE VRAM: VRAM je trvale
-        # vysoká kvůli rezidentním modelům (keep_alive), i když se nic nepočítá.
-        gtemp = t.get("gpu_edge_c")
-        ctemp = t.get("cpu_temp_c")
-        busy = ((gtemp is not None and gtemp >= 55.0)
-                or (ctemp is not None and ctemp >= 68.0))
-        if busy and not game:
-            det = []
-            if gtemp is not None:
-                det.append(f"GPU {gtemp:.0f} °C")
-            if ctemp is not None:
-                det.append(f"CPU {ctemp:.0f} °C")
-            notes.append("právě něco zpracovávám (%s) — nejspíš má vlastní "
-                         "analytika, čtení či malování; v neherním režimu "
-                         "vytěžuje počítač MŮJ mozek, ne hra — vypnutím to "
-                         "přeruším" % ", ".join(det))
-    except Exception:
-        pass
-    if notes:
-        return ("Než počítač vypnu, pane — " + "; ".join(notes)
-                + ". Opravdu vypnout?")
+        busy, why = False, ""
+    if busy:
+        return ("Než počítač vypnu, pane — %s. Vypnout, nebo počkat, "
+                "až to dodělá?" % why)
     return ("Na počítači teď nevidím nic rozpracovaného, pane. "
             "Opravdu mám počítač vypnout?")
 
@@ -795,7 +814,7 @@ class AgentRouter:
             return True
         t = _norm(raw)
         first = t.split()[0] if t.split() else ""
-        return first in _REQUEST_OPENERS
+        return first in _REQUEST_OPENERS or first in _ACTION_VERBS
 
     def _actionable(self, text: str) -> bool:
         if not self.route_all_requests:
@@ -841,6 +860,20 @@ class AgentRouter:
         # RING (a to zrovna horor, kterého se domácnost bála).
         # Rozlišovač: potvrzení je KRÁTKÉ a bez nového obsahu („ano", „pusť to").
         # Jakmile věta nese další podstatné slovo, je to NOVÝ požadavek.
+        # PC_SHUTDOWN_DEFER_V1 — „až dodělá" je odpověď, ne nový požadavek.
+        # Smysl dává jen u vypínání PC; jinde se ignoruje.
+        if (pend.action.id == "pc_shutdown" and _LATER_PAT.search(message or "")):
+            self._pending.pop(name, None)
+            self._log(handler, pend, "deferred")
+            try:
+                from scripts.pc_deferred_shutdown import request as _defer
+                _defer(person=name or "", note=message[:120])
+                return ("Dobře, pane — nechám ho dopracovat a vypnu ho, "
+                        "jakmile bude mít klid. Dám vědět.")
+            except Exception as _de:
+                log.warning("odložené vypnutí neuloženo: %s", _de)
+                return "Odložit vypnutí se mi teď nepovedlo, pane."
+
         _short = len(words) <= 2
         is_yes = (m in _YES
                   or (_short and (first in _YES

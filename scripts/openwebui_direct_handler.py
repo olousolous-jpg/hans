@@ -2933,6 +2933,52 @@ class OpenWebUIDirectHandler:
         # G4D_DEDUP_ADDRESS_V1 — očisti opakované oslovení PŘED
         # rozdvojením do conv_store i diary→RAG (oba cíle čisté).
         if response:
+            # GROUNDING_GUARD_V1 — nepřidal si k podkladu vlastní fakta?
+            # Doloženo 12.8. (vrak u Sicílie): na PRVNÍ dotaz odpověděl přesně
+            # podle zdroje, na DRUHÝ („zjisti více") už nebylo z čeho a vyrobil
+            # si náklad, obchodní cestu i stav vraku — a podal to jako „Zprávy
+            # uvádějí". Instrukce ANTIKONFAB tenhle obrat VÝSLOVNĚ zakazuje a
+            # model ji přesto porušil → prompt to neuhlídá, musí to být kontrola
+            # PO generování. Běží jen u faktických odpovědí s podkladem
+            # ('grounded'), aby se nesahalo na běžný hovor.
+            # PŘED zápisem do conv_store i deníku — ať se vymyšlené věty
+            # nedostanou do paměti (týž důvod jako u oprav oslovení níž).
+            try:
+                if (getattr(self, '_grounding_outcome', '') == 'grounded'
+                        and _grounding and _grounding is not _GROUNDING_UNSET):
+                    from scripts.grounding_guard import check as _gg_check
+                    _facts = _grounding.replace(ANTIKONFAB, ' ')
+                    _facts = _facts.replace(ANTIKONFAB_NOFACTS, ' ')
+                    # ⚠️ REFERENCÍ MUSÍ BÝT VŠECHNO, CO MODEL DOSTAL, ne jen
+                    # grounding. První živý test (13:49) zahodil VĚTU, KTERÁ
+                    # PODLOŽENÁ BYLA — fakta měl z historie rozhovoru, kdežto
+                    # grounding v tu chvíli nesl jiný zápisek. Bez historie
+                    # guard trestá správné odpovědi.
+                    try:
+                        for _h in (self.conv_store.get_history(name) or [])[-6:]:
+                            _facts += ' ' + str(
+                                _h.get('content', _h) if isinstance(_h, dict) else _h)
+                    except Exception:
+                        pass
+                    _clean, _dropped = _gg_check(response, _facts)
+                    if _dropped:
+                        # ⛔ POUZE HLÁSÍ, NEZASAHUJE (přepnuto 12.8. po dvou
+                        # falešných poplaších naživo). Guard stojí na
+                        # předpokladu, že jde vyjmenovat všechno, co model
+                        # dostal — a ten v téhle architektuře NEPLATÍ: fakta
+                        # tečou i z RAG a kontextu, kam guard nevidí. Zahodil
+                        # proto větu, která je doslova v uloženém zdroji, a
+                        # protože se abstinence ukládá do historie rozhovoru,
+                        # SAMO SE TO POSILOVALO (čím víc odmítl, tím míň měl
+                        # čím podložit další odpověď).
+                        # Zapnout zpět až bude reference úplná — viz BACKLOG.
+                        logging.getLogger(__name__).info(
+                            'GROUNDING_GUARD_V1 [jen hlásím]: %d vět bez opory '
+                            'v podkladu. První: %r', len(_dropped),
+                            _dropped[0][:80])
+            except Exception as _gge:
+                logging.getLogger(__name__).warning(
+                    'GROUNDING_GUARD_V1 selhal (odpověď ponechána): %s', _gge)
             try:
                 from scripts.conversation_store import dedup_address_g4d
                 response = dedup_address_g4d(response)

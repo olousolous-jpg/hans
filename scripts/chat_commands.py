@@ -2342,6 +2342,86 @@ register(
 )
 
 
+# ─── /zdroje — odkud Hans čerpal (HANS_SOURCES_V1) ─────────────────────────
+def _cmd_zdroje(handler, name, args) -> str:
+    """Vypíše odkazy na to, co Hans četl. Deterministicky z deníku.
+
+    Bez argumentu: posledních pár čtení. S argumentem: filtr na téma
+    („zdroje vrak"). Co odkaz nemá, se přizná — nikdy se nedomýšlí.
+    """
+    import sqlite3 as _sq
+    from datetime import datetime as _dt
+    db = _recall_db(handler)
+    # ⚠️ U NL vzorů přijde jako `args` CELÁ zpráva (parse_command vrací msg),
+    # takže „odkud jsi vlastně čerpal?" by se hledalo jako téma a nic nenašlo.
+    # Téma se proto tahá týmž extraktorem jako u /cetl; prázdné = vypiš poslední.
+    raw = (args or "").strip()
+    q = ""
+    try:
+        from scripts.hans_recall import _extract_topic
+        q = (_extract_topic(raw) or "").strip().lower()
+    except Exception:
+        pass
+    if not q and raw and len(raw.split()) <= 3 and "?" not in raw:
+        q = raw.lower()          # slash forma: /zdroje vrak
+    try:
+        cx = _sq.connect("file:%s?mode=ro" % db, uri=True, timeout=5.0)
+        if q:
+            rows = cx.execute(
+                "SELECT ts, title, source_url FROM diary "
+                "WHERE event_type IN ('web_read','reading_takeaway','study_note') "
+                "AND (lower(title) LIKE ? OR lower(COALESCE(note,'')) LIKE ?) "
+                "ORDER BY ts DESC LIMIT 8", ("%%%s%%" % q, "%%%s%%" % q)).fetchall()
+        else:
+            rows = cx.execute(
+                "SELECT ts, title, source_url FROM diary "
+                "WHERE event_type IN ('web_read','reading_takeaway','study_note') "
+                "ORDER BY ts DESC LIMIT 6").fetchall()
+        cx.close()
+    except Exception:
+        return "Nepodařilo se mi teď nahlédnout do zápisků, pane."
+
+    if not rows:
+        return ("K tomuhle nemám v zápiscích žádné čtení, pane."
+                if q else "Zatím jsem si nic nezapsal, pane.")
+
+    s_url, s_bez = [], []
+    for ts, title, url in rows:
+        d = _dt.fromtimestamp(ts).strftime("%d.%m.")
+        t = str(title or "")[:70]
+        (s_url if url else s_bez).append((d, t, url))
+
+    out = []
+    if s_url:
+        out.append("Četl jsem tohle, pane:")
+        for d, t, u in s_url:
+            out.append("• %s %s — %s" % (d, t, u))
+    if s_bez:
+        if s_url:
+            out.append("")
+        out.append("U tohohle mám zápisek, ale odkaz jsem si tehdy neuložil "
+                   "(ukládám ho až od 12. srpna) — nerad bych ho domýšlel:")
+        for d, t, _ in s_bez:
+            out.append("• %s %s" % (d, t))
+    return "\n".join(out)
+
+
+register(
+    "zdroje",
+    slash_aliases=["zdroje", "odkazy", "literatura", "zdroj", "odkaz"],
+    nl_patterns=[
+        r"\bodkud\s+(jsi|si|to)\s+.{0,12}(čerpal|cerpal|m[áa][šs]|vz[áa]l|v[íi][šs])",
+        r"\b(z\s+)?[čc]eho\s+(jsi|si)\s+.{0,10}(čerpal|cerpal|vych[áa]zel)",
+        r"\bd[áa][šs]\s+(mi\s+)?odkaz",
+        r"\bkde\s+(jsi|si)\s+(to\s+)?(četl|cetl|na[šs]el|vzal)",
+        r"\bjak[ýy]\s+(je\s+)?(ten\s+)?zdroj",
+        r"\bposli\s+(mi\s+)?odkaz|\bpo[šs]li\s+(mi\s+)?odkaz",
+    ],
+    handler=_cmd_zdroje,
+    help_text="Odkazy na to, co jsem četl (přímo z deníku): odkud jsi čerpal?",
+)
+
+
 def _cmd_videl(handler, name, args) -> str:
     cfg = getattr(handler, "config", {}) or {}
     from scripts.hans_recall import last_seen_answer
@@ -3314,7 +3394,17 @@ _LLM_ROUTE_SYSTEM = (
       "„co jsi dnes dělal?\" -> zadny\n„jak se dnes máš?\" -> zadny\n"
       "„co jsi dělal celý den?\" -> zadny\n"
       "„přehraj ten seriál\" -> zadny\n„co běží v televizi?\" -> zadny\n"
-      "„děje se něco doma?\" -> zadny\n„zapni hlídání\" -> zadny\n\n"
+      "„děje se něco doma?\" -> zadny\n„zapni hlídání\" -> zadny\n"
+      # HANS_CMD_LLM_ROUTE_V5 (12.8.) — ŽÁDOST O ZALOŽENÍ není žádost o výpis.
+      # Doloženo 12.8. 09:29: „připomeň mi, že mám provést měření dnes v 17:00"
+      # → model poslal na /kalendar (= VÝPIS událostí), Hans odpověděl, že
+      # kalendář není napojený, a připomínka se nikam neuložila. Kalendář je
+      # navíc JEN KE ČTENÍ (Proton ICS), takže tam žádost o zápis nemá co dělat
+      # — patří agentní akci, která ji umí založit.
+      "„připomeň mi zítra v 8 zavolat doktorovi\" -> zadny\n"
+      "„připomeň mi to v 17:00\" -> zadny\n"
+      "„poznamenej si, že mám koupit mléko\" -> zadny\n"
+      "„nezapomeň mi připomenout schůzku\" -> zadny\n\n"
       "Odpověz JEDNÍM slovem ze seznamu."
 )
 

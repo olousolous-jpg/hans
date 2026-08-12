@@ -1084,6 +1084,31 @@ class HansIdle:
             except Exception as _rte:
                 _log.debug('timed reminders: %s', _rte)
 
+        # PC_SHUTDOWN_DEFER_V1 — čeká se na dokončení práce, aby šel vypnout PC?
+        # Throttle 60 s: telemetrie jde po SSH, častěji nemá smysl.
+        if (time.time() - getattr(self, '_last_pc_defer', 0.0)) >= 60.0:
+            self._last_pc_defer = time.time()
+            try:
+                from scripts.pc_deferred_shutdown import tick as _pc_defer_tick
+                _msg = _pc_defer_tick(self)
+                if _msg:
+                    _log.info('PC_SHUTDOWN_DEFER_V1: %s', _msg)
+                    try:
+                        tg = getattr(self, '_telegram', None) or getattr(
+                            self, '_matrix', None)
+                        _s = getattr(tg, 'send', None) if tg else None
+                        if callable(_s):
+                            _s(_msg)     # okamžitě — je to výsledek povelu
+                    except Exception as _pne:
+                        _log.debug('defer notify: %s', _pne)
+                    try:
+                        self._log_entry('pc_shutdown', 'Odložené vypnutí PC',
+                                        note=_msg)
+                    except Exception:
+                        pass
+            except Exception as _pde:
+                _log.debug('pc defer tick: %s', _pde)
+
         # Mood — periodický recompute (klouzavý průměr + hystereze)
         if hasattr(self, '_mood'):
             self._mood.tick()

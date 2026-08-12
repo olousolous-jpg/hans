@@ -86,7 +86,14 @@ _TELE_CMD = (
     "sensors 2>/dev/null | grep -iE 'Tctl|edge:|junction:|^mem:|fan1:|PPT:'; "
     "echo '===VRAM==='; "
     f"{_ROCM} --showmeminfo vram 2>&1 | grep -i 'VRAM Total'; "
-    "echo '===RAM==='; free -b | grep '^Mem'"
+    "echo '===RAM==='; free -b | grep '^Mem'; "
+    # PC_LOAD_TELEMETRY_V1 — ZÁTĚŽ, ne teplota. Změřeno 12.8. při skutečné
+    # inferenci: GPU 0 %→99 %, příkon 6 W→219 W, ale CPU teplota jen 36→52 °C,
+    # tedy POD dosavadním prahem 68 °C. Teplota je zpožděná a závisí na okolí
+    # (v zimě se přes práh nemusí dostat vůbec). loadavg sám taky nestačí:
+    # při plné GPU práci byl 0.59 na 32 jádrech = 2 %.
+    "echo '===LOAD==='; cut -d' ' -f1 /proc/loadavg; nproc; "
+    "cat /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null | head -1"
 )
 
 
@@ -131,6 +138,18 @@ def telemetry(config: dict):
         t["ram_used_gb"] = round(used / 1e9, 1)
         t["ram_avail_gb"] = round(avail / 1e9, 1)
     # None když nic neparsováno (SSH vrátil junk)
+    # PC_LOAD_TELEMETRY_V1 — zátěž (přímé měřítko práce)
+    _ld = (out.split("===LOAD===") + [""])[1] if "===LOAD===" in out else ""
+    _ls = [x.strip() for x in _ld.strip().splitlines() if x.strip()]
+    for _i, _key, _cast in ((0, "load1", float), (1, "cores", int),
+                            (2, "gpu_busy_pct", float)):
+        if len(_ls) > _i:
+            try:
+                t[_key] = _cast(_ls[_i].split()[0])
+            except Exception:
+                pass
+    if t.get("load1") is not None and t.get("cores"):
+        t["load_per_core"] = round(t["load1"] / max(1, int(t["cores"])), 3)
     return t if any(v is not None for v in t.values()) else None
 
 
