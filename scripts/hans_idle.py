@@ -645,9 +645,34 @@ class HansIdle:
         # dotyčný v místnosti sám. Připomínka v nevhodnou chvíli je horší než
         # žádná: měření rozpoznávání se dá udělat jen s jedním člověkem doma
         # (s víc lidmi chybí ground truth — doloženo 11.8.).
+        # COMMIT_COND_V1 — podmínka `alone` se ptá, kdo je DOMA, ne kdo je
+        # zrovna v záběru. Původní verze brala jen aktuálně viditelné osoby:
+        # 12.8. to vyšlo (druhá osoba dorazila o 6 minut později), ale kdyby byla
+        # ve vedlejším pokoji, připomínka by padla taky — a měření, které má
+        # smysl jen o samotě, by bylo znehodnocené.
+        _alone = None
+        if any(len(r) > 3 and r[3] == 'alone' for r in rows):
+            try:
+                import sqlite3 as _sq3
+                _win = float((self.config.get('reminder', {}) or {}).get(
+                    'alone_window_min', 45)) * 60.0
+                _cx = _sq3.connect("file:%s?mode=ro" % dbp, uri=True, timeout=5.0)
+                _seen = {str(x[0]).lower() for x in _cx.execute(
+                    "SELECT DISTINCT title FROM diary WHERE event_type='person_seen' "
+                    "AND ts > ?", (time.time() - _win,))}
+                _cx.close()
+                _alone = (len(_seen) <= 1)
+                if not _alone:
+                    _log.info("COMMIT_COND_V1: připomínka 'jen o samotě' čeká — "
+                              "za posledních %.0f min viděn(i) %s",
+                              _win / 60, ", ".join(sorted(_seen)))
+            except Exception as _ae:
+                _log.debug('alone check: %s', _ae)
+                _alone = False        # nevím → raději nepřipomínat
         mine = [r for r in rows
                 if _norm(r[1]) in present
-                and not (len(r) > 3 and r[3] == 'alone' and len(present) != 1)]
+                and not (len(r) > 3 and r[3] == 'alone'
+                         and (len(present) != 1 or _alone is False))]
         if not mine:
             return  # sliby patří někomu, kdo tu teď není → počká na něj
         ids = [r[0] for r in mine]

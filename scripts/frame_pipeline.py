@@ -267,51 +267,43 @@ class FramePipeline:
                     else float(_rt.get('vote_thresh', 0.65))
                 _resc_t = float(_rt.get('cluster_rescue_thresh', 0.58))
                 _resc_m = float(_rt.get('cluster_rescue_margin', 0.06))
-                _cluster_rescue = (not c_unknown and c_conf >= _resc_t
-                                   and c_margin >= _resc_m)
+                # VOTE_ARC_WINS_V1 — ZÁCHRANA CLUSTEREM VYPNUTA (12.8.).
+                # Změřeno na témž sezení: když arc mlčel, cluster nabídl jméno
+                # 2187× a bylo ŠPATNĚ v 76.6 % (1665× jméno osoby, která nebyla
+                # doma). Marginová pojistka většinu zadržela, ale z 13, které
+                # prošly, bylo 11 chybných. Poměr 2 správně : 11 chybně.
+                # Zpět přepínačem `recognition_tuning.cluster_rescue`.
+                _cluster_rescue = (
+                    bool(_rt.get('cluster_rescue', False))
+                    and not c_unknown and c_conf >= _resc_t
+                    and c_margin >= _resc_m)
                 if not arc_unknown and not c_unknown:
                     if arc_name == c_name:
                         # Oba shodne -> jisty vysledek
                         final_name = arc_name
                         final_conf = round(min(1.0, (arc_conf + c_conf) / 2 * 1.2), 3)
-                    elif _used_pc:
-                        # VOTE_NO_CROSS_SCALE_V1 (11.8. večer): při neshodě NESMÍ
-                        # Hailo cluster přebít rozhodnutí z PC.
-                        # `arc_conf >= c_conf` porovnávalo DVĚ NESOUMĚŘITELNÉ ŠKÁLY:
-                        # cluster hlásí 1-vzdálenost (typicky 0.45-0.56), zatímco
-                        # float skóre z PC padá večer k ~0.32, protože galerie je
-                        # stavěná z denního světla. Číselně tak slabší hlas VŽDY
-                        # přebil silnější. VŠIMNUTO si toho naživo 11.8. večer
-                        # (319 přepsaných rozhodnutí za 5 minut), ale POZOR:
-                        # tehdejší závěr „cluster vyrábí falešná jména" se
-                        # NEPOTVRDIL — doma byli všichni tři, takže obě jména
-                        # mohla být správná. Důvod téhle větve je STRUKTURÁLNÍ
-                        # (nesouměřitelné škály + cluster je změřeně slabší),
-                        # ne ta pozorovaná čísla. Kdo má na neshodě častěji
-                        # pravdu, ZMĚŘENO NENÍ — z uloženého sběru to nejde
-                        # (brána propustí <1 % detekcí a sporné případy v datech
-                        # nejsou); rozhodne až řízené sezení s jedním člověkem.
-                        # Cluster navíc stojí na int8 embeddinzích, které lidi
-                        # rozlišit NEUMÍ (změřeno 10.-11.8.), a jako třetí hlas
-                        # přidal jen 0.3 b.
-                        # Zůstává mu jen role záchrany, když arc mlčí (níž).
-                        if arc_conf >= _thresh:
-                            final_name = arc_name
-                            final_conf = round(arc_conf * 0.7, 3)
-                        else:
-                            final_name = '?'   # radši „nevím" než cizí jméno
-                            final_conf = 0.0
                     else:
-                        # Ruzna jmena -> nejistota, vezmi lepsi
-                        if arc_conf >= c_conf and arc_conf >= _thresh:
-                            final_name = arc_name
-                            final_conf = round(arc_conf * 0.7, 3)
-                        elif c_conf >= _thresh:
-                            final_name = c_name
-                            final_conf = round(c_conf * 0.7, 3)
-                        else:
-                            final_name = '?'
-                            final_conf = 0.0
+                        # VOTE_ARC_WINS_V1 (12.8.) — ZMĚŘENO ŘÍZENÝM SEZENÍM.
+                        # Uživatel byl doma SÁM, takže každé jiné jméno je
+                        # prokazatelná záměna. Ze 4342 hlasování:
+                        #     neshoda obou hlasů   694× (16 %)
+                        #     arc měl pravdu       692× (99.7 %)
+                        #     cluster měl pravdu     0× ( 0.0 %)
+                        # Dosavadní pravidlo (nejdřív „vyšší číslo vyhrává",
+                        # od 11.8. konzervativní abstinence) z toho udělalo
+                        # 366 správně, 325× „nevím" a 4 cizí jména.
+                        # Když rozhoduje arc: 693 správně, 0 nevím, 2 chyby.
+                        #
+                        # ⚠️ Práh se ZÁMĚRNĚ neuplatňuje: i arc s nízkou
+                        # jistotou je řádově lepší než cluster, který stojí na
+                        # int8 embeddinzích neschopných rozlišit lidi
+                        # (změřeno 10.-11.8.). Držet kvůli němu abstinenci
+                        # znamenalo zahodit 325 správných odpovědí.
+                        # ⚠️ Neplatí to obecně o „druhém hlasu" — platí to
+                        # o TOMHLE clusteru. Kdyby druhý hlas jednou stál na
+                        # srovnatelném modelu, přeměřit.
+                        final_name = arc_name
+                        final_conf = round(arc_conf * 0.7, 3)
                 elif not arc_unknown and arc_conf >= _thresh:
                     # Jen AsyncRecognizer vi
                     final_name = arc_name

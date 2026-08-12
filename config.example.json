@@ -60,14 +60,15 @@
     "vote_thresh": 0.65,
     "cluster_rescue_thresh": 0.65,
     "cluster_rescue_margin": 0.12,
-    "_cluster_rescue_note": "CLUSTER_RESCUE_V1: cluster zachrani off-angle identitu kdyz arc slaby. rescue_thresh=min conf (sim), rescue_margin=min odstup nejblizsi vs 2. osoby (pojistka proti zamene). vote_thresh=brana ostatnich vetvi fuze.",
+    "_cluster_rescue_note": "VOTE_ARC_WINS_V1 (12.8.): vypnuto podle měření z řízeného sezení (doma jediný člověk = ground truth zdarma). Když arc mlčel, cluster nabídl jméno 2187x a mýlil se v 76.6 %; z 13 návrhů, které prošly marginem, bylo 11 chybných. Cluster stojí na int8 embeddinzích, které lidi rozlišit neumí. Zapnout zpět jen s novým měřením.",
     "score_mode": "top_k",
     "score_top_k": 3,
     "_score_note": "FACE_SCORE_TOPK_V1 (8.8.): score_mode=top_k → skóre osoby = průměr score_top_k nejlepších vzorků. 'legacy' = původní 0.6*mean+0.4*max. Margin snížen 0.12 → 0.06: margin byl VÁZANÁ podmínka (práh 0.30/0.35/0.42 dává identický výsledek). Změřeno leave-one-out na reálné sadě: 50 % → 86 % správně, záměny 0.0 % → 0.3 %. margin 0.04 dá 90.8 % ale 0.7 % záměn — nasazen konzervativní bod. POZOR: měřeno na 2 osobách ze stejné session; s třetí osobou přeměřit, záměny mohou růst.",
     "_arcface_thresh_note": "DOČASNĚ 0.42 → 0.60 (8.8. večer). Galerie obsahuje jen dvě osoby (obě s opraveným zarovnáním); vzorky třetí osoby jsou staré a odložené, přeenrolluje se 9.8. večer. Se dvěma osobami se margin překonává snadněji → víc sebejistých a tím i špatných rozhodnutí (u jedné osoby 9 % → 15 % záměn). Práh 0.60 to vrací na 8 % a hlavně zajistí, že chybějící osoba bude po návratu poctivě Unknown místo aby dostala cizí jméno. PO přeenrollování všech tří PŘEMĚŘIT a vrátit na hodnotu, která vyjde (dřív 0.42 byla prokazatelně nepodstatná — vázala vždy margin).",
     "pc_margin": 0.04,
     "pc_gallery": "data/known_faces_pc.pkl",
-    "pc_negatives": "data/known_faces_pc_negative.pkl"
+    "pc_negatives": "data/known_faces_pc_negative.pkl",
+    "cluster_rescue": false
   },
   "enrollment": {
     "enrollment_frames": 30,
@@ -1216,7 +1217,7 @@
     "_max_note": "HODINOVÝ strop 150 je hlavní regulátor (9.8.). Denní strop má špatný tvar — vyčerpá se dopoledne a o VEČERNÍ data přijdeme, přitom pokrytí různých denních dob je celý smysl sběru. max_per_day 3000 je jen pojistka. Úplně bez stropu to NEJDE: shlukování při čtení je O(n²) — 3000 snímků v jednom časovém bloku = 36 MB matice, 12000 = 576 MB a 8 s. Ochrany v load_sessions: jen posledních 14 dní + prořeďování bloků nad 1500 snímků (na disku zůstane vše).",
     "recent_memory": 300,
     "_multi_note": "Nastaveno pro VÍC OSOB naráz (10.8.). max_per_hour 150 → 300: strop je GLOBÁLNÍ, takže tři lidé by se o 150 dělili po padesáti. recent_memory: filtr rozmanitosti se držel jen per track, jenže track se tříští (38 ID na 222 snímků, medián 2) → 63 % snímků mělo jinde skoro dvojče. Globální paměť posledních 300 přijatých vzorků duplicity chytne i přes změnu track ID.",
-    "_stopped_note": "VYPNUTO 12.8. po dosbírání ranního světla (na pokyn uživatele — doma nikdo). Nasbíráno celkem 6356 vzorků, z toho 949 čeká na označení na /harvest. ZNOVU ZAPNOUT, až se rozpoznávání zhorší: galerie jsou zmrazené v letních podmínkách a v prosinci je tma od čtyř — a právě na podmínkách ten model stojí. Po doznačení přestavět galerie: tools/build_pc_gallery.py --write, build_pc_clusters.py --write, rebuild_cluster_db.py --write"
+    "_stopped_note": "VYPNUTO 12.8. večer — 7004 vzorků, VŠECHNY označené (tři osoby + třída 'není tvář'). Galerie z nich přestavěny. ZNOVU ZAPNOUT, až se rozpoznávání zhorší: galerie jsou zmrazené v letních podmínkách a v prosinci je tma od čtyř — na podmínkách ten model stojí. Přestavba: tools/build_pc_gallery.py --write · build_pc_clusters.py --write · rebuild_cluster_db.py --write"
   },
   "pc_embed": {
     "enabled": true,
@@ -1259,5 +1260,9 @@
     "busy_gpu_watt": 40.0,
     "busy_cpu_load": 0.25,
     "_prahy_note": "Změřeno 12.8. na reálné inferenci: klid GPU 0 % / 6 W / load-na-jádro 0.005, práce GPU 96-99 % / 215-219 W. Prahy jsou nad mezerami mezi úlohami (uprostřed odpovědi spadl příkon na 16 W). CPU zátěž je doplněk pro práci, která na GPU nejde (noční analytika num_gpu:0). TEPLOTU NEPOUŽÍVAT — při té inferenci byla 52 °C, tedy pod dřívějším prahem 68 °C, a v zimě se přes práh nemusí dostat vůbec."
+  },
+  "reminder": {
+    "alone_window_min": 45,
+    "_alone_note": "COMMIT_COND_V1: připomínka s podmínkou alone se ozve, jen když za posledních N minut nebyl vidět nikdo jiný. Aktuální viditelnost nestačí — člověk ve vedlejším pokoji není v záběru, ale doma je."
   }
 }
