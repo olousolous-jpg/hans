@@ -2921,6 +2921,28 @@ class OpenWebUIDirectHandler:
                 'G1 opinion grounding failed: %s', _oge)
         if _a1_abstain:
             response = A1_ABSTAIN_TEXT
+            # CLAIM_RETRACT_V1 — brzda umí ODMÍTNOUT, ale neuměla se OPRAVIT.
+            # Doloženo 6.8. 09:10→09:12: Hans tvrdil „hradby až 5 metrů",
+            # o 80 s později přiznal „nemám spolehlivý záznam" — ale to číslo
+            # nechal viset jako fakt (v jeho zápiscích NENÍ). Když se tedy
+            # abstinuje, dohlédni, jestli o tomtéž sám před chvílí něco
+            # netvrdil, a vezmi to výslovně zpět. Deterministické, bez LLM.
+            try:
+                from scripts.claim_retract import append_retraction
+                _hist = []
+                try:
+                    _hist = self.conv_store.get_history(name) or []
+                except Exception:
+                    pass
+                _resp2 = append_retraction(response, _raw_message, _hist)
+                if _resp2 != response:
+                    logging.getLogger(__name__).info(
+                        'CLAIM_RETRACT_V1: beru zpět dřívější tvrzení '
+                        '(abstinence u %r)', (_raw_message or '')[:60])
+                    response = _resp2
+            except Exception as _cre:
+                logging.getLogger(__name__).warning(
+                    'CLAIM_RETRACT_V1 selhal (odpověď ponechána): %s', _cre)
             if on_sentence:
                 try:
                     on_sentence(response)   # ať to TTS vysloví

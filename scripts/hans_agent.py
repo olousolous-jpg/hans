@@ -459,6 +459,65 @@ def _run_kodi_pause(handler, args) -> str:
         "Pozastavení se nezdařilo, pane."
 
 
+def _run_pc_wake(handler, args) -> str:
+    """HANS_AGENT_ACTIONS_V3 — probuď PC magic packetem. Sdílí `pc_remote.wake`
+    s mostem i noční rutinou (HANS_WOL_SHARED_V1) = jedna pravda o WOL."""
+    cfg = getattr(handler, "config", {}) or {}
+    mac = str(cfg.get("wol_pc_mac", "") or "")
+    if not mac:
+        return "Nemám nastavenou MAC adresu počítače, pane."
+    try:
+        from scripts import pc_remote
+        if not pc_remote.wake(config=cfg, mac=mac):
+            return "Probouzecí signál se nepodařilo odeslat, pane."
+    except Exception as e:
+        log.warning("pc_wake selhal: %s", e)
+        return "Probuzení počítače se nezdařilo, pane."
+    # Vědomě NEČEKÁME na náběh (~40 s) — agent musí odpovědět hned;
+    # ověření naběhnutí dělá most (`_wol_verify`), když se ptá uživatel.
+    return "Posílám počítači probouzecí signál, pane. Chvíli mu to potrvá."
+
+
+def _run_hans_wake(handler, args) -> str:
+    """HANS_AGENT_ACTIONS_V3 — probuď SEBE (opak `_run_sleep`). Týž setter,
+    opačný stav, aby se ty dvě cesty nemohly rozejít."""
+    hi = getattr(handler, "_hans_idle", None)
+    rt = getattr(hi, "_routine", None) if hi else None
+    if not rt or not hasattr(rt, "set_manual_sleep"):
+        return "Probudit se teď neumím, pane."
+    try:
+        rt.set_manual_sleep(False)
+        return "Jsem vzhůru, pane. K službám."
+    except Exception:
+        return "Probuzení se nezdařilo, pane."
+
+
+def _run_kodi_resume(handler, args) -> str:
+    """HANS_AGENT_ACTIONS_V3 — pokračovat v pozastaveném přehrávání."""
+    kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
+    if not kodi:
+        return "K přehrávači se nedaří připojit, pane."
+    try:
+        ok = kodi.play()
+    except Exception as e:
+        log.warning("kodi_resume selhal: %s", e)
+        ok = False
+    return "Pouštím dál." if ok else "Nepodařilo se pokračovat, pane."
+
+
+def _run_game_mode(handler, args) -> str:
+    """HANS_AGENT_ACTIONS_V3 — herní mód zap/vyp. Deleguje na `_cmd_herni`
+    (HANS_UNIFY_ACTIONS_V1 — chat i agent volají TÝŽ kód)."""
+    mode = (args.get("mode") or "").strip().lower()
+    arg = "vyp" if mode in ("off", "vyp", "stop", "ne", "konec") else "zap"
+    try:
+        from scripts.chat_commands import _cmd_herni
+        return _cmd_herni(handler, None, arg)
+    except Exception as e:
+        log.warning("game_mode_toggle selhal: %s", e)
+        return "Herní mód se teď přepnout nepodařilo, pane."
+
+
 def _run_kodi_stop(handler, args) -> str:
     kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
     if not kodi:
@@ -733,6 +792,50 @@ ACTIONS: dict[str, Action] = {
         hints=["hlídej", "hlidej", "hlídání", "hlidani", "stráž", "straz",
                "hlídat dům", "hlidat dum", "hlídej místnost", "zapni hlidani"],
         args=["mode"], run=_run_guard, grounding=None,
+        needs_confirm=True, cooldown_s=15),
+
+    # ── HANS_AGENT_ACTIONS_V3 (13.8.) — dosud chybějící protipóly ───────────
+    # Brána rozkazy propouštěla (HANS_AGENT_NO_WORDGATE_V1), ale agent na ně
+    # neměl akci → spadly do chatu a persona na ně jen odpověděla slovy.
+    "pc_wake": Action(
+        "pc_wake",
+        "Probudit / zapnout stolní POČÍTAČ (PC) přes síť (Wake-on-LAN) — když "
+        "uživatel řekne ať zapneš/probudíš/nahodíš počítač. OPAK akce "
+        "pc_shutdown; nezaměňuj s ní („vypni pc\u201c = pc_shutdown).",
+        hints=["zapni pc", "zapni počítač", "zapni pocitac", "probuď pc",
+               "probud pc", "nahoď pc", "nahod pc", "nastartuj pc",
+               "zapni ten pocitac", "probuď počítač", "wol"],
+        args=[], run=_run_pc_wake, grounding=None,
+        needs_confirm=True, cooldown_s=60),
+    "hans_wake": Action(
+        "hans_wake",
+        "Probudit SEBE (Hanse) ze spánku — když uživatel řekne ať se probudíš / "
+        "vstáváš / už nespíš. OPAK akce hans_sleep. NENÍ to zapnutí počítače "
+        "(to je pc_wake).",
+        hints=["probuď se", "probud se", "vzbuď se", "vzbud se", "vstávej",
+               "vstavej", "už nespi", "uz nespi", "jsi vzhůru", "prober se"],
+        args=[], run=_run_hans_wake, grounding=None,
+        needs_confirm=False, cooldown_s=30),
+    "kodi_resume": Action(
+        "kodi_resume",
+        "Pokračovat v POZASTAVENÉM filmu/přehrávání na TV (odpauzovat). "
+        "Bez argumentu — když uživatel chce pustit DÁL to, co běželo. "
+        "Pro spuštění konkrétního filmu podle názvu je kodi_play_film.",
+        hints=["pusť to dál", "pust to dal", "pokračuj", "pokracuj",
+               "odpauzuj", "zruš pauzu", "zrus pauzu", "hraj dál", "hraj dal",
+               "spusť to zas", "pusť to zpátky"],
+        args=[], run=_run_kodi_resume, grounding=None,
+        needs_confirm=False, cooldown_s=10),
+    "game_mode_toggle": Action(
+        "game_mode_toggle",
+        "Zapnout nebo vypnout HERNÍ MÓD (Hans uvolní grafiku pro hru a přestane "
+        "používat svůj mozek; vypnutím si ho vezme zpět). Argument 'mode' = "
+        "'on' (jdu hrát / uvolni grafiku) nebo 'off' (dohrál jsem / vrať mozek). "
+        "Na pouhý DOTAZ na stav („máš herní mód?\u201c) tuto akci NEvol.",
+        hints=["herní mód", "herni mod", "jdu hrát", "jdu hrat", "budu hrát",
+               "budu hrat", "uvolni grafiku", "dohrál jsem", "dohral jsem",
+               "dohrál", "vrať mozek", "vrat mozek"],
+        args=["mode"], run=_run_game_mode, grounding=None,
         needs_confirm=True, cooldown_s=15),
 }
 

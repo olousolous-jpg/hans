@@ -584,6 +584,14 @@ def delete_samples(day: str, files: list, root="data/harvest") -> int:
     Vzorek má ~6 kB, takže koš nic nestojí, a překlik by jinak nenávratně
     zahodil dobrý snímek. `_kos` je uvnitř denní složky, takže ho
     `load_sessions` (které iteruje jen denní adresáře) nikdy nenačte.
+
+    FACE_HARVEST_TRASH_META_V1 (13.8.) — do koše jde i META ŘÁDEK, ne jen
+    snímek. Dřív se řádek zahodil natrvalo, takže vrácení obrázku vzorek
+    NEOBNOVILO (embedding, štítek a podmínky snímání byly pryč) — vyřazení
+    tím bylo nevratné navzdory tomu, co slibuje docstring. Doloženo: 1411
+    snímků v koši, 0 meta řádků. Řádek se PŘESOUVÁ (ne označuje), protože
+    `meta.jsonl` má ~11 čtecích míst a jediný zapomenutý filtr by vrátil
+    falešné detekce do galerie. Obnovu dělá `restore_samples`.
     """
     d = Path(root) / day
     p = d / "meta.jsonl"
@@ -592,7 +600,7 @@ def delete_samples(day: str, files: list, root="data/harvest") -> int:
     want = set(files)
     kos = d / "_kos"
     kos.mkdir(exist_ok=True)
-    rows, n = [], 0
+    rows, dropped, n = [], [], 0
     for line in open(p, encoding="utf-8"):
         try:
             r = json.loads(line)
@@ -606,13 +614,62 @@ def delete_samples(day: str, files: list, root="data/harvest") -> int:
                     os.replace(src, kos / r["file"])
                 except Exception:
                     pass
-            continue                      # z meta.jsonl vypadne
+            dropped.append(r)             # z meta.jsonl vypadne, ale do koše
+            continue
         rows.append(r)
+    # meta do koše NEJDŘÍV — kdyby zápis selhal, radši vzorek nevyřadit
+    # (řádek zůstane v meta.jsonl) než ho ztratit.
+    if dropped:
+        with open(kos / "meta.jsonl", "a", encoding="utf-8") as f:
+            for r in dropped:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
     tmp = p.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     os.replace(tmp, p)
+    return n
+
+
+def restore_samples(day: str, files: list, root="data/harvest") -> int:
+    """FACE_HARVEST_TRASH_META_V1 — vrať vzorky z koše zpět mezi živé.
+
+    Protipól `delete_samples`: přesune snímek z `<den>/_kos/` zpět do denní
+    složky a jeho řádek z `_kos/meta.jsonl` zpět do `meta.jsonl`. Bez souboru
+    se řádek nevrací (osiřelá meta by ukazovala na nic). Vrací počet vrácených.
+    """
+    d = Path(root) / day
+    kos = d / "_kos"
+    kp = kos / "meta.jsonl"
+    if not kp.exists():
+        return 0
+    want = set(files)
+    keep, back, n = [], [], 0
+    for line in open(kp, encoding="utf-8"):
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if r.get("file") in want:
+            src = kos / r["file"]
+            if src.is_file():
+                try:
+                    os.replace(src, d / r["file"])
+                    back.append(r)
+                    n += 1
+                    continue
+                except Exception:
+                    pass
+        keep.append(r)
+    if back:
+        with open(d / "meta.jsonl", "a", encoding="utf-8") as f:
+            for r in back:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        tmp = kp.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for r in keep:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        os.replace(tmp, kp)
     return n
 
 

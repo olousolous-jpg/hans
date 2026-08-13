@@ -1109,6 +1109,25 @@ class HansIdle:
             except Exception as _rte:
                 _log.debug('timed reminders: %s', _rte)
 
+        # CHAT_DEFERRED_V1 — přehraj zprávy, na které nebyl mozek (herní mód /
+        # spící PC). `brain_available` vrací False i při herním módu, takže
+        # jedna podmínka kryje oba případy. Throttle 60 s (sonda jde po síti).
+        if (time.time() - getattr(self, '_last_chat_defer', 0.0)) >= 60.0:
+            self._last_chat_defer = time.time()
+            try:
+                from scripts.chat_deferred import pending as _cd_pend
+                if _cd_pend():
+                    from scripts.ollama_client import brain_available
+                    if brain_available(self.config):
+                        from scripts.chat_deferred import drain as _cd_drain
+                        _tg = getattr(self.chat, 'telegram', None) \
+                            if self.chat else None
+                        _send = getattr(_tg, 'send', None) if _tg else None
+                        if callable(_send) and self.chat is not None:
+                            _cd_drain(self.chat, _send, self.config)
+            except Exception as _cde:
+                _log.debug('chat_deferred drain: %s', _cde)
+
         # PC_SHUTDOWN_DEFER_V1 — čeká se na dokončení práce, aby šel vypnout PC?
         # Throttle 60 s: telemetrie jde po SSH, častěji nemá smysl.
         if (time.time() - getattr(self, '_last_pc_defer', 0.0)) >= 60.0:

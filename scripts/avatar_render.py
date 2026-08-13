@@ -261,6 +261,23 @@ def _ollama_warm(config: dict, model: str) -> None:
         resume_warmup()
     except Exception as _re:
         _log.debug("avatar: resume_warmup selhal: %s", _re)
+    # AVATAR_WARM_GAME_GUARD_V1 (13.8.) — NEPINUJ model zpět, když se HRAJE.
+    # Tohle je přímé urllib volání MIMO `ollama_client`, takže se na něj
+    # herní gate nevztahuje — přesně footgun, před kterým varuje CLAUDE.md
+    # („každý přímý HTTP na Ollamu mimo ollama_client MUSÍ mít vlastní
+    # game_mode_on() guard"). Doloženo 13.8. 14:22: uprostřed 5hodinové hry
+    # snímal room_observer místnost, model se odložil a hned „nahřál zpět"
+    # s keep_alive=-1 → 9,6 GB ve VRAM (13,4 z 17,2 GB obsazeno) po celý
+    # zbytek hry, ačkoli herní mód běžel. O pár řádků níž (ComfyUI, ř. ~585)
+    # týž guard správně je. [[ollama-vram-tiers]]
+    try:
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            _log.info("avatar: hans-czech NEnahřívám zpět — běží hra "
+                      "(VRAM patří jí); vrátí se po skončení herního módu")
+            return
+    except Exception as _ge:
+        _log.debug("avatar: game_mode check selhal: %s", _ge)
     try:
         data = json.dumps({"model": model, "prompt": "ok", "keep_alive": -1,
                            "stream": False}).encode()

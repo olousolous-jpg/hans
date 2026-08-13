@@ -307,10 +307,24 @@ class MatrixBridge:
             if reply:
                 await self._a_send(reply, room.room_id)
             else:
+                # CHAT_DEFERRED_V1 — mozek nebyl (spí / herní mód). Zprávu
+                # NEZAHAZUJ: ulož do fronty a přehraj, až bude mozek zpět.
+                # Doloženo 13.8. 12:01 — „pripomen v 18:00 …" se ztratilo,
+                # protože běžela hra a `_stream_message` vrátil None.
+                _q = False
+                try:
+                    from scripts.chat_deferred import enqueue as _cd_enq
+                    _q = _cd_enq(person, text, channel="matrix")
+                except Exception as _cde:
+                    _log.warning("chat_deferred enqueue: %s", _cde)
                 await self._a_send(
-                    "Můj mozek (počítač s jazykovým centrem) teď spí, takže "
-                    "vám nedokážu pořádně odpovědět. Dám vědět, jakmile budu "
-                    "opět online.", room.room_id)
+                    ("Můj mozek (počítač s jazykovým centrem) teď spí, takže "
+                     "vám hned neodpovím — ale zprávu jsem si poznamenal a "
+                     "vrátím se k ní, jakmile budu online."
+                     if _q else
+                     "Můj mozek (počítač s jazykovým centrem) teď spí, takže "
+                     "vám nedokážu pořádně odpovědět. Dám vědět, jakmile budu "
+                     "opět online."), room.room_id)
         except Exception as e:
             _log.warning("matrix on_message: %s", e)
 

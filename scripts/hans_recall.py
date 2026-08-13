@@ -867,9 +867,15 @@ def first_memory_answer(db_path: str) -> str:
 
 # ── co / kdy jsi četl ────────────────────────────────────────────────────────
 
+# HANS_RECALL_NODIACRITICS_V1 (13.8.) — uživatel píše z telefonu BEZ DIAKRITIKY
+# („cetl jsi o hradech?"). Vzor čekal jen „četl" → téma se nevytáhlo VŮBEC
+# a Hans místo recallu vrátil „naposledy jsem četl…", ačkoli deník záznamy měl
+# (690 řádků se Sherlockem, 2370 s hradem). Registrační `nl_patterns` u /cetl
+# tolerantní verzi `[čc]etl` používají už dřív — tady se jen srovnává krok.
 _TOPIC_PAT = re.compile(
-    r"(?:četla?\s+(?:jsi|sis)?\s*(?:něco\s+)?o|kdy\s+(?:jsi|sis)\s+četla?\s+o?|"
-    r"četla?\s+jsi)\s+(.{2,60}?)\s*\??$",
+    r"(?:[čc]etla?\s+(?:jsi|sis)?\s*(?:n[ěe]co\s+)?o|"
+    r"kdy\s+(?:jsi|sis)\s+[čc]etla?\s+o?|"
+    r"[čc]etla?\s+jsi)\s+(.{2,60}?)\s*\??$",
     re.IGNORECASE,
 )
 _STOPWORDS = {"něco", "neco", "dnes", "dneska", "včera", "vcera", "naposledy",
@@ -1373,18 +1379,49 @@ def _topic_in_memory(db_path: str, topic: str) -> bool:
     if not prefixes:
         return False
     conn = None
+    # HANS_RECALL_NODIA_DB_V1 (13.8.) — SQL LIKE NESKLÁDÁ DIAKRITIKU, takže
+    # dotaz bez háčků minul zápisek s háčky: „co vis o historii opevneni?" →
+    # jádrový prefix 'opevne' × uložené 'opevnění' → Hans ZAPŘEL tři vlastní
+    # zápisky („nic jsem si o tom nezapsal ani nečetl", doloženo 13.8. 16:31,
+    # ačkoli má study_note „Historie opevnění"). Uživatel píše z telefonu bez
+    # diakritiky, deník ji má — přesně na to `_fold` odjakživa je, jen se tady
+    # nevolalo (klasické „komponenta existuje, ale nikdo ji nevolá").
+    # POŘADÍ: nejdřív prostá shoda (rychlá), teprve při neúspěchu složená
+    # (volá python funkci nad řádky) → dotazy S diakritikou nic nestojí navíc.
+    _TYPES = ("'web_read','study_note','book_read','book_reflection',"
+              "'movie_opinion','kodi_playing','reading_takeaway'")
+    # HANS_RECALL_NODIA_SPLIT_V1 (13.8.) — `UNION` nutil SQLite vyhodnotit OBĚ
+    # strany, i když malá tabulka `entities` odpověděla hned: změřeno 1557 ms
+    # vs 124 ms pro tytéž dotazy spuštěné ZVLÁŠŤ s předčasným koncem
+    # (entities 2 ms → diary 122 ms). Rozděleno = 12× rychleji v běžném případě,
+    # kdy se téma najde. Případ „nenajde" zůstává ~1,6 s (plný sken je nutný).
+    # `%(f)s` = obalová funkce nad sloupcem: prázdná pro prostou shodu,
+    # `nodia` pro shodu bez diakritiky.
+    _ENT = "SELECT 1 FROM entities WHERE %(f)s(lower(name)) LIKE ? LIMIT 1"
+    _DIA = ("SELECT 1 FROM diary WHERE (%(f)s(lower(title)) LIKE ? OR "
+            "%(f)s(lower(note)) LIKE ?) AND event_type IN (" + _TYPES
+            + ") LIMIT 1")
     try:
         conn = _ro(db_path)
+        try:
+            conn.create_function("nodia", 1, _fold)
+            _has_nodia = True
+        except Exception:
+            _has_nodia = False      # starší sqlite → zůstane jen prostá shoda
+
+        def _hit(fn: str, needle: str) -> bool:
+            """Levné `entities` napřed, deník až když nestačí (předčasný konec).
+            `fn` = "" pro prostou shodu, "nodia" pro shodu bez diakritiky."""
+            sub = {"f": fn}
+            if conn.execute(_ENT % sub, (needle,)).fetchone():
+                return True
+            return bool(conn.execute(_DIA % sub, (needle, needle)).fetchone())
+
         for pref in prefixes:
-            like = "%" + pref + "%"
-            r = conn.execute(
-                "SELECT 1 FROM entities WHERE lower(name) LIKE ? "
-                "UNION SELECT 1 FROM diary WHERE (lower(title) LIKE ? OR "
-                "lower(note) LIKE ?) AND event_type IN ('web_read','study_note',"
-                "'book_read','book_reflection','movie_opinion','kodi_playing',"
-                "'reading_takeaway') LIMIT 1",
-                (like, like, like)).fetchone()
-            if not r:
+            ok = _hit("", "%" + pref + "%")          # rychlá prostá shoda
+            if not ok and _has_nodia:                # až pak dražší bez háčků
+                ok = _hit("nodia", "%" + _fold(pref) + "%")
+            if not ok:
                 return False   # jádrové slovo bez záznamu → celé téma není
         return True            # všechna jádrová slova mají záznam
     except Exception:

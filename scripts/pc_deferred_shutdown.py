@@ -99,36 +99,76 @@ def pc_busy(config: dict) -> tuple[bool, str]:
     ⚠️ Nevím ≠ klid: když se stav nepodaří zjistit, hlásí se ZANEPRÁZDNĚNO.
     Vypnout stroj kvůli mlčícímu čidlu je horší chyba než počkat.
     """
+    # PC_BUSY_SOURCE_AWARE_V1 — rozliš Hansovo MLUVENÍ od REÁLNÉ práce.
+    c = (config.get("pc_defer", {}) or {})
+    gpu_pct = float(c.get("busy_gpu_pct", 15.0))
+    gpu_w = float(c.get("busy_gpu_watt", 40.0))
+    cpu_load = float(c.get("busy_cpu_load", 0.25))
+    verify_s = float(c.get("gpu_verify_s", 2.0))
+
+    def _sample():
+        """Jeden vzorek. (gpu_busy_pct, gpu_power_w, load_per_core) nebo
+        None místo dvojice, když PC neodpovídá / nevidíme na vytížení."""
+        from scripts import pc_remote
+        t = pc_remote.telemetry(config) or {}
+        if not t:
+            return None, None, None, "počítač neodpovídá na dotaz po stavu"
+        g, w, l = t.get("gpu_busy_pct"), t.get("gpu_power_w"), t.get("load_per_core")
+        if g is None and w is None and l is None:
+            return None, None, None, "nevidím na vytížení (raději počkám)"
+        return g, w, l, None
+
+    # 1) HRA
     try:
         from scripts.ollama_client import game_mode_on
         if game_mode_on():
             return True, "běží hra (herní mód)"
     except Exception:
         pass
-    c = (config.get("pc_defer", {}) or {})
-    gpu_pct = float(c.get("busy_gpu_pct", 15.0))
-    gpu_w = float(c.get("busy_gpu_watt", 40.0))
-    cpu_load = float(c.get("busy_cpu_load", 0.25))
+
+    # 2) REÁLNÁ Hansova práce (render/analytika) — ta si SAMA uspí warmup
+    #    (avatar_render, evening_reflection…). Běžný chat to NEDĚLÁ → Hansovo
+    #    mluvení se sem nechytí. Jádro rozlišení „Hans vs něco jiného".
     try:
-        from scripts import pc_remote
-        t = pc_remote.telemetry(config) or {}
+        from scripts.ollama_client import warmup_paused
+        if warmup_paused():
+            return True, "ještě dokončuji rozpracované (kresba nebo analýza)"
+    except Exception:
+        pass
+
+    # 3) TELEMETRIE PC (nevím ≠ klid → raději počkej)
+    try:
+        g, w, l, err = _sample()
     except Exception as e:
         return True, "stav počítače se nepodařilo zjistit (%s)" % str(e)[:40]
-    if not t:
-        return True, "počítač neodpovídá na dotaz po stavu"
+    if err:
+        return True, err
 
-    g, w, l = t.get("gpu_busy_pct"), t.get("gpu_power_w"), t.get("load_per_core")
-    if g is None and w is None and l is None:
-        return True, "nevidím na vytížení (raději počkám)"
-    det = []
-    if g is not None and g >= gpu_pct:
-        det.append("GPU %.0f %%" % g)
-    if w is not None and w >= gpu_w:
-        det.append("příkon %.0f W" % w)
+    # 4) CPU ZÁTĚŽ = analytika (i lehká, num_gpu:0) = reálná práce. Mluvení
+    #    procesor nezatěžuje → blokuj hned, bez ověřování.
     if l is not None and l >= cpu_load:
-        det.append("procesor %.0f %%" % (l * 100))
-    if det:
-        return True, "ještě počítá (%s)" % ", ".join(det)
+        return True, "běží analytika (procesor %.0f %%)" % (l * 100)
+
+    # 5) GPU zátěž BEZ warmup_paused = Hansovo MLUVENÍ (krátká špička hans-czech)
+    #    NEBO cizí GPU práce (trvá). Rozliš PERZISTENCÍ — krátká věta zmizí do ~2 s.
+    gpu_hot = (g is not None and g >= gpu_pct) or (w is not None and w >= gpu_w)
+    if gpu_hot:
+        import time as _t
+        _t.sleep(verify_s)
+        try:
+            g2, w2, _l2, _e2 = _sample()
+        except Exception:
+            g2, w2 = g, w
+        still = ((g2 is not None and g2 >= gpu_pct)
+                 or (w2 is not None and w2 >= gpu_w))
+        if still:
+            det = []
+            if g2 is not None and g2 >= gpu_pct:
+                det.append("GPU %.0f %%" % g2)
+            if w2 is not None and w2 >= gpu_w:
+                det.append("příkon %.0f W" % w2)
+            return True, "něco zatěžuje grafiku (%s)" % ", ".join(det)
+        # krátká špička → to jsem jen mluvil → neblokuje
     return False, "klid"
 
 

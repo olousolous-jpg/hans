@@ -408,6 +408,41 @@ def game_launched(title: str = ""):
     return {"ok": True, "person": person, "game": title}
 
 
+@app.get("/api/game/leftover")
+def game_leftover(desc: str = ""):
+    """HANS_GAME_LEFTOVER_V1 — herní watcher hlásí, že po zavření hry zůstalo
+    něco viset (osiřelý proces / GPU se neuvolnila). Zapíšeme diagnostický
+    deníkový event + hlášku do notify_queue (Hansův most → Matrix, šifrovaně)."""
+    import time as _t
+    import json as _j
+    desc = (desc or "").strip()[:400]
+    if not desc:
+        return {"ok": False, "reason": "no desc"}
+    # deníkový event (diagnostika — dohledatelné, kdy a co zůstalo)
+    try:
+        conn = sqlite3.connect(str(DIARY_PATH))
+        conn.execute(
+            "INSERT INTO diary (ts,event_type,title,note,data) VALUES (?,?,?,?,?)",
+            (_t.time(), "game_leftover", "", desc, ""))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
+    # hláška na Matrix přes frontu (direct=True → nezdrží tiché hodiny; je to
+    # výsledek diagnostiky, na kterou uživatel čeká, ne Hansův nápad)
+    try:
+        with open("data/notify_queue.jsonl", "a", encoding="utf-8") as q:
+            q.write(_j.dumps({
+                "text": ("\u26a0\ufe0f Po zavření hry na počítači něco zůstalo "
+                         "viset, pane: %s. Grafika se možná neuvolnila úplně "
+                         "(drží proud / blokuje pozdější vypnutí)." % desc),
+                "direct": True,
+            }, ensure_ascii=False) + "\n")
+    except Exception as e:
+        return {"ok": True, "notified": False, "reason": str(e)}
+    return {"ok": True, "notified": True}
+
+
 @app.get("/api/game/favorites")
 def game_favorites(person: str = "", days: int = 60):
     """Oblíbené hry osoby (nejčastěji spuštěné) z game_launched událostí."""

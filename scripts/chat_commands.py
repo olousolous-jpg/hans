@@ -1531,6 +1531,29 @@ def _cmd_zajmy(handler, name, args) -> str:
     cfg = getattr(handler, "config", {}) or {}
     db = cfg.get("diary_db") or "data/hans_diary.db"
     who = (args or "").strip().lower()
+    # HANS_LLM_ROUTE_ARGS_V2 — `zajmy` má nl_patterns=[] → chodí sem VÝHRADNĚ
+    # přes LLM router, který dává args="" → „co zajímá Janu?" vypsalo VŠECHNY
+    # (doloženo 13.8. voláním handleru). Příkaz je read-only (mode=ro), takže
+    # vzít původní větu z vlákna je bezpečné. Jméno rozřeší `_resolve_person`
+    # (sdílený helper z hans_recall, používá ho i `videl`) — volá se s asker=None,
+    # aby se NEuplatnil jeho fallback na tazatele: „jaké zájmy mají lidi doma?"
+    # musí dál vypsat všechny, ne jen tazatele. „mě/mne" se dořeší zvlášť.
+    if not who:
+        try:
+            _tc = getattr(handler, "_thread_ctx", None)
+            _q = str(_tc[0]) if (_tc and _tc[0]) else ""
+        except Exception:
+            _q = ""
+        if _q:
+            try:
+                from scripts.hans_recall import _resolve_person
+                _p = _resolve_person(_q, cfg, None)
+                if not _p and re.search(r"\bm[ěe]\b|\bmne\b", _q.lower()):
+                    _p = name
+                if _p:
+                    who = str(_p).strip().lower()
+            except Exception:
+                pass
     try:
         conn = _s.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
         conn.row_factory = _s.Row
@@ -2322,7 +2345,20 @@ register(
 
 def _cmd_cetl(handler, name, args) -> str:
     from scripts.hans_recall import reading_answer
-    out = reading_answer(_recall_db(handler), args or "")
+    q = (args or "").strip()
+    # HANS_LLM_ROUTE_ARGS_V2 — LLM router předává args="" (záměrná pojistka proti
+    # mutujícím podpříkazům), takže routovaný dotaz by ztratil TÉMA a spadl na
+    # „poslední čtení". Příkaz je čistě ČTECÍ → původní věta se dá vzít z vlákna.
+    # `reading_answer` si téma vytáhne samo (`_extract_topic`), proto celá věta.
+    # Týž vzor jako `_cmd_rozhovory` (6.8.) a `_cmd_videl` (7.8.).
+    if not q:
+        try:
+            _tc = getattr(handler, "_thread_ctx", None)
+            if _tc and _tc[0]:
+                q = str(_tc[0])
+        except Exception:
+            pass
+    out = reading_answer(_recall_db(handler), q)
     return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
 
 
