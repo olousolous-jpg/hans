@@ -70,6 +70,30 @@ class EyeServoController:
             _log.info("EyeServoController vypnuto (config eye_servo.enabled=false)")
             return
         try:
+            # EYE_SERVO_MCU_RESET_V1 (13.8.) — HAT MCU se MUSÍ resetovat, než se
+            # serva vytvoří, jinak jsou povely TIŠE IGNOROVÁNY (týž důvod i týž
+            # postup jako v `servo_controller`, kde to je od začátku).
+            # Doložený bug: oči šlo z menu zapnout jednou a fungovaly; po vypnutí
+            # (`release()` → pulse_width(0)) je už žádné zapnutí nerozhýbalo —
+            # stav serva se bez resetu nezvedne. Po bootu je MCU ještě použitelné,
+            # proto to PRVNÍ zapnutí vypadalo v pořádku a chyba se zdála být
+            # v přepínači. Ověřeno naživo: s resetem se oči rozhýbou i po cyklu
+            # release→recenter, bez něj se nehnou vůbec.
+            # ⚠️ Reset provádíme JEN když kamerová serva běžet nemají — jinak ho
+            # udělal `ServoController` při startu a druhý reset by kamerovým
+            # servům uprostřed práce podrazil nohy (dnes jsou vypnutá kvůli
+            # krátkému CSI kabelu, ale až se vrátí, tohle to ošetří).
+            if not bool((self.config.get("servo_tracking", {}) or {})
+                        .get("enable_tracking", False)):
+                try:
+                    from robot_hat import utils as _rh_utils
+                    _rh_utils.reset_mcu()
+                    time.sleep(0.2)      # MCU potřebuje chvíli na náběh
+                    _log.info("eye_servo: HAT MCU resetován (kamerová serva "
+                              "vypnutá → neudělal to ServoController)")
+                except Exception as _re:
+                    _log.warning("eye_servo: reset MCU selhal (%s) — povely "
+                                 "serv mohou být ignorovány", _re)
             from robot_hat import Servo
             self._pan_s  = Servo(self._pan_ch)
             self._tilt_s = Servo(self._tilt_ch)
