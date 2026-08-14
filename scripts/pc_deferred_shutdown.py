@@ -102,7 +102,10 @@ def pc_busy(config: dict) -> tuple[bool, str]:
     # PC_BUSY_SOURCE_AWARE_V1 — rozliš Hansovo MLUVENÍ od REÁLNÉ práce.
     c = (config.get("pc_defer", {}) or {})
     gpu_pct = float(c.get("busy_gpu_pct", 15.0))
-    gpu_w = float(c.get("busy_gpu_watt", 40.0))
+    # PC_BUSY_WATT_TRUTH_V1 — práh zvednut 40 → 100 W. Klidová spotřeba
+    # s rezidentním modelem je 45–51 W, takže starý práh ležel POD klidem
+    # a hlásil práci pořád; skutečná inference bere 150–219 W.
+    gpu_w = float(c.get("busy_gpu_watt", 100.0))
     cpu_load = float(c.get("busy_cpu_load", 0.25))
     verify_s = float(c.get("gpu_verify_s", 2.0))
 
@@ -151,22 +154,42 @@ def pc_busy(config: dict) -> tuple[bool, str]:
 
     # 5) GPU zátěž BEZ warmup_paused = Hansovo MLUVENÍ (krátká špička hans-czech)
     #    NEBO cizí GPU práce (trvá). Rozliš PERZISTENCÍ — krátká věta zmizí do ~2 s.
-    gpu_hot = (g is not None and g >= gpu_pct) or (w is not None and w >= gpu_w)
-    if gpu_hot:
+    #
+    # PC_BUSY_WATT_TRUTH_V1 (14.8.) — ⚠️ PROCENTA SAMA NESTAČÍ, ROZHODUJE PŘÍKON.
+    # Doloženo 13.8. v noci: po FLUX renderu zůstal na GPU přeplněný runlist a
+    # čidlo hlásilo 99 % při ~45 W, ačkoli NIC nepočítalo (Ollama i ComfyUI
+    # nečinné, ověřeno kernel logem). Odložené vypnutí PC proto nikdy neproběhlo
+    # a stroj běžel celou noc — perzistence to nechytila, protože zaseklé čidlo
+    # je perzistentní taky. Naměřené hodnoty, které dělí realitu:
+    #     klid, model uvolněn        0 %     6 W
+    #     klid, model rezidentní     0 %   45–51 W   ← pořád KLID
+    #     ZASEKLÝ runlist           99 %   45–49 W   ← vytížení BEZ práce
+    #     skutečná inference     90–99 %  150–219 W  ← práce
+    # Mezi „model jen leží" a „opravdu počítá" je propast; starý práh 40 W ležel
+    # POD klidovou spotřebou, takže hlásil práci pořád. Příkon je proto hlavní
+    # signál a procenta jen záloha, když se příkon nepodaří přečíst („nevím ≠
+    # klid" → radši nevypínat). Herní mód a Hansova vlastní práce mají vlastní
+    # větve výš, takže tahle je čistě na CIZÍ zátěž.
+    # ⚠️ Kořen (fronty po renderu) řeší `COMFY_GPU_RECLAIM_V1`; tohle je pojistka
+    # pro případ, že GPU zasekne cokoli jiného.
+    def _busy_now(gg, ww):
+        if ww is not None:
+            return ww >= gpu_w          # příkon = pravda
+        return gg is not None and gg >= gpu_pct   # bez příkonu ber procenta
+
+    if _busy_now(g, w):
         import time as _t
         _t.sleep(verify_s)
         try:
             g2, w2, _l2, _e2 = _sample()
         except Exception:
             g2, w2 = g, w
-        still = ((g2 is not None and g2 >= gpu_pct)
-                 or (w2 is not None and w2 >= gpu_w))
-        if still:
+        if _busy_now(g2, w2):
             det = []
-            if g2 is not None and g2 >= gpu_pct:
-                det.append("GPU %.0f %%" % g2)
-            if w2 is not None and w2 >= gpu_w:
+            if w2 is not None:
                 det.append("příkon %.0f W" % w2)
+            elif g2 is not None:
+                det.append("GPU %.0f %% (příkon nezměřen)" % g2)
             return True, "něco zatěžuje grafiku (%s)" % ", ".join(det)
         # krátká špička → to jsem jen mluvil → neblokuje
     return False, "klid"

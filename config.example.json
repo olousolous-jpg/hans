@@ -1257,9 +1257,9 @@
     "max_wait_h": 4.0,
     "_note": "PC_SHUTDOWN_DEFER_V1 (12.8.): na potvrzení vypnutí PC smí přijít TŘETÍ odpověď — odložit („až doděláš co je rozpracováno\"). Hans počítač vypne sám, jakmile přestane být zaneprázdněný. idle_checks = kolikrát PO SOBĚ musí být klid (teplota kolísá, jeden vzorek je mezera mezi úlohami, ne konec práce; tik jede á 60 s). max_wait_h = strop čekání; když se klid nedostaví, NEVYPÍNÁ a řekne to — vypnout stroj po čtyřech hodinách bez varování je horší než nevypnout ho vůbec. Stav v souboru data/.pc_shutdown_pending přežije restart Hanse.",
     "busy_gpu_pct": 15.0,
-    "busy_gpu_watt": 40.0,
+    "busy_gpu_watt": 100.0,
     "busy_cpu_load": 0.25,
-    "_prahy_note": "Změřeno 12.8. na reálné inferenci: klid GPU 0 % / 6 W / load-na-jádro 0.005, práce GPU 96-99 % / 215-219 W. Prahy jsou nad mezerami mezi úlohami (uprostřed odpovědi spadl příkon na 16 W). CPU zátěž je doplněk pro práci, která na GPU nejde (noční analytika num_gpu:0). TEPLOTU NEPOUŽÍVAT — při té inferenci byla 52 °C, tedy pod dřívějším prahem 68 °C, a v zimě se přes práh nemusí dostat vůbec."
+    "_prahy_note": "PŘÍKON JE HLAVNÍ SIGNÁL, procenta jen záloha, když se příkon nepodaří přečíst. Naměřeno na RX6800: klid s uvolněným modelem 0 % / 6 W; klid s REZIDENTNÍM modelem 0 % / 45-51 W (pořád klid!); ZASEKLÝ runlist po FLUX renderu 99 % / 45-49 W (vytížení BEZ práce — kvůli tomu počítač jednu noc vůbec neusnul); skutečná inference 90-99 % / 150-219 W. Práh 100 W leží v propasti mezi klidem s modelem a skutečnou prací. CPU zátěž je doplněk pro práci, která na GPU nejde. TEPLOTU NEPOUŽÍVAT — je zpožděná a závisí na okolí."
   },
   "reminder": {
     "alone_window_min": 45,
