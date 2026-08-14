@@ -1496,6 +1496,21 @@ class HansRoutine:
                 self._health_last_bad = bad_key
             except Exception as _e:
                 _log.debug('health watcher: %s', _e)
+            # COMFY_RECLAIM_PERIODIC_V1 (14.8.) — pojistka na zaseklý runlist.
+            # Úklid po renderu (COMFY_GPU_RECLAIM_V1) pokrývá běžný případ, ale
+            # nemusí doběhnout: restart Hanse uprostřed renderu, výpadek SSH při
+            # měření, nebo plná fronta ComfyUI (tam ustupuje schválně). Pak by
+            # grafika visela na 99 % do dalšího malování a stála ~40 W navíc
+            # (změřeno: klid 6 W × zaseklý runlist 45-49 W). Tady se to dorovná
+            # nejpozději za `check_interval_s`. Sdílí TÝŽ kód, jen bez čekání na
+            # usazení — po deseti minutách je stav dávno ustálený.
+            try:
+                from scripts.avatar_render import _comfy_reclaim_gpu
+                if _comfy_reclaim_gpu(self.config, after_render=False):
+                    _log.info('health: uvolnil jsem zaseklou grafiku '
+                              '(fronty po renderu)')
+            except Exception as _ge:
+                _log.debug('health: reclaim GPU: %s', _ge)
             if self._stop.wait(self._health_interval):
                 break
 

@@ -239,7 +239,7 @@ def _ollama_loaded(config: dict) -> list:
         return []
 
 
-def _comfy_reclaim_gpu(config: dict) -> None:
+def _comfy_reclaim_gpu(config: dict, after_render: bool = True) -> bool:
     """COMFY_GPU_RECLAIM_V1 (14.8.) — `/free` vrátí VRAM, ale NE FRONTY na GPU.
 
     DOLOŽENO A ZREPRODUKOVÁNO (14.8. 07:58–08:04, řízený pokus):
@@ -265,15 +265,15 @@ def _comfy_reclaim_gpu(config: dict) -> None:
     try:
         from scripts import pc_remote
     except Exception:
-        return
+        return False
     cfg = _acfg(config) or {}
     if not bool(cfg.get("gpu_reclaim", True)):
-        return
+        return False
     # Restartovat smíme JEN ComfyUI běžící na tomtéž stroji, na který máme SSH —
     # jinak bychom sahali na cizí/lokální službu.
     host = str(((config or {}).get("pc_remote", {}) or {}).get("host", "") or "")
     if not host or host not in _comfy_url(config):
-        return
+        return False
     busy_pct = float(cfg.get("gpu_reclaim_pct", 15.0))
     work_w = float(cfg.get("gpu_reclaim_work_watt", 100.0))
 
@@ -296,21 +296,28 @@ def _comfy_reclaim_gpu(config: dict) -> None:
     # vylezla na 99 % a zůstala tam (ověřeno ručním voláním o minutu později,
     # které restart provedlo správně). Reprodukční skript, který měřil až po 5 s,
     # 99 % viděl. Proto: nech to usadit a při nízké hodnotě zkus ještě jednou.
-    time.sleep(float(cfg.get("gpu_reclaim_settle_s", 4.0)))
+    # COMFY_RECLAIM_PERIODIC_V1 (14.8.) — `after_render=False` je PERIODICKÁ
+    # kontrola (health watcher á 10 min). Tam se nečeká na usazení ani nezkouší
+    # podruhé: zaseklý stav je v tu chvíli už dávno ustálený, kdežto hned po
+    # renderu naskakuje se zpožděním. Pojistka pro případ, že úklid po renderu
+    # neproběhl — Hans se restartoval uprostřed, selhalo SSH, nebo měl ComfyUI
+    # frontu. Bez ní by zaseklý runlist visel do dalšího renderu a stál ~40 W.
+    if after_render:
+        time.sleep(float(cfg.get("gpu_reclaim_settle_s", 4.0)))
     busy, watt = _read()
-    if busy is not None and busy < busy_pct:
+    if after_render and busy is not None and busy < busy_pct:
         time.sleep(float(cfg.get("gpu_reclaim_retry_s", 6.0)))
         busy2, watt2 = _read()
         if busy2 is not None:
             busy, watt = busy2, watt2
     if busy is None:
-        return
+        return False
     if busy < busy_pct:
-        return                       # GPU spadla sama → nic neřešíme
+        return False                 # GPU spadla sama → nic neřešíme
     if watt is not None and watt >= work_w:
         _log.info("avatar: GPU %.0f %% při %.0f W — něco opravdu počítá, "
                   "ComfyUI nerestartuji", busy, watt)
-        return
+        return False
     # COMFY_RECLAIM_QUEUE_GUARD_V1 (14.8.) — NIKDY nerestartuj, když má ComfyUI
     # co dělat. Render umí spustit hans_art, hans_maker i avatar a klidně z JINÉHO
     # procesu (Hans běží pořád, testy zvlášť) — restart uprostřed cizí úlohy ji
@@ -323,16 +330,16 @@ def _comfy_reclaim_gpu(config: dict) -> None:
         st = None
     if st is None:
         _log.info("avatar: stav fronty ComfyUI neznámý → nerestartuji")
-        return
+        return False
     if st.get("running") or int(st.get("pending") or 0) > 0:
         _log.info("avatar: ComfyUI má práci (running=%s, pending=%s) → "
                   "nerestartuji", st.get("running"), st.get("pending"))
-        return
+        return False
     _log.warning("avatar: GPU uvízla na %.0f %% při %.0f W (fronty po renderu) "
                  "→ restartuji ComfyUI, ať se grafika uvolní", busy, watt or -1)
     if pc_remote.run(config, "systemctl --user restart comfyui", timeout=25) is None:
         _log.warning("avatar: restart ComfyUI se nezdařil")
-        return
+        return False
     # Počkej, až se zvedne — jinak by další render narazil na mrtvou službu.
     base = _comfy_url(config)
     for _ in range(15):
@@ -340,10 +347,11 @@ def _comfy_reclaim_gpu(config: dict) -> None:
         try:
             urllib.request.urlopen(f"{base}/system_stats", timeout=5).read()
             _log.info("avatar: ComfyUI zpět po restartu, grafika uvolněna")
-            return
+            return True
         except Exception:
             continue
     _log.warning("avatar: ComfyUI po restartu do 30 s neodpověděl")
+    return True
 
 
 def _comfy_free(config: dict) -> None:
