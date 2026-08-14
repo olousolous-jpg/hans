@@ -239,6 +239,113 @@ def _ollama_loaded(config: dict) -> list:
         return []
 
 
+def _comfy_reclaim_gpu(config: dict) -> None:
+    """COMFY_GPU_RECLAIM_V1 (14.8.) — `/free` vrátí VRAM, ale NE FRONTY na GPU.
+
+    DOLOŽENO A ZREPRODUKOVÁNO (14.8. 07:58–08:04, řízený pokus):
+        výchozí stav          GPU  0 %   7 W    0 hlášek jádra
+        FLUX render           OK
+        po renderu + /free    GPU 99 %  50 W  138× „amdgpu: Runlist is getting
+                                              oversubscribed due to too many queues"
+        +60 s klidu           GPU 99 %  45 W  ← samo NESPADNE
+        restart ComfyUI       GPU  0 %   7 W  ← okamžitě čisté
+    Týž otisk měl provozní incident 13.8. večer: hlášky od 22:35:50 (render start
+    22:35:52) běžely ještě HODINU po dokončení renderu a `pc_busy` kvůli tomu
+    hlásil „něco zatěžuje grafiku" → odložené vypnutí PC se nikdy neprovedlo
+    a stroj běžel celou noc. V noci bez malování (analytika) je hlášek NULA.
+
+    Rozlišovač: **příkon**, ne procenta. Rezidentní model v klidu = 45–51 W,
+    skutečná inference 150–219 W. Zaseklý runlist = 99 % při ~45 W, tedy
+    „vytížení bez práce" → restartovat. Když je příkon vysoký, něco opravdu
+    počítá a NESAHÁME na to.
+
+    Potvrzuje starší poznámku „ComfyUI po FLUXu nevrátí VRAM" (5.8.) — táž
+    rodina, tentýž viník; teď doložená v provozu i v kernel logu.
+    """
+    try:
+        from scripts import pc_remote
+    except Exception:
+        return
+    cfg = _acfg(config) or {}
+    if not bool(cfg.get("gpu_reclaim", True)):
+        return
+    # Restartovat smíme JEN ComfyUI běžící na tomtéž stroji, na který máme SSH —
+    # jinak bychom sahali na cizí/lokální službu.
+    host = str(((config or {}).get("pc_remote", {}) or {}).get("host", "") or "")
+    if not host or host not in _comfy_url(config):
+        return
+    busy_pct = float(cfg.get("gpu_reclaim_pct", 15.0))
+    work_w = float(cfg.get("gpu_reclaim_work_watt", 100.0))
+
+    def _read():
+        try:
+            out = pc_remote.run(config, (
+                "cat /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null | head -1; "
+                "/opt/rocm/bin/rocm-smi --showpower 2>/dev/null | "
+                "grep -oE '[0-9]+\\.[0-9]+' | head -1"), timeout=15)
+            vals = [v.strip() for v in (out or "").splitlines() if v.strip()]
+            return (float(vals[0]) if len(vals) > 0 else None,
+                    float(vals[1]) if len(vals) > 1 else None)
+        except Exception as e:
+            _log.debug("comfy reclaim: stav GPU nezjištěn (%s)", e)
+            return None, None
+
+    # COMFY_RECLAIM_SETTLE_V1 (14.8.) — NEMĚŘIT HNED PO `/free`. Zaseklý runlist
+    # se projeví se ZPOŽDĚNÍM: první ostrý běh (08:19) změřil GPU okamžitě po
+    # uvolnění, přečetl hodnotu pod prahem a TIŠE se vrátil — a grafika pak
+    # vylezla na 99 % a zůstala tam (ověřeno ručním voláním o minutu později,
+    # které restart provedlo správně). Reprodukční skript, který měřil až po 5 s,
+    # 99 % viděl. Proto: nech to usadit a při nízké hodnotě zkus ještě jednou.
+    time.sleep(float(cfg.get("gpu_reclaim_settle_s", 4.0)))
+    busy, watt = _read()
+    if busy is not None and busy < busy_pct:
+        time.sleep(float(cfg.get("gpu_reclaim_retry_s", 6.0)))
+        busy2, watt2 = _read()
+        if busy2 is not None:
+            busy, watt = busy2, watt2
+    if busy is None:
+        return
+    if busy < busy_pct:
+        return                       # GPU spadla sama → nic neřešíme
+    if watt is not None and watt >= work_w:
+        _log.info("avatar: GPU %.0f %% při %.0f W — něco opravdu počítá, "
+                  "ComfyUI nerestartuji", busy, watt)
+        return
+    # COMFY_RECLAIM_QUEUE_GUARD_V1 (14.8.) — NIKDY nerestartuj, když má ComfyUI
+    # co dělat. Render umí spustit hans_art, hans_maker i avatar a klidně z JINÉHO
+    # procesu (Hans běží pořád, testy zvlášť) — restart uprostřed cizí úlohy ji
+    # zabije („úloha zmizela, server nejspíš restartoval"). Fronta na PC je jediná
+    # pravda, která vidí všechny (HANS_RENDER_STATUS_V1). Nevím ≠ prázdno: když
+    # se stav nepodaří zjistit, radši NErestartuji.
+    try:
+        st = render_status(config)
+    except Exception:
+        st = None
+    if st is None:
+        _log.info("avatar: stav fronty ComfyUI neznámý → nerestartuji")
+        return
+    if st.get("running") or int(st.get("pending") or 0) > 0:
+        _log.info("avatar: ComfyUI má práci (running=%s, pending=%s) → "
+                  "nerestartuji", st.get("running"), st.get("pending"))
+        return
+    _log.warning("avatar: GPU uvízla na %.0f %% při %.0f W (fronty po renderu) "
+                 "→ restartuji ComfyUI, ať se grafika uvolní", busy, watt or -1)
+    if pc_remote.run(config, "systemctl --user restart comfyui", timeout=25) is None:
+        _log.warning("avatar: restart ComfyUI se nezdařil")
+        return
+    # Počkej, až se zvedne — jinak by další render narazil na mrtvou službu.
+    base = _comfy_url(config)
+    for _ in range(15):
+        time.sleep(2)
+        try:
+            urllib.request.urlopen(f"{base}/system_stats", timeout=5).read()
+            _log.info("avatar: ComfyUI zpět po restartu, grafika uvolněna")
+            return
+        except Exception:
+            continue
+    _log.warning("avatar: ComfyUI po restartu do 30 s neodpověděl")
+
+
 def _comfy_free(config: dict) -> None:
     """AVATAR_RENDER_COMFY_FREE_V1 — uvolni VRAM v ComfyUI po renderu.
     Jinak ComfyUI drží SDXL checkpoint (~7GB) rezidentně → hans-czech (10.8GB)
@@ -250,6 +357,7 @@ def _comfy_free(config: dict) -> None:
                                      headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=30).read()
         _log.info("avatar: ComfyUI VRAM uvolněna (/free)")
+        _comfy_reclaim_gpu(config)   # COMFY_GPU_RECLAIM_V1
     except Exception as _e:
         _log.debug("avatar: ComfyUI /free selhal: %s", _e)
 
