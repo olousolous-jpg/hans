@@ -1319,6 +1319,14 @@ _KNOWLEDGE_CHECK_RE = re.compile(
     r"zjisti[t]?\s+v[íi]ce?\s+o|"          # HANS_KNOWLEDGE_CHECK_V2
     r"[řr]ekni\s+mi\s+o|pov[ěe]z\s+mi\s+o|"  # HANS_KNOWLEDGE_CHECK_V2
     r"m[áa][šs]\s+z[áa]zna?m\s+o|"
+    # HANS_STUDY_CONTENT_RECALL_V1 (14.8.) — „co sis odnesl ZE STUDIA X" /
+    # „co ses naučil o X" je otázka na OBSAH tématu X, ne na stav programu.
+    # Bez tohohle ji router poslal na /studium (výpis pod-témat) místo na
+    # recall zápisků. Vyžaduje PŘEDMĚT za sebou → „jak jde studium?" (stav,
+    # bez předmětu) se sem nechytí a jde správně na /studium.
+    r"co\s+(?:sis|ses|jsi\s+s[ie])\s+"
+    r"(?:odnes\w*|nau[čc]il\w*|dozv[ěe]d\w*|zapamatoval\w*)"
+    r"(?:\s+(?:ze|z)\s+studi\w+)?(?:\s+o)?|"
     r"nev[íi][šs]\s+co\s+je|nev[íi][šs]\s+kdo\s+je)"
     r"\s+([\w\s\d\.\-']+?)"
     r"(?:[?.,;\n]|$)",                     # HANS_KNOWLEDGE_CHECK_V2 — i konec řetězce

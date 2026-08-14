@@ -2696,6 +2696,22 @@ class OpenWebUIDirectHandler:
                                                turns=_t_turns)
                 except Exception as _re:
                     print(f"[Chat] cmd route error: {_re}")
+            # HANS_STUDY_CONTENT_RECALL_V1 (14.8.) — „studium" chytá jak regex
+            # (`parse_command`, nl_pattern „co ses naučil") tak router, proto
+            # guard patří SEM, za obě cesty. Obsahová otázka „co sis odnesl ZE
+            # STUDIA X" / „co ses naučil O X" má KONKRÉTNÍ TÉMA → je to dotaz na
+            # OBSAH, ne na stav programu → zruš routing na /studium, ať spadne na
+            # běžnou cestu (knowledge_check dohledá zápisky). „jak jde studium?"
+            # (stav, bez tématu) se do knowledge_check nechytí → výpis zůstane.
+            if _cmd and _cmd[0] == "studium":
+                try:
+                    from scripts.hans_recall import is_knowledge_check_query
+                    if is_knowledge_check_query(user_message):
+                        print("[Chat] studium+téma → recall "
+                              "(HANS_STUDY_CONTENT_RECALL_V1)")
+                        _cmd = None
+                except Exception:
+                    pass
             if _cmd:
                 # HANS_THREAD_V1 — uživatel právě OPRAVIL tutéž cestu, která
                 # odpovídala minule → nepouštět ji znovu (vracela by totéž;
