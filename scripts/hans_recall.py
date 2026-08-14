@@ -1359,12 +1359,15 @@ _TOPIC_QUALIFIERS = {
 
 
 def _topic_core_prefixes(topic: str) -> list:
-    """HANS_RECALL_DECLENSION_V1 — jádrová slova tématu (bez kvalifikátorů)
-    oříznutá na prefix (declension-safe). 'jazyku dadština' → ['dadšt']."""
+    """HANS_RECALL_STEM_V2 — jádrová slova tématu (bez kvalifikátorů) oříznutá
+    na KMEN (declension-safe). 'jazyku dadština' → ['dadš']; 'hradech' → 'hrad'.
+    Ořez -3 znaky (česká koncovka mění poslední 1–3 znaky kmene), podlaha 4
+    (kmen 'hrad' má 4 znaky) — kratší by v textu náhodně splýval, proto se
+    4znakové prefixy hledají jen v titulu (viz `_topic_in_memory`)."""
     import re as _re
     words = [w for w in _re.split(r"[^0-9a-zá-žA-ZÁ-Ž]+", (topic or "").lower())
              if len(w) >= 4 and w not in _TOPIC_QUALIFIERS]
-    return [w[:max(5, len(w) - 2)] for w in words]
+    return [w[:max(4, len(w) - 3)] for w in words]
 
 
 def _topic_in_memory(db_path: str, topic: str) -> bool:
@@ -1397,10 +1400,35 @@ def _topic_in_memory(db_path: str, topic: str) -> bool:
     # kdy se téma najde. Případ „nenajde" zůstává ~1,6 s (plný sken je nutný).
     # `%(f)s` = obalová funkce nad sloupcem: prázdná pro prostou shodu,
     # `nodia` pro shodu bez diakritiky.
-    _ENT = "SELECT 1 FROM entities WHERE %(f)s(lower(name)) LIKE ? LIMIT 1"
-    _DIA = ("SELECT 1 FROM diary WHERE (%(f)s(lower(title)) LIKE ? OR "
-            "%(f)s(lower(note)) LIKE ?) AND event_type IN (" + _TYPES
-            + ") LIMIT 1")
+    # HANS_RECALL_STEM_V2 — postav JEDEN dotaz, který vyžaduje VŠECHNA jádrová
+    # slova v TÉMŽE řádku (AND). Dřív se každé slovo hledalo zvlášť napříč
+    # deníkem → „historie fotbaloveho mistrovstvi" našlo 3 slova ve 3 různých
+    # záznamech = falešně „mám záznam" (měřeno: 4 z 8 negativů). Krátký prefix
+    # (≤4 zn) jen v TITULU — v dlouhém textu poznámky by 4 znaky splynuly.
+    def _clauses(fn):
+        """(SQL fragment 'A AND B AND …', args) pro obal `fn` ('' / 'nodia')."""
+        col_t = ("%s(lower(title))" % fn) if fn else "lower(title)"
+        col_n = ("%s(lower(note))" % fn) if fn else "lower(note)"
+        parts, args = [], []
+        for p in prefixes:
+            needle = "%" + (_fold(p) if fn else p) + "%"
+            if len(p) <= 4:                      # krátký → jen titul
+                parts.append("(%s LIKE ?)" % col_t)
+                args.append(needle)
+            else:                                # delší → titul i poznámka
+                parts.append("(%s LIKE ? OR %s LIKE ?)" % (col_t, col_n))
+                args += [needle, needle]
+        return " AND ".join(parts), args
+
+    def _ent_clause(fn):
+        """entities má jen `name` → všechny prefixy v jednom jménu (AND)."""
+        col = ("%s(lower(name))" % fn) if fn else "lower(name)"
+        parts, args = [], []
+        for p in prefixes:
+            parts.append("(%s LIKE ?)" % col)
+            args.append("%" + (_fold(p) if fn else p) + "%")
+        return " AND ".join(parts), args
+
     try:
         conn = _ro(db_path)
         try:
@@ -1409,21 +1437,21 @@ def _topic_in_memory(db_path: str, topic: str) -> bool:
         except Exception:
             _has_nodia = False      # starší sqlite → zůstane jen prostá shoda
 
-        def _hit(fn: str, needle: str) -> bool:
-            """Levné `entities` napřed, deník až když nestačí (předčasný konec).
-            `fn` = "" pro prostou shodu, "nodia" pro shodu bez diakritiky."""
-            sub = {"f": fn}
-            if conn.execute(_ENT % sub, (needle,)).fetchone():
+        def _found(fn: str) -> bool:
+            ec, ea = _ent_clause(fn)                 # levné entities napřed
+            if conn.execute("SELECT 1 FROM entities WHERE %s LIMIT 1" % ec,
+                            ea).fetchone():
                 return True
-            return bool(conn.execute(_DIA % sub, (needle, needle)).fetchone())
+            dc, da = _clauses(fn)
+            return bool(conn.execute(
+                "SELECT 1 FROM diary WHERE %s AND event_type IN (%s) LIMIT 1"
+                % (dc, _TYPES), da).fetchone())
 
-        for pref in prefixes:
-            ok = _hit("", "%" + pref + "%")          # rychlá prostá shoda
-            if not ok and _has_nodia:                # až pak dražší bez háčků
-                ok = _hit("nodia", "%" + _fold(pref) + "%")
-            if not ok:
-                return False   # jádrové slovo bez záznamu → celé téma není
-        return True            # všechna jádrová slova mají záznam
+        if _found(""):                              # rychlá prostá shoda
+            return True
+        if _has_nodia and _found("nodia"):          # až pak dražší bez háčků
+            return True
+        return False
     except Exception:
         return False
     finally:
