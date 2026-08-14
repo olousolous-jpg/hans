@@ -1259,7 +1259,7 @@
     "busy_gpu_pct": 15.0,
     "busy_gpu_watt": 100.0,
     "busy_cpu_load": 0.25,
-    "_prahy_note": "PŘÍKON JE HLAVNÍ SIGNÁL, procenta jen záloha, když se příkon nepodaří přečíst. Naměřeno na RX6800: klid s uvolněným modelem 0 % / 6 W; klid s REZIDENTNÍM modelem 0 % / 45-51 W (pořád klid!); ZASEKLÝ runlist po FLUX renderu 99 % / 45-49 W (vytížení BEZ práce — kvůli tomu počítač jednu noc vůbec neusnul); skutečná inference 90-99 % / 150-219 W. Práh 100 W leží v propasti mezi klidem s modelem a skutečnou prací. CPU zátěž je doplněk pro práci, která na GPU nejde. TEPLOTU NEPOUŽÍVAT — je zpožděná a závisí na okolí."
+    "_prahy_note": "Změřeno 12.8., přeměřeno 14.8. PŘÍKON JE HLAVNÍ SIGNÁL, procenta jen záloha, když se příkon nepodaří přečíst. Naměřeno: KLID (s načteným modelem i bez něj) 0 % / 6 W — rezidentní model GPU nezdražuje; ZASEKLÝ runlist po FLUX renderu 99 % / 45-49 W, tedy vytížení BEZ práce a ~40 W navíc (13.8. kvůli tomu PC neusnul celou noc); skutečná inference 90-99 % / 150-219 W. Práh 100 W leží mezi zaseklým stavem a prací; starý práh 40 W ležel pod OBOJÍM, takže hlásil práci pořád. POZN.: dřívější údaj „klid s rezidentním modelem 45-51 W\" byl chybný — patřil zaseklému runlistu a čtení pořízenému hned po práci. CPU zátěž je doplněk pro práci, která na GPU nejde (num_gpu:0). TEPLOTU NEPOUŽÍVAT — při inferenci byla 52 °C, pod dřívějším prahem 68 °C."
   },
   "reminder": {
     "alone_window_min": 45,

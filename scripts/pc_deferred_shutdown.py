@@ -161,12 +161,14 @@ def pc_busy(config: dict) -> tuple[bool, str]:
     # nečinné, ověřeno kernel logem). Odložené vypnutí PC proto nikdy neproběhlo
     # a stroj běžel celou noc — perzistence to nechytila, protože zaseklé čidlo
     # je perzistentní taky. Naměřené hodnoty, které dělí realitu:
-    #     klid, model uvolněn        0 %     6 W
-    #     klid, model rezidentní     0 %   45–51 W   ← pořád KLID
-    #     ZASEKLÝ runlist           99 %   45–49 W   ← vytížení BEZ práce
+    #     klid (s modelem i bez)     0 %      6 W   ← rezidentní model NIC nestojí
+    #     ZASEKLÝ runlist           99 %   45–49 W   ← vytížení BEZ práce, ~40 W navíc
     #     skutečná inference     90–99 %  150–219 W  ← práce
-    # Mezi „model jen leží" a „opravdu počítá" je propast; starý práh 40 W ležel
-    # POD klidovou spotřebou, takže hlásil práci pořád. Příkon je proto hlavní
+    # ⚠️ OPRAVA MĚŘENÍ (14.8.): dřív tu stálo „klid s rezidentním modelem 45–51 W".
+    # Bylo to ŠPATNĚ — ta hodnota patřila zaseklému runlistu a jednomu čtení
+    # pořízenému hned po práci, kdy takty ještě dobíhaly. Přeměřeno třikrát:
+    # model v paměti sám o sobě GPU nezdražuje (6 W jako bez něj), zato zaseklý
+    # runlist stojí ~40 W navíc. Práh 100 W platí dál — leží mezi 49 a 150 W. Příkon je proto hlavní
     # signál a procenta jen záloha, když se příkon nepodaří přečíst („nevím ≠
     # klid" → radši nevypínat). Herní mód a Hansova vlastní práce mají vlastní
     # větve výš, takže tahle je čistě na CIZÍ zátěž.
