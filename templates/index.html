@@ -1258,8 +1258,11 @@ async function loadArt() {
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px"><span style="font-size:0.78rem;line-height:1.2;font-weight:600">${esc(a.book)}</span>${badge}</div>
         <div style="font-size:0.68rem;color:var(--fg2);margin-top:1px">${esc(a.date)}</div>
         <!-- HANS_ART_ORIGIN_V1_WEB — původ díla (z čeho vycházel) nad vlastní kritikou -->
-        ${a.origin ? `<div style="font-size:0.7rem;color:var(--fg);margin-top:3px;font-style:italic;max-height:4.3em;overflow:hidden;line-height:1.25">${esc(a.origin)}</div>` : ''}
-        <div style="font-size:0.7rem;color:var(--fg2);margin-top:3px;max-height:4.3em;overflow:hidden;line-height:1.25">${esc(a.caption)}</div>
+        <!-- HANS_ART_CAPTION_EXPAND_V1 — popis i kritika se dřív ořízly na 4.3em
+             BEZ náznaku (text v DB je celý, jen ho galerie schovala — vypadalo to
+             jako „useknutá věta"). Teď klik rozbalí/sbalí celý text. -->
+        ${a.origin ? `<div onclick="this.style.maxHeight=this.style.maxHeight?'':'4.3em'" title="Klikni pro celý text" style="font-size:0.7rem;color:var(--fg);margin-top:3px;font-style:italic;max-height:4.3em;overflow:hidden;line-height:1.25;cursor:pointer">${esc(a.origin)}</div>` : ''}
+        <div onclick="this.style.maxHeight=this.style.maxHeight?'':'4.3em'" title="Klikni pro celý text" style="font-size:0.7rem;color:var(--fg2);margin-top:3px;max-height:4.3em;overflow:hidden;line-height:1.25;cursor:pointer">${esc(a.caption)}</div>
       </div>`;
     }).join('');
   } catch (e) {}
