@@ -146,6 +146,27 @@ def capabilities_report() -> str:
     return "\n".join(out)
 
 
+def capabilities_summary() -> str:
+    """HANS_CAP_SUMMARY_V1 — VŘELÉ, konverzační shrnutí pro přirozený dotaz
+    „co umíš?" (zvlášť od cizího/nového člověka). Bez slash-příkazů a interní
+    syntaxe — ta zahltí někoho, kdo o Hansovi neví nic. Plný výčet s příkazy
+    zůstává pod explicitním /schopnosti (capabilities_report). Text je ručně
+    kurátorovaný nad TÝMIŽ skutečnými schopnostmi → nekonfabuluje."""
+    return (
+        "Jsem Hans, majordomus tohoto domu — a dělám hlavně tři věci.\n\n"
+        "Tvořím — maluji obrazy (své sny, dojmy ze dne i na jakékoli téma), "
+        "píši vlastní eseje a povídky a propojuji to, co se naučím, do vlastních "
+        "postřehů.\n\n"
+        "Poznávám — celé týdny do hloubky studuji témata, která mě zajímají, "
+        "vedu si deník i dlouhodobou paměť a přes kameru poznávám, kdo je v "
+        "místnosti.\n\n"
+        "Starám se o dům — řeknu vám z živých dat (ne z hlavy), co běží na "
+        "televizi, kdo je doma, jaké je počasí i jak se má počítač; pustím film "
+        "a když nejste doma, pohlídám místnost.\n\n"
+        "Nemusíte si pamatovat žádné příkazy — stačí se přirozeně zeptat nebo "
+        "mě o něco poprosit.")
+
+
 # ── V2: self-detekce nově přidaných schopností ───────────────────────────────
 def _load_known() -> set:
     try:

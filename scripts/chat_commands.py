@@ -35,6 +35,21 @@ def _current_channel() -> Optional[str]:
 
 # CHAT_COMMANDS_MARKER
 
+# HANS_CAP_SUMMARY_V1 — původ routingu (slash × NL × LLM) v thread-local.
+# Slash a LLM-route vracejí OBĚ prázdné args → z args samotných je nerozliším.
+# Původ ale rozhoduje, jestli /schopnosti dá plný výpis (slash) nebo vřelé
+# shrnutí (přirozený dotaz). Stejný vzor jako _current_channel výše.
+_route_tls = threading.local()
+
+
+def _set_route_origin(origin: Optional[str]) -> None:
+    _route_tls.origin = origin
+
+
+def _route_origin() -> Optional[str]:
+    return getattr(_route_tls, "origin", None)
+
+
 # ── Registr commands ───────────────────────────────────────────────────
 
 _COMMANDS: dict[str, dict] = {}
@@ -73,6 +88,7 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
     """Pokus se rozpoznat command. Vrátí (command_id, args) nebo None.
     Slash má prioritu. NL detekce běží jen pokud message nezačíná /."""
     msg = message.strip()
+    _set_route_origin(None)  # HANS_CAP_SUMMARY_V1 — nezdědit původ z minula
     if not msg:
         return None
 
@@ -85,6 +101,7 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
         args = parts[1] if len(parts) > 1 else ""
         for cmd_id, spec in _COMMANDS.items():
             if slash_name in spec["slash"]:
+                _set_route_origin("slash")
                 return (cmd_id, args)
         return None  # neznámý slash → ne-command
 
@@ -93,9 +110,11 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
     for cmd_id, spec in _COMMANDS.items():
         for pat in spec["nl"]:
             if pat.search(msg):
+                _set_route_origin("nl")
                 return (cmd_id, msg)
         for pat in spec.get("nl_fold", []):
             if pat.search(msg_fold):
+                _set_route_origin("nl")
                 return (cmd_id, msg)
     return None
 
@@ -1363,9 +1382,16 @@ register(
 
 # ─── /schopnosti — co Hans reálně umí (HANS_CAPABILITY_AWARENESS_V1) ─────────
 def _cmd_schopnosti(handler, name, args) -> str:
+    # HANS_CAP_SUMMARY_V1 — plný výčet se slash-příkazy zahltí nováčka. Proto:
+    # jen EXPLICITNÍ slash /schopnosti (origin "slash") → plný report; přirozený
+    # dotaz „co umíš/dokážeš?" (origin "nl"/"llm"/neznámý) → vřelé shrnutí. Původ
+    # rozhoduje, protože slash i LLM-route vracejí OBĚ prázdné args (nerozliší se).
     try:
-        from scripts.hans_capabilities import capabilities_report
-        return capabilities_report()
+        from scripts.hans_capabilities import (capabilities_report,
+                                               capabilities_summary)
+        if _route_origin() == "slash":
+            return capabilities_report()
+        return capabilities_summary()
     except Exception as e:
         return "Přehled schopností nedostupný: %s" % e
 
@@ -3561,7 +3587,10 @@ def resolve_command_llm(message: str, config: dict, turns=None):
     _ckey = _route_cache_key(msg, turns)
     if _ckey in _llm_route_cache:
         cid = _thread_guard(_llm_route_cache[_ckey], msg, config, turns)
-        return (cid, "") if cid else None
+        if cid:
+            _set_route_origin("llm")  # HANS_CAP_SUMMARY_V1
+            return (cid, "")
+        return None
     try:
         from scripts.hans_intent import _ask_classifier
         out = _ask_classifier(config, _LLM_ROUTE_SYSTEM, msg)
@@ -3586,6 +3615,7 @@ def resolve_command_llm(message: str, config: dict, turns=None):
         _llm_route_cache[_ckey] = ""
         return None
     if cid:
+        _set_route_origin("llm")  # HANS_CAP_SUMMARY_V1
         _log.info("HANS_CMD_LLM_ROUTE_V1: '%.40s' → /%s", msg, cid)
         return (cid, "")
     return None
