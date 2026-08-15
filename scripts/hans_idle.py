@@ -16,7 +16,8 @@ from pathlib import Path
 from datetime import datetime
 
 from scripts.cz_names import was as _cz_was, saw as _cz_saw, \
-    display_name as _cz_display, acc as _cz_acc  # HANS_NAME_INFLECTION_V1
+    display_name as _cz_display, acc as _cz_acc, \
+    person_gender as _cz_gender, past_verb as _cz_past  # HANS_NAME_INFLECTION_V1
 
 _log = logging.getLogger("hans_idle")
 
@@ -1625,7 +1626,9 @@ class HansIdle:
         except Exception:
             pass
         # deník + karta osoby (film_suggestion_accepted → _MENTION_EVENT_TYPES)
-        note = u"%s přijal/a můj návrh na film „%s\"." % (person.capitalize(), title)
+        # HANS_VOCATIVE_CONSONANT_V1 — rod z profilu místo generického „/a"
+        note = u"%s %s můj návrh na film „%s\"." % (
+            _cz_display(person), _cz_past("přijal", _cz_gender(person)), title)
         self._log_entry("film_suggestion_accepted", title=person, note=note)
         _log.info("[FilmSuggest] PŘIJATO %s ← %s", person, title)
 

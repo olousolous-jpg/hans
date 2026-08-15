@@ -21,6 +21,14 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 # ── Vokativ ──────────────────────────────────────────────────────────────
 
+# HANS_VOCATIVE_CONSONANT_V1 — generické fallbacky, NE křestní jména: souhláskový
+# vokativ by je zmršil („Uživatel"→„Uživatle"). Necháváme beze změny (jako dřív).
+_GENERIC_ADDRESS = frozenset({
+    "uživatel", "uzivatel", "unknown", "unknown_person", "neznámý", "neznamy",
+    "host", "návštěva", "navsteva", "člověk", "clovek", "pán", "pan",
+})
+
+
 def vocative(name: str, gender: Optional[str] = None,
              config: Optional[dict] = None) -> str:
     """Vokativ (5. pád) pro oslovení.
@@ -39,9 +47,38 @@ def vocative(name: str, gender: Optional[str] = None,
     if over:
         return over
     base = _title(name)
-    if base.lower().endswith("a"):
+    low = base.lower()
+    if low.endswith("a"):
         return base[:-1] + "o"
-    return base
+    if low.endswith(("e", "i", "o", "u", "y", "í", "é", "á", "ý", "ů", "ú")):
+        return base                            # samohláska → beze změny (Marie, Jiří)
+    if low in _GENERIC_ADDRESS:
+        return base                            # „Uživatel"/„Unknown" nejsou jména
+    # HANS_VOCATIVE_CONSONANT_V1 — mužský souhláskový vokativ (Petr→Petře).
+    # Dřív se souhláska nechávala beze změny → nováček „Petr" zůstal „Petr".
+    # Aplikuje se JEN když rod NENÍ ženský (žena končící souhláskou = vokativ
+    # == nominativ: Dagmar→Dagmar). Neznámý rod (cizí člověk) → mužský tvar,
+    # protože drtivá většina souhláskových křestních jmen je mužská.
+    if gender in ("žena", "z", "f", "female"):
+        return base
+    return _masc_consonant_vocative(base)
+
+
+def _masc_consonant_vocative(base: str) -> str:
+    """Mužský vokativ jmen končících souhláskou. Pragmatické, ne dokonalé —
+    pokrývá běžné vzory; okrajové (Zdeněk) svěř config override `voc`."""
+    low = base.lower()
+    if low[-1] in "šžčřc" or low.endswith("j"):
+        return base + "i"                      # Tomáš→Tomáši, Ondřej→Ondřeji
+    if low.endswith("ek"):
+        return base[:-2] + "ku"                # Marek→Marku, Radek→Radku (e-drop)
+    if low.endswith(("k", "g", "h")) or low.endswith("ch"):
+        return base + "u"                      # Patrik→Patriku, Bedřich→Bedřichu
+    if low.endswith("el"):
+        return base[:-2] + "le"                # Karel→Karle, Pavel→Pavle (e-drop)
+    if len(low) >= 2 and low[-1] == "r" and low[-2] not in "aeiouyáéíóúůě":
+        return base[:-1] + "ře"                # Petr→Petře, Alexandr→Alexandře
+    return base + "e"                          # Martin→Martine, Jan→Jane, Igor→Igore
 
 
 # ── Akuzativ (4. pád) — „Viděl jsem Janu / Standu / Petra“ ────────
@@ -83,6 +120,9 @@ _PAST_M_TO_F = {
     "šel":      "šla",
     "napsal":   "napsala",
     "spal":     "spala",
+    "přijal":   "přijala",
+    "sledoval": "sledovala",
+    "zmínil":   "zmínila",
 }
 
 
@@ -316,6 +356,12 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
                              re.IGNORECASE)
         text, _c = _p_addr.subn(lambda m: m.group(1) + target, text)
         n += _c
+        # HANS_VOCATIVE_CONSONANT_V1 — „pane Petr" (titul + 1. pád partnera, ne
+        # po čárce → předchozí vzor to minul). Titul = jednoznačné oslovení.
+        _p_title = re.compile(r"\b(pan[íi]|pane)\s+" + re.escape(_form) + r"\b",
+                              re.IGNORECASE)
+        text, _ct = _p_title.subn(lambda m: m.group(1) + " " + target, text)
+        n += _ct
     for pname in known:
         if str(pname).strip().lower() == str(partner).strip().lower():
             continue

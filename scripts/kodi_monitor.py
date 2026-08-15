@@ -15,7 +15,8 @@ from pathlib import Path
 from datetime import datetime
 
 from scripts.cz_names import came as _cz_came, left as _cz_left, \
-    display_name as _cz_display  # HANS_NAME_INFLECTION_V1
+    display_name as _cz_display, person_gender as _cz_gender, \
+    past_verb as _cz_past  # HANS_NAME_INFLECTION_V1
 
 _log = logging.getLogger("kodi_monitor")
 
@@ -314,7 +315,9 @@ class KodiMonitor:
             if genre: line += f" [{genre}]"
             line += f" — {dt}"
             lines.append(line)
-        return f"Co {name} naposledy sledoval/a:\n" + "\n".join(lines)
+        # HANS_VOCATIVE_CONSONANT_V1 — rod z profilu místo generického „/a"
+        _sled = _cz_past("sledoval", _cz_gender(name))
+        return f"Co {_cz_display(name)} naposledy {_sled}:\n" + "\n".join(lines)
 
     def get_today_events(self) -> str:
         """Příchody a odchody osob dnes."""
