@@ -817,6 +817,8 @@
       "min_evidence": 20,
       "min_engagement": 500,
       "results": 3,
+      "per_paper_takeaway": true,
+      "_per_paper_note": "HANS_RESEARCH_PAPER_TAKEAWAY_V1 — z každé odborné práce použité v deep tieru se udělá TRVALÝ per-práce výpisek (reading_takeaway + source_url + RAG), ať se konkrétní vědecký přínos neztratí. false = jen dřívější chování (titul v study_seen_works).",
       "max_chars": 4000,
       "timeout": 20,
       "mailto": "you@example.com",

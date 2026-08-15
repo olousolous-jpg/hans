@@ -28,6 +28,7 @@ LLM části (kurikulum/poznámka/syntéza) běží v noci na base modelu keep_al
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -718,10 +719,15 @@ def _ia_research(config: dict, query: str, max_chars: int = 2500,
 
 
 def _openalex_research(config: dict, query: str, n: int = 3,
-                       max_chars: int = 4000, db_path: str = None) -> str:
+                       max_chars: int = 4000, db_path: str = None,
+                       sink: list = None) -> str:
     """Vytáhne z OpenAlexu pár nejrelevantnějších NOVÝCH prací (název+rok+autoři+
     abstrakt) k tématu. DEDUP: práce použité dřív (study_seen_works) přeskočí, ať
-    Hans necituje stejnou práci/autora opakovaně. '' při chybě/nic. Best-effort."""
+    Hans necituje stejnou práci/autora opakovaně. '' při chybě/nic. Best-effort.
+
+    HANS_RESEARCH_PAPER_TAKEAWAY_V1 — když je `sink` list, přidá do něj i
+    STRUKTURU každé použité práce (title/year/authors/abstract/url), ať z ní
+    volající umí udělat per-práce trvalý výpisek (ne jen titul v registru)."""
     import requests
     rc = _cfg(config).get("research_tier", {}) or {}
     mailto = rc.get("mailto", "hans@local")
@@ -757,6 +763,9 @@ def _openalex_research(config: dict, query: str, n: int = 3,
         blocks.append(f"[Výzkum: {title} ({year}; {authors})]\n{abstract[:1500]}")
         if wid:
             new_items.append((wid, title))
+        if sink is not None:                    # HANS_RESEARCH_PAPER_TAKEAWAY_V1
+            sink.append({"title": title, "year": year, "authors": authors,
+                         "abstract": abstract, "url": wid})
         if len(blocks) >= int(n):
             break
     _record_works(db_path, new_items)
@@ -863,7 +872,7 @@ def _is_strong_topic(config: dict, diary_db_path: str, topic: str) -> bool:
 
 
 def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
-                     db_path: str = None):
+                     db_path: str = None, papers_sink: list = None):
     """Nastuduj pod-téma do hloubky: PLNÝ hlavní článek (ne jen lead) + úvody
     několika nejrelevantnějších pododkazů z úvodní sekce (v pořadí výskytu).
     deep=True (HANS_STUDY_RESEARCH_TIER_V1) → navíc abstrakty skutečného výzkumu
@@ -954,7 +963,8 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
             for rq in _oa_queries:
                 research = _openalex_research(
                     config, rq, n=int(rc.get("results", 3)),
-                    max_chars=int(rc.get("max_chars", 4000)), db_path=db_path)
+                    max_chars=int(rc.get("max_chars", 4000)), db_path=db_path,
+                    sink=papers_sink)  # HANS_RESEARCH_PAPER_TAKEAWAY_V1
                 if research:
                     parts.append(research)
                     break
@@ -1027,6 +1037,45 @@ def _generate_note(config: dict, topic: str, sub: str, material: str) -> str:
         return (raw or "").strip()
     except Exception as e:
         _log.warning("_generate_note LLM selhal: %s", e)
+        return ""
+
+
+# ── Per-práce výpisek z odborného abstraktu (HANS_RESEARCH_PAPER_TAKEAWAY_V1) ──
+_PAPER_TAKEAWAY_SYSTEM = (
+    "Jsi {persona_name}. Právě jsi přečetl ABSTRAKT jedné odborné práce. Napiš "
+    "si k ní KRÁTKÝ výpisek v první osobě (2-3 věty): co konkrétně tato práce "
+    "zjišťuje nebo přináší a co tě na tom zaujalo. Vyjdi VÝHRADNĚ z abstraktu — "
+    "nic si nepřidávej a nevymýšlej výsledky, které v něm nejsou. Piš česky, "
+    "souvisle, bez uvození typu „Abstrakt uvádí“."
+)
+
+
+def _distill_paper(config: dict, topic: str, paper: dict) -> str:
+    """LLM napíše krátký výpisek z abstraktu JEDNÉ práce. '' při selhání —
+    volající pak sáhne po deterministickém fallbacku (samotný abstrakt)."""
+    abstract = (paper.get("abstract") or "").strip()
+    if len(abstract) < 80:
+        return ""
+    c = _cfg(config)
+    timeout = int(c.get("llm_timeout", 300))
+    prompt = (f"Téma studia: {topic}\n"
+              f"Práce: {paper.get('title', '')} "
+              f"({paper.get('year', '')}; {paper.get('authors', '')})\n\n"
+              f"Abstrakt:\n{abstract[:2000]}")
+    try:
+        from scripts.ollama_client import ollama_generate
+        from scripts.hans_persona import persona_name as _pn
+    except ImportError:
+        return ""
+    try:
+        system = _PAPER_TAKEAWAY_SYSTEM.format(persona_name=_pn(config))
+        raw = ollama_generate(model=_model(config), prompt=prompt, system=system,
+                              config=config, timeout=timeout, keep_alive=0,
+                              options={"temperature": 0.4, "num_ctx": 4096,
+                                       "num_predict": 220})
+        return (raw or "").strip()
+    except Exception as e:
+        _log.warning("_distill_paper LLM selhal: %s", e)
         return ""
 
 
@@ -1461,8 +1510,10 @@ class StudyStore:
         # 1) hloubkové čtení (plný hlavní článek + intro pododkazů; u velmi
         #    silného koníčku navíc abstrakty výzkumu z OpenAlexu — deep tier)
         deep = _is_strong_topic(config, self._diary_path, topic)
+        research_papers = []  # HANS_RESEARCH_PAPER_TAKEAWAY_V1
         material, source_url, _main = _gather_material(
-            config, sub, topic, deep=deep, db_path=self._diary_path)
+            config, sub, topic, deep=deep, db_path=self._diary_path,
+            papers_sink=research_papers)
         # HANS_WIKI_TRANSIENT_V1 — Wikipedia dole (429/5xx) = výpadek zdroje,
         # NE „nenašel jsem". Odlož jako u výpadku LLM: žádný fail_count, žádný
         # skip; pod-téma se zkusí znovu, až API odpoví.
@@ -1504,6 +1555,13 @@ class StudyStore:
         # 3) deník study_note
         title = f"Studium: {topic} — {sub}"
         self._write_diary("study_note", title, note, diary_writer)
+
+        # 3b) per-práce výpisky z odborných prací (HANS_RESEARCH_PAPER_TAKEAWAY_V1)
+        try:
+            self._record_paper_takeaways(config, topic, research_papers,
+                                         knowledge, diary_writer)
+        except Exception as e:
+            _log.debug("record_paper_takeaways: %s", e)
 
         # 4) RAG upload (čtenářská kolekce)
         if knowledge is not None and getattr(knowledge, "enabled", False):
@@ -1566,6 +1624,59 @@ class StudyStore:
             conn.close()
         except Exception as e:
             _log.warning("study diary write selhal: %s", e)
+
+    def _record_paper_takeaways(self, config, topic, papers, knowledge=None,
+                                diary_writer=None):
+        """HANS_RESEARCH_PAPER_TAKEAWAY_V1 — z každé odborné práce použité v
+        research tieru udělá TRVALÝ per-práce výpisek (reading_takeaway + URL +
+        RAG). Dřív po práci zůstal jen titul v study_seen_works → konkrétní
+        vědecký přínos se ztrácel. Best-effort, nikdy neshodí studijní krok."""
+        rc = _cfg(config).get("research_tier", {}) or {}
+        if not papers or not rc.get("per_paper_takeaway", True):
+            return
+        for p in papers:
+            try:
+                title = (p.get("title") or "").strip()
+                if not title:
+                    continue
+                takeaway = _distill_paper(config, topic, p)
+                if not takeaway:
+                    # fallback bez LLM: samotný abstrakt (lossless), ať se přínos
+                    # neztratí ani když je mozek dole
+                    ab = (p.get("abstract") or "").strip()
+                    if len(ab) < 80:
+                        continue
+                    takeaway = ("Přečetl jsem odbornou práci a poznamenal si její "
+                                "obsah: " + ab[:500])
+                year = p.get("year") or ""
+                d_title = f"{title} ({year})" if year else title
+                url = p.get("url") or ""
+                try:
+                    conn = sqlite3.connect(self._diary_path)
+                    conn.execute(
+                        "INSERT INTO diary (ts, event_type, title, data, "
+                        "source_url) VALUES (?,?,?,?,?)",
+                        (time.time(), "reading_takeaway", d_title, takeaway, url))
+                    conn.commit()
+                    conn.close()
+                except Exception as e:
+                    _log.warning("paper takeaway zápis selhal: %s", e)
+                    continue
+                if knowledge is not None and getattr(knowledge, "enabled", False):
+                    try:
+                        coll = str(_cfg(config).get("rag_collection", "hans_cetba"))
+                        knowledge.upload(
+                            collection_key=coll,
+                            doc_id="paper_" + hashlib.md5(
+                                (url or d_title).encode("utf-8")).hexdigest()[:16],
+                            title=d_title, text=takeaway,
+                            metadata={"koníček": topic, "zdroj": url or "openalex",
+                                      "typ": "research_paper"})
+                    except Exception as e:
+                        _log.debug("paper takeaway RAG: %s", e)
+                _log.info("study: per-práce výpisek — „%.50s“", title)
+            except Exception as e:
+                _log.warning("_record_paper_takeaways položka selhala: %s", e)
 
     # ── dokončení + syntéza ────────────────────────────────────────────────
     def _complete_program(self, config: dict, prog: dict, knowledge=None,
