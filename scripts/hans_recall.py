@@ -872,15 +872,27 @@ def first_memory_answer(db_path: str) -> str:
 # a Hans místo recallu vrátil „naposledy jsem četl…", ačkoli deník záznamy měl
 # (690 řádků se Sherlockem, 2370 s hradem). Registrační `nl_patterns` u /cetl
 # tolerantní verzi `[čc]etl` používají už dřív — tady se jen srovnává krok.
+# HANS_READING_TOPIC_SENTENCE_BOUND_V1 — capture NESMÍ přejít přes hranici věty
+# (?.!). Dřív `(.{2,60}?)...$` kotvené na konec spolklo u dvouvětného dotazu
+# „Četl jsi něco zajímavého? Rád bych se o tom dozvěděl víc." celý druhý úsek →
+# pahýlové „téma" a rozbité „tohle mám o ‚…zajímavého Rád bych…'". `[^?.!]`
+# zastaví u prvního otazníku/tečky.
 _TOPIC_PAT = re.compile(
     r"(?:[čc]etla?\s+(?:jsi|sis)?\s*(?:n[ěe]co\s+)?o|"
     r"kdy\s+(?:jsi|sis)\s+[čc]etla?\s+o?|"
-    r"[čc]etla?\s+jsi)\s+(.{2,60}?)\s*\??$",
+    r"[čc]etla?\s+jsi)\s+([^?.!]{2,60}?)\s*\??$",
     re.IGNORECASE,
 )
 _STOPWORDS = {"něco", "neco", "dnes", "dneska", "včera", "vcera", "naposledy",
               "nějakou", "nejakou", "knihu", "článek", "clanek", "si", "už",
               "uz", "vůbec", "vubec", "někdy", "nekdy", "ty",
+              # hodnotící přídavná jména / plevel — samy o sobě nejsou téma
+              # („četl jsi něco zajímavého?" nemá dát topic „zajímavého")
+              "zajímavého", "zajimaveho", "zajímavé", "zajimave", "zajímavou",
+              "zajimavou", "zajímavý", "zajimavy", "hezkého", "hezkeho",
+              "pěkného", "pekneho", "dobrého", "dobreho", "nového", "noveho",
+              "víc", "vic", "více", "vice", "rád", "rada", "bych", "dozvěděl",
+              "dozvedel",
               # zájmena — nejsou téma; „četl jsi JI?" nesmí dát bogus topic „ji“
               # → falešné „o ‚ji' nemám záznam". Prázdné téma → radši nech projít.
               "ji", "ho", "je", "jej", "něj", "nej", "ni", "ně", "to", "tom",
@@ -910,6 +922,11 @@ def _extract_topic(question: str) -> str:
         return ""
     words = [w for w in re.findall(r"[\wěščřžýáíéúůďťňó-]+", m.group(1))
              if w.lower() not in _STOPWORDS]
+    # HANS_READING_TOPIC_SENTENCE_BOUND_V1 — reálné čtenářské téma je krátké
+    # (1-4 slova: „hradech", „Sherlock Holmes"). Delší = pahýl z ukecané věty,
+    # ne téma → radši prázdno = obecný výpis „co jsem četl", ne bogus „o ‚…'".
+    if len(words) > 4:
+        return ""
     return " ".join(words).strip()
 
 
