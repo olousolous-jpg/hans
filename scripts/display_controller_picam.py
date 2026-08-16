@@ -152,6 +152,13 @@ class PicamDisplayController:
         self.config           = config
         self.database_manager = database_manager
         self.openwebui_chat   = openwebui_chat
+        # HANS_EYE_BLINK_V1 — dej chat handleru callback na mrknutí očima
+        # (handler oči nezná; drží je display controller). Pro /blink z chatu.
+        if openwebui_chat is not None:
+            try:
+                openwebui_chat._blink_eyes = self._blink_eyes_now
+            except Exception:
+                pass
         self.servo_controller = servo_controller
         self.processing       = True
         self._calib           = None   # SERVO_MANUAL_CALIB_V1 wizard state
@@ -565,8 +572,19 @@ class PicamDisplayController:
                         if _name and _name not in (
                                 "Unknown", "Person", "...", "?", ""):
                             try:
-                                self.openwebui_chat.handle_face_recognition(
+                                _greeted = self.openwebui_chat.handle_face_recognition(
                                     _name, float(_conf))
+                                # HANS_EYE_BLINK_V1 — mrkni očima, když Hans právě
+                                # někoho pozdravil (periodické mrkání je vypnuté).
+                                if _greeted:
+                                    _eyes = (self._get_eye_servo()
+                                             if self._eyes_on() else None)
+                                    if _eyes is not None and getattr(
+                                            _eyes, "available", False):
+                                        try:
+                                            _eyes.blink_now()
+                                        except Exception:
+                                            pass
                             except Exception as _e:
                                 # Nesmí shodit hlavní smyčku
                                 print(f"[Greeting] trigger error: {_e}")
@@ -739,6 +757,20 @@ class PicamDisplayController:
             self._eye_servo = None
         return self._eye_servo
 
+    def _blink_eyes_now(self) -> bool:
+        """HANS_EYE_BLINK_V1 — mrkni očima na povel (chat /blink, pozdrav).
+        Vrací True když se mrknutí spustilo. maybe_blink() v hlavní smyčce ho
+        dokončí (plynulá rampa). Bezpečné volat z jiného vlákna (chat)."""
+        try:
+            eyes = self._get_eye_servo() if self._eyes_on() else None
+            if eyes is not None and getattr(eyes, "available", False) \
+                    and getattr(eyes, "_lids_available", False):
+                eyes.blink_now()
+                return True
+        except Exception:
+            pass
+        return False
+
     def _pick_eye_focus(self, known, area):
         """Více známých osob → vrať bbox JEDNÉ, na kterou se teď oči dívají.
         Po multi_dwell_s přeskočí na další (round-robin). Stabilní podle JMÉNA
@@ -858,12 +890,21 @@ class PicamDisplayController:
             eyes = self._get_eye_servo() if self._eyes_on() else None
             if eyes is not None and getattr(eyes, "available", False):
                 self._drive_eyes_only(boxes, identities, eyes)
+                try:
+                    eyes.maybe_blink()          # HANS_EYE_BLINK_V1
+                except Exception:
+                    pass
             return
         if getattr(self.servo_controller, 'calibrating', False):
             return  # SERVO_MANUAL_CALIB_V1 — wizard owns the servo
 
         eyes = self._get_eye_servo() if self._eyes_on() else None
         eye_mode = eyes is not None and getattr(eyes, "available", False)
+        if eye_mode:
+            try:
+                eyes.maybe_blink()              # HANS_EYE_BLINK_V1
+            except Exception:
+                pass
         cam_follow = bool((self.config.get("eye_servo", {}) or {}).get("camera_follow", True))
 
         if not boxes:

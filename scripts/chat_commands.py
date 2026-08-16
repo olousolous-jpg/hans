@@ -1405,6 +1405,29 @@ register(
 )
 
 
+# ─── /blink — mrknutí animatronickými víčky (HANS_EYE_BLINK_V1) ──────────────
+def _cmd_blink(handler, name, args) -> str:
+    fn = getattr(handler, "_blink_eyes", None)
+    if not callable(fn):
+        return "Oči teď nemám po ruce, pane."
+    try:
+        ok = fn()
+    except Exception as e:
+        return "Mrknutí se nepovedlo, pane: %s" % e
+    return "*mrkl jsem*" if ok else "Víčka teď nejsou aktivní, pane."
+
+
+register(
+    "blink",
+    slash_aliases=["blink", "mrkni"],
+    # jen jednoznačné „mrkni okem/očima / zamrkej" — NE holé „mrkni" (kolize s
+    # „mrkni na to" = podívej se)
+    nl_patterns=[r"\bzamrkej\b", r"\bmrkni\s+(oč|ok|na\s+m[ěe])"],
+    handler=_cmd_blink,
+    help_text="Hans mrkne očima: /blink",
+)
+
+
 # ─── co hraje? — ŽIVÁ kontrola Kodi (HANS_LIVE_PLAYBACK_QUERY_V1) ────────────
 def _cmd_hraje(handler, name, args) -> str:
     """co hraje / co se přehrává — Hans zkontroluje ŽIVÝ stav Kodi (ne deník);

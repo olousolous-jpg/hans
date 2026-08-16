@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import json
 import logging
+import random
+import threading
 import time
 from pathlib import Path
 
@@ -34,6 +36,11 @@ _DEFAULT_CALIB = {
     "channels": {"pan": "P2", "tilt": "P3"},
     "pan":  {"center": 0.0, "min": -30.0, "max": 30.0},
     "tilt": {"center": 0.0, "min": -20.0, "max": 34.0},
+    "lids": {},
+    # HANS_EYE_GAZE_TILT_OFFSET_V1 — přičte se k tilt úhlu pohledu (kamera je
+    # výš než oči → obličej ve středu rámu, ale oči koukají moc nízko → posun
+    # nahoru). Laděno v eye_calibration.json (hot-reload, bez restartu).
+    "gaze_tilt_offset": 0.0,
 }
 
 
@@ -49,6 +56,27 @@ class EyeServoController:
         # uvolnění serv proti pískání: po idle_release_s bez reálného pohybu →
         # pulse_width(0) → serva limp → ticho. Reálný pohyb je znovu probudí.
         self._idle_release_s = float(cfg.get("idle_release_s", 2.0))
+        # HANS_EYE_BLINK_V1 — animatronická víčka (P4-P7) + mrkání stavovým
+        # automatem (bez vlákna, bez sleep → neblokuje kameru).
+        self._blink_enabled = bool(cfg.get("blink_enabled", True))
+        self._blink_min_s = float(cfg.get("blink_min_s", 3.0))
+        self._blink_max_s = float(cfg.get("blink_max_s", 9.0))
+        self._blink_hold_s = float(cfg.get("blink_hold_s", 0.10))
+        # HANS_EYE_BLINK_SMOOTH_V1 — plynulé (rampované) mrknutí = tišší serva.
+        # Delší close/open = pomalejší pohyb = méně hluku (uživatel 16.8.).
+        self._blink_close_s = float(cfg.get("blink_close_s", 0.30))
+        self._blink_open_s = float(cfg.get("blink_open_s", 0.30))
+        self._lid_release_s = float(cfg.get("lid_release_s", 0.0))  # 0 = drž (proti průhybu)
+        self._lid_servos = {}
+        self._lid_open = {}
+        self._lid_closed = {}
+        self._lids_available = False
+        self._blinking = False           # běží vlákno _run_blink?
+        self._blink_thread = None
+        self._io_lock = threading.Lock() # serializace I2C (pan/tilt × víčka)
+        self._next_blink_ts = 0.0
+        self._lid_last_move_ts = 0.0
+        self._lids_released = False
         self.available = False
         self._pan_s = None
         self._tilt_s = None
@@ -65,6 +93,7 @@ class EyeServoController:
         self._calib_check_ts = 0.0
         self._pan_ch  = self.calib["channels"].get("pan", "P2")
         self._tilt_ch = self.calib["channels"].get("tilt", "P3")
+        self._gaze_tilt_offset = float(self.calib.get("gaze_tilt_offset", 0.0))
 
         if not self.enabled:
             _log.info("EyeServoController vypnuto (config eye_servo.enabled=false)")
@@ -103,9 +132,138 @@ class EyeServoController:
                       self.calib["pan"]["min"], self.calib["pan"]["max"],
                       self.calib["tilt"]["min"], self.calib["tilt"]["max"])
             self.center()
+            self._init_lids()          # HANS_EYE_BLINK_V1
         except Exception as e:
             _log.warning("EyeServoController HW init selhal (%s) — oči neaktivní", e)
             self.available = False
+
+    # ── víčka / mrkání (HANS_EYE_BLINK_V1) ──────────────────────────────
+    def _init_lids(self):
+        """Vytvoř serva víček z kalibrace (lids: {key:{channel,closed,open}}).
+        Klidová poloha = OTEVŘENO. Bez víček v kalibraci = mrkání tiše vypnuté."""
+        lids = (self.calib.get("lids") or {})
+        if not lids:
+            _log.info("eye_servo: žádná víčka v kalibraci — mrkání vypnuto")
+            return
+        try:
+            from robot_hat import Servo
+            for key, rec in lids.items():
+                ch = (rec or {}).get("channel")
+                if not ch:
+                    continue
+                self._lid_servos[key] = Servo(ch)
+                self._lid_open[key] = float(rec.get("open", 0.0))
+                self._lid_closed[key] = float(rec.get("closed", 0.0))
+            if self._lid_servos:
+                self._lids_available = True
+                self._set_lids("open")                  # klid = otevřeno
+                self._schedule_next_blink(time.time())
+                _log.info("eye_servo: víčka připojena (%s), mrkání %s",
+                          ",".join(sorted(self._lid_servos)),
+                          "ON" if self._blink_enabled else "OFF")
+        except Exception as e:
+            _log.warning("eye_servo: init víček selhal (%s) — mrkání vypnuto", e)
+            self._lids_available = False
+
+    def _set_lids(self, state: str):
+        """Nastav všechna víčka na 'open' nebo 'closed' (jednorázový povel)."""
+        if not self._lids_available:
+            return
+        tbl = self._lid_open if state == "open" else self._lid_closed
+        with self._io_lock:
+            for key, servo in self._lid_servos.items():
+                try:
+                    servo.angle(tbl.get(key, 0.0))
+                except Exception as e:
+                    _log.debug("eye_servo: lid angle selhal (%s): %s", key, e)
+        self._lid_last_move_ts = time.time()
+        self._lids_released = False
+
+    def _schedule_next_blink(self, now: float):
+        self._next_blink_ts = now + random.uniform(self._blink_min_s,
+                                                    self._blink_max_s)
+
+    def open_lids(self):
+        self._set_lids("open")
+
+    def close_lids(self):
+        self._set_lids("closed")
+
+    def _maybe_release_lids(self, now: float):
+        """Volitelně uvolní serva víček po klidu (proti pískání). Default 0 =
+        držet (aby otevřené víčko nepropadlo). Zapni jen když víčko drží i limp."""
+        if (self._lid_release_s <= 0 or self._lids_released
+                or self._blinking):
+            return
+        if now - self._lid_last_move_ts < self._lid_release_s:
+            return
+        with self._io_lock:
+            for servo in self._lid_servos.values():
+                try:
+                    servo.pulse_width(0)
+                except Exception:
+                    pass
+        self._lids_released = True
+
+    def _lids_to_frac(self, frac: float):
+        """Nastav víčka na zlomek dráhy: 0 = otevřeno, 1 = zavřeno. I2C zámek,
+        ať se to nepere s pan/tilt povely z hlavní smyčky."""
+        frac = max(0.0, min(1.0, frac))
+        with self._io_lock:
+            for key, servo in self._lid_servos.items():
+                o = self._lid_open.get(key, 0.0)
+                c = self._lid_closed.get(key, 0.0)
+                try:
+                    servo.angle(o + (c - o) * frac)
+                except Exception as e:
+                    _log.debug("eye_servo: lid frac angle selhal (%s): %s", key, e)
+        self._lid_last_move_ts = time.time()
+        self._lids_released = False
+
+    def _run_blink(self):
+        """HANS_EYE_BLINK_SMOOTH_V2 — mrknutí v samostatném vlákně JEMNÝMI kroky
+        (á ~12 ms), aby servo bylo pořád v pohybu = PLYNULE (dřív řídké povely
+        1×/snímek → servo dojelo a čekalo → pohyb „po pulzech")."""
+        try:
+            dt = 0.012
+            n_close = max(3, int(self._blink_close_s / dt))
+            for i in range(1, n_close + 1):
+                self._lids_to_frac(i / n_close)
+                time.sleep(dt)
+            time.sleep(self._blink_hold_s)
+            n_open = max(3, int(self._blink_open_s / dt))
+            for i in range(1, n_open + 1):
+                self._lids_to_frac(1.0 - i / n_open)
+                time.sleep(dt)
+        except Exception as e:
+            _log.debug("eye_servo: _run_blink selhal: %s", e)
+        finally:
+            self._blinking = False
+
+    def maybe_blink(self):
+        """Volat KAŽDÝ snímek. Neblokuje. Jen SPOUŠTÍ periodické mrkání (když
+        blink_enabled) a uvolňuje serva víček po klidu — samotný pohyb běží ve
+        vlákně (_run_blink), aby byl plynulý."""
+        if not self._lids_available:
+            return
+        now = time.time()
+        if self._blink_enabled and not self._blinking:
+            if self._next_blink_ts <= 0.0:
+                self._schedule_next_blink(now)
+            elif now >= self._next_blink_ts:
+                self.blink_now()
+                self._schedule_next_blink(now)
+        if not self._blinking:
+            self._maybe_release_lids(now)
+
+    def blink_now(self):
+        """Jednorázové mrknutí na povel (pozdrav, /blink). Neblokuje — spustí
+        vlákno _run_blink (plynulá jemná rampa). Ignoruje, pokud už mrká."""
+        if not self._lids_available or self._blinking:
+            return
+        self._blinking = True
+        self._blink_thread = threading.Thread(target=self._run_blink, daemon=True)
+        self._blink_thread.start()
 
     def _load_calib(self, path: str) -> dict:
         calib = json.loads(json.dumps(_DEFAULT_CALIB))  # deep copy
@@ -116,6 +274,10 @@ class EyeServoController:
                 for k in ("channels", "pan", "tilt"):
                     if k in data and isinstance(data[k], dict):
                         calib[k].update(data[k])
+                if isinstance(data.get("lids"), dict):   # HANS_EYE_BLINK_V1
+                    calib["lids"] = data["lids"]
+                if "gaze_tilt_offset" in data:           # HANS_EYE_GAZE_TILT_OFFSET_V1
+                    calib["gaze_tilt_offset"] = data["gaze_tilt_offset"]
         except Exception as e:
             _log.warning("eye_servo: čtení kalibrace %s selhalo (%s) — defaulty", path, e)
         return calib
@@ -147,7 +309,8 @@ class EyeServoController:
         if last is not None and abs(ema - last) < self._deadband:
             return
         try:
-            servo.angle(ema)
+            with self._io_lock:          # I2C sdílené s vláknem víček
+                servo.angle(ema)
             setattr(self, last_attr, ema)
             self._last_move_ts = time.time()
             self._released = False
@@ -166,11 +329,12 @@ class EyeServoController:
         """pulse_width(0) → přeruší PWM → serva limp → přestanou pískat."""
         if not self.available:
             return
-        for servo in (self._pan_s, self._tilt_s):
-            try:
-                servo.pulse_width(0)
-            except Exception as e:
-                _log.debug("eye_servo: pulse_width(0) selhal: %s", e)
+        with self._io_lock:
+            for servo in (self._pan_s, self._tilt_s):
+                try:
+                    servo.pulse_width(0)
+                except Exception as e:
+                    _log.debug("eye_servo: pulse_width(0) selhal: %s", e)
         self._released = True
 
     # ── veřejné API ─────────────────────────────────────────────────────
@@ -193,9 +357,11 @@ class EyeServoController:
         if mt and mt != self._calib_mtime:
             self._calib_mtime = mt
             self.calib = self._load_calib(self._calib_path)
+            self._gaze_tilt_offset = float(self.calib.get("gaze_tilt_offset", 0.0))
             _log.info("eye_servo: kalibrace přenačtena (pan center=%.1f "
-                      "tilt center=%.1f)", self.calib["pan"]["center"],
-                      self.calib["tilt"]["center"])
+                      "tilt center=%.1f tilt_offset=%.1f)",
+                      self.calib["pan"]["center"], self.calib["tilt"]["center"],
+                      self._gaze_tilt_offset)
 
     def look_at_frac(self, cx: float, cy: float):
         """cx, cy ∈ 0..1 = střed bboxu osoby v rámu. Pohne očima tam."""
@@ -204,6 +370,12 @@ class EyeServoController:
         self._maybe_reload_calib()
         pan  = self._map_axis(cx, "pan",  self._pan_invert)
         tilt = self._map_axis(cy, "tilt", self._tilt_invert)
+        # HANS_EYE_GAZE_TILT_OFFSET_V1 — posun pohledu nahoru/dolů (kamera výš
+        # než oči), oříznutý na kalibrované meze.
+        if self._gaze_tilt_offset:
+            _t = self.calib["tilt"]
+            tilt = max(float(_t["min"]), min(float(_t["max"]),
+                                             tilt + self._gaze_tilt_offset))
         self._send(self._pan_s,  pan,  "_pan_ema",  "_last_pan")
         self._send(self._tilt_s, tilt, "_tilt_ema", "_last_tilt")
         self._maybe_release()

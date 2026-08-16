@@ -369,16 +369,21 @@ class OpenWebUIDirectHandler:
     # ── Face recognition event ────────────────────────────────────────────────
 
     def handle_face_recognition(self, name: str, confidence: float):
+        # HANS_EYE_BLINK_V1 — vrací True, když se PRÁVĚ spustil pozdrav (aby
+        # volající mohl mrknout očima). Jinak False (idempotentní — už pozdraveno).
         if not self.enabled or not name:
-            return
+            return False
         should_greet = self.should_greet_person(name)
+        greeted = False
         if should_greet and self.greeting_enabled:
             self.mark_person_greeted(name)
             threading.Thread(target=self._send_greeting_async,
                              args=(name, confidence), daemon=True).start()
+            greeted = True
         if self.popup_enabled and self.popup_manager:
             self.popup_manager.handle_face_detection(name, confidence,
                                                       not should_greet)
+        return greeted
 
     def _send_greeting_async(self, name: str, confidence: float):
         try:
