@@ -29,9 +29,13 @@ _log = logging.getLogger("hans_selfcritique")
 _SYSTEM = (
     "Jsi {persona_name} a kriticky se ohlížíš za SVÝMI VLASTNÍMI nedávnými replikami "
     "(řádky „{persona_name}:…\"). Tvým úkolem je u SEBE najít JEDEN konkrétní moment, "
-    "kde ses mohl vyjádřit lépe — kde jsi byl zbytečně rozvláčný, vyhýbavý, opakoval "
-    "ses (tytéž obraty/myšlenky), plácal obecné fráze bez obsahu, nebo jsi vlastně "
-    "neodpověděl na to, co padlo. Jde o KVALITU tvého projevu, NE o faktickou chybu.\n"
+    "kde ses mohl vyjádřit lépe — kde jsi vlastně NEODPOVĚDĚL na to, co padlo, vyhýbal "
+    "ses a nezavázal se, plácal prázdné fráze bez obsahu (např. „je mi ctí sloužit\"), "
+    "opakoval tutéž myšlenku/obrat napříč replikami, ztratil majordomský tón (příliš "
+    "škrobeně a učeně, nebo naopak moc familiárně), nebo zněl falešně sebejistě.\n"
+    "Jde o KVALITU tvého projevu, NE o faktickou chybu. DRŽ VYSOKOU LAŤKU: jediné "
+    "zbytečné slovo, pleonasmus či drobné slovíčkaření je POD laťku — na to ponaučení "
+    "NEDĚLEJ. Když nic podstatnějšího nenajdeš, vrať prázdný objekt {{}}.\n"
     "Vrať VÝHRADNĚ JSON objekt s klíči:\n"
     "  weak_quote = tvá slabá pasáž (krátký doslovný úryvek tvé repliky),\n"
     "  issue      = čím je slabá (1 věta),\n"
@@ -116,14 +120,23 @@ def _strip_think(text: str) -> str:
 
 _REASON_SYSTEM = (
     "You are {name}, critically reviewing YOUR OWN recent replies (the lines "
-    "starting with \"{name}:\"). Find the SINGLE most genuine weakness in the "
-    "QUALITY of your expression — needless verbosity, repetition (the same "
-    "phrases/ideas again), evasiveness, empty filler, or not actually answering "
-    "what was said. This is about expression quality, NOT factual errors.\n"
+    "starting with \"{name}:\"). Find the SINGLE most genuine, SUBSTANTIVE weakness "
+    "in HOW you communicated. This is about quality of expression, NOT factual errors.\n"
+    "Look only for weaknesses that actually mattered to the person you spoke with, e.g.:\n"
+    "  - you did not actually answer what was asked, or you dodged it;\n"
+    "  - evasive hedging / refusing to commit when you could have helped;\n"
+    "  - empty formulaic filler that says nothing (e.g. endless \"it is my honour to serve\");\n"
+    "  - you made the SAME point or reused the same stock phrasing across several replies;\n"
+    "  - the tone broke your role — too stiff and academic, or too casual for a "
+    "19th-century majordomo;\n"
+    "  - you over-claimed or sounded falsely certain;\n"
+    "  - you gave no concrete, useful content.\n"
     "Think step by step in English. The replies are in Czech — read them carefully.\n"
-    "HOLD A HIGH BAR: flag only a real, specific weakness. If your replies are fine, "
-    "or the only issues just repeat lessons you already took, say NONE — do NOT force "
-    "or repeat a critique.\n"
+    "HOLD A HIGH BAR. Do NOT flag a single redundant or unnecessary word, a pleonasm, "
+    "or minor wording polish — that is BELOW the bar and not worth a lesson. If the "
+    "only issue you can find is word-level redundancy or phrasing, answer VERDICT: NONE. "
+    "Likewise if your replies are genuinely fine, or the only weakness repeats a KIND of "
+    "lesson you already took, answer VERDICT: NONE — do NOT force or recycle a critique.\n"
     "After your reasoning, output EXACTLY these two lines and nothing after:\n"
     "  WEAK: <a short excerpt of your weak passage, copied VERBATIM from the Czech "
     "replies>\n"
@@ -142,9 +155,13 @@ def _reason_critique(config: dict, cfg: dict, transcript: str, name: str,
     from scripts.ollama_client import ollama_chat
     user = transcript
     if recent:
-        user += ("\n\n(You already took these lessons — find something DIFFERENT, "
-                 "do not repeat them:\n" + "\n".join("- %s" % r[:120]
-                                                     for r in recent) + ")")
+        # HANS_SELFCRITIQUE_SUBSTANCE_V1 — anti-repetice na KATEGORII, ne na textu:
+        # jinak model najde „další zbytečné slovo" = formálně jiné, fakticky totéž.
+        user += ("\n\n(You already took these lessons recently — find a weakness of a "
+                 "DIFFERENT KIND, not the same kind of issue about a different word or "
+                 "phrase. If the only thing left is the same kind of nitpick, answer "
+                 "VERDICT: NONE:\n" + "\n".join("- %s" % r[:120]
+                                                for r in recent) + ")")
     system = _REASON_SYSTEM.format(name=name)
     opts = {"temperature": float(cfg.get("reasoning_temperature", 0.5)),
             "num_ctx": int(cfg.get("reasoning_num_ctx", 8192)),
@@ -274,8 +291,9 @@ def run_self_critique(config: dict, diary_db_path: str,
         system = _SYSTEM.format(persona_name=pname)
         user = transcript
         if recent:
-            user += ("\n\n(Tato ponaučení už sis vzal — najdi něco JINÉHO, "
-                     "neopakuj je:\n"
+            # HANS_SELFCRITIQUE_SUBSTANCE_V1 — anti-repetice na DRUH, ne na text
+            user += ("\n\n(Tato ponaučení už sis vzal — najdi slabinu JINÉHO DRUHU, "
+                     "ne totéž o jiném slově. Když zbývá jen slovíčkaření, vrať {}:\n"
                      + "\n".join("- %s" % r[:120] for r in recent) + ")")
         try:
             from scripts.ollama_client import ollama_generate
