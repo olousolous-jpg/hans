@@ -3466,7 +3466,9 @@ _LLM_ROUTE_CMDS = [
     ("smer",       "jeho vlastní směr a aspirace"),
     ("vhledy",     "co si všiml ve vlastních datech"),
     ("anomalie",   "odchylky v jeho chování"),
-    ("vzpominka",  "jeho první/nejstarší vzpomínka"),
+    # HANS_SOFT_MEMORY_V1 — popis zúžen: model sem posílal i „máš oblíbenou
+    # vzpomínku?", což je vztahový dotaz do volného registru, ne výpis.
+    ("vzpominka",  "jeho ÚPLNĚ PRVNÍ (nejstarší) vzpomínka — NE oblíbená ani hezká"),
     ("videl",      "kdy koho naposledy viděl"),
     # HANS_ROUTE_SELF_ACTIVITY_V1 — dřív jen „o čem jsme se spolu bavili":
     # model pod to schoval i „co jsi dnes dělal?" a Hans vysypal přepis chatu.
@@ -3580,6 +3582,25 @@ def _asks_own_records(message: str, config: dict) -> bool:
     return not (out or "").strip().lower().startswith("jine")
 
 
+# HANS_SOFT_MEMORY_V1 — rozlišení faktického a měkkého dotazu na vzpomínku.
+_MEM_FACTUAL_PAT = re.compile(
+    r"(prvn[íi]|nejstarš[íi]|nejd[řr][íi]v|nejd[řr][íi]v[ěe]jš[íi]|"
+    r"úpln[ěe]\s+prvn[íi]|jak\s+dávno)", re.I)
+_MEM_SOFT_PAT = re.compile(
+    r"(oblíben|nejoblíben|hezk|nejhezč|krásn|nejkrásn|mil[áou]|dojemn|"
+    r"nejrad[šs]|nejlep[šs]|nejsiln|vtipn|smutn|zábavn|radostn|"
+    r"d[ůu]ležit|cenn)", re.I)
+
+
+def _soft_memory_ask(msg: str) -> bool:
+    """True = dotaz na vzpomínku VZTAHOVÝ (oblíbená, hezká, nejsilnější),
+    ne faktický (první / nejstarší / jak dávno)."""
+    m = msg or ""
+    if _MEM_FACTUAL_PAT.search(m):
+        return False
+    return bool(_MEM_SOFT_PAT.search(m))
+
+
 def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     """HANS_CMD_LLM_ROUTE_V4 — oprav štítek podle DETERMINISTICKÝCH signálů.
 
@@ -3589,6 +3610,15 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     nic — kdežto `rozhovory` má A4 (`HANS_THREAD_V1`), který hledá
     v `teddy_dialog` přes `hans_convindex`.
     """
+    # HANS_SOFT_MEMORY_V1 — „máš oblíbenou vzpomínku?" NENÍ dotaz na MIN(ts).
+    # Router pod `vzpominka` schová každou větu se slovem vzpomínka, protože
+    # jiný štítek pro paměť nemá. Faktický dotaz („první/nejstarší") chodí
+    # na short-circuit přes vlastní nl_patterns, takže se tu o nic nepřijde;
+    # měkký/vztahový dotaz posíláme do volného registru (= žádný výpis).
+    if cid == "vzpominka" and _soft_memory_ask(msg):
+        _log.info("HANS_SOFT_MEMORY_V1: '%.40s' → /vzpominka ZAMÍTNUTO "
+                  "(měkký dotaz, ne nejstarší záznam)", msg)
+        return ""
     if cid not in ("nitky", "rozhovory"):
         return cid
     try:
