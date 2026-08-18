@@ -275,7 +275,15 @@ def _comfy_reclaim_gpu(config: dict, after_render: bool = True) -> bool:
     if not host or host not in _comfy_url(config):
         return False
     busy_pct = float(cfg.get("gpu_reclaim_pct", 15.0))
-    work_w = float(cfg.get("gpu_reclaim_work_watt", 100.0))
+    # COMFY_RECLAIM_WATT_FLOOR_V1 (18.8.) — práh 100 W byl NAD reálnou prací, tak
+    # se restartovalo do běžícího výpočtu. Data ze 17.–18.8. (7 zásahů) separují
+    # obě populace čistě:
+    #   • zásek runlistu:  99 % při 49 W  (2×, restart oprávněný)
+    #   • reálná práce:  19–53 % při 74–95 W  (5×, 19:37–20:18 á 10 min — restart
+    #     nic nespravil, protože nebylo co spravovat; nejspíš Ollama inference)
+    # 65 W leží mezi nimi s rezervou na obě strany. Drží princip
+    # [[gpu-busy-percent-lies]]: rozhoduje PŘÍKON, procenta lžou.
+    work_w = float(cfg.get("gpu_reclaim_work_watt", 65.0))
 
     def _read():
         try:
