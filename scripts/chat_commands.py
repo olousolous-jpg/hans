@@ -575,6 +575,20 @@ def _cmd_rozvrh(handler, name, args) -> str:  # HANS_SCHEDULE_V1
         skip = ""
         if r["last_skip_reason"] and not r["last_run_ok"]:
             skip = f" [posl. skip: {r['last_skip_reason']}]"
+        # HANS_SCHEDULE_LAST_OK_UI_V1 (18.8.) — „kdy naposledy BĚŽELA" a „kdy
+        # naposledy USPĚLA" se u zaseklé rutiny rozcházejí: studium se 18.8.
+        # hlásilo každou minutu, ale 5 h nic nenastudovalo. Bez tohohle by řádek
+        # tvrdil „před 1 min" a vedle něj svítilo ⚠️, což mate.
+        _ok_ts = r.get("last_ok_ts") or 0
+        if _ok_ts and last_ts and (last_ts - _ok_ts) > 60:
+            _oh = (now - _ok_ts) / 3600
+            _ow = (f"před {_oh*60:.0f} min" if _oh < 1 else
+                   (f"před {_oh:.1f}h" if _oh < 24 else f"před {_oh/24:.1f} dny"))
+            skip += f" [posl. ÚSPĚCH: {_ow}]"
+        elif not _ok_ts and last_ts:
+            # Ne „nikdy neuspěla" — úspěchy se sledují teprve od migrace
+            # (HANS_SCHEDULE_LAST_OK_V1), starší běhy o sobě data nemají.
+            skip += " [bez zaznamenaného úspěchu]"
         enabled = "" if r["enabled"] else " (vypnuto)"
         lines.append(f"{marker}• {lbl} — {when} (max gap {gap_h:.0f}h){skip}{enabled}")
     if stale_list:
