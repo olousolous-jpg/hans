@@ -239,15 +239,27 @@ class HansCuriosity:
         Vola Wiki API list=random, dostane title, předá _reader.wikipedia.
         Bez cooldownu (zapojí _activity_read pravděpodobností)."""
         import json
+        import urllib.error
         import urllib.request
         try:
             url = ('https://cs.wikipedia.org/w/api.php'
                    '?action=query&list=random'
                    '&rnnamespace=0&rnlimit=1&format=json')
+            # HANS_WIKI_THROTTLE_CALLERS_V1 (18.8.) — i tenhle jeden dotaz jde do
+            # SDÍLENÉ wiki kvóty. Kdyby ho bucket neviděl, jeho účetnictví lže a
+            # noční sběr materiálu si sáhne na limit, o kterém neví.
+            from scripts import _wiki_throttle as _wt
+            _wt.acquire(url)
             req = urllib.request.Request(url,
-                headers={'User-Agent': 'HansBot/1.0 (curiosity)'})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                data = json.loads(r.read().decode('utf-8'))
+                headers={'User-Agent':
+                         'HansBot/1.0 (+https://github.com/olousolous-jpg/hans)'})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    data = json.loads(r.read().decode('utf-8'))
+            except urllib.error.HTTPError as he:
+                _wt.note_code(getattr(he, 'code', 0),
+                              he.headers.get('Retry-After') if he.headers else None)
+                raise
             randoms = data.get('query', {}).get('random', [])
             if not randoms:
                 _log.warning('Curiosity random_wiki: API vrátilo prázdný seznam')

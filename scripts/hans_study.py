@@ -683,7 +683,9 @@ def _record_works(db_path: str, items) -> None:
 
 
 # ── HANS_STUDY_SOURCES_V2 — Wikisource (primární texty) + Internet Archive ──
-_UA = {"User-Agent": "HansStudyBot/1.0 (home assistant; contact via GitHub)"}
+# HANS_WIKI_UA_CONTACT_V1 — viz web_reader (kontakt v UA = mírnější kvóta).
+_UA = {"User-Agent": "HansStudyBot/1.0 "
+                     "(+https://github.com/olousolous-jpg/hans)"}
 
 
 def _en_title(cs_title: str, lang: str = "cs") -> str:
@@ -693,6 +695,15 @@ def _en_title(cs_title: str, lang: str = "cs") -> str:
     if lang == "en" or not cs_title:
         return cs_title or ""
     import requests as _rq
+    # HANS_WIKI_THROTTLE_V1 — tenhle dotaz jde MIMO WebReader session, ale do
+    # TÉHOŽ rate-limit rozpočtu; bez rozestupu prodlužoval dávku, která si 429
+    # vyrobila. Cooldown = přechodný výpadek → prázdný název (volající to už umí).
+    try:
+        from scripts import _wiki_throttle as _wt
+        _wt.acquire(f"https://{lang}.wikipedia.org/w/api.php")
+    except Exception as e:
+        _log.debug("_en_title: throttle (%s)", e)
+        return ""
     try:
         r = _rq.get(f"https://{lang}.wikipedia.org/w/api.php", params={
             "action": "query", "prop": "langlinks", "titles": cs_title,
@@ -719,9 +730,13 @@ def _wikisource_read(config: dict, query: str, langs=("cs", "en"),
     import html as _html
     import requests as _rq
     seen = _seen_work_ids(db_path)
+    # HANS_WIKI_THROTTLE_WS_V1 (18.8.) — Wikisource je TÁŽ Wikimedia infrastruktura
+    # a čerpá z téhož rozpočtu jako Wikipedia; studium sahá na obojí v jednom kole.
+    from scripts import _wiki_throttle as _wt
     for lang in langs:
         api = f"https://{lang}.wikisource.org/w/api.php"
         try:
+            _wt.acquire(api)
             r = _rq.get(api, params={
                 "action": "query", "list": "search", "srsearch": query,
                 "srlimit": 4, "format": "json"}, headers=_UA, timeout=15)

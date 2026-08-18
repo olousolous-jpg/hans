@@ -141,8 +141,13 @@ class WebReader:
         from scripts.hans_persona import persona_core  # PERSONA_REFACTOR_1_4
         self._persona   = persona_core(config)
         self._sess      = requests.Session()
+        # HANS_WIKI_UA_CONTACT_V1 (18.8.) — Wikimedia chce v UA KONTAKT; bez něj
+        # má klient přísnější kvótu (sonda 18.8.: staré UA dostalo 429 u 14.
+        # dotazu, UA s odkazem prošlo všech 14). Odkaz na VEŘEJNÉ repo, ne osobní
+        # mail — hlavička jde do cizích logů a repo je public ([[hans-public-repo]]).
         self._sess.headers.update({
-            "User-Agent": "HansBot/1.0 (home assistant; educational use)"
+            "User-Agent": "HansBot/1.0 "
+                          "(+https://github.com/olousolous-jpg/hans)"
         })
         # HANS_WIKI_TRANSIENT_V1 (4.8.) — „článek neexistuje" × „Wikipedia teď
         # neodpovídá" se dosud nedaly rozeznat: 429/5xx spadlo do stejného
@@ -151,6 +156,29 @@ class WebReader:
         # Tenhle příznak drží poslední HTTP stav, aby volající poznal výpadek
         # a mohl ODLOŽIT místo počítání pokusu (vzor [[ollama-deferred-processing]]).
         self.last_transient = False
+
+    # HANS_WIKI_THROTTLE_V1 (18.8.) — JEDINÝ východ na síť pro celý WebReader.
+    # Dřív šlo 8 wiki dotazů přímo přes `self._sess.get` bez jakéhokoli
+    # rozestupu → `_gather_material` vypálil 9+ requestů za sekundu → cs.wikipedia
+    # 429 → studium se odložilo → za minutu TÁŽ dávka → livelock (18.8., 5 h).
+    # Tady se řeší obojí naráz:
+    #   • tempo + cooldown pro Wikimedii (`_wiki_throttle`),
+    #   • `_note_http` na KAŽDÉ odpovědi. Dosud se volalo jen u 3 z 8 míst, takže
+    #     429 při stahování SAMOTNÉHO ČLÁNKU se tvářil jako „článek neexistuje".
+    # Ne-WMF adresy (RSS, přímé URL) jdou beze změny — cizí server nemá důvod
+    # platit za wiki rate-limit.
+    def _get(self, url: str, **kw):
+        from scripts import _wiki_throttle as _wt
+        if _wt.is_wikimedia(url):
+            try:
+                _wt.acquire(url)
+            except _wt.WikiCooldown:
+                # Přechodný stav, ne prázdný výsledek — ať volající ODLOŽÍ.
+                self.last_transient = True
+                raise
+        r = self._sess.get(url, **kw)
+        self._note_http(r)
+        return r
 
     def _note_http(self, resp) -> None:
         """Zaznamenej přechodné selhání API (rate limit / výpadek serveru)."""
@@ -185,7 +213,7 @@ class WebReader:
 
         api = WIKIPEDIA_API if lang == "cs" else WIKIPEDIA_API_EN
         try:
-            r = self._sess.get(api.format(title=title), timeout=self._timeout)
+            r = self._get(api.format(title=title), timeout=self._timeout)
             if r.status_code != 200:
                 return None
             data    = r.json()
@@ -274,9 +302,21 @@ class WebReader:
              irrelevantní).
         """
         api = f"https://{lang}.wikipedia.org/w/api.php"
-        # 1) prefixsearch — přesné začátky titulů
+        # HANS_WIKI_PHRASE_SKIP_PREFIX_V1 (17.8.) — u POPISNÉ FRÁZE je
+        # prefixsearch zbytečný dotaz: hledá začátky NÁZVŮ, a „Hrady a zříceniny
+        # Jičínska" žádný článek nezačíná. Cena není nula — cs.wikipedia řeže po
+        # ~6 dotazech (HTTP 429) a study jich dělá několik za pod-téma, takže
+        # ušetřený request je ušetřený falešný výpadek.
+        # Poznávací znak fráze: česká spojka/předložka jako samostatné slovo,
+        # nebo interpunkce. Kanonické víceslovné TITULY („Icon of the Seas")
+        # tím neztrácíme — anglické „of the" v seznamu není.
+        _phrase = bool(re.search(r"[,:;]|\s(?:a|i|nebo|se|si|v|ve|na|o|od|"
+                                 r"pro|při|za|s|k|do)\s", query or "", re.I))
+        # 1) prefixsearch — přesné začátky titulů (u fráze se přeskočí)
         try:
-            r = self._sess.get(api, params={
+            if _phrase:
+                raise _SkipPrefix()
+            r = self._get(api, params={
                 "action": "query", "list": "prefixsearch",
                 "pssearch": query, "format": "json",
                 "pslimit": 3, "psnamespace": 0,
@@ -301,11 +341,14 @@ class WebReader:
                     return _best
                 _log.debug("Wikipedia prefixsearch %r pro %r pod prahem → "
                            "zkouším srsearch", _best, query)
+        except _SkipPrefix:
+            _log.debug("Wikipedia: %r je fráze → prefixsearch přeskočen "
+                       "(šetřím dotaz proti rate-limitu)", query)
         except Exception as e:
             _log.debug("Wikipedia prefixsearch error: %s", e)
         # 2) srsearch s title-similarity filtrem
         try:
-            r = self._sess.get(api, params={
+            r = self._get(api, params={
                 "action": "query", "list": "search",
                 "srsearch": query, "format": "json",
                 "srlimit": 5, "srnamespace": 0,
@@ -362,7 +405,7 @@ class WebReader:
         `_wikipedia_search` se NEMĚNÍ (žádný sdílený práh se neuvolňuje)."""
         api = f"https://{lang}.wikipedia.org/w/api.php"
         try:
-            r = self._sess.get(api, params={
+            r = self._get(api, params={
                 "action": "query", "list": "search",
                 "srsearch": query, "format": "json",
                 "srlimit": int(limit), "srnamespace": 0,
@@ -420,7 +463,7 @@ class WebReader:
                           "redirects": 1, "format": "json",
                           "formatversion": 2}
                 params.update(extra)
-                r = self._sess.get(api, params=params, timeout=self._timeout)
+                r = self._get(api, params=params, timeout=self._timeout)
                 pages = r.json().get("query", {}).get("pages", [])
                 if pages and isinstance(pages, list):
                     node = pages[0].get(piprop) or {}
@@ -440,7 +483,7 @@ class WebReader:
         import urllib.parse as _up
         api = f"https://{lang}.wikipedia.org/w/api.php"
         try:
-            r = self._sess.get(api, params={
+            r = self._get(api, params={
                 "action": "parse", "page": page_title, "prop": "text",
                 "section": "0", "format": "json", "redirects": 1,
             }, timeout=self._timeout)
@@ -492,7 +535,7 @@ class WebReader:
         if intro_only:
             params["exintro"] = 1
         try:
-            r = self._sess.get(api, params=params, timeout=self._timeout)
+            r = self._get(api, params=params, timeout=self._timeout)
             pages = r.json().get("query", {}).get("pages", [])
             if pages and isinstance(pages, list):
                 return (pages[0].get("extract") or "").strip()
@@ -511,7 +554,7 @@ class WebReader:
         if not url:
             return []
         try:
-            r = self._sess.get(url, timeout=self._timeout)
+            r = self._get(url, timeout=self._timeout)
             soup = BeautifulSoup(r.content, "xml")
             items = []
             for item in soup.find_all("item")[:max_items]:
@@ -588,7 +631,7 @@ class WebReader:
         """Stáhne URL a vrátí (title, body_text) BEZ sumarizace. Sdíleno
         fetch_url a rss_summary (HANS_NEWS_FETCH_V1 — RSS teď čte skutečný
         článek, ne jen titulek z feedu)."""
-        r = self._sess.get(url, timeout=self._timeout)
+        r = self._get(url, timeout=self._timeout)
         soup = BeautifulSoup(r.content, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()

@@ -194,7 +194,14 @@ def _alt_titles(title: str, lang: str = "cs", limit: int = 6) -> list:
     if not q:
         return []
     api = "https://%s.wikipedia.org/w/api.php" % lang
-    hdr = {"User-Agent": "HansBot/1.0 (home assistant; educational use)"}
+    # HANS_WIKI_THROTTLE_CALLERS_V1 — sdílená kvóta, viz web_reader._get.
+    hdr = {"User-Agent": "HansBot/1.0 (+https://github.com/olousolous-jpg/hans)"}
+    try:
+        from scripts import _wiki_throttle as _wt
+        _wt.acquire(api)
+    except Exception as e:
+        log.debug("alt_titles: throttle (%s)", e)
+        return []
     try:
         r = _rq.get(api, params={"action": "query", "list": "prefixsearch",
                                  "pssearch": "%s (film" % q, "pslimit": limit,
