@@ -1802,3 +1802,286 @@ def day_fact_lines(f: dict, config: dict = None) -> list:
     if f.get("n_dialogs"):
         lines.append("Rozhovorů s Koláčem: %d." % f["n_dialogs"])
     return lines
+
+
+# ── HANS_PERSON_CARD_V1 (18.8.) — „kdo je X?“ deterministicky ────────────────
+# C4 (7.8.): fakt o dceři LEŽÍ v `relationships` (role, rodina, charakterizace
+# 379 znaků), ale dotaz šel rovnou do RAG. Ten nic nenašel, a o tom, jestli Hans
+# odpoví nebo abstinuje, pak rozhodoval self-consistency práh — TÁŽ otázka tedy
+# jednou vrátila odpověď a podruhé „nemám spolehlivý záznam“.
+# Pořadí je proto: domácnost → encyklopedie → nic. Bez LLM; hlas se přidá až
+# nad výsledkem ([[prompt-debt-tool-calling]]: STAV → PAMĚŤ → HLAS).
+
+
+def _family_sentence(pid: str, links: dict, config: dict) -> str:
+    """Rodinné vazby jako ŠTÍTKY s dvojtečkou („Rodiče: Standa a Jana“).
+
+    ⚠️ Záměrně NE větná vazba: čeština by chtěla 2. pád („dcera Standy a Jany“)
+    a `cz_names` umí jen vokativ a akuzativ. Vymýšlet další skloňování kvůli
+    jedné větě se nevyplatí — štítek je gramaticky bezpečný v každém pádu.
+    """
+    if not links:
+        return ""
+    try:
+        from scripts.cz_names import display_name as _dn
+    except Exception:
+        return ""
+    def _join(ids):
+        return " a ".join(_dn(i, config) or i for i in ids if i)
+    out = []
+    if links.get("parents"):
+        out.append("rodiče: %s" % _join(links["parents"]))
+    if links.get("spouse"):
+        out.append("partner: %s" % (_dn(links["spouse"], config) or links["spouse"]))
+    if links.get("children"):
+        out.append("děti: %s" % _join(links["children"]))
+    return "; ".join(out)
+
+
+def person_card(db_path: str, query: str, config: dict) -> str:
+    """Deterministická odpověď na „kdo je X / co víš o X“. "" = nevím (pak ať
+    odpoví běžná cesta; NIC se nedomýšlí).
+
+    Pořadí: (1) `relationships` — domácnost zná Hans nejlíp a má o ní vlastní
+    pozorování; (2) `entities` — lidé z jeho čtení (Bud Spencer). Přísné
+    `resolve` (bez `loose`, etype='osoba'), aby „co víš o hradech“ netrefilo
+    člověka.
+    """
+    q = (query or "").strip()
+    if not q:
+        return ""
+    # (1) DOMÁCNOST
+    try:
+        from scripts.cz_names import find_known_person, display_name
+        pid = find_known_person(q, config)
+        if pid:
+            from scripts.hans_relationships import Relationships
+            card = Relationships(config).get(pid)
+            if card:
+                nm = card.display_name or display_name(pid, config) or pid
+                head = nm
+                if card.role:
+                    head += " — " + card.role
+                head += "."
+                fam = _family_sentence(pid, card.family_links or {}, config)
+                if fam:
+                    head += " (%s)" % fam
+                ch = (card.characterization or "").strip()
+                if ch:
+                    head += " " + (ch[:400] + ("…" if len(ch) > 400 else ""))
+                return head
+    except Exception as e:
+        _log.debug("person_card: domácnost (%s)", e)
+    # (2) ENCYKLOPEDIE (Hansovo čtení)
+    try:
+        from scripts.hans_entities import EntityStore
+        ent = EntityStore(config).resolve(q, etype="osoba")
+        if ent:
+            # ⚠️ NE `fact_block()` — ta věta („Ověřený fakt o „X“ (z mého
+            # čtení, zdroj: …)“) je GROUNDING PRO MODEL, ne odpověď člověku.
+            # Když ji vrátíme přímo (a to se stane vždy, když hlasový krok
+            # neprojde kontrolou), uživatel čte vnitřek stroje. Doloženo
+            # živě 18.8. Skládáme proto vlastní, čitelnou podobu.
+            g = (ent.get("gloss") or "").strip()
+            nm = ent.get("name") or "?"
+            if not g:
+                return "%s — mám o něm záznam, ale bez bližšího popisu." % nm
+            src = (ent.get("source") or "").strip()
+            out = g if g.lower().startswith(nm.lower()[:6]) else "%s: %s" % (nm, g)
+            if src:
+                out += " (z mého čtení, zdroj: %s)" % src
+            return out
+    except Exception as e:
+        _log.debug("person_card: entity (%s)", e)
+    return ""
+
+
+def person_card_voiced(db_path: str, query: str, config: dict) -> str:
+    """HANS_PERSON_CARD_VOICE_V1 (18.8.) — táž fakta, ale Hansovým hlasem.
+
+    Bez tohohle kroku dostal uživatel do chatu SYROVOU KARTU
+    („Jana — paní domu. (partner: Standa; děti: Klára) …“), případně rovnou
+    vnitřní grounding řetězec z `fact_block` („Ověřený fakt o „X“ (z mého
+    čtení, zdroj: …)“). To je podklad PRO MODEL, ne odpověď člověku —
+    doloženo živým dialogem 18.8.
+
+    Kontrakt je stejný jako u `/dnes` (HANS_DAY_AT_HOME_V1): fakta vzniknou
+    DETERMINISTICKY, hlas je smí jen přeformulovat. Když mozek není
+    (herní mód / PC dole), vrátí se karta holá — radši strohé než žádné.
+    """
+    card = person_card(db_path, query, config)
+    if not card:
+        return ""
+    try:
+        from scripts.ollama_client import brain_available
+        if not brain_available(config):
+            return card
+    except Exception:
+        pass
+    try:
+        from scripts.ollama_client import ollama_generate
+        from scripts.hans_persona import persona_core
+        try:
+            core = persona_core(config, with_address=False)
+        except Exception:
+            core = ""
+        model = (config.get("models", {}) or {}).get("dialog", "hans-czech:latest")
+        system = (core + "\n\n" if core else "") + (
+            "Někdo se tě ptá na konkrétního člověka. Odpověz souvisle "
+            "(2-4 věty, tvým hlasem). "
+            # Doloženo živě 18.8.: na „kdo je Bud Spencer?" model odpověděl
+            # „Jmenuji se Carlo Pedersoli… zemřel jsem“ — vzal „první osobu“
+            # jako pokyn mluvit ZA TU OSOBU. Proto se to říká výslovně.
+            "⚠️ O té osobě mluv ve TŘETÍ osobě („je“, „byl“) — první osoba "
+            "patří jen tobě, Hansovi. NIKDY nemluv jako ona. "
+            # HANS_DAY_AT_HOME_EXACT_V1 (7.8.) — týž hlasový krok jinde komolil
+            # čísla; tady z „1929“ udělal „roku devětadvacátého“.
+            "LETOPOČTY, DATA a ČÍSLA opiš PŘESNĚ číslicemi tak, jak jsou ve "
+            "faktech (1929, 2016) — nepřepisuj je slovy. "
+            "Vyjdi POUZE z faktů níže — "
+            "co v nich není, nevíš, a nic si nepřimýšlej: žádné domněnky o "
+            "povaze, zvycích ani vztazích navíc. Jména, role a rodinné vazby "
+            "opiš PŘESNĚ tak, jak jsou uvedené. Když je mezi fakty zdroj "
+            "(odkaz), zmiň, odkud to máš; když tam žádný zdroj NENÍ, o zdroji "
+            # Doloženo živě 18.8.: u domácnosti model připsal
+            # „(zdroj neuváděn)“ — pro uživatele je to šum o vnitřku.
+            "nepiš NIC, ani že chybí. Žádný nadpis, žádné odrážky, "
+            "žádné uvozovky kolem celé odpovědi.")
+        out = ollama_generate(
+            model, "FAKTA O OSOBĚ:\n" + card + "\n\nOdpověz na dotaz: " + (query or ""),
+            system=system, config=config, timeout=60)
+        txt = (out or "").strip().strip('"')
+        # HANS_PERSON_CARD_VOICE_V1 — DETERMINISTICKÁ KONTROLA MÍSTO DŮVĚRY.
+        # Instrukce „čísla opiš číslicemi" nestačila: doloženo 18.8., z „1929"
+        # a „2016" udělal hans-czech „roku devětadvacátého" a „šestnáctého".
+        # To není sloh, to je posunutý FAKT. Prompt už nezesiluji (vzor
+        # [[prompt-debt-tool-calling]]) — radši ověřím výsledek: když se z faktů
+        # ztratí letopočet, hlasovou verzi nepřijmu a vrátím kartu.
+        import re as _re
+        years = set(_re.findall(r"\b(1[89]\d\d|20\d\d)\b", card))
+        if years and not years.issubset(set(
+                _re.findall(r"\b(1[89]\d\d|20\d\d)\b", txt))):
+            _log.info("person_card_voiced: hlas ztratil letopočet %s → karta",
+                      sorted(years - set(_re.findall(
+                          r"\b(1[89]\d\d|20\d\d)\b", txt))))
+            return card
+        # Krátká odpověď = model se nechytil → radši fakta než pahýl.
+        if len(txt) >= 40:
+            return txt[:1200]
+    except Exception as e:
+        _log.warning("person_card_voiced: hlas selhal (%s) — vracím kartu", e)
+    return card
+
+
+def household_card(db_path: str, config: dict) -> str:
+    """HANS_HOUSEHOLD_CARD_V1 (18.8.) — SLOŽENÍ DOMÁCNOSTI, ne kdo je vidět.
+
+    Doloženo dialogem 18.8.: na „kdo v tomhle domě žije" Hans odpověděl
+    „pan Standa, Stando a slečna Klára" — do výčtu se vplížilo OSLOVENÍ a jeden
+    člen domácnosti CHYBĚL, protože odpověď skládal model z hlavy. Seznam
+    přitom leží v `relationships`. Bez LLM; "" když store nic nedá.
+    """
+    try:
+        from scripts.hans_relationships import Relationships
+    except Exception as e:
+        _log.debug("household_card: import (%s)", e)
+        return ""
+    try:
+        cards = [c for c in (Relationships(config).all_cards() or [])
+                 if (c.display_name or "").strip()]
+    except Exception as e:
+        _log.debug("household_card: store (%s)", e)
+        return ""
+    if not cards:
+        return ""
+    # Pořadí: pán/paní domu první, pak zbytek — ne náhodné z DB.
+    def _rank(c):
+        r = (c.role or "").lower()
+        return (0 if "pán" in r else 1 if "paní" in r else 2, c.person_id)
+    # ⚠️ ZÁMĚRNĚ `display_name`, NE `formal_name`: ten sáhne po plném jméně
+    # z configu („Johana"), jenže doma se jí říká Jana — a kontrola
+    # úplnosti v hlasovém kroku porovnává právě `display_name`, takže by si
+    # věta s kontrolou protiřečila. Role („paní domu") titul stejně nese.
+    parts = []
+    for c in sorted(cards, key=_rank):
+        nm = c.display_name
+        parts.append("%s (%s)" % (nm, c.role) if c.role else nm)
+    if len(parts) == 1:
+        return "V domě žije %s." % parts[0]
+    return "V domě žijí %s a %s." % (", ".join(parts[:-1]), parts[-1])
+
+
+def household_card_voiced(db_path: str, config: dict) -> str:
+    """Totéž Hansovým hlasem, ale s KONTROLOU ÚPLNOSTI: když ve vyslovené
+    verzi chybí něčí jméno, nepřijme se. Právě vynechaný člen domácnosti byl
+    ta chyba, kvůli které tohle vzniklo — hezčí věta za cenu ztraceného
+    člověka nestojí."""
+    card = household_card(db_path, config)
+    if not card:
+        return ""
+    try:
+        from scripts.hans_relationships import Relationships
+        names = [(c.display_name or "").strip()
+                 for c in (Relationships(config).all_cards() or [])
+                 if (c.display_name or "").strip()]
+    except Exception:
+        names = []
+    try:
+        from scripts.ollama_client import brain_available
+        if not brain_available(config):
+            return card
+    except Exception:
+        pass
+    try:
+        from scripts.ollama_client import ollama_generate
+        from scripts.hans_persona import persona_core
+        try:
+            core = persona_core(config, with_address=False)
+        except Exception:
+            core = ""
+        model = (config.get("models", {}) or {}).get("dialog", "hans-czech:latest")
+        system = (core + "\n\n" if core else "") + (
+            "Pán domu se ptá, KDO V DOMĚ ŽIJE. Odpověz jednou až dvěma větami "
+            "svým hlasem. Vyjmenuj VŠECHNY osoby z faktů níže i s jejich rolí — "
+            "nikoho nevynechej, nikoho nepřidávej a role neměň. Nepleť do "
+            "výčtu oslovení toho, s kým mluvíš. Žádné odrážky.")
+        out = ollama_generate(model, "FAKTA:\n" + card + "\n\nOdpověz.",
+                              system=system, config=config, timeout=60)
+        txt = (out or "").strip().strip('"')
+        if txt and all(n in txt for n in names) and len(txt) >= 20:
+            return txt[:600]
+        if txt:
+            _log.info("household_card_voiced: hlas vynechal jméno → karta")
+    except Exception as e:
+        _log.warning("household_card_voiced: %s", e)
+    return card
+
+
+# HANS_PERSON_ASK_PAT_V1 (18.8.) — ptá se věta NA OSOBU jako takovou?
+# Dotazovací tvary, u kterých má smysl vrátit kartu. Sám o sobě NESTAČÍ —
+# volající musí navíc mít ve větě známou osobu, jinak by karta vyskočila
+# i na „co víš o hradech". A obráceně: jméno samo taky nestačí, jinak přeteče
+# na konverzační věty („myslíš, že by Jana měla radost z kávovaru?" —
+# doloženo živě 18.8.).
+_PERSON_ASK_PAT = __import__("re").compile(
+    r"(kdo\s+(je|to\s+je|byl|byla)|"
+    r"co\s+v[íi][šs]\s+o|co\s+o\s+(n[ěe]m|n[íi]|nich)\s+v[íi][šs]|"
+    r"co\s+je\s+za[čc]|zn[áa][šs]|[řr]ekni\s+mi\s+o|pov[ěe]z\s+mi\s+o|"
+    r"[řr]ekni\s+mi\s+n[ěe]co\s+o|co\s+mi\s+[řr]ekne[šs]\s+o)",
+    __import__("re").IGNORECASE)
+
+
+def asks_about_person(query: str, config: dict) -> bool:
+    """True = věta jmenuje známou osobu A ptá se na ni. Obě podmínky musí
+    platit současně — viz komentář u `_PERSON_ASK_PAT`."""
+    q = (query or "").strip()
+    if not q or not _PERSON_ASK_PAT.search(q):
+        return False
+    try:
+        from scripts.cz_names import find_known_person
+        if find_known_person(q, config):
+            return True
+    except Exception:
+        pass
+    # osoba z Hansova čtení (Bud Spencer) — rozhodne až `person_card`
+    return True

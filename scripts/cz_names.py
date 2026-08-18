@@ -153,6 +153,46 @@ def _load_config() -> dict:
     return _config_cache
 
 
+def find_known_person(message: str, config: Optional[dict] = None) -> str:
+    """HANS_PERSON_CARD_V1 (18.8.) — jmenuje věta někoho ze `known_persons`?
+    Vrátí KLÍČ osoby (`klara`), jinak "".
+
+    Sem se to vytáhlo z `hans_agent._asks_person_presence`, aby dvě cesty
+    (dotaz na PŘÍTOMNOST × dotaz KDO TO JE) nehledaly jméno každá po svém a
+    nerozešly se. Bere tvary z configu (`nom`/`acc`/`voc`), diakritiku skládá
+    pryč a porovnává na PREFIX bez poslední hlásky, takže projdou i pády,
+    které v configu nejsou („Klárou“, „o Kláře“).
+    """
+    import re as _re
+    import unicodedata as _ud
+
+    def _fold(s):
+        return "".join(c for c in _ud.normalize("NFKD", (s or "").lower())
+                       if not _ud.combining(c))
+
+    msg = _fold(message)
+    if not msg:
+        return ""
+    cfg = config if config is not None else _load_config()
+    kp = (cfg or {}).get("known_persons", {}) or {}
+    best, best_len = "", 0
+    for key, rec in (kp or {}).items():
+        forms = {_fold(key)}
+        for f in ("nom", "acc", "voc", "full", "gen", "dat", "loc", "ins"):
+            v = (rec or {}).get(f)
+            if v:
+                forms.add(_fold(v))
+        for n in forms:
+            if len(n) < 3:
+                continue
+            stem = n[:-1] or n
+            if _re.search(r"\b%s" % _re.escape(stem), msg):
+                # nejdelší shoda vyhrává (delší tvar = jistější trefa)
+                if len(stem) > best_len:
+                    best, best_len = key, len(stem)
+    return best
+
+
 def person_gender(name: str, config: Optional[dict] = None) -> Optional[str]:
     """Vytáhne rod z config.known_persons (klíč = lower-case jméno).
 

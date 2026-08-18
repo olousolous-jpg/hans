@@ -3479,7 +3479,15 @@ _LLM_ROUTE_CMDS = [
     # kolidovalo s „co teď BĚŽÍ v tv" a router posílal dotaz na televizi sem.
     ("rozvrh",     "jeho vlastní rozvrh autonomních rutin a jejich poslední tik"),
     ("zdravi",     "zdraví systému: Ollama, Kodi, PC, disk"),
-    ("zajmy",      "co koho zajímá"),
+    # HANS_PERSON_ASK_PAT_V1 — popis byl tak obecný („co koho zajímá"), že si
+    # k sobě přitáhl i „co o ní víš" → Hans místo odpovědi vysypal výpis zájmů.
+    # ⚠️ V popisu ZÁMĚRNĚ ŽÁDNÉ konkrétní jméno: první verze uváděla příklad
+    # „jaké má Jana zájmy“ a router si podle toho jména přitáhl i otázku
+    # „myslíš, že by Jana měla radost z kávovaru?“ (regrese 18.8., moje).
+    ("zajmy",      "VÝSLOVNĚ zájmy a koníčky osoby — musí v dotazu zaznít "
+                   "„zájmy“, „koníčky“, „co koho zajímá“. NE obecný dotaz na "
+                   "osobu („co víš o X“, „kdo je X“) a NE otázka na názor "
+                   "(„myslíš, že by se X líbilo…“)"),
     # HANS_CMD_LLM_ROUTE_V4 — dřív „…s osobou": model to četl jako
     # „věta zmiňující osobu" a posílal sem dotazy na Koláče.
     ("nitky",      "nedokončená témata, která zbývá dotáhnout"),
@@ -3501,6 +3509,14 @@ _LLM_ROUTE_SYSTEM = (
       # má grounded blok „FAKTA O MĚ A O MÉM DNEŠKU" (HANS_SELF_STATE_V1).
       # Bez těchto příkladů to model schovával pod `rozhovory` (= přepis chatu).
       "„co jsi dnes dělal?\" -> zadny\n„jak se dnes máš?\" -> zadny\n"
+      # HANS_PERSON_ASK_PAT_V1 — dotaz NA OSOBU si k sobě přitahoval /zajmy
+      # (jediná „osobní" volba v katalogu). Odpovídá na něj karta z
+      # `relationships`/`entities` až za routerem, takže sem patří „zadny“.
+      "„co o ní víš?\" -> zadny\n„na Janu jsi zapomněl, co o ní víš\" -> zadny\n"
+      "„kdo je Klára?\" -> zadny\n„co víš o Janě?\" -> zadny\n"
+      # Otázka na NÁZOR jen zmiňuje osobu — patří do volného hovoru.
+      "„myslíš, že by Jana měla radost z kávovaru?\" -> zadny\n"
+      "„co by na to řekla Klára?\" -> zadny\n"
       "„co jsi dělal celý den?\" -> zadny\n"
       "„přehraj ten seriál\" -> zadny\n„co běží v televizi?\" -> zadny\n"
       "„děje se něco doma?\" -> zadny\n„zapni hlídání\" -> zadny\n"

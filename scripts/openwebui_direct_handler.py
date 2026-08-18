@@ -104,6 +104,11 @@ def _cz_clock_words(h: int, m: int) -> str:
     return f'{hw} {mw}'
 
 
+class _SkipLookup(Exception):
+    """HANS_PERSON_CARD_BYPASS_V1 — interní signál: odpověď je z karty osoby,
+    instantní dohledání se přeskakuje (jinak by přepsalo jistý fakt domněnkou)."""
+
+
 class OpenWebUIDirectHandler:
 
     def __init__(self, config: dict):
@@ -595,11 +600,28 @@ class OpenWebUIDirectHandler:
         try:
             from scripts.hans_recall import (
                 is_knowledge_check_query, knowledge_check_answer,
-                reading_recall_answer)
+                reading_recall_answer, person_card)
             if is_knowledge_check_query(str(_text)):
                 _dbp_kc = (self.config.get("diary_db")
                            or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                            or "data/hans_diary.db")
+                # HANS_PERSON_CARD_KC_V1 (18.8.) — OSOBA MÁ PŘEDNOST PŘED ČTENÍM.
+                # Agentní akce `report_person` řeší jen tvar „kdo je X?"; „co víš
+                # o X?" se sem odbočí DŘÍV a agenta vůbec nepotká. Doloženo živě
+                # 18.8.: „a co víš o Janě?" → Hans popsal vesnici Henčov
+                # u Jihlavy, protože v paměti nic nenašel a spustil dohledání.
+                # Fakt o paní domu přitom leží v `relationships`. Proto se sem
+                # vkládá první: vlastní pozorování domácnosti je autoritativnější
+                # než cokoli dohledaného, a rovnou to ubírá práci near-miss
+                # pravopisu ([[instant-lookup-verify-loop]]).
+                # Neosobní dotaz („co víš o hradech?") vrátí prázdno → beze změny.
+                try:
+                    _pc = person_card(_dbp_kc, str(_text), self.config)
+                except Exception:
+                    _pc = ""
+                if _pc:
+                    self._grounding_outcome = 'grounded'
+                    return _pc
                 # HANS_READING_RECALL_V1 — nejdřív deterministicky dohledej, co
                 # si o tom Hans SÁM přečetl (declension-safe, obchází flaky RAG
                 # na tenkých souhrnech). Má přednost před „nemám záznam".
@@ -2780,11 +2802,41 @@ class OpenWebUIDirectHandler:
         # (doložený Červený trpaslík). Grounding block s explicit „PAMĚŤ
         # NEOBSAHUJE X" NEZABRAL (persona > grounding). Bypass jako sources_answer.
         try:
-            from scripts.hans_recall import knowledge_check_bypass
+            from scripts.hans_recall import knowledge_check_bypass, person_card
             _dbp_kb = (self.config.get("diary_db")
                        or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                        or "data/hans_diary.db")
-            _kb = knowledge_check_bypass(_dbp_kb, user_message, asker=name)
+            # HANS_PERSON_CARD_BYPASS_V1 (18.8.) — OSOBA MÁ PŘEDNOST PŘED
+            # DOHLEDÁVÁNÍM. Doloženo živě 18.8.: „a co víš o Janě?" → Hans
+            # popsal vesnici Henčov u Jihlavy, protože v paměti nic nenašel a
+            # spustil `lookup_now`. Fakt o paní domu přitom leží v
+            # `relationships`. Agentní akce `report_person` to nezachytí —
+            # „co víš o X?" se odbočí SEM a agenta vůbec nepotká.
+            # ⚠️ Nestačilo vložit to do `_build_grounding`: ta skládá jen
+            # PODKLAD PRO MODEL, kdežto tenhle bypass odpovídá uživateli přímo
+            # a model už nespustí (na to jsem při stavbě naletěl).
+            # Neosobní dotaz („co víš o hradech?") vrátí prázdno → beze změny.
+            # ⚠️ BRÁNA (nález z živého testu 18.8.): bez ní se karta vysypala i na
+            # KONVERZAČNÍ větu, která jméno jen zmiňuje — „myslíš, že by Jana
+            # měla radost z kávovaru?" dostalo místo odpovědi výpis karty.
+            # `person_card` sám o sobě říká jen „ta věta jmenuje známou osobu",
+            # ne „ptá se, KDO to je“. Kartu proto pustíme jen u znalostního
+            # dotazu (tvar „co víš o X“); tvar „kdo je X“ řeší agentní akce
+            # `report_person` dřív a sem nedojde.
+            _pcard = ""
+            try:
+                from scripts.hans_recall import (is_knowledge_check_query as _ikc,
+                                                 asks_about_person as _aap)
+                # HANS_PERSON_ASK_PAT_V1 — sama `is_knowledge_check_query` je
+                # moc úzká: „na Janu jsi zapomněl, ne? co o ní víš" jí NEPROJDE
+                # (doloženo živě 18.8.) a LLM router to pak poslal na výpis zájmů.
+                if _ikc(user_message) or _aap(user_message, self.config):
+                    # HANS_PERSON_CARD_VOICE_V1 — kartu vyslov, nevysypej
+                    from scripts.hans_recall import person_card_voiced
+                    _pcard = person_card_voiced(_dbp_kb, user_message, self.config)
+            except Exception:
+                _pcard = ""
+            _kb = _pcard or knowledge_check_bypass(_dbp_kb, user_message, asker=name)
             if _kb:
                 # HANS_INSTANT_LOOKUP_V1 (4.8.) — „nemám záznam" už není konec:
                 # zkus téma DOHLEDAT HNED a odpovědět PROVIZORNĚ. Do paměti se
@@ -2792,8 +2844,10 @@ class OpenWebUIDirectHandler:
                 # ověří se v noci a ráno se případně pošle oprava. Když dohledání
                 # nevyjde (mozek dole / článek nenalezen / gate), padáme zpět na
                 # původní poctivé „nemám záznam" — žádná regrese.
-                _bypass_kind = "knowledge_check"
+                _bypass_kind = "person_card" if _pcard else "knowledge_check"
                 try:
+                    if _pcard:
+                        raise _SkipLookup()   # HANS_PERSON_CARD_BYPASS_V1
                     from scripts.hans_recall import _extract_knowledge_topic
                     from scripts.hans_findings import lookup_now
                     _topic_kb = _extract_knowledge_topic(user_message)
@@ -2805,6 +2859,9 @@ class OpenWebUIDirectHandler:
                             _bypass_kind = "instant_lookup"
                             print("[Chat] HANS_INSTANT_LOOKUP_V1 → provizorní "
                                   "odpověď z dohledání (čeká na noční ověření)")
+                except _SkipLookup:
+                    print("[Chat] HANS_PERSON_CARD_BYPASS_V1 → karta osoby "
+                          "(dohledávání přeskočeno)")
                 except Exception as _ile:
                     print(f"[Chat] instant lookup error: {_ile}")
                 if _bypass_kind == "knowledge_check":

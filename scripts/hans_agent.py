@@ -156,16 +156,14 @@ def _asks_person_presence(message: str, config: dict) -> bool:
     msg = _fold(message)
     if not msg:
         return False
-    kp = (config or {}).get("known_persons", {}) or {}
-    names = set()
-    for key, rec in kp.items():
-        names.add(_fold(key))
-        for f in ("nom", "acc", "voc"):
-            v = (rec or {}).get(f)
-            if v:
-                names.add(_fold(v))
-    if not any(_re.search(r"\b%s" % _re.escape(n[:-1] or n), msg)
-               for n in names if len(n) >= 3):
+    # HANS_PERSON_CARD_V1 (18.8.) — hledání jména se přesunulo do
+    # `cz_names.find_known_person`, ať ho sdílí s dotazem „kdo je X?“
+    # (`hans_recall.person_card`). Dvě kopie by se dřív nebo později rozešly.
+    try:
+        from scripts.cz_names import find_known_person as _fkp
+        if not _fkp(message, config):
+            return False
+    except Exception:
         return False
     return bool(_re.search(
         r"(doma|je\s+tu|je\s+tady|jsou\s+tu|jsou\s+tady|kde\s+je|kde\s+jsou|"
@@ -395,6 +393,42 @@ def _run_pc_health(handler, args) -> str:
         return "Počítač: " + ", ".join(lines) + "."
     except Exception:
         return "Stav počítače se mi teď nedaří zjistit, pane."
+
+
+def _run_household(handler, args) -> Optional[str]:
+    """HANS_HOUSEHOLD_CARD_V1 — kdo v domě BYDLÍ (ne kdo je právě vidět)."""
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts.hans_recall import household_card_voiced
+        return household_card_voiced(
+            cfg.get("diary_db", "data/hans_diary.db"), cfg) or None
+    except Exception as e:
+        log.debug("report_household: %s", e)
+        return None
+
+
+def _run_person_info(handler, args) -> Optional[str]:
+    """HANS_PERSON_CARD_ACTION_V1 — „kdo je X?“ / „co víš o X?“ z DETERMINISTICKÝCH
+    úložišť (`relationships`, pak `entities`). Prázdno → vrať None, ať odpoví
+    běžná cesta; NIC se nedomýšlí (C4, 7.8.: fakt ležel v DB, ale dotaz šel do
+    RAG a o odpovědi rozhodoval práh self-consistency)."""
+    cfg = getattr(handler, "config", {}) or {}
+    q = (args or {}).get("jmeno") or ""
+    # Instance routeru visí na handleru jako `_agent_inst`
+    # (`openwebui_direct_handler._agent_router`), NE `_agent` — na to jsem
+    # při stavbě naletěl a surová věta nikdy nedorazila.
+    _ar = getattr(handler, "_agent_inst", None) or getattr(handler, "_agent", None)
+    raw = getattr(_ar, "_raw_message", "") or ""
+    try:
+        # HANS_PERSON_CARD_VOICE_V1 — hlasový krok; bez mozku spadne na kartu
+        from scripts.hans_recall import person_card_voiced
+        db = cfg.get("diary_db", "data/hans_diary.db")
+        # napřed celá věta (nese pád), teprve pak samotné jméno z routeru
+        return (person_card_voiced(db, raw, cfg)
+                or person_card_voiced(db, q, cfg) or None)
+    except Exception as e:
+        log.debug("report_person: %s", e)
+        return None
 
 
 def _run_who_home(handler, args) -> str:
@@ -744,9 +778,33 @@ ACTIONS: dict[str, Action] = {
                "vram", "kolik ram", "gpu", "grafick", "jak se má počítač"],
         args=[], run=_run_pc_health, grounding=None,
         needs_confirm=False, cooldown_s=10),
+    "report_household": Action(
+        "report_household",
+        "Odpovědět na dotaz, KDO V DOMĚ BYDLÍ / ŽIJE — složení domácnosti "
+        "(kdo do ní patří a jakou má roli). ⚠️ NE kdo je právě doma nebo "
+        "v místnosti TEĎ — to je report_who_is_home. Rozdíl: „kdo tu bydlí“ "
+        "je trvalý stav, „kdo je doma“ je aktuální pozorování.",
+        hints=["kdo tu bydli", "kdo tu žije", "kdo tu zije", "kdo v dome",
+               "kdo v domě", "domacnost", "domácnost", "kdo sem patri"],
+        args=[], run=_run_household, grounding=None,
+        needs_confirm=False, cooldown_s=10),
+    "report_person": Action(
+        "report_person",
+        "Odpovědět na dotaz KDO JE konkrétní člověk / co o něm Hans ví / jaký "
+        "je — identita a charakteristika osoby (člen domácnosti i osobnost "
+        "z Hansova čtení). Patří sem i „co víš o <jméno>?“, „řekni mi o "
+        "<jméno>“, „znáš <jméno>?“, „co je zač <jméno>?“ — tedy i tvary, kde "
+        "jméno stojí v jiném pádě („o Janě“, „o Kláře“). "
+        "⚠️ NE dotaz na PŘÍTOMNOST nebo polohu („je X doma?“, "
+        "„kde je X?“, „kdo je doma?“) — ten patří report_who_is_home.",
+        hints=["kdo je", "kdo to je", "co vis o", "co víš o", "co je zac",
+               "co je zač", "znas", "znáš", "kdo byl", "rekni mi o"],
+        args=["jmeno"], run=_run_person_info, grounding=None,
+        needs_confirm=False, cooldown_s=10),
     "report_who_is_home": Action(
         "report_who_is_home",
-        "Odpovědět na dotaz o PŘÍTOMNOSTI osob TEĎ — kdo je doma / v místnosti / "
+        "Odpovědět na dotaz o PŘÍTOMNOSTI osob TEĎ (koho Hans právě VIDÍ) — "
+        "kdo je doma / v místnosti / "
         "kdo tu je, ale i „kde je <jméno>?“, „je <jméno> doma?“, „co dělá "
         "<jméno>?“ (odpověď = koho Hans právě VIDÍ; NEDOMÝŠLET činnost, jen "
         "přítomnost). Vyber TUTO akci u dotazů na aktuální polohu/přítomnost "
@@ -1106,6 +1164,10 @@ class AgentRouter:
         return m.endswith("?") or bool(self._SLEEP_NEGATION.search(m))
 
     def propose(self, handler, name: str, message: str) -> Optional[str]:
+        # HANS_PERSON_CARD_ACTION_V1 (18.8.) — `report_person` potřebuje CELOU
+        # větu, ne jen jméno vytažené routerem: „co víš o Janě?“ nese pád,
+        # který config zná, kdežto router by mohl vrátit tvar jiný.
+        self._raw_message = message or ""
         """Vrátí propose_text (Hansův návrh + [ano/ne]) nebo None (běžný chat)."""
         if not self.enabled:
             return None
