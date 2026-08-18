@@ -538,12 +538,28 @@ async def get_diary_entry(type: str, offset: int = 0):
             import re as _re
             m = _re.search(r"([\w\-]+\.md)", row[2] or "")
             if m:
-                wp = Path("data/hans_works") / m.group(1)
+                # HANS_WEBADMIN_AUTHORSHIP_V1 — hledej v obou adresářích:
+                # starší eseje ze studia leží v data/hans_works, novější
+                # autorská díla v data/works.
+                for _base in ("data/hans_works", "data/works"):
+                    wp = Path(_base) / m.group(1)
+                    if wp.exists():
+                        try:
+                            text = wp.read_text(encoding="utf-8").strip()
+                        except Exception:
+                            pass
+                        break
+        elif type == "writing_completed":
+            # HANS_WEBADMIN_AUTHORSHIP_V1 — dílo na pokračování: poznámka nese
+            # jen dovětek, soubor se pozná ze SLUGU nadpisu (týž slug, jakým ho
+            # `hans_authorship._complete` zapsal → nemůže se to rozejít).
+            try:
+                from scripts.hans_authorship import _slug as _wslug
+                wp = Path("data/works") / ("%s.md" % _wslug(row[1] or ""))
                 if wp.exists():
-                    try:
-                        text = wp.read_text(encoding="utf-8").strip()
-                    except Exception:
-                        pass
+                    text = wp.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
         return {"total": total, "offset": offset, "dt": row[0],
                 "title": row[1] or "", "text": text, "ts": row[3]}
     except Exception as e:
