@@ -392,6 +392,125 @@ def _render_site_images(config: dict, pages: dict, dest_dir: Path, cap: int):
     return out, len(mapping), len(all_gens)
 
 
+# ── HANS_MAKER_PRINCIPLE_CHECK_V1 — propsaly se principy do CSS? ────────────
+# Každý princip má DETERMINISTICKOU stopu v kódu. Kontroluje se jen to, co brief
+# skutečně žádá (klíčová slova), ať se nevyčítá princip, který se neučil.
+_PRINCIPLE_CHECKS = (
+    # (co v briefu, lidský název, jak se pozná v CSS)
+    (("kerning", "tracking", "letter-spacing", "prostrkání"),
+     "kerning/tracking (letter-spacing)", "letter_spacing"),
+    (("leading", "line-height", "řádkování", "radkovani"),
+     "řádkování (line-height)", "line_height"),
+    (("hierarch", "hierarchie"),
+     "vizuální hierarchie (typová škála)", "type_scale"),
+    (("third", "třetin", "tretin", "golden", "zlatý řez", "zlaty rez",
+      "composition", "kompozic", "grid", "mřížka"),
+     "kompozice (mřížka / zlatý řez)", "layout_grid"),
+    (("colour", "color", "barv", "palette", "paleta"),
+     "barevný akcent (ne jen šedá)", "accent_color"),
+    (("harmon",),
+     "barevná harmonie (≥2 odstíny)", "two_hues"),
+)
+
+
+def _css_colors(html: str) -> list:
+    """Barvy z CSS jako (h, s, v). Bere #rgb, #rrggbb a rgb()."""
+    import colorsys
+    out = []
+    for m in re.finditer(r"#([0-9a-fA-F]{3,6})\b", html or ""):
+        h = m.group(1)
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        if len(h) != 6:
+            continue
+        r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+        out.append(colorsys.rgb_to_hsv(r, g, b))
+    for m in re.finditer(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", html or ""):
+        r, g, b = (int(m.group(i)) / 255.0 for i in (1, 2, 3))
+        out.append(colorsys.rgb_to_hsv(r, g, b))
+    return out
+
+
+def _has_trace(kind: str, html: str) -> bool:
+    """Je v kódu stopa po daném principu?"""
+    h = html or ""
+    if kind == "letter_spacing":
+        return "letter-spacing" in h
+    if kind == "line_height":
+        return "line-height" in h
+    if kind == "type_scale":
+        sizes = {m.group(1) for m in re.finditer(
+            r"font-size\s*:\s*([0-9.]+(?:rem|em|px|%))", h)}
+        return len(sizes) >= 3
+    if kind == "layout_grid":
+        return ("grid-template-columns" in h or "1.618" in h
+                or re.search(r"display\s*:\s*grid", h) is not None
+                or "columns:" in h)
+    if kind in ("accent_color", "two_hues"):
+        chrom = [c for c in _css_colors(h) if c[1] >= 0.25 and 0.12 <= c[2] <= 0.97]
+        if kind == "accent_color":
+            return len(chrom) >= 1
+        hues = sorted(c[0] * 360 for c in chrom)
+        return any(b - a >= 30 for a, b in zip(hues, hues[1:])) if len(hues) >= 2 else False
+    return True
+
+
+def principle_gaps(brief: str, html: str) -> list:
+    """Které principy brief žádá, ale v kódu po nich není stopa. Čistá funkce."""
+    b = (brief or "").lower()
+    gaps = []
+    for keys, label, kind in _PRINCIPLE_CHECKS:
+        if not any(k in b for k in keys):
+            continue                      # brief to nežádá → nevyčítej
+        if not _has_trace(kind, html):
+            gaps.append(label)
+    return gaps
+
+
+def _repair_principles(config: dict, model: str, prompt: str, system: str,
+                       html: str, brief: str, what: str = "") -> str:
+    """Jedno opravné kolo: modelu se VYJMENUJE, co v kódu chybí. Nová verze se
+    přijme jen když je platná A má MENŠÍ mezeru — jinak zůstane původní
+    (opravné kolo nesmí dílo zhoršit)."""
+    gaps = principle_gaps(brief, html)
+    if not gaps or not _cfg(config).get("principle_check", True):
+        if gaps:
+            _log.info("maker%s: principy nekontroluji (principle_check=false)", what)
+        return html
+    _log.warning("maker%s: v kódu CHYBÍ nastudované principy: %s — jedno "
+                 "opravné kolo", what, "; ".join(gaps))
+    try:
+        from scripts.ollama_client import ollama_generate
+        raw = ollama_generate(
+            model,
+            prompt + "\n\nPŘEDCHOZÍ VERZE principy NEAPLIKOVALA. Uprav CSS tak, "
+            "aby bylo v kódu VIDĚT tohle:\n- " + "\n- ".join(gaps) +
+            "\nKonkrétně: letter-spacing na nadpisech, mřížka "
+            "(grid-template-columns) nebo poměr 1.618 v rozvržení, a alespoň "
+            "jedna sytá akcentová barva (ne jen odstíny šedé). Obsah a strukturu "
+            "zachovej. Vrať POUZE kompletní kód.",
+            system=system, config=config,
+            timeout=int(_cfg(config).get("llm_timeout", 600)), keep_alive=0,
+            options={"temperature": float(_cfg(config).get("temperature", 0.3)),
+                     "num_ctx": int(_cfg(config).get("num_ctx", 8192)),
+                     "num_predict": int(_cfg(config).get("num_predict", 4096)),
+                     "num_gpu": int(_cfg(config).get("num_gpu", 99))})
+        fixed = _extract_html(raw) if (raw and raw.strip()) else ""
+        if fixed and len(fixed) >= 120:
+            after = principle_gaps(brief, fixed)
+            if len(after) < len(gaps):
+                _log.info("maker%s: opravné kolo pomohlo — chybí už jen %s",
+                          what, "; ".join(after) or "nic")
+                return fixed
+            _log.info("maker%s: opravné kolo nepomohlo (chybí %d→%d) — "
+                      "nechávám původní", what, len(gaps), len(after))
+        else:
+            _log.info("maker%s: opravné kolo nevrátilo použitelný kód", what)
+    except Exception as e:
+        _log.warning("maker%s: opravné kolo selhalo: %s", what, e)
+    return html
+
+
 def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
                     deepen_round: int = 0) -> dict:
     """HANS_MAKER_MULTIPAGE_V1 — vícestránkové dílo: coder udělá stylovou
@@ -425,6 +544,13 @@ def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
         landing = _extract_html(raw) if (raw and raw.strip()) else ""
         if not landing or len(landing) < 120:
             return {"status": "deferred", "reason": "landing prázdný"}
+        # HANS_MAKER_PRINCIPLE_CHECK_V1 — landing nese STYL pro celý web
+        # (`_extract_style` ho kopíruje do podstránek), takže opravou CSS tady
+        # se principy propíšou do všech stránek naráz.
+        landing = _repair_principles(
+            config, model,
+            "Téma: %s\n\nDESIGN BRIEF:\n%s\n\nVrať index.html:" % (topic, brief),
+            _LANDING_SYSTEM, landing, brief, " site")
         img_prompts = _image_prompts_for(config, [sub for _, sub in subs])
         style = _extract_style(landing)
         pages = {"index.html": landing}
