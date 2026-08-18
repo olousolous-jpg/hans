@@ -123,6 +123,55 @@ _RECALL_PAT = re.compile(
     r"zn[áa][šs]\b|pamatuje[šs]", re.IGNORECASE)
 
 
+# HANS_FILM_RECOMMEND_V1 — žádá věta o DOPORUČENÍ (ne o spuštění)?
+def _asks_recommendation(message: str) -> bool:
+    """True = „doporuč mi film", „co bys vybral", „máš tip" — konverzační
+    žádost o názor. Rozkaz s názvem („pusť Kruh") sem NEspadá."""
+    import re as _re, unicodedata as _ud
+    msg = "".join(c for c in _ud.normalize("NFKD", (message or "").lower())
+                  if not _ud.combining(c))
+    if not msg:
+        return False
+    return bool(_re.search(
+        r"(doporuc|dopurac|co\s+bys\s+(mi\s+)?(vybral|navrhl|doporucil)|"
+        r"mas\s+(nejaky\s+)?tip|na\s+co\s+se\s+(mam|mame)\s+podivat|"
+        r"co\s+bych\s+si\s+mel\s+pustit|co\s+navrhujes|"
+        r"co\s+stoji\s+za\s+(to\s+)?(videni|shlednuti))", msg))
+
+
+# HANS_PRESENCE_ASK_V1 — ptá se věta na PŘÍTOMNOST konkrétní známé osoby?
+_PRESENCE_PAT = None
+
+
+def _asks_person_presence(message: str, config: dict) -> bool:
+    """True = věta jmenuje známou osobu z `known_persons` a ptá se, kde je
+    nebo jestli je doma. Deterministické: jména i pády bere z configu,
+    diakritiku skládá pryč, takže „janu"/„Jana"/„jana" sedí stejně."""
+    import re as _re, unicodedata as _ud
+
+    def _fold(s):
+        return "".join(c for c in _ud.normalize("NFKD", (s or "").lower())
+                       if not _ud.combining(c))
+
+    msg = _fold(message)
+    if not msg:
+        return False
+    kp = (config or {}).get("known_persons", {}) or {}
+    names = set()
+    for key, rec in kp.items():
+        names.add(_fold(key))
+        for f in ("nom", "acc", "voc"):
+            v = (rec or {}).get(f)
+            if v:
+                names.add(_fold(v))
+    if not any(_re.search(r"\b%s" % _re.escape(n[:-1] or n), msg)
+               for n in names if len(n) >= 3):
+        return False
+    return bool(_re.search(
+        r"(doma|je\s+tu|je\s+tady|jsou\s+tu|jsou\s+tady|kde\s+je|kde\s+jsou|"
+        r"videl|vidis|vidite|dorazil|prisel|prisla|je\s+pryc|odesel|odesla)", msg))
+
+
 def _looks_like_recall(message: str) -> bool:
     return bool(_RECALL_PAT.search(message or ""))
 
@@ -1073,6 +1122,25 @@ class AgentRouter:
             if aid in ("report_home_status", "report_who_is_home",
                        "report_now_playing") and self._mentions_kolac(message):
                 aid = "report_kolac_status"
+            # HANS_FILM_RECOMMEND_V1 — žádost o DOPORUČENÍ není rozkaz pustit.
+            # Doloženo 2×: „Doporučil bys mi film?" → nabídl pustit sportovní
+            # přenos, co zrovna běžel (název si router vzal z živého stavu).
+            # action=null → odpoví volný hovor z Hansových zápisků o filmech.
+            if aid in ("kodi_play_film", "add_book_wishlist") and \
+                    _asks_recommendation(message):
+                log.info("HANS_FILM_RECOMMEND_V1: %s potlačen — věta žádá "
+                         "doporučení, ne spuštění: %.50s", aid, message)
+                return None
+            # HANS_PRESENCE_ASK_V1 — dotaz na přítomnost konkrétní osoby patří
+            # VŽDY na who_home, i v ukecané formě („nevíš, jestli je Jana
+            # doma?" končilo na report_kolac_status). Přepisujeme jen mezi
+            # `report_*` akcemi, aby guard neukradl skutečný příkaz.
+            if (aid and aid.startswith("report_") and aid != "report_who_is_home"
+                    and not self._mentions_kolac(message)
+                    and _asks_person_presence(message, self.config)):
+                log.info("HANS_PRESENCE_ASK_V1: %s → report_who_is_home "
+                         "(dotaz na přítomnost osoby): %.50s", aid, message)
+                aid = "report_who_is_home"
             # HANS_CHAT_STUDY_BRIDGE_GUARD — recall („zjisti víc o / co víš o
             # X") se NESMÍ zrouteovat na studium (malý model občas splete „víc"
             # a „si") → nech odpovědní/film-recall cestu (action=null).
