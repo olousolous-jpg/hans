@@ -464,6 +464,82 @@ def _topic_anchor_tokens(topic: str) -> list:
     return _title_tokens(t)
 
 
+# HANS_STUDY_ANCHOR_DECOMPOSE_V1 — české místní přípony: „Jičínska" → „Jičín".
+_GEO_SUFFIXES = ("ského", "ském", "skou", "ska", "sko", "ské", "ský", "ská", "sky")
+
+
+def _geo_base(word: str) -> str:
+    """Ořízne místní příponu. Krátká slova nechá být (ať nevznikne pahýl)."""
+    w = (word or "").strip(" .,;:")
+    if len(w) < 7:
+        return w
+    for suf in _GEO_SUFFIXES:
+        if w.lower().endswith(suf) and len(w) - len(suf) >= 4:
+            return w[:-len(suf)]
+    return w
+
+
+def _decomposed_anchor_queries(sub: str, topic: str, limit: int = 3) -> list:
+    """Dotazy na kotvu ze SLOŽEK fráze, od nejkonkrétnější k nejobecnější.
+
+    „Hrady a zříceniny Jičínska" / „Český ráj a okolní hrady"
+        → ['Jičín', 'Český ráj', 'zříceniny']
+    Vlastní jména pod-tématu jdou první (nesou místo/osobu), pak jádro tématu
+    programu, teprve nakonec obecné pojmy.
+    """
+    out, seen = [], set()
+
+    def _add(q):
+        q = (q or "").strip(" .,;:–-")
+        if len(q) >= 4 and q.lower() not in seen:
+            seen.add(q.lower())
+            out.append(q)
+
+    s = (sub or "").split(":")[0]
+    import re as _re0
+    # 0) POD-TÉMA BEZ KONCOVÉ PŘEDLOŽKOVÉ VAZBY — nejlepší kandidát, protože
+    #    zůstane vlastní předmět: „Gotická architektura v Čechách" → „Gotická
+    #    architektura" (což článek JE). Bez tohohle padalo studium až na obecnou
+    #    kotvu typu „Historie", která k pod-tématu nemá co říct.
+    _trim = _re0.sub(r"\s+(?:v|ve|na|o|u|za|pro|při|po|do|od|s|se|k|ke)\s+\S+.*$",
+                     "", s).strip()
+    if _trim and _trim.lower() != s.strip().lower() and len(_trim.split()) >= 2:
+        _add(_trim)
+    # 0b) první dvě slova pod-tématu (když druhé není spojka/předložka) —
+    #     „Archeologické metody a datování" → „Archeologické metody"
+    _w = s.split()
+    if len(_w) >= 2 and _w[1].lower() not in (
+            "a", "i", "nebo", "v", "ve", "na", "o", "u", "za", "pro", "při",
+            "po", "do", "od", "s", "se", "k", "ke"):
+        _add(" ".join(_w[:2]))
+    # 1) vlastní jména pod-tématu (velké písmeno uvnitř věty) + geo-normalizace.
+    #    Genitivní/lokálová přídavná jména („Českého", „Broumovském") samostatný
+    #    článek nikdy nejsou — jen by spálila dotaz proti rate-limitu.
+    for wd in s.split()[1:]:
+        if not wd[:1].isupper():
+            continue
+        base = _geo_base(wd)
+        if base.lower() != wd.lower():
+            _add(base)               # „Broumovském" → „Broumov" = dobrý kandidát
+        elif not wd.lower().endswith(
+                ("ého", "ému", "ém", "ých", "ým", "ými", "ou",
+                 # ⚠️ 17.8. živý test: „Čechách" (lokál) našel „Čechočovice" —
+                 # tvary v nepřímém pádě nejsou názvy článků a přes práh
+                 # podobnosti propašují CIZÍ obec. Radši je nezkoušet vůbec.
+                 "ách", "ích", "ám", "ím", "emi", "ami")):
+            _add(wd)                 # „Českého" sem nepatří, článek to není
+    # 2) jádro tématu programu jako FRÁZE („Český ráj a okolní hrady" → „Český ráj")
+    import re as _re
+    core = _re.split(r"\s+(?:a|i|nebo|se|v|na)\s+|[(:,–-]", (topic or "").strip(),
+                     maxsplit=1)[0]
+    _add(core)
+    # 3) obecná podstatná jména pod-tématu (poslední záchrana)
+    for wd in s.split():
+        if len(wd) >= 6 and not wd[:1].isupper():
+            _add(wd)
+    return out[:limit]
+
+
 def _anchor_pick(config: dict, w, sub: str, topic: str, lang: str,
                  used_titles: set) -> Optional[str]:
     """Vyber článek kotvený na téma programu. None = nic vhodného."""
@@ -492,6 +568,33 @@ def _anchor_pick(config: dict, w, sub: str, topic: str, lang: str,
         _log.info("study: '%s' — přesný článek neexistuje, kotvím na téma "
                   "programu → '%s' (skóre %.2f)", sub, title, score)
         return title
+    # HANS_STUDY_ANCHOR_DECOMPOSE_V1 — druhý průchod: dotazy ze SLOŽEK fráze.
+    # Pravidlo výše žádá titul obsahující VŠECHNY tokeny tématu, což u místních
+    # a odborných článků („Jičín", „Kumburk") nikdy neprojde. Tady se ptáme
+    # přímo na složky; o relevanci rozhoduje title-similarity gate uvnitř
+    # `_wikipedia_search`, takže se nepřimyká nic nesouvisejícího.
+    _maxq = int(c.get("anchor_decompose_max", 3))
+    for q in _decomposed_anchor_queries(sub, topic, limit=_maxq):
+        if getattr(w, "last_transient", False):
+            break                        # rate-limit → nezhoršuj to dalšími dotazy
+        try:
+            t = w._wikipedia_search(q, lang)
+        except Exception as e:
+            _log.debug("anchor decompose '%s': %s", q, e)
+            continue
+        if not t or _norm(t) in used_titles:
+            continue
+        # ⚠️ DRUHÁ POJISTKA (17.8., z živého testu): práh podobnosti sám
+        # nestačí — dotaz „Čechách" prošel na článek „Čechočovice" (cizí obec).
+        # Titul proto musí NĚKTERÝM tokenem odpovídat dotazu, jinak ho zahoď.
+        _qtok = _title_tokens(q)
+        _ttok = _title_tokens(t)
+        if _qtok and not any(_token_match(a, b) for a in _qtok for b in _ttok):
+            _log.info("study: kotva '%s' pro dotaz '%s' ZAMÍTNUTA "
+                      "(titul dotazu neodpovídá)", t, q)
+            continue
+        _log.info("study: '%s' — kotva ze složky fráze '%s' → '%s'", sub, q, t)
+        return t
     return None
 
 

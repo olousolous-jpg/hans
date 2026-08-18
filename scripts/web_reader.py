@@ -99,6 +99,11 @@ WIKIPEDIA_API_EN = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
 WIKIPEDIA_SEARCH = "https://cs.wikipedia.org/w/api.php"
 
 
+class _SkipPrefix(Exception):
+    """HANS_WIKI_PHRASE_SKIP_PREFIX_V1 — interní signál: u popisné fráze
+    prefixsearch nedělá nic užitečného, přeskoč ho a jdi na fulltext."""
+
+
 @dataclass
 class ReadResult:
     source: str          # "wikipedia", "rss", "url"
