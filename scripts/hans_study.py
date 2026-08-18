@@ -1505,9 +1505,20 @@ class StudyStore:
             conn = self._connect()
             try:
                 row = conn.execute(
-                    "SELECT id, topic FROM study_program WHERE status='pending' "
+                    "SELECT id, topic, fail_count, curriculum FROM study_program WHERE status='pending' "
                     "ORDER BY id ASC LIMIT 1").fetchone()
-                return {"id": row["id"], "topic": row["topic"]} if row else None
+                # HANS_STUDY_PENDING_STUCK_V1 — fail_count musí projít dál,
+                # jinak by se počítadlo pokusů vždy vracelo na nulu.
+                if not row:
+                    return None
+                # HANS_STUDY_SEEDED_CURRICULUM_V1 — kurikulum musí projít dál,
+                # aby aktivace poznala ručně naseedované téma.
+                try:
+                    _cur = json.loads(row["curriculum"] or "[]")
+                except Exception:
+                    _cur = []
+                return {"id": row["id"], "topic": row["topic"],
+                        "fail_count": row["fail_count"], "curriculum": _cur}
             finally:
                 conn.close()
         except Exception:
@@ -1539,11 +1550,58 @@ class StudyStore:
         # (Hans/uživatel se k němu zavázal). Vygeneruj kurikulum a aktivuj.
         pend = self._next_pending_topic()
         if pend:
-            curriculum = _generate_curriculum(config, pend["topic"], [])
+            # HANS_STUDY_SEEDED_CURRICULUM_V1 (17.8.) — když už pending téma
+            # kurikulum MÁ (ručně naseedované, ověřené proti encyklopedii),
+            # respektuj ho a negeneruj přes něj vlastní. Dřív se přepisovalo
+            # vždycky, takže ruční seed neměl jak přežít aktivaci.
+            curriculum = pend.get("curriculum") or []
+            if len(curriculum) >= 3:
+                _log.info("study: pending '%s' má připravené kurikulum "
+                          "(%d pod-témat) — negeneruji nové",
+                          pend["topic"], len(curriculum))
+            else:
+                curriculum = _generate_curriculum(config, pend["topic"], [])
             if len(curriculum) < 3:
-                _log.info("study.ensure_program: kurikulum pending '%s' "
-                          "se nevygenerovalo (LLM dole?) — zkusím příště",
-                          pend["topic"])
+                # HANS_STUDY_PENDING_STUCK_V1 — rozliš „mozek dole" (0 pod-témat,
+                # pokus se nepočítá) od „téma je nedohledatelné" (něco přišlo,
+                # ale validace to seškrtala). Druhé po 3 nocích uzavři, ať se to
+                # neopakuje tiše navěky.
+                _transient = not curriculum
+                _fails = int(pend.get("fail_count") or 0)
+                if not _transient:
+                    _fails += 1
+                _blocked = (not _transient) and _fails >= 3
+                try:
+                    conn = self._connect()
+                    try:
+                        conn.execute(
+                            "UPDATE study_program SET fail_count=?, status=?, "
+                            "updated_ts=? WHERE id=?",
+                            (_fails, "blocked" if _blocked else "pending",
+                             time.time(), pend["id"]))
+                        conn.commit()
+                    finally:
+                        conn.close()
+                except Exception as _pe:
+                    _log.debug("pending fail_count: %s", _pe)
+                if _blocked:
+                    _log.warning("study: pending téma '%s' po %d pokusech "
+                                 "BLOKOVÁNO — encyklopedie k němu nedá dost "
+                                 "dohledatelných pod-témat", pend["topic"], _fails)
+                    try:
+                        self._write_diary(
+                            "study_blocked",
+                            "Studium '%s' nelze začít" % pend["topic"],
+                            "Po %d pokusech se nepodařilo sestavit kurikulum "
+                            "z dohledatelných zdrojů." % _fails)
+                    except Exception:
+                        pass
+                else:
+                    _log.info("study.ensure_program: kurikulum pending '%s' "
+                              "se nevygenerovalo (%s) — pokus %d/3",
+                              pend["topic"],
+                              "LLM dole" if _transient else "nedohledatelné",
+                              _fails)
                 return None
             try:
                 conn = self._connect()
@@ -2331,16 +2389,16 @@ def _run_study_session_impl(config: dict, diary_db_path: str, knowledge=None,
         if res is None:
             hans_schedule.mark('study_tick', ok=False, skip_reason='deferred')
         else:
-            rr = res.get("result", "studied")
-            if rr in ("studied", "completed"):
+            rr = res.get("result", RESULT_STUDIED)
+            if produced_knowledge(rr):   # přísnější než made_progress — viz _KNOWLEDGE
                 hans_schedule.mark('study_tick', ok=True)
             else:
                 hans_schedule.mark('study_tick', ok=False, skip_reason=rr)
     except Exception:
         pass
     if res is None:
-        return "deferred"
-    return res.get("result", "studied")
+        return RESULT_DEFERRED
+    return res.get("result", RESULT_STUDIED)
 
 
 # ── Smoke (python3 -m scripts.hans_study) ───────────────────────────────────
