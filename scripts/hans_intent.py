@@ -408,18 +408,27 @@ class HansIntent:
 # legitimní dotaz na domácnost. Rozdíl „na MĚ × na DŮM" je jiná otázka a chce
 # vlastní příklady — s nimi 12/12.
 _SELF_SYSTEM = (
-    "Rozhodni, čeho se týká česká otázka položená domácímu asistentovi.\n"
-    "ASISTENT = ptá se na NĚJ samotného (jak se má, co dělá, jeho nálada, "
-    "co je u něj nového, co dnes dělal).\n"
-    "DUM = ptá se na dění v domácnosti (kdo je doma, co běží v televizi, "
-    "co se děje doma).\n\n"
-    "Příklady:\n„jak se máš?\" -> asistent\n„co děláš?\" -> asistent\n"
-    "„co je u tebe nového?\" -> asistent\n„nudíš se?\" -> asistent\n"
-    "„co jsi dnes dělal?\" -> asistent\n"
-    "„kdo je doma?\" -> dum\n„co hraje na TV?\" -> dum\n"
-    "„je někdo v pokoji?\" -> dum\n"
-    "„co se děje doma?\" -> dum\n\n"
-    "Odpověz JEDNÍM slovem: asistent nebo dum."
+    "Rozhodni, \u010deho se t\u00fdk\u00e1 \u010desk\u00e1 ot\u00e1zka polo\u017een\u00e1 dom\u00e1c\u00edmu asistentovi.\n"
+    "ASISTENT = pt\u00e1 se na N\u011aJ samotn\u00e9ho (jak se m\u00e1, co d\u011bl\u00e1, jeho n\u00e1lada, "
+    "co je u n\u011bj nov\u00e9ho, co dnes d\u011blal).\n"
+    "DUM = pt\u00e1 se na d\u011bn\u00ed v dom\u00e1cnosti (kdo je doma, co b\u011b\u017e\u00ed v televizi, "
+    "co se d\u011bje doma).\n"
+    # HANS_INTENT_THIRD_PERSON_V1 (18.8.) — T\u0158ET\u00cd KATEGORIE, ne dal\u0161\u00ed p\u0159\u00edklad.
+    # Volba byla bin\u00e1rn\u00ed, tak\u017ee „kdo je Klára?“ nebyla ANI JEDNA mo\u017enost
+    # a model ji tla\u010dil do ASISTENT. Zm\u011b\u0159eno 18.8.: 11/16, a chybovalo
+    # p\u0159esn\u011b t\u011bch 5 dotaz\u016f na identitu t\u0159et\u00ed osoby. Soci\u00e1ln\u00ed guard pak
+    # potla\u010dil stavovou akci u dotazu, kter\u00fd se Hanse v\u016fbec net\u00fdkal (C4, 7.8.).
+    "OSOBA = pt\u00e1 se na KONKR\u00c9TN\u00cdHO \u010cLOV\u011aKA jin\u00e9ho ne\u017e asistent \u2014 kdo to je, "
+    "co o n\u011bm v\u00ed, jak\u00fd je.\n\n"
+    "P\u0159\u00edklady:\n„jak se máš?“ -> asistent\n„co děláš?“ -> asistent\n"
+    "„co je u tebe nového?“ -> asistent\n„nudíš se?“ -> asistent\n"
+    "„co jsi dnes dělal?“ -> asistent\n"
+    "„kdo je doma?“ -> dum\n„co hraje na TV?“ -> dum\n"
+    "„je někdo v pokoji?“ -> dum\n"
+    "„co se děje doma?“ -> dum\n"
+    "„kdo je Klára?“ -> osoba\n„co víš o Janě?“ -> osoba\n"
+    "„kdo je Bud Spencer?“ -> osoba\n\n"
+    "Odpov\u011bz JEDN\u00cdM slovem: asistent, dum nebo osoba."
 )
 
 _self_cache: dict = {}
@@ -470,7 +479,12 @@ def _ask_classifier(config: dict, system: str, message: str) -> Optional[str]:
 
 
 def is_about_self(message: str, config: dict) -> bool:
-    """Ptá se zpráva na HANSE (jeho stav/náladu/činnost)? Mini model na Pi.
+    """Ptá se zpráva na HANSE (jeho stav/náladu/činnost)?
+
+    Klasifikuje `hans-czech` NA PC (od 5.8., viz `_ask_classifier`) — dřív tu stálo
+    "mini model na Pi", což už neplatí a plete při ladění (herní mód klasifikaci
+    shodí, protože PC je pak mimo). Vrací True JEN pro kategorii asistent —
+    `dum` i `osoba` (HANS_INTENT_THIRD_PERSON_V1) jsou False.
 
     Selhání / nejednoznačná odpověď → False (chovej se jako dosud). Vypnutý
     `intent.use_llm` → False, žádný fallback na seznam slov: tenhle detektor
