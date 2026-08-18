@@ -1833,6 +1833,44 @@ def _cmd_studium(handler, name, args) -> str:
                    "(z %d pokusů, pak ho přeskočím sám). "
                    "Chcete-li hned: /studium přeskoč" % (_fc, _maxf))
         out.append("")
+    # HANS_STUDY_TODAY_LINE_V1 (18.8.) — DNEŠEK. Výpis dosud ukazoval jen stav
+    # kurikula, takže na „jak ti dneska šlo studium?" i na přímé „povedlo se ti
+    # dneska něco nastudovat?" chodila TÁŽ statická šablona (doloženo dialogem
+    # 18.8.). Poctivá odpověď přitom v datech JE — `hans_schedule.study_tick`
+    # od HANS_SCHEDULE_LAST_OK_V1 rozlišuje „kdy to naposledy zkusilo" od
+    # „kdy naposledy USPĚLO". Bez tohohle řádku Hans o dnešku buď mlčel, nebo
+    # si ho přisvojil („dnes jsem prohluboval znalosti…“, ač studium neproběhlo).
+    try:
+        from scripts.hans_schedule import ScheduleStore as _SS
+        import datetime as _dt
+        _row = _SS(_recall_db(handler)).get("study_tick") or {}
+        _today = _dt.date.today()
+
+        def _is_today(ts):
+            try:
+                return bool(ts) and _dt.date.fromtimestamp(float(ts)) == _today
+            except Exception:
+                return False
+
+        _why = {"deferred": "encyklopedie nebo mozek neodpovídaly",
+                "noread": "k pod-tématu jsem nenašel zdroj",
+                "idle": "neměl jsem co studovat",
+                "skipped": "pod-téma jsem přeskočil"}
+        if _is_today(_row.get("last_ok_ts")):
+            out.append("Dnes se mi povedlo nastudovat pod-téma.")
+        elif _is_today(_row.get("last_run_ts")):
+            _r = (_row.get("last_skip_reason") or "").strip()
+            _kdy = _dt.datetime.fromtimestamp(
+                float(_row["last_run_ts"])).strftime("%H:%M")
+            # Neznámý kód vypiš, jak je — radši syrový než domyšlený.
+            _txt = _why.get(_r, _r)
+            out.append("Dnes se mi nic nastudovat nepodařilo (poslední pokus "
+                       "%s%s)." % (_kdy, (", důvod: " + _txt) if _txt else ""))
+        else:
+            out.append("Dnes jsem se ke studiu ještě nedostal.")
+        out.append("")
+    except Exception as _te:
+        _log.debug("/studium: dnešní řádek nešel sestavit (%s)", _te)
     out.append("Sessions: %d  |  ručně: /studium teď, /studium přeskoč"
                % ap["sessions_done"])
     # HANS_STUDY_RECALL_V1 — fronta pending (aby bylo jasné, co JEŠTĚ NENÍ
