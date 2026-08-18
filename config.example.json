@@ -836,7 +836,9 @@
     "_validate_delay_note": "prodleva mezi dotazy při validaci — bez ní si vyrobíme vlastní rate-limit",
     "anchor_min_score": 0.3,
     "anchor_max_tokens": 4,
-    "_anchor_note": "HANS_STUDY_TOPIC_ANCHOR_V1 — když přesný článek neexistuje, ber kandidáta obsahujícího jádro NÁZVU PROGRAMU (krátký titul, nízké skóre); garbage bez kotvy neprojde."
+    "_anchor_note": "HANS_STUDY_TOPIC_ANCHOR_V1 — když přesný článek neexistuje, ber kandidáta obsahujícího jádro NÁZVU PROGRAMU (krátký titul, nízké skóre); garbage bez kotvy neprojde.",
+    "anchor_decompose_max": 3,
+    "_note_anchor_decompose_max": "HANS_STUDY_ANCHOR_DECOMPOSE_V1: kolik dotazů smí padnout na hledání kotvy ze SLOŽEK fráze pod-tématu. Strop je kvůli wiki rate-limitu (viz _wiki_throttle) — každý dotaz navíc je krok k HTTP 429."
   },
   "authorship": {
     "enabled": true,
@@ -970,7 +972,7 @@
     "blink_enabled": false,
     "blink_min_s": 3.0,
     "blink_max_s": 9.0,
-    "blink_hold_s": 0.10,
+    "blink_hold_s": 0.1,
     "blink_close_s": 0.45,
     "blink_open_s": 0.45,
     "lid_release_s": 0.0,

@@ -19,10 +19,25 @@ NÍZKOSTAKOVÉ (na rozdíl od Severky): jen čte a poznámkuje, nemutuje identit
 ani postoje přímo. Proto je gate stálosti volnější (config) než u Severky.
 
 Tabulka `study_program` v hans_diary.db:
-  id, topic, curriculum(JSON), current_index, status(active|completed|abandoned),
-  sessions_done, started_ts, updated_ts, last_session_ts
+  id, topic, curriculum(JSON), current_index, status, sessions_done,
+  started_ts, updated_ts, last_session_ts
 
-Wiring: 1 session/noc v hans_routine nočním ticku (run_study_session).
+STAVY PROGRAMU (HANS_STUDY_UNIFY_V1, 18.8. — dřív tu stálo `abandoned`, které
+v kódu NIKDY neexistovalo; `pending`/`blocked` naopak chyběly):
+  active    — běží; `get_active_program` bere NEJSTARŠÍ (HANS_STUDY_SEQUENTIAL_V1)
+  completed — kurikulum dojeté + mistrovská reflexe
+  pending   — téma čeká na aktivaci (chat/agent přes `add_pending_topic`)
+  blocked   — 3× se nepodařilo vygenerovat kurikulum (HANS_STUDY_PENDING_STUCK_V1)
+Druhá tabulka v tomhle modulu: `deepen_proposals` (pending|approved|rejected|
+expired) — návrhy na prohloubení dokončeného programu.
+
+WIRING — TŘI vstupy, ne jeden (docstring dřív sliboval „1 session/noc"):
+  1. noční okno `hans_routine._in_night_window()` = **22:00–06:00** (ne 2–6),
+  2. brain_up catchup `hans_routine.study_catchup_async()` — 1×/den, když
+     noční okno vyšlo naprázdno (HANS_STUDY_BRAIN_UP_CATCHUP_V1),
+  3. ruční `/studium teď` z chatu (`chat_commands`).
+Denní guard `_last_study_date` je PERZISTENTNÍ (`_save_routine_state`), takže
+restart Hanse den neodemkne; po `deferred` se ZÁMĚRNĚ nenastaví → retry.
 LLM části (kurikulum/poznámka/syntéza) běží v noci na base modelu keep_alive=0
 (anti-konfabulace + VRAM tier; [[ollama-vram-tiers]]). Deferral-safe.
 """
@@ -35,6 +50,48 @@ import re
 import sqlite3
 import time
 from typing import List, Optional
+
+# ── HANS_STUDY_UNIFY_V1 (18.8.) — JEDNA PRAVDA O VÝSLEDCÍCH ─────────────────
+# Kódy se dřív porovnávaly řetězcem na třech místech a každé mělo jiný názor:
+# docstring `run_study_session` jmenoval 4 kódy, reálně jich vzniká 6, routine
+# testovala `!= "deferred"` a chat neznal `skipped` (uživatel se o něm nedozvěděl,
+# ačkoli přesně kvůli tomu HANS_STUDY_NUDGE_V1 vznikl). Predikáty níž jsou
+# jediné místo, kde se význam kódu rozhoduje.
+RESULT_STUDIED   = "studied"     # nastudováno pod-téma
+RESULT_COMPLETED = "completed"   # kurikulum dojeté (+ mistrovská reflexe)
+RESULT_SKIPPED   = "skipped"     # pod-téma po max_subtopic_failures přeskočeno
+RESULT_NOREAD    = "noread"      # k pod-tématu se nenašlo čtení (fail_count++)
+RESULT_IDLE      = "idle"        # není co studovat / vypnuto
+RESULT_DEFERRED  = "deferred"    # transientní výpadek (LLM/wiki) → retry
+
+#: Kódy, po kterých se NESMÍ zapálit denní guard — nic se nestalo, zkus znovu.
+_TRANSIENT = {RESULT_DEFERRED}
+#: Kódy, kde se program pohnul kupředu (index nebo znalost) — `skipped` ANO,
+#: protože kurikulum postoupilo na další pod-téma.
+_PROGRESS = {RESULT_STUDIED, RESULT_COMPLETED, RESULT_SKIPPED}
+#: Kódy, kde session opravdu NĚCO PŘINESLA. `skipped` schválně NE: přeskočení
+#: mrtvého pod-tématu je pohyb, ale ne znalost — a kdyby se počítalo jako
+#: úspěch, program, který jen přeskakuje, by rozvrhovému auditu hlásil „ok"
+#: každou noc a slepé místo (HANS_SCHEDULE_LAST_OK_V1) by se vrátilo jinými
+#: dveřmi. Proto má audit vlastní, PŘÍSNĚJŠÍ predikát.
+_KNOWLEDGE = {RESULT_STUDIED, RESULT_COMPLETED}
+
+
+def is_transient(code: str) -> bool:
+    """True = přechodné selhání → guard nenastavovat, zkusit znovu."""
+    return (code or "") in _TRANSIENT
+
+
+def made_progress(code: str) -> bool:
+    """True = session posunula program (nastudováno / dojeto / pod-téma
+    přeskočeno). `noread` a `idle` progres NEJSOU — program stojí na místě."""
+    return (code or "") in _PROGRESS
+
+
+def produced_knowledge(code: str) -> bool:
+    """True = session přinesla ZNALOST (studied/completed). Tohle chce
+    rozvrhový audit — viz komentář u `_KNOWLEDGE`."""
+    return (code or "") in _KNOWLEDGE
 
 _log = logging.getLogger("hans_study")
 
@@ -2194,12 +2251,17 @@ def completed_studies_block(config: dict, diary_db_path: str,
 # ── Top-level noční vstup (volá hans_routine) ───────────────────────────────
 def run_study_session(config: dict, diary_db_path: str, knowledge=None,
                       diary_writer=None) -> str:
-    """Jedna noční studijní session. Vrací kód výsledku:
+    """Jedna studijní session. Vrací JEDEN ze ŠESTI kódů (HANS_STUDY_UNIFY_V1 —
+    dřív jich docstring jmenoval jen 4, `skipped` a `noread` chyběly):
        'studied'   — nastudováno pod-téma
        'completed' — kurikulum dokončeno (mistrovská reflexe)
+       'skipped'   — pod-téma po `max_subtopic_failures` přeskočeno (program se
+                     POSUNUL, ale nic se nenaučil)
+       'noread'    — k pod-tématu se nenašlo čtení; fail_count++, program STOJÍ
        'idle'      — nic ke studiu (žádný durable koníček / vše prostudováno)
-       'deferred'  — transientní selhání (Ollama/wiki dole) → routine zkusí znovu
-    Routine si podle kódu řídí denní guard (deferred = retry, jinak set date)."""
+       'deferred'  — transientní selhání (Ollama/wiki dole) → zkusit znovu
+    Volající NEMÁ kódy porovnávat řetězcem — na to jsou `is_transient()`
+    (nastavit denní guard?) a `made_progress()` (posunulo se to?)."""
     if not _cfg(config).get("enabled", True):
         return "idle"
     # HANS_STUDY_VRAM_HANDOFF_V1 — studium běží na base OpenEuroLLM (8GB), ale

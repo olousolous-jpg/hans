@@ -775,7 +775,9 @@ class HansRoutine:
 
     def study_catchup_async(self):
         """HANS_STUDY_BRAIN_UP_CATCHUP_V1 — studium běží jen v nočním okně
-        (2-6) a potřebuje mozek, jenže PC se v tom okně často neprobudí
+        (**22:00–06:00**, `_in_night_window`; HANS_STUDY_UNIFY_V1 — tady stálo
+        „2-6", což neodpovídalo kódu) a potřebuje mozek, jenže PC se v tom okně
+        často neprobudí
         (3:00 analytický wake je nespolehlivý) → session se odloží
         (deferred) a okno mezitím zavře, takže studium tiše stojí i dny.
         Na naběhnutí mozku (ranní WOL) proto dojeď 1 session, když dnes
@@ -793,10 +795,12 @@ class HansRoutine:
                 return  # dnes už proběhla (noční tick nebo dřívější catchup)
             if not self._chat_quiet_ok():
                 return  # neruš aktivní chat těžkou base-LLM session
-            from scripts.hans_study import run_study_session
+            from scripts.hans_study import run_study_session, is_transient
             _scode = run_study_session(
                 self.config, self._diary_path, knowledge=self._knowledge)
-            if _scode != "deferred":
+            # HANS_STUDY_UNIFY_V1 — význam kódu rozhoduje hans_study, ne tenhle
+            # řetězcový test (obě cesty ke studiu se dřív mohly rozejít).
+            if not is_transient(_scode):
                 self._last_study_date = today
                 self._save_routine_state()
                 _log.info("Studijní session (brain_up catchup): %s", _scode)
@@ -2085,14 +2089,15 @@ class HansRoutine:
                     and self._chat_quiet_ok()):
                 _creative_busy = True
                 try:
-                    from scripts.hans_study import run_study_session
+                    from scripts.hans_study import (run_study_session,
+                                                     is_transient)
                     # diary_writer záměrně NEpředáváme: _diary_write píše do
                     # sloupce `note`, ale studijní poznámky musí do `data`
                     # (odkud je čte _gather_notes pro mistrovskou reflexi).
                     _scode = run_study_session(
                         self.config, self._diary_path,
                         knowledge=self._knowledge)
-                    if _scode != "deferred":
+                    if not is_transient(_scode):   # HANS_STUDY_UNIFY_V1
                         self._last_study_date = today
                         self._save_routine_state()
                         _log.info("Studijní session: %s", _scode)

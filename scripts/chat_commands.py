@@ -1728,6 +1728,14 @@ def _cmd_studium(handler, name, args) -> str:
                     _msg = ("Studium jsem musel odložit, pane — buď mi nebyl "
                             "dostupný mozek, nebo encyklopedie neodpovídala. "
                             "Zkusím to znovu sám.")
+                elif code == "skipped":
+                    # HANS_STUDY_UNIFY_V1 — `skipped` sem dosud nepropadl, takže
+                    # uživatel po ručním „/studium teď" NEDOSTAL žádnou zprávu,
+                    # ačkoli právě kvůli tomu HANS_STUDY_NUDGE_V1 vznikl.
+                    _msg = ("Pod-téma „%s\" jsem po opakovaných pokusech "
+                            "přeskočil, pane — encyklopedie k němu nic nemá. "
+                            "Pokračuji dalším v pořadí."
+                            % (_prev_sub or "aktuální"))
                 elif code == "idle":
                     _msg = "Teď nemám co studovat, pane — vše z kurikula je hotové."
                 if _msg:
