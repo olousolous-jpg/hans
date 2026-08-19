@@ -153,6 +153,33 @@ def _load_config() -> dict:
     return _config_cache
 
 
+def is_known_person(name: str, config: Optional[dict] = None) -> bool:
+    """HANS_HOUSEHOLD_PRIVACY_V1 (19.8.) — je tazatel někdo ze `známých osob`?
+
+    Zdroj je jediný: `known_persons` v configu. Porovnává se přes složenou
+    diakritiku a bere i tvary `nom`/`full`, aby „Johana" i „jana" sedly.
+    """
+    import unicodedata as _ud
+    n = "".join(c for c in _ud.normalize("NFKD", (name or "").strip().lower())
+                if not _ud.combining(c))
+    if not n:
+        return False
+    kp = ((config if config is not None else _load_config()) or {}).get(
+        "known_persons", {}) or {}
+    for key, rec in kp.items():
+        forms = {str(key)}
+        for f in ("nom", "full"):
+            v = (rec or {}).get(f)
+            if v:
+                forms.add(str(v))
+        for form in forms:
+            ff = "".join(c for c in _ud.normalize("NFKD", form.strip().lower())
+                         if not _ud.combining(c))
+            if ff and ff == n:
+                return True
+    return False
+
+
 def find_known_person(message: str, config: Optional[dict] = None) -> str:
     """HANS_PERSON_CARD_V1 (18.8.) — jmenuje věta někoho ze `known_persons`?
     Vrátí KLÍČ osoby (`klara`), jinak "".

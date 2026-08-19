@@ -1871,7 +1871,15 @@ def _family_sentence(pid: str, links: dict, config: dict) -> str:
     return "; ".join(out)
 
 
-def person_card(db_path: str, query: str, config: dict) -> str:
+#: HANS_HOUSEHOLD_PRIVACY_V1 — odpověď cizímu tazateli. Radši zdvořilé
+#: odmítnutí než mlčení: kdyby cesta jen zmlkla, odpověď doskládá model
+#: z ostatního kontextu a domácnost může vyzradit stejně.
+_PRIVACY_REFUSAL = ("O lidech z tohoto domu mluvím jen s těmi, koho znám, "
+                    "pane. Snad mi to prominete.")
+
+
+def person_card(db_path: str, query: str, config: dict,
+                asker: str = "") -> str:
     """Deterministická odpověď na „kdo je X / co víš o X“. "" = nevím (pak ať
     odpoví běžná cesta; NIC se nedomýšlí).
 
@@ -1885,8 +1893,16 @@ def person_card(db_path: str, query: str, config: dict) -> str:
         return ""
     # (1) DOMÁCNOST
     try:
-        from scripts.cz_names import find_known_person, display_name
+        from scripts.cz_names import (find_known_person, display_name,
+                                      is_known_person)
         pid = find_known_person(q, config)
+        # HANS_HOUSEHOLD_PRIVACY_V1 — o ČLENU DOMÁCNOSTI jen se známou osobou.
+        # Encyklopedické osoby (větev 2) zůstávají volné — Bud Spencer je
+        # veřejný fakt, ne soukromí domu.
+        if pid and asker and not is_known_person(asker, config):
+            _log.info("person_card: %r není známá osoba → soukromí domácnosti",
+                      asker)
+            return _PRIVACY_REFUSAL
         if pid:
             from scripts.hans_relationships import Relationships
             card = Relationships(config).get(pid)
@@ -1942,9 +1958,9 @@ def person_card_voiced(db_path: str, query: str, config: dict) -> str:
     DETERMINISTICKY, hlas je smí jen přeformulovat. Když mozek není
     (herní mód / PC dole), vrátí se karta holá — radši strohé než žádné.
     """
-    card = person_card(db_path, query, config)
-    if not card:
-        return ""
+    card = person_card(db_path, query, config, asker=asker)
+    if not card or card == _PRIVACY_REFUSAL:
+        return card   # odmítnutí jde jak je, model ho nepřebásňuje
     try:
         from scripts.ollama_client import brain_available
         if not brain_available(config):
@@ -2014,6 +2030,14 @@ def household_card(db_path: str, config: dict) -> str:
     člen domácnosti CHYBĚL, protože odpověď skládal model z hlavy. Seznam
     přitom leží v `relationships`. Bez LLM; "" když store nic nedá.
     """
+    # HANS_HOUSEHOLD_PRIVACY_V1 — složení domácnosti není veřejná informace.
+    try:
+        from scripts.cz_names import is_known_person
+        if asker and not is_known_person(asker, config):
+            _log.info("household_card: %r není známá osoba → odmítám", asker)
+            return _PRIVACY_REFUSAL
+    except Exception:
+        pass
     try:
         from scripts.hans_relationships import Relationships
     except Exception as e:
@@ -2044,14 +2068,14 @@ def household_card(db_path: str, config: dict) -> str:
     return "V domě žijí %s a %s." % (", ".join(parts[:-1]), parts[-1])
 
 
-def household_card_voiced(db_path: str, config: dict) -> str:
+def household_card_voiced(db_path: str, config: dict, asker: str = "") -> str:
     """Totéž Hansovým hlasem, ale s KONTROLOU ÚPLNOSTI: když ve vyslovené
     verzi chybí něčí jméno, nepřijme se. Právě vynechaný člen domácnosti byl
     ta chyba, kvůli které tohle vzniklo — hezčí věta za cenu ztraceného
     člověka nestojí."""
-    card = household_card(db_path, config)
-    if not card:
-        return ""
+    card = household_card(db_path, config, asker=asker)
+    if not card or card == _PRIVACY_REFUSAL:
+        return card   # odmítnutí se NEvyslovuje modelem, jde jak je
     try:
         from scripts.hans_relationships import Relationships
         names = [(c.display_name or "").strip()

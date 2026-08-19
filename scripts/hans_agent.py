@@ -424,10 +424,12 @@ def _run_pc_health(handler, args) -> str:
 def _run_household(handler, args) -> Optional[str]:
     """HANS_HOUSEHOLD_CARD_V1 — kdo v domě BYDLÍ (ne kdo je právě vidět)."""
     cfg = getattr(handler, "config", {}) or {}
+    _ar = getattr(handler, "_agent_inst", None) or getattr(handler, "_agent", None)
+    _who = getattr(_ar, "_raw_name", "") or ""
     try:
         from scripts.hans_recall import household_card_voiced
         return household_card_voiced(
-            cfg.get("diary_db", "data/hans_diary.db"), cfg) or None
+            cfg.get("diary_db", "data/hans_diary.db"), cfg, asker=_who) or None
     except Exception as e:
         log.debug("report_household: %s", e)
         return None
@@ -445,13 +447,14 @@ def _run_person_info(handler, args) -> Optional[str]:
     # při stavbě naletěl a surová věta nikdy nedorazila.
     _ar = getattr(handler, "_agent_inst", None) or getattr(handler, "_agent", None)
     raw = getattr(_ar, "_raw_message", "") or ""
+    _who = getattr(_ar, "_raw_name", "") or ""   # HANS_HOUSEHOLD_PRIVACY_V1
     try:
         # HANS_PERSON_CARD_VOICE_V1 — hlasový krok; bez mozku spadne na kartu
         from scripts.hans_recall import person_card_voiced
         db = cfg.get("diary_db", "data/hans_diary.db")
         # napřed celá věta (nese pád), teprve pak samotné jméno z routeru
-        return (person_card_voiced(db, raw, cfg)
-                or person_card_voiced(db, q, cfg) or None)
+        return (person_card_voiced(db, raw, cfg, asker=_who)
+                or person_card_voiced(db, q, cfg, asker=_who) or None)
     except Exception as e:
         log.debug("report_person: %s", e)
         return None
@@ -1197,6 +1200,9 @@ class AgentRouter:
         # (19.8.: přiřazení bylo omylem NAD docstringem, takže docstring
         # přestal být docstringem — vráceno na správné pořadí.)
         self._raw_message = message or ""
+        # HANS_HOUSEHOLD_PRIVACY_V1 — runnery potřebují vědět, KDO se ptá
+        # (karty o domácnosti se cizímu člověku nevydávají).
+        self._raw_name = name or ""
         if not self.enabled:
             return None
         try:
