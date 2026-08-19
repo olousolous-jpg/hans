@@ -102,6 +102,11 @@ _DREAM_SEEDS = [
 ]
 
 
+class _StudyBusy(Exception):
+    """HANS_STUDY_SINGLE_FLIGHT_V1 — studium právě běží z druhé cesty;
+    tenhle tick tiše přeskoč (NENÍ to chyba, guard se nesmí nastavit)."""
+
+
 class HansRoutine:
     """Denní rytmus — řídí fáze dne a noční mód."""
 
@@ -152,6 +157,17 @@ class HansRoutine:
         self._last_narrative = ""        # AUTOBIOGRAPHICAL_NARRATIVE_V1 (krok 3, týdenní guard)
         self._last_creation_reflection = ""  # HANS_CREATION_REFLECTION_V1 (D, týdenní guard)
         self._last_study_date = ""       # HANS_STUDY_V1 (1 studijní session/noc)
+        # HANS_STUDY_SINGLE_FLIGHT_V1 (19.8.) — ke studiu vedou DVĚ nezávislé
+        # cesty (noční okno + brain_up catchup) a 19.8. ve 03:04 a 03:05 se
+        # spustily do sebe: dvě sessions na TÉMŽE pod-tématu, dva zápisky
+        # v deníku, dvakrát zaplacený VRAM handoff. Denní guard je nechytil,
+        # protože OBĚ odstartovaly dřív, než ho první stihla nastavit — závod,
+        # ne chyba v jeho logice. Zámek se bere NEBLOKUJÍCÍ: druhý běh tenhle
+        # tik přeskočí (blokující by duplicitu vyrobil taky, jen o minutu
+        # později). Uvolňuje se ve `finally`, aby pád session zámek nedržel —
+        # kdyby ho držel, umlčel by jednu z cest natrvalo, a catchup existuje
+        # PRÁVĚ PROTO, že noční okno je nespolehlivé ([[study-brain-up-catchup]]).
+        self._study_lock = __import__("threading").Lock()
         self._last_writing_date = ""     # HANS_AUTHORSHIP_V1 (1 autorská session/noc)
         self._last_synthesis_date = ""   # HANS_SYNTHESIS_IDEAS_V1 (vlastní nápady, kadence)
         self._last_selfcritique_date = ""  # HANS_SELFCRITIQUE_V1 (sebekritika, kadence)
@@ -796,8 +812,17 @@ class HansRoutine:
             if not self._chat_quiet_ok():
                 return  # neruš aktivní chat těžkou base-LLM session
             from scripts.hans_study import run_study_session, is_transient
-            _scode = run_study_session(
-                self.config, self._diary_path, knowledge=self._knowledge)
+            # HANS_STUDY_SINGLE_FLIGHT_V1
+            if not self._study_lock.acquire(blocking=False):
+                _log.debug("studium (catchup): jiná session už běží → přeskakuji")
+                return
+            try:
+                if self._last_study_date == today:
+                    return   # vítěz závodu ji mezitím dokončil
+                _scode = run_study_session(
+                    self.config, self._diary_path, knowledge=self._knowledge)
+            finally:
+                self._study_lock.release()
             # HANS_STUDY_UNIFY_V1 — význam kódu rozhoduje hans_study, ne tenhle
             # řetězcový test (obě cesty ke studiu se dřív mohly rozejít).
             if not is_transient(_scode):
@@ -2094,9 +2119,19 @@ class HansRoutine:
                     # diary_writer záměrně NEpředáváme: _diary_write píše do
                     # sloupce `note`, ale studijní poznámky musí do `data`
                     # (odkud je čte _gather_notes pro mistrovskou reflexi).
-                    _scode = run_study_session(
-                        self.config, self._diary_path,
-                        knowledge=self._knowledge)
+                    # HANS_STUDY_SINGLE_FLIGHT_V1
+                    if not self._study_lock.acquire(blocking=False):
+                        _log.debug("studium (noc): jiná session už běží → "
+                                   "přeskakuji tick")
+                        raise _StudyBusy()
+                    try:
+                        if self._last_study_date == today:
+                            raise _StudyBusy()   # catchup ji mezitím dojel
+                        _scode = run_study_session(
+                            self.config, self._diary_path,
+                            knowledge=self._knowledge)
+                    finally:
+                        self._study_lock.release()
                     if not is_transient(_scode):   # HANS_STUDY_UNIFY_V1
                         self._last_study_date = today
                         self._save_routine_state()
@@ -2105,6 +2140,8 @@ class HansRoutine:
                         # HANS_STUDY_DEFER_LOG_V1 — brain dole → deferred každý
                         # tick (~70s): DEBUG, ne INFO (dřív ~600 řádků/noc spamu).
                         _log.debug("Studijní session: deferred")
+                except _StudyBusy:
+                    pass          # HANS_STUDY_SINGLE_FLIGHT_V1 — ne chyba
                 except Exception as _stue:
                     _log.warning("Studijní session selhala: %s", _stue)
 
