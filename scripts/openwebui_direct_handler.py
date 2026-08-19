@@ -1902,6 +1902,44 @@ class OpenWebUIDirectHandler:
                           # zaražený doprostřed a následovalo ho ještě šest
                           # bloků kontextu, takže ho recency přebila.
                           + current)  # …/ HANS_CAPABILITY_AWARENESS_V1
+            # HANS_PROMPT_SIZE_PROBE_V1 (19.8.) — MĚŘENÍ, ne oprava.
+            # Změřeno na 989 reálných dotazech: system prompt má medián 1977 zn,
+            # ale MAXIMUM 21 387 a u 40 % dotazů přesáhne 10 000. Grounding
+            # (pár set znaků) se v tom utopí — doloženo 19.8.: týž dotaz
+            # s týmž groundingem odpověděl v izolaci (~2 KB promptu) správně
+            # „1966", zatímco živě (17 280 zn) trval na vymyšleném „1963".
+            # Než se začne řezat, musí být vidět KTERÝ blok to nafukuje.
+            # ⚠️ Logují se JEN DÉLKY, žádný obsah — do debug.log nesmí nic
+            # osobního ([[privacy-external-outputs]]).
+            try:
+                _blocks = {
+                    "system_base": system_base, "time": time_ctx,
+                    "persons": persons_ctx, "surr": surr_ctx, "kodi": kodi_ctx,
+                    "room": room_ctx, "place": place_ctx, "cal": cal_ctx,
+                    "diary": diary_ctx, "story": story_ctx, "study": study_ctx,
+                    "direction": direction_ctx, "idea": idea_ctx,
+                    "read": read_ctx, "body": body_ctx, "mood": mood_ctx,
+                    "health": health_ctx, "downtime": downtime_ctx,
+                    "severka": severka_ctx, "deepen": deepen_ctx,
+                    "lessons": lessons_ctx, "teddy": teddy_ctx,
+                    "memory": memory_ctx, "threads": threads_ctx,
+                    "interests": interests_ctx, "qsuggest": qsuggest_ctx,
+                    "routine": routine_ctx, "cap": cap_ctx,
+                    "current": current,
+                }
+                _sizes = {k: len(v or "") for k, v in _blocks.items()}
+                _sizes = {k: v for k, v in _sizes.items() if v}
+                _dbg(
+                    location="openwebui_direct_handler.py:_build_system",
+                    message="Prompt block sizes",
+                    data={"total": int(len(system_msg)),
+                          "n_blocks": len(_sizes),
+                          "top": dict(sorted(_sizes.items(),
+                                             key=lambda x: -x[1])[:8]),
+                          "sizes": _sizes},
+                )
+            except Exception:
+                pass
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
             # rozvláčnosti (jen chat; greeting má vlastní brevitu).
             if not for_greeting:
@@ -2230,6 +2268,9 @@ class OpenWebUIDirectHandler:
                     "n_history": int(hist_n),
                     "system_chars": int(len(system or "")),
                     "user_chars": int(len(user or "")),
+                    # HANS_PROMPT_SIZE_PROBE_V1 — měřeno 19.8.: grounding se
+                    # do zprávy vůbec nedostával (n_total == n_history+2).
+                    "grounding_chars": int(len((grounding or "").strip())),
                 },
             )
         except Exception:
