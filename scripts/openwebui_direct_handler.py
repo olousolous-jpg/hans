@@ -615,8 +615,22 @@ class OpenWebUIDirectHandler:
                 # než cokoli dohledaného, a rovnou to ubírá práci near-miss
                 # pravopisu ([[instant-lookup-verify-loop]]).
                 # Neosobní dotaz („co víš o hradech?") vrátí prázdno → beze změny.
+                # HANS_PERSON_CARD_KC_FIX_V1 (19.8.) — OPRAVA MÉ VLASTNÍ REGRESE
+                # z 18.8. Zpráva sem chodí s prefixem „<jméno> se ptá:", takže
+                # `find_known_person` našel TAZATELE a `person_card` vracel jeho
+                # kartu jako grounding NA COKOLI. Změřeno: na „a co ses o tom
+                # divadle dozvěděl?" dostal model 448 zn Oldova životopisu
+                # místo 1 307 zn vlastního zápisku o divadle — a tak si rok
+                # vzniku vymyslel. Postihovalo to KAŽDÝ znalostní dotaz v chatu.
+                # Dvě pojistky: (1) prefix odstranit, (2) kartu pustit jen
+                # u dotazu, který se OPRAVDU ptá na osobu.
                 try:
-                    _pc = person_card(_dbp_kc, str(_text), self.config)
+                    import re as _pcre
+                    _q_nopfx = _pcre.sub(r"^\s*\S+\s+se\s+pt[áa]:\s*", "",
+                                         str(_text))
+                    from scripts.hans_recall import asks_about_person as _aap2
+                    _pc = (person_card(_dbp_kc, _q_nopfx, self.config)
+                           if _aap2(_q_nopfx, self.config) else "")
                 except Exception:
                     _pc = ""
                 if _pc:
