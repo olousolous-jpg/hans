@@ -139,6 +139,32 @@ def _asks_recommendation(message: str) -> bool:
         r"co\s+stoji\s+za\s+(to\s+)?(videni|shlednuti))", msg))
 
 
+# HANS_OPINION_NOT_ORDER_V1 (19.8.) — ptá se věta na NÁZOR, ne o akci?
+# Doloženo živě 18.8.: „myslíš, že by Kláru bavil ten film o Bondovi?" → agent
+# navrhl film PUSTIT (conf 0.70). Prompt routeru přitom UŽ obsahuje „akci zvol
+# JEN u jasného pokynu" i „buď konzervativní" — nezabralo, takže další věta do
+# promptu je prompt debt ([[prompt-debt-tool-calling]]) a rozhoduje se to tady.
+_OPINION_PAT = re.compile(
+    r"\b(mysl[íi][šs]|co\s+bys\s+[řr]ekl|co\s+ty\s+na|co\s+[řr][íi]k[áa][šs]\s+na|"
+    r"bavilo\s+by|l[íi]bilo\s+by|m[ěe]l[aoy]?\s+by\s+radost|co\s+soud[íi][šs]|"
+    r"p[řr]ipad[áa]\s+ti|zd[áa]\s+se\s+ti)\b", re.IGNORECASE)
+# ⚠️ BEZ TOHOHLE by veto zabilo i ZDVOŘILOU ŽÁDOST („myslíš, že bys mohl pustit
+# toho Bonda?"), která dnes funguje správně (conf 0.95). Proto musí platit OBOJÍ:
+# názorový tvar A ZÁROVEŇ žádná žádost směrem k Hansovi.
+_REQUEST_TO_HANS = re.compile(
+    r"\b(bys\s+mohl|bys\s+mohla|m[ůu][žz]e[šs]|mohl\s+bys|mohla\s+bys|"
+    r"pus[ťt]|zapni|vypni|p[řr]idej|nastuduj|ud[ěe]lej|za[řr]i[ďd]|spus[ťt]|"
+    r"dej|ho[ďd]|p[řr]ehraj|zastav|pozastav)\b", re.IGNORECASE)
+
+
+def _asks_opinion(message: str) -> bool:
+    """True = věta se ptá na NÁZOR a nic po Hansovi nechce."""
+    msg = message or ""
+    if not _OPINION_PAT.search(msg):
+        return False
+    return not _REQUEST_TO_HANS.search(msg)
+
+
 # HANS_PRESENCE_ASK_V1 — ptá se věta na PŘÍTOMNOST konkrétní známé osoby?
 _PRESENCE_PAT = None
 
@@ -1164,11 +1190,13 @@ class AgentRouter:
         return m.endswith("?") or bool(self._SLEEP_NEGATION.search(m))
 
     def propose(self, handler, name: str, message: str) -> Optional[str]:
+        """Vrátí propose_text (Hansův návrh + [ano/ne]) nebo None (běžný chat)."""
         # HANS_PERSON_CARD_ACTION_V1 (18.8.) — `report_person` potřebuje CELOU
         # větu, ne jen jméno vytažené routerem: „co víš o Janě?“ nese pád,
         # který config zná, kdežto router by mohl vrátit tvar jiný.
+        # (19.8.: přiřazení bylo omylem NAD docstringem, takže docstring
+        # přestal být docstringem — vráceno na správné pořadí.)
         self._raw_message = message or ""
-        """Vrátí propose_text (Hansův návrh + [ano/ne]) nebo None (běžný chat)."""
         if not self.enabled:
             return None
         try:
@@ -1192,6 +1220,15 @@ class AgentRouter:
                     _asks_recommendation(message):
                 log.info("HANS_FILM_RECOMMEND_V1: %s potlačen — věta žádá "
                          "doporučení, ne spuštění: %.50s", aid, message)
+                return None
+            # HANS_OPINION_NOT_ORDER_V1 — otázka na názor nesmí spustit akci
+            # S NÁSLEDKEM. Informativní `report_*` se NEvetuje: u názorové
+            # otázky je odpověď nanejvýš mimo mísu, ale nic neprovede — kdežto
+            # „pustím film" uživatel řeší tím, že ho zastavuje.
+            _act = ACTIONS.get(aid) if aid else None
+            if _act is not None and _act.needs_confirm and _asks_opinion(message):
+                log.info("HANS_OPINION_NOT_ORDER_V1: %s potlačen — věta se ptá "
+                         "na názor, nežádá akci: %.50s", aid, message)
                 return None
             # HANS_PRESENCE_ASK_V1 — dotaz na přítomnost konkrétní osoby patří
             # VŽDY na who_home, i v ukecané formě („nevíš, jestli je Jana
