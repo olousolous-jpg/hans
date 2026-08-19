@@ -446,6 +446,10 @@ class OpenWebUIDirectHandler:
         'udalost': ['hans_identita', 'hans_denik', 'hans_pripady', 'hans_cetba'],
         'misto': ['hans_denik', 'hans_cetba'],
     }
+    # HANS_CHATLOG_NOT_FACT_V1 — poznávací znak chatového logu v RAG.
+    _CHATLOG_RE = __import__("re").compile(
+        r"^\s*#*\s*Rozhovor\s+s\s|NEOVĚŘENO — vlastní výrok",
+        __import__("re").IGNORECASE)
     _GROUNDING_MAX_DISTANCE = 0.75   # G3B_THRESHOLD_V1 — kalibrováno z dat (bylo 0.70, moc přísné)
     _GROUNDING_TIMEOUT_S = 2         # grounding nikdy nebrzdí odpověď
     _GROUNDING_K = 3
@@ -883,6 +887,7 @@ class OpenWebUIDirectHandler:
             #    Celý sken v jednom timeoutu (ne timeout na kolekci).
             import concurrent.futures as _cf
             all_chunks = []
+            _skipped_chatlogs = []   # HANS_CHATLOG_NOT_FACT_V1
             try:
                 with _cf.ThreadPoolExecutor(
                         max_workers=len(collections)) as _ex:
@@ -902,6 +907,19 @@ class OpenWebUIDirectHandler:
                                 for _ch in _b.chunks:
                                     _ch = dict(_ch)
                                     _ch['collection'] = _futs[_fut]
+                                    # HANS_CHATLOG_NOT_FACT_V1 (19.8.) — CO JSEM
+                                    # ŘEKL NENÍ CO VÍM. Chatové výměny se ukládají
+                                    # do `hans_pripady` (HANS_CHAT_RECALL_V1) a
+                                    # faktická cesta je pak četla jako důkaz —
+                                    # tedy Hansův vlastní výrok se mu vracel jako
+                                    # znalost. Doloženo 19.8.: fabulovaný rok
+                                    # vzniku divadla se uložil 7× a vracel se.
+                                    # ⚠️ Pro `conversation_recall` zůstávají —
+                                    # tam JSOU na místě („o čem jsme mluvili").
+                                    _txt = str(_ch.get('text') or '')
+                                    if _CHATLOG_RE.search(_txt[:120]):
+                                        _skipped_chatlogs.append(1)
+                                        continue
                                     all_chunks.append(_ch)
                         except Exception:
                             pass
@@ -915,6 +933,10 @@ class OpenWebUIDirectHandler:
                     'G3B: multi-query selhalo: %s', _qe)
                 return ''
 
+            if _skipped_chatlogs:
+                logging.getLogger(__name__).info(
+                    'HANS_CHATLOG_NOT_FACT_V1: %d kusů z chatu vyřazeno '
+                    'z faktického groundingu', len(_skipped_chatlogs))
             # 4) nic relevantního pod prahem → G3C: vrať aspoň anti-konfab
             #    (bez faktů). Faktický dotaz bez záznamů → Hans NESMÍ
             #    konfabulovat. Web ověření přijde post-hoc (G.5).
@@ -3318,7 +3340,11 @@ class OpenWebUIDirectHandler:
             ts = _t.time()
             import datetime as _dt
             when = _dt.datetime.fromtimestamp(ts).strftime("%A %-d.%-m.%Y %H:%M")
+            # HANS_CHATLOG_NOT_FACT_V1 — původ přímo v textu, ať je i pro
+            # člověka (a pro každou budoucí cestu) zřejmé, že tohle NENÍ
+            # ověřená znalost, ale co Hans v hovoru řekl.
             text = (f"Rozhovor s {name} ({when}):\n"
+                    f"[NEOVĚŘENO — vlastní výrok v hovoru, ne ověřený fakt]\n"
                     f"{name}: {question.strip()}\n{pname}: {answer.strip()}")
             try:
                 _kn.upload(
@@ -3326,7 +3352,9 @@ class OpenWebUIDirectHandler:
                     doc_id=f"chatlog_{int(ts)}_{name}",
                     title=f"Rozhovor s {name}: {question.strip()[:60]}",
                     text=text,
-                    metadata={"kdy": when, "osoba": name, "typ": "rozhovor"})
+                    metadata={"kdy": when, "osoba": name, "typ": "rozhovor",
+                              # HANS_CHATLOG_NOT_FACT_V1
+                              "overeno": False, "puvod": "vlastni_vyrok"})
             except Exception as _e:
                 print(f"[Chat] chat memory upload (worker): {_e}")
         _th.Thread(target=_work, daemon=True, name="ChatMemoryUpload").start()
