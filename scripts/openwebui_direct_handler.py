@@ -1443,9 +1443,28 @@ class OpenWebUIDirectHandler:
             _lbl = _rt.phase_label if _rt else ""
             _lbl = f"{_lbl}, " if _lbl else ""
             _slovy = _cz_clock_words(_now.hour, _now.minute)
+            # HANS_DATE_WORDS_V1 (19.8.) — DATUM MUSÍ PŘIJÍT UŽ ROZEPSANÉ.
+            # Čas se posílá slovy (`_cz_clock_words`) a model ho opakuje
+            # SPRÁVNĚ; datum dostával jen číslicemi a rozepisoval si ho sám —
+            # a to hans-czech neumí (táž slabina jako „roku devětadvacátého"
+            # místo 1929). Doloženo 19.8. v testu očima cizího člověka: Hans
+            # tvrdil „sobota, patnáctého srpna roku dvoutisíc šestého", ačkoli
+            # byla středa 19. 8. 2026 — a to i na PŘÍMÝ dotaz.
+            # Protidůkaz ze stejného hovoru: deterministická cesta (shrnutí
+            # konverzace) datum uvedla správně, protože ho neskládal model.
+            # Tohle tedy NENÍ další instrukce do promptu, ale odebrání úlohy,
+            # kterou model neumí ([[prompt-debt-tool-calling]]).
+            _dnes_slovy = ""
+            try:
+                from scripts.cz_numbers import normalize as _cz_norm
+                _dnes_slovy = _cz_norm(
+                    f"{_now.day}.{_now.month}.{_now.year}").strip()
+            except Exception:
+                _dnes_slovy = ""   # bez modulu zůstane dnešní text s číslicemi
             time_ctx = (f"\n\nTeď je {_lbl}{_DNY[_now.weekday()]} "
-                        f"{_now.day}.{_now.month}.{_now.year}. "
-                        f"Přesný čas je {_now:%H:%M}, tedy {_slovy}. "
+                        f"{_now.day}.{_now.month}.{_now.year}"
+                        + (f", slovy {_dnes_slovy}" if _dnes_slovy else "")
+                        + f". Přesný čas je {_now:%H:%M}, tedy {_slovy}. "
                         f"Tento čas a datum ber jako fakt, neodhaduj je.")
         except Exception:
             time_ctx = ""
@@ -2801,6 +2820,65 @@ class OpenWebUIDirectHandler:
         # halucinuje „mám v paměti záznamy" i pro věci, které nikdy neviděl
         # (doložený Červený trpaslík). Grounding block s explicit „PAMĚŤ
         # NEOBSAHUJE X" NEZABRAL (persona > grounding). Bypass jako sources_answer.
+        # HANS_DATETIME_ANSWER_V1 — datum/čas ze systémových hodin, deterministicky
+        # a PŘED modelem (jinak si datum rozepíše špatně a A1 pak abstinuje).
+        try:
+            from scripts.hans_recall import datetime_answer as _dta
+            _dtans = _dta(user_message)
+            if _dtans:
+                print("[Chat] HANS_DATETIME_ANSWER_V1 → deterministická odpověď")
+                try:
+                    self.conv_store.add_exchange(name, user_message, _dtans,
+                                                 channel=channel)
+                except Exception:
+                    pass
+                self._log_human_chat_to_diary(name, user_message, _dtans,
+                                              bypass_kind="datetime")
+                return _dtans
+        except Exception as _dte:
+            print(f"[Chat] datetime answer error: {_dte}")
+
+        # HANS_ASKER_STATE_V1 — „vidíte mě?" / „kdo jsem já?" ze živých dat.
+        try:
+            from scripts.hans_recall import asker_state_answer
+            _hi_as = getattr(self, "_hans_idle", None)
+            _as = asker_state_answer(
+                user_message, name,
+                getattr(_hi_as, "_present_names", None) or [], self.config)
+            if _as:
+                print("[Chat] HANS_ASKER_STATE_V1 → odpověď ze živého stavu")
+                try:
+                    self.conv_store.add_exchange(name, user_message, _as,
+                                                 channel=channel)
+                except Exception:
+                    pass
+                self._log_human_chat_to_diary(name, user_message, _as,
+                                              bypass_kind="asker_state")
+                return _as
+        except Exception as _ase:
+            print(f"[Chat] asker state error: {_ase}")
+
+        # HANS_BOOK_RECOMMEND_V1 — doporučení z VLASTNÍ četby, ne z fantazie.
+        try:
+            from scripts.hans_recall import (asks_book_recommendation,
+                                             book_recommendation)
+            if asks_book_recommendation(user_message):
+                _br = book_recommendation(
+                    (self.config.get("diary_db")
+                     or "data/hans_diary.db"), self.config)
+                if _br:
+                    print("[Chat] HANS_BOOK_RECOMMEND_V1 → z dočtených knih")
+                    try:
+                        self.conv_store.add_exchange(name, user_message, _br,
+                                                     channel=channel)
+                    except Exception:
+                        pass
+                    self._log_human_chat_to_diary(name, user_message, _br,
+                                                  bypass_kind="book_recommend")
+                    return _br
+        except Exception as _bre:
+            print(f"[Chat] book recommend error: {_bre}")
+
         try:
             from scripts.hans_recall import knowledge_check_bypass, person_card
             _dbp_kb = (self.config.get("diary_db")

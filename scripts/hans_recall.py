@@ -2142,3 +2142,187 @@ def asks_about_person(query: str, config: dict) -> bool:
         pass
     # osoba z Hansova čtení (Bud Spencer) — rozhodne až `person_card`
     return True
+
+
+# ── HANS_DATETIME_ANSWER_V1 (19.8.) — kolikátého je / kolik je hodin ─────────
+# Datum a čas jsou ŽIVÝ STAV jako počasí nebo co běží na TV — patří mezi
+# deterministické odpovědi, ne k modelu. Dnešní řetěz byl jinak absurdní:
+# model dostane správné datum v kontextu, přesto ho rozepíše špatně („sobota,
+# patnáctého srpna roku dvoutisíc šestého" místo středy 19. 8. 2026), A1
+# self-consistency to pozná jako nestabilní — a Hans ABSTINUJE na otázku,
+# jejíž odpověď má přímo před sebou. Doloženo 19.8. v testu očima cizího člověka.
+_DATE_ASK = __import__("re").compile(
+    r"(kolik[áa]t[ée]ho\s+(je|m[áa]me)|jak[ée]\s+je\s+dnes\s+datum|"
+    r"jak[ýy]\s+je\s+dnes(ka)?\s+den|co\s+je\s+dnes\s+za\s+den|"
+    r"jak[ée]\s+m[áa]me\s+datum|kter[ýy]\s+je\s+dnes\s+den)",
+    __import__("re").IGNORECASE)
+_TIME_ASK = __import__("re").compile(
+    r"(kolik\s+(je|m[áa]me)\s+hodin|kolik\s+je\s+ted|kolik\s+je\s+te[ďd])",
+    __import__("re").IGNORECASE)
+_DNY_CZ = ("pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota", "neděle")
+
+
+def datetime_answer(query: str) -> str:
+    """Deterministická odpověď na dotaz po datu / čase. "" = není to on.
+
+    Datum i čas se vrací ROVNOU SLOVY (`cz_numbers`), aby to sedělo i pro
+    hlasový výstup — model si číslice rozepsat neumí.
+    ⚠️ Omezeno na KRÁTKÉ dotazy: „kolik je hodin práce před námi?" má být
+    normální hovor, ne výpis hodin.
+    """
+    q = (query or "").strip()
+    if not q or len(q.split()) > 7:
+        return ""
+    want_date = bool(_DATE_ASK.search(q))
+    want_time = bool(_TIME_ASK.search(q))
+    if not (want_date or want_time):
+        return ""
+    import datetime as _dt
+    now = _dt.datetime.now()
+    try:
+        from scripts.cz_numbers import normalize as _n
+        d_words = _n(f"{now.day}.{now.month}.{now.year}").strip()
+    except Exception:
+        d_words = ""
+    den = _DNY_CZ[now.weekday()]
+    # čas taky slovy — `cz_numbers` to umí („09:31" → „devět hodin třicet jedna
+    # minut"); číslice by hlasová syntéza přečetla špatně, což je celý důvod,
+    # proč ten modul vznikl.
+    try:
+        from scripts.cz_numbers import normalize as _n2
+        cas = _n2(now.strftime("%H:%M")).strip() or now.strftime("%H:%M")
+    except Exception:
+        cas = now.strftime("%H:%M")
+    if want_date and not want_time:
+        return ("Dnes je %s %s." % (den, d_words) if d_words
+                else "Dnes je %s %d.%d.%d." % (den, now.day, now.month, now.year))
+    if want_time and not want_date:
+        return "Je %s." % cas
+    return ("Dnes je %s %s, %s." % (den, d_words or "", cas)).replace("  ", " ")
+
+
+# ── HANS_BOOK_RECOMMEND_V1 (19.8.) — doporučení z VLASTNÍ četby ─────────────
+# Doloženo 19.8. (test očima cizího člověka): na „doporučte mi knihu" Hans
+# vymyslel titul „Království z kamene" od Josefa Matějky včetně děje. V deníku
+# o ní NIC, na Wikipedii neexistuje (autor ano, kniha ne).
+# ⚠️ Příčina není „model rád fabuluje" — cesta pro doporučení knihy prostě
+# NEEXISTOVALA, přestože Hans má 6 dočtených knih a 479 reflexí. Nedáváme sem
+# brzdu, ale chybějící cestu; fabrikace tím ztrácí důvod.
+_BOOK_ASK = __import__("re").compile(
+    r"(doporu[čc]|tip)\w*\s+(mi\s+|n[ěe]jak\w+\s+|na\s+)*(kn[ií]\w+|[čc]etb\w+)"
+    r"|co\s+(bych|si)\s+.{0,20}p[řr]e[čc][íi]st"
+    r"|n[ěe]jak\w+\s+kn[ií]\w+\s+(na|k)\s+[čc]ten",
+    __import__("re").IGNORECASE)
+
+
+def asks_book_recommendation(query: str) -> bool:
+    """Ptá se věta na DOPORUČENÍ KNIHY? (film sem NEpatří)"""
+    q = (query or "").strip()
+    if not q or len(q.split()) > 12:
+        return False
+    if __import__("re").search(r"\bfilm|seri[áa]l|po[řr]ad\b", q, __import__("re").IGNORECASE):
+        return False
+    return bool(_BOOK_ASK.search(q))
+
+
+def book_recommendation(db_path: str, config: dict = None) -> str:
+    """Doporučení z knih, které Hans DOČETL, i s tím, co si o nich zapsal.
+    "" když nic nedočetl — pak ať odpoví běžná cesta, nic se nevyrábí."""
+    import sqlite3
+    try:
+        with sqlite3.connect("file:%s?mode=ro" % db_path, uri=True,
+                             timeout=3.0) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute(
+                "SELECT title, ts FROM diary WHERE event_type='book_finished' "
+                "ORDER BY ts DESC LIMIT 8").fetchall()
+            if not rows:
+                return ""
+            import random
+            pick = random.choice([dict(r) for r in rows])
+            titul = (pick.get("title") or "").replace("Docetl:", "").strip()
+            if not titul:
+                return ""
+            # vlastní reflexe k té knize (proč ho zaujala) — ne obsah z internetu
+            refl = db.execute(
+                "SELECT COALESCE(data, note) AS t FROM diary "
+                "WHERE event_type='book_completion_reflection' "
+                "AND COALESCE(title,'') LIKE ? ORDER BY ts DESC LIMIT 1",
+                ("%" + titul + "%",)).fetchone()
+    except Exception as e:
+        _log.debug("book_recommendation: %s", e)
+        return ""
+    out = "Z toho, co jsem dočetl, bych doporučil „%s“." % titul
+    t = (refl["t"] if refl else "") or ""
+    if t:
+        t = " ".join(t.split())
+        out += " " + (t[:260] + ("…" if len(t) > 260 else ""))
+    return out
+
+
+# ── HANS_ASKER_STATE_V1 (19.8.) — otázky NA TAZATELE ────────────────────────
+# Dva doložené rozpory z testu očima cizího člověka (19.8.):
+#   „Vidíte mě?"   → „Ano, vidím vás."  … o dvě výměny později „Teď tu nikoho
+#                     nevidím." (kamera nikoho neviděla — zdvořilost z hlavy)
+#   „Kdo jsem já?" → „jste pán domu a hlava rodiny, s Janou vychováváte dceru"
+#                     (řečeno NEZNÁMÉMU člověku — konfabulace i únik zároveň)
+# Obojí je živý stav, ne úloha pro model: kdo je vidět, ví `_present_names`,
+# kdo je kdo, vědí `known_persons` a `relationships`.
+_SEES_ME = __import__("re").compile(
+    r"\b(vid[íi][šs]\s+m[ěe]|vid[íi]te\s+m[ěe]|vid[íi][šs]\s+mne|"
+    r"vid[íi]te\s+mne|kouk[áa][šs]\s+na\s+m[ěe]|zn[áa][šs]\s+m[ěe]j"
+    r"|m[ůu][žz]e[šs]\s+m[ěe]\s+vid[ěe]t)\b", __import__("re").IGNORECASE)
+_WHO_AM_I = __import__("re").compile(
+    r"(kdo\s+jsem(\s+j[áa])?\b|v[íi][šs]\s+kdo\s+jsem|v[íi][ée]te\s+kdo\s+jsem"
+    r"|pozn[áa]v[áa][šs]\s+m[ěe]|pozn[áa]v[áa]te\s+m[ěe]|zn[áa][šs]\s+m[ěe]\b"
+    r"|zn[áa]te\s+m[ěe]\b)", __import__("re").IGNORECASE)
+
+
+def asker_state_answer(query: str, asker: str, present_names, config: dict) -> str:
+    """Deterministická odpověď na „vidíte mě?" / „kdo jsem já?". "" = není to on."""
+    q = (query or "").strip()
+    if not q or len(q.split()) > 8:
+        return ""
+    try:
+        from scripts.cz_names import is_known_person, display_name
+    except Exception:
+        return ""
+    known = bool(asker) and is_known_person(asker, config)
+    disp = (display_name(asker, config) if known else (asker or "")).strip()
+
+    if _SEES_ME.search(q):
+        # „vidíš mě RÁD?" je otázka na vztah, ne na kameru (chyceno vlastním
+        # protipříkladem při testu — vzor jinak odpověděl výpisem z kamery).
+        if __import__("re").search(r"\br[áa]d[aoy]?\b", q, __import__("re").IGNORECASE):
+            return ""
+        names = [n for n in (present_names or [])
+                 if n and n not in ("Unknown", "?", "")]
+        me = [n for n in names
+              if disp and n.strip().lower() == disp.strip().lower()
+              or (asker and n.strip().lower() == asker.strip().lower())]
+        if me:
+            return "Ano, vidím vás, pane."
+        if names:
+            try:
+                from scripts.cz_names import accusative as _acc
+                vid = ", ".join(_acc(n, config) or n for n in names)
+            except Exception:
+                vid = ", ".join(names)
+            return "Vás teď nevidím, pane — v místnosti vidím %s." % vid
+        return "Teď tu nikoho nevidím, pane — kamera je prázdná."
+
+    if _WHO_AM_I.search(q):
+        if not known:
+            # Žádné domýšlení identity a ŽÁDNÉ údaje o domácnosti
+            # (táž hranice jako HANS_HOUSEHOLD_PRIVACY_V1).
+            return ("Neznám vás, pane — ve svých záznamech vás nemám. "
+                    "Rád se to dozvím, představíte-li se.")
+        try:
+            from scripts.hans_relationships import Relationships
+            card = Relationships(config).get(str(asker).strip().lower())
+        except Exception:
+            card = None
+        if card and card.role:
+            return "Jste %s, %s." % (card.display_name or disp, card.role)
+        return "Jste %s — znám vás ze svých záznamů." % (disp or asker)
+    return ""
