@@ -3489,7 +3489,13 @@ _LLM_ROUTE_CMDS = [
     ("videl",      "kdy koho naposledy viděl"),
     # HANS_ROUTE_SELF_ACTIVITY_V1 — dřív jen „o čem jsme se spolu bavili":
     # model pod to schoval i „co jsi dnes dělal?" a Hans vysypal přepis chatu.
-    ("rozhovory",  "OBSAH našich dřívějších rozhovorů (o čem jsme spolu mluvili)"),
+    # HANS_STUDY_CONTENT_ROUTE_V1 (19.8.) — dotaz na obsah tématu router
+    # posílal SEM a Hans vypsal shrnutí chatu místo obsahu studia (19.8.).
+    # Rozhoduje PŘEDMĚT: o čem jsme MLUVILI × co víš O TÉ VĚCI.
+    ("rozhovory",  "OBSAH našich dřívějších ROZHOVORŮ (o čem jsme spolu "
+                   "mluvili, co jsem říkal). NE dotaz na obsah nějakého TÉMATU "
+                   '„co ses o tom dozvěděl“, „co je zajímavého na X“ — to je '
+                   "věcná otázka, ne vzpomínka na chat"),
     ("seznam",     "seznam poznámek a úkolů"),
     ("kalendar",   "nadcházející události z kalendáře"),
     # HANS_HRAJE_WORDORDER_V1 — dřív „…kdy co naposledy BĚŽELO": sloveso
@@ -3535,6 +3541,9 @@ _LLM_ROUTE_SYSTEM = (
       "„myslíš, že by Jana měla radost z kávovaru?\" -> zadny\n"
       "„co by na to řekla Klára?\" -> zadny\n"
       "„co jsi dělal celý den?\" -> zadny\n"
+      # HANS_STUDY_CONTENT_ROUTE_V1 — dotaz na OBSAH tématu (i navazující).
+      "„a co ses o tom divadle dozvěděl?\" -> zadny\n"
+      "„co je na tom zajímavého?\" -> zadny\n"
       "„přehraj ten seriál\" -> zadny\n„co běží v televizi?\" -> zadny\n"
       "„děje se něco doma?\" -> zadny\n„zapni hlídání\" -> zadny\n"
       # HANS_CMD_LLM_ROUTE_V5 (12.8.) — ŽÁDOST O ZALOŽENÍ není žádost o výpis.

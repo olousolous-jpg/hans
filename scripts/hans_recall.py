@@ -1351,11 +1351,38 @@ _KNOWLEDGE_CHECK_RE = re.compile(
 )
 
 
+# ── HANS_KNOWLEDGE_WORDORDER_V1 (19.8.) — předmět PŘED slovesem ─────────────
+# `_KNOWLEDGE_CHECK_RE` čeká pořadí „co ses DOZVĚDĚL o divadle". Čeština běžně
+# staví i obráceně („co ses O TOM DIVADLE dozvěděl?") a takový dotaz branou
+# propadl — Hans pak odpověděl volnou generací a rozešel se s VLASTNÍM zápiskem
+# (doloženo 19.8.: řekl rok 1963 a „Zdeňka Svěřínského", ač jeho study_note
+# uvádí 1966 a Jiřího Šebánka).
+# ⚠️ NEPÍŠU nový mechanismus — `HANS_STUDY_CONTENT_RECALL_V1` už existuje
+# a funguje, jen ho míjí slovosled. Táž třída jako HANS_HRAJE_WORDORDER_V1
+# („co teď běží v tv"). Proto se věta jen PŘESKLÁDÁ do tvaru, kterému rozumí.
+_OBJ_FIRST_RE = re.compile(
+    r"\bco\s+(sis|ses|jsi\s+si|jsi\s+se)\s+(o|na)\s+(.{2,60}?)\s+"
+    r"(odnes\w*|nau[čc]il\w*|dozv[ěe]d\w*|zapamatoval\w*)",
+    re.IGNORECASE)
+
+
+def _reorder_object_first(text: str) -> str:
+    """Přeskládá „co ses o tom divadle dozvěděl" → „co ses dozvěděl o tom
+    divadle". Když vzor nesedí, vrací text beze změny."""
+    t = text or ""
+    try:
+        return _OBJ_FIRST_RE.sub(
+            lambda m: "co %s %s %s %s" % (m.group(1), m.group(4),
+                                          m.group(2), m.group(3)), t)
+    except Exception:
+        return t
+
+
 def is_knowledge_check_query(text: str) -> bool:
     """Ptá se uživatel „znáš X?" / „co víš o X?" / „máš záznam o X?"? Levný gate.
     Regex je unicode-safe → volám na ORIGINÁLU (bez _fold), ať `_extract_topic`
     dostane originální text s diakritikou."""
-    return bool(_KNOWLEDGE_CHECK_RE.search(text or ""))
+    return bool(_KNOWLEDGE_CHECK_RE.search(_reorder_object_first(text)))
 
 
 def _extract_knowledge_topic(text: str) -> Optional[str]:
@@ -1491,6 +1518,9 @@ def reading_recall_answer(db_path: str, question: str = "") -> Optional[str]:
     žádný LLM. Řeší „přečteno ale nezapamatováno": ruční odkaz z chatu jde do
     web_read, ale RAG ho na tenkém souhrnu semanticky nedohledá; tady se najde
     přímo z deníku (declension-safe AND na jádrových slovech)."""
+    # HANS_KNOWLEDGE_WORDORDER_V1 — i tady, jinak brána
+    # pustí dotaz dál, ale hledání téma nenajde.
+    question = _reorder_object_first(question)
     if not question or not is_knowledge_check_query(question):
         return None
     prefixes = _topic_core_prefixes(_extract_knowledge_topic(question) or "")
@@ -1532,6 +1562,9 @@ def knowledge_check_answer(db_path: str, user_text: str) -> Optional[str]:
 
     Anti-konfab silnější než system prompt klauzule (G4B position: grounding
     sedí těsně před user query, přebíjí conversation history i persona)."""
+    # HANS_KNOWLEDGE_WORDORDER_V1 — i tady, jinak brána
+    # pustí dotaz dál, ale hledání téma nenajde.
+    user_text = _reorder_object_first(user_text)
     topic = _extract_knowledge_topic(user_text)
     if not topic:
         return None
