@@ -2465,6 +2465,30 @@ def today_line(diary_db_path: str = "data/hans_diary.db") -> str:
                 return False
 
         if _is_today(row.get("last_ok_ts")):
+            # HANS_STUDY_TODAY_TOPIC_V1 (19.8.) — říct i CO. Bez tématu si model
+            # ve volném hovoru vzal starší téma z deníku: doloženo 19.8., kdy
+            # Hans tvrdil „studoval jsem Český ráj", ačkoli dnes studoval
+            # Cimrmana (Český ráj dokončil předchozí večer).
+            try:
+                import sqlite3 as _sq
+                with _sq.connect("file:%s?mode=ro" % diary_db_path,
+                                 uri=True, timeout=3.0) as _db:
+                    _r = _db.execute(
+                        "SELECT title FROM diary WHERE event_type='study_note' "
+                        "AND ts >= ? ORDER BY ts DESC LIMIT 1",
+                        (_dt.datetime.combine(today, _dt.time.min).timestamp(),)
+                    ).fetchone()
+                _t = (_r[0] if _r else "") or ""
+                # „Studium: <téma> — <pod-téma>"
+                _t = _t.replace("Studium:", "").strip()
+                if " — " in _t:
+                    _tema, _sub = [x.strip() for x in _t.split(" — ", 1)]
+                    return ("Dnes se mi povedlo nastudovat pod-téma „%s“ "
+                            "z tématu „%s“." % (_sub, _tema))
+                if _t:
+                    return "Dnes se mi povedlo nastudovat „%s“." % _t
+            except Exception as _e2:
+                _log.debug("today_line: téma nešlo zjistit (%s)", _e2)
             return "Dnes se mi povedlo nastudovat pod-téma."
         if _is_today(row.get("last_run_ts")):
             why = {"deferred": "encyklopedie nebo mozek neodpovídaly",
