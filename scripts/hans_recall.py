@@ -1945,7 +1945,8 @@ def person_card(db_path: str, query: str, config: dict,
     return ""
 
 
-def person_card_voiced(db_path: str, query: str, config: dict) -> str:
+def person_card_voiced(db_path: str, query: str, config: dict,
+                       asker: str = "") -> str:
     """HANS_PERSON_CARD_VOICE_V1 (18.8.) — táž fakta, ale Hansovým hlasem.
 
     Bez tohohle kroku dostal uživatel do chatu SYROVOU KARTU
@@ -2022,7 +2023,7 @@ def person_card_voiced(db_path: str, query: str, config: dict) -> str:
     return card
 
 
-def household_card(db_path: str, config: dict) -> str:
+def household_card(db_path: str, config: dict, asker: str = "") -> str:
     """HANS_HOUSEHOLD_CARD_V1 (18.8.) — SLOŽENÍ DOMÁCNOSTI, ne kdo je vidět.
 
     Doloženo dialogem 18.8.: na „kdo v tomhle domě žije" Hans odpověděl
