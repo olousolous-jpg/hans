@@ -1373,7 +1373,8 @@ class OpenWebUIDirectHandler:
             print(f"[Chat] ask_question_via_popup failed: {_e}")
             return False
 
-    def _build_system(self, name: str, for_greeting: bool = False) -> str:
+    def _build_system(self, name: str, for_greeting: bool = False,
+                      user_msg: str = "") -> str:
         # PERSONA_REFACTOR_1_4 — jednotný zdroj identity
         from scripts.hans_persona import persona_core
         system_base = persona_core(self.config)
@@ -1408,10 +1409,42 @@ class OpenWebUIDirectHandler:
                 persons_ctx += (f"\n\n{name} rád(a) hraje na PC: „{_fav}" + "\""
                                 " (často to spouští). Můžeš to přirozeně zmínit, "
                                 "nevnucuj.")
+        # ── HANS_CTX_RELEVANCE_V1 (19.8.) — ptá se blok, jestli je k něčemu? ──
+        # Změřeno na 12 různých dotazech: system prompt měl VŽDY ~14 350 zn
+        # (rozptyl 80 zn) a 22 z 23 bloků bylo přítomno pokaždé. Kontext se
+        # tedy neřídil otázkou — a grounding (pár set zn) v té zdi zanikl:
+        # týž dotaz odpověděl v izolaci správně, živě si vymýšlel rok.
+        # ⚠️ PŘI POCHYBNOSTI VKLÁDAT. Radši delší prompt než ztracená schopnost.
+        _relf = (user_msg or "").lower()
+        try:
+            import unicodedata as _u
+            _relf = "".join(c for c in _u.normalize("NFKD", _relf)
+                            if not _u.combining(c))
+        except Exception:
+            pass
+        import re as _rre
+        _is_knowledge_q = bool(_rre.search(
+            r"\b(co\s+(je|jsou|byl|byla)|kdo\s+(je|byl)|co\s+vis|co\s+ses|"
+            r"proc|jak\s+(vznikl|funguje))\b", _relf))
+        _asks_ability = bool(_rre.search(
+            r"\b(umis|umite|dokazes|zvladnes|schopnost|co\s+vsechno|nauc|"
+            r"namaluj|namalujes|napis|pust|zapni|vypni|pridej|nastuduj|udelej|"
+            r"zaridis|muzes)\b", _relf))
+        _about_tv = bool(_rre.search(
+            r"\b(tv|televiz|kodi|film|serial|poust|hraje|sledova|div[áa])", _relf))
+        _about_kolac = bool(_rre.search(r"(kolac|plysak|medv)", _relf))
+        _about_self_day = bool(_rre.search(
+            r"(co\s+jsi\s+delal|jak\s+se\s+mas|co\s+je\s+u\s+tebe|jak\s+ses)",
+            _relf))
+
         # HANS_CAPABILITY_AWARENESS_V1 — Hans ví, co reálně umí (nabízet/dělat,
         # ne odmítat). Faktický seznam. Jen full mód (pozdrav drží brevitu).
+        # HANS_CTX_RELEVANCE_V1 — u ČISTĚ ZNALOSTNÍHO dotazu se vynechává
+        # (3 021 zn = 21 % promptu, a na „co je zajímavého na gotice" nemá vliv).
+        # ⚠️ U ŽÁDOSTI zůstává: tenhle blok vznikl proto, že Hans odmítl malovat
+        # s tím, že „nemá umělecké sklony" (2.7.) — a to se nesmí vrátit.
         cap_ctx = ""
-        if not for_greeting:
+        if not for_greeting and (_asks_ability or not _is_knowledge_q):
             try:
                 from scripts.hans_capabilities import (
                     capabilities_context, recent_gained_context)
@@ -1424,9 +1457,11 @@ class OpenWebUIDirectHandler:
                 cap_ctx = cap_ctx or ""
 
         # Hans dialog s plysákem
+        # HANS_CTX_RELEVANCE_V1 — jen když na Koláče přijde řeč nebo se ptáme,
+        # co Hans dělal; k dotazu na knihu či počasí nepřispívá (742 zn).
         teddy_ctx = ""
         _hd = getattr(self, '_hans_dialog', None)
-        if _hd:
+        if _hd and (_about_kolac or _about_self_day or not _is_knowledge_q):
             _teddy = _hd.get_last_dialog()
             if _teddy:
                 teddy_ctx = '\n\n' + _teddy
@@ -1583,8 +1618,11 @@ class OpenWebUIDirectHandler:
 
         # Kodi kontext
         kodi_ctx = ""
+        # HANS_CTX_RELEVANCE_V1 — co běží na TV je u čistě znalostního dotazu
+        # („co je zajímavého na gotice") jen šum za 871 zn. U dotazu na TV,
+        # film či sledování se vkládá dál.
         _km = getattr(self, '_kodi_monitor', None)
-        if _km:
+        if _km and (_about_tv or not _is_knowledge_q):
             _now_playing = _km.get_now_playing_context()
             _history     = _km.get_person_history(name)
             _events      = _km.get_today_events()
@@ -2341,7 +2379,8 @@ class OpenWebUIDirectHandler:
             if isinstance(prompt, tuple):
                 system, user = prompt
             else:
-                system = self._build_system(name) if name else ""
+                system = (self._build_system(name, user_msg=str(prompt or ""))
+                          if name else "")
                 user = prompt
             # G4B_GROUNDING_POSITION_V1 — grounding ZA historii (param),
             # ne připojený k system (jinak ho historie přebije).
@@ -2399,7 +2438,8 @@ class OpenWebUIDirectHandler:
             if isinstance(prompt, tuple):
                 system, user = prompt
             else:
-                system = self._build_system(name) if name else ""
+                system = (self._build_system(name, user_msg=str(prompt or ""))
+                          if name else "")
                 user = prompt
             # G4B_GROUNDING_POSITION_V1 — grounding ZA historii (param).
             # G3D_SKIP_GROUNDING_INTERNAL_V1 — interní prompt → bez groundingu
@@ -3134,7 +3174,7 @@ class OpenWebUIDirectHandler:
         except Exception as _ae:
             print(f"[Chat] agent layer error: {_ae}")
 
-        system   = self._build_system(name)
+        system   = self._build_system(name, user_msg=user_message)
         # Prefix user message jménem osoby pro lepší RAG retrieval.
         # "kdo jsem?" → "<jméno> se ptá: kdo jsem?" → embedding najde kartu osoby
         # místo kdo_je_hans.txt. Originál se ukládá do historie bez prefixu.
