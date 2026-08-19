@@ -2494,6 +2494,33 @@ class OpenWebUIDirectHandler:
                 return None
         except Exception as _cpe:
             logging.getLogger(__name__).debug('confirm precedence: %s', _cpe)
+        # HANS_DEEPEN_QUESTION_GUARD_V1 (19.8.) — OTÁZKA NENÍ ZPĚTNÁ VAZBA.
+        # Dokud leží návrh na prohloubení, posílá se KAŽDÁ další zpráva LLM
+        # klasifikátoru (SCHVALUJE/ZAMITA/KRITIZUJE/NIC). Doloženo 19.8.:
+        # nevinný dotaz „a Babičku jsi četl ty sám?" vyhodnotil jako KRITIZUJE
+        # → `apply_deepen_proposal` reaktivoval DOKONČENÝ program „Český ráj"
+        # (completed → active) a přidal 4 pod-témata. Uživatel o nic nežádal,
+        # jen se ptal — a přišel tím o pořadí ve studijní frontě
+        # (`get_active_program` bere nejstarší aktivní).
+        # Deterministicky PŘED klasifikátorem: tázací věta bez schvalovacího
+        # nebo odmítacího slova = NIC. Prompt se neladí, dotaz se prostě nepustí.
+        try:
+            import re as _qre
+            _m = (message or "").strip()
+            _is_q = _m.endswith("?") or bool(_qre.match(
+                r"^\s*(kdo|co|kde|kdy|jak|pro[čc]|kolik|kter|[čc][íi]|zn[áa]|"
+                r"vid[íi]|um[íi][šs]|m[áa][šs]|je\s|jsi\s|byl\s)", _m, _qre.I))
+            _fb = bool(_qre.search(
+                r"\b(ano|jo|souhlas\w*|schval\w*|dob[řr]e|prohlub|prohloub|"
+                r"ne\b|nechci|nesouhlas\w*|zru[šs]|nech\s+to|špatn\w*|"
+                r"slab\w*|m[ěe]l\s+bys|douč|dodělej)\b", _m, _qre.I))
+            if _is_q and not _fb:
+                logging.getLogger(__name__).info(
+                    'HANS_DEEPEN_QUESTION_GUARD_V1: %.40s je otázka, ne zpětná '
+                    'vazba → návrh se nedotýkám', _m)
+                return None
+        except Exception as _qge:
+            logging.getLogger(__name__).debug('deepen question guard: %s', _qge)
         p0 = pend[0]
         from scripts.ollama_client import ollama_generate
         model = (self.config.get("dialog", {}) or {}).get("model") or "hans-czech:latest"
@@ -2911,7 +2938,8 @@ class OpenWebUIDirectHandler:
                 if _ikc(user_message) or _aap(user_message, self.config):
                     # HANS_PERSON_CARD_VOICE_V1 — kartu vyslov, nevysypej
                     from scripts.hans_recall import person_card_voiced
-                    _pcard = person_card_voiced(_dbp_kb, user_message, self.config)
+                    _pcard = person_card_voiced(_dbp_kb, user_message,
+                                                self.config, asker=name)
             except Exception:
                 _pcard = ""
             _kb = _pcard or knowledge_check_bypass(_dbp_kb, user_message, asker=name)
