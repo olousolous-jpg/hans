@@ -2249,7 +2249,13 @@ def study_context_string(config: dict, diary_db_path: str,
                f"/{len(ap['curriculum'])}).")
         if data:
             out += " Naposledy mě zaujalo: " + data.strip().replace("\n", " ")
-        return out[:max_chars]
+        # HANS_STUDY_TODAY_SHARED_V1 — ořež NEJDŘÍV a teprve pak připoj dnešek,
+        # jinak by ho strop `max_chars` uřízl — a je to ta část, kvůli které se
+        # to dělá: bez ní si model z „posledních pár dní studuji" vyrobil
+        # „dnes jsem studoval", ačkoli dnes studium neproběhlo (18.8.).
+        out = out[:max_chars]
+        _tl = today_line(diary_db_path)
+        return (out + " " + _tl).strip() if _tl else out
     # žádný aktivní → nedávno dokončené?
     title, data, ts = _latest_diary_text(diary_db_path, "study_mastery")
     if title and data and ts and (time.time() - ts) < 14 * 86400:
@@ -2431,3 +2437,47 @@ if __name__ == "__main__":
         else:
             print("(žádný aktivní program)")
         print("\nPoužij `programs` pro výpis všech programů.")
+
+
+def today_line(diary_db_path: str = "data/hans_diary.db") -> str:
+    """HANS_STUDY_TODAY_SHARED_V1 (19.8.) — JEDNA věta o tom, jak dopadl DNEŠEK.
+
+    Jedna pravda pro dvě místa: výpis `/studium` i kontext volného hovoru.
+    Původně to bylo jen ve výpisu (HANS_STUDY_TODAY_LINE_V1) a hovor o dnešku
+    nevěděl nic — doloženo 18.8., kdy Hans v jednom chatu řekl „Dnes jsem
+    studoval do hloubky Český ráj" a o tři výměny později „Dnes se mi nic
+    nastudovat nepodařilo". Druhá kopie logiky by se rozešla stejně.
+
+    Zdroj je `hans_schedule.study_tick`, kde se od HANS_SCHEDULE_LAST_OK_V1
+    rozlišuje „kdy to naposledy ZKUSILO" od „kdy naposledy USPĚLO".
+    '' když se stav nedá zjistit (volající pak nic nepřidává).
+    """
+    try:
+        import datetime as _dt
+        from scripts.hans_schedule import ScheduleStore
+        row = ScheduleStore(diary_db_path).get("study_tick") or {}
+        today = _dt.date.today()
+
+        def _is_today(ts):
+            try:
+                return bool(ts) and _dt.date.fromtimestamp(float(ts)) == today
+            except Exception:
+                return False
+
+        if _is_today(row.get("last_ok_ts")):
+            return "Dnes se mi povedlo nastudovat pod-téma."
+        if _is_today(row.get("last_run_ts")):
+            why = {"deferred": "encyklopedie nebo mozek neodpovídaly",
+                   "noread": "k pod-tématu jsem nenašel zdroj",
+                   "idle": "neměl jsem co studovat",
+                   "skipped": "pod-téma jsem přeskočil"}
+            r = (row.get("last_skip_reason") or "").strip()
+            kdy = _dt.datetime.fromtimestamp(
+                float(row["last_run_ts"])).strftime("%H:%M")
+            txt = why.get(r, r)   # neznámý kód syrový, ne domyšlený
+            return ("Dnes se mi nic nastudovat nepodařilo (poslední pokus %s%s)."
+                    % (kdy, (", důvod: " + txt) if txt else ""))
+        return "Dnes jsem se ke studiu ještě nedostal."
+    except Exception as e:
+        _log.debug("today_line: %s", e)
+        return ""
