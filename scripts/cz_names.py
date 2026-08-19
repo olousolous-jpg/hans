@@ -413,14 +413,26 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
                          re.IGNORECASE)
         text, cnt = pat.subn(target, text)
         n += cnt
-        # „paní Jana" — model titul spojí s 1. pádem, ne s vokativem. Titul
-        # + jméno je ale JEDNOZNAČNÉ oslovení, takže se přepisuje taky.
-        # Bez titulu se 1. pád NEtrhá (to je legitimní 3. osoba).
+        # „paní Jana" — model titul spojí s 1. pádem, ne s vokativem.
+        # HANS_ADDRESSEE_3RD_PERSON_V1 (19.8.) — dřív se to bralo za
+        # JEDNOZNAČNÉ oslovení a přepisovalo KDEKOLI ve větě. To je ale chyba:
+        # „paní Jana je paní domu" je 3. osoba, ne oslovení. Doloženo 4× živě,
+        # mimo jiné „V tomto domě bydlí pan Standa, **Stando** a slečna Klára"
+        # (člen domácnosti z výčtu ZMIZEL) a „**Stando** si zakládá na pohodlí"
+        # (věta byla o paní domu). Docstring téhle funkce přitom slibuje, že
+        # zmínky ve 3. osobě zůstanou nedotčené — tenhle vzor ten slib porušoval.
+        # Nově se přepisuje JEN ve skutečné oslovovací pozici: začátek věty nebo
+        # za čárkou A ZÁROVEŇ následuje interpunkce/konec.
+        # (Vokativ cizí osoby — „paní Jano" — se dál přepisuje kdekoli, viz `pat`
+        # výš: to je oslovení nesprávného člověka a patří opravit.)
         for form in {str(pname), display_name(pname, config)}:
             if not form or len(form) < 3:
                 continue
-            pat2 = re.compile(r"\b(?:pan[íi]|pane)\s+" + re.escape(form) + r"\b",
-                              re.IGNORECASE)
-            text, cnt2 = pat2.subn(target, text)
+            pat2 = re.compile(
+                r"(?:(?<=^)|(?<=,))(\s*)(?:pan[íi]|pane)\s+"
+                + re.escape(form) + r"\b(?=\s*(?:[:,;!?]|$))",
+                re.IGNORECASE | re.MULTILINE)
+            # mezeru za čárkou vrátit zpět (jinak vznikne „Ano,Stando")
+            text, cnt2 = pat2.subn(lambda m: m.group(1) + target, text)
             n += cnt2
     return text, n
