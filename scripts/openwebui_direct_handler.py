@@ -2675,6 +2675,24 @@ class OpenWebUIDirectHandler:
         return ("Schváleno, pane. Prohloubím studium „%s“ a příště z něj vytvořím "
                 "lepší dílo." % p0["topic"])
 
+    def _is_test_person(self, name: str) -> bool:
+        """HANS_TEST_PERSON_V1 — je tohle testovací identita?
+        ⚠️ Zápis chatu do deníku má DVĚ cesty (tenhle helper pro early-return
+        větve a hlavní zápis na konci `send_chat_message`) — proto predikát,
+        ne kopie kontroly ve dvou místech. První verze hlídala jen helper
+        a řádek se stejně zapsal ([[test-the-fix-not-the-symptom]])."""
+        try:
+            _tp = [str(x).strip().lower()
+                   for x in (self.config.get("test_persons") or [])]
+            if (name or "").strip().lower() in _tp:
+                logging.getLogger(__name__).info(
+                    "HANS_TEST_PERSON_V1: %r je testovací identita — "
+                    "do deníku ani RAG se nezapisuje", name)
+                return True
+        except Exception:
+            pass
+        return False
+
     def _log_human_chat_to_diary(self, name: str, user_message: str,
                                  response: str,
                                  bypass_kind: str = None) -> None:
@@ -2692,6 +2710,17 @@ class OpenWebUIDirectHandler:
         vlastní „mimotělní" sdělení nezná → kognitivní dissonance při
         čtení vlastního deníku ([[bypass-self-reflection]])."""
         if not response:
+            return
+        # HANS_TEST_PERSON_V1 (19.8.) — rozhovor vedený pod TESTOVACÍ identitou
+        # se do paměti nezapisuje. Důvod je doložený: 19.8. jsem uklidil deník
+        # i RAG od vyvrácené fabulace a o minutu později ji tam vrátil vlastním
+        # ověřovacím rozhovorem — druhý den to vypadalo jako návrat bugu
+        # ([[test-the-fix-not-the-symptom]], bod 6). Chat funguje normálně
+        # (Hans odpovídá, historie vlákna se drží v conv_store, takže se dá
+        # testovat i navazování), jen se z toho nestává „co Hans ví".
+        # ⚠️ ZÁMĚRNĚ jen tenhle jeden zápis: `human_chat` je zdroj pro deník,
+        # reflexe i RAG, takže vynechání tady utne celou větev naráz.
+        if self._is_test_person(name):
             return
         try:
             _note = f"{name}: {user_message}\nHans: {response}"
@@ -3375,14 +3404,18 @@ class OpenWebUIDirectHandler:
             # human_chat. Přes _log_entry → spustí synthesis_hooks
             # → vytvoří chat_reflection → upload do hans_identita RAG.
             _note = f"{name}: {_raw_message}\nHans: {response}"
-            _hi_log = getattr(self, "_hans_idle", None)
+            # HANS_TEST_PERSON_V1 — u testovací identity se přeskočí OBOJÍ:
+            # deník i RAG. ⚠️ NESTAČÍ vynulovat `_hi_log` — tím by se naopak
+            # spustila záložní SQL větev níž a řádek by se zapsal stejně.
+            _skip_mem = self._is_test_person(name)
+            _hi_log = None if _skip_mem else getattr(self, "_hans_idle", None)
             if _hi_log and hasattr(_hi_log, "_log_entry"):
                 try:
                     _hi_log._log_entry("human_chat", name, note=_note)
                 except Exception as _e:
                     print(f"[Chat] human_chat log_entry failed: {_e}")
                     _hi_log = None
-            if not _hi_log:
+            if not _hi_log and not _skip_mem:
                 # Fallback — přímý SQL
                 try:
                     import sqlite3 as _sql, time as _t
@@ -3402,7 +3435,8 @@ class OpenWebUIDirectHandler:
             # vágní chat_reflection (ta ukládá jen dojem, ne téma). Na pozadí
             # (RAG = síťový hop), best-effort.
             try:
-                self._upload_chat_memory(name, _raw_message, response)
+                if not _skip_mem:
+                    self._upload_chat_memory(name, _raw_message, response)
             except Exception as _e:
                 print(f"[Chat] chat memory upload failed: {_e}")
         return response

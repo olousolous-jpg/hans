@@ -1276,5 +1276,7 @@
   "reminder": {
     "alone_window_min": 45,
     "_alone_note": "COMMIT_COND_V1: připomínka s podmínkou alone se ozve, jen když za posledních N minut nebyl vidět nikdo jiný. Aktuální viditelnost nestačí — člověk ve vedlejším pokoji není v záběru, ale doma je."
-  }
+  },
+  "test_persons": [],
+  "_test_persons_note": "HANS_TEST_PERSON_V1: jména, pod kterými se Hans testuje. Rozhovor s nimi se NEZAPISUJE do deníku (human_chat) ani do RAG — jinak vlastní testovací repliky skončí v paměti jako by to byly znalosti. Chat i historie vlákna fungují normálně."
 }
