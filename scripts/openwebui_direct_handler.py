@@ -2902,6 +2902,40 @@ class OpenWebUIDirectHandler:
                         _cmd = None
                 except Exception:
                     pass
+            # HANS_PROVENANCE_NOT_LIST_V1 (19.8.) — „odkud to máš?" / „máš to
+            # ze svých zápisků?" po Hansově tvrzení je KONFRONTACE, ne žádost
+            # o výpis. Doloženo 19.8. 2× v jednom hovoru: první šla regexem na
+            # /zdroje (výpis odkazů ze studia), druhá routerem na /rozhovory
+            # (shrnutí 52 výměn) — obě místo odpovědi na položenou otázku.
+            # ⚠️ Vzor „odkud to máš" má /zdroje ZÁMĚRNĚ (archiv 2026-07, ř. 358),
+            # takže se NERUŠÍ plošně: jen tehdy, když je ve vlákně čerstvé
+            # Hansovo tvrzení, které se dá konfrontovat. „Odkud jsi čerpal ke
+            # studiu?" bez takového tvrzení dál vypíše odkazy.
+            # Proč zrušit routing a nic nedosazovat: dotaz tím propadne na
+            # faktickou cestu → když tvrzení nemá oporu, A1 abstinuje a TEPRVE
+            # TÍM se spustí CLAIM_RETRACT_V1, který na tyhle formulace vzor
+            # (`_SOURCE_Q`) má, ale dosud se k nim nedostal — žije jen uvnitř
+            # abstinenční větve. Hotová mašinerie, žádná nová.
+            if _cmd and _cmd[0] in ("zdroje", "rozhovory", "cetl"):
+                try:
+                    from scripts.claim_retract import _SOURCE_Q, find_claim
+                    if _SOURCE_Q.search(user_message or ""):
+                        _hist_p = []
+                        try:
+                            _hist_p = self.conv_store.get_history(name) or []
+                        except Exception:
+                            pass
+                        if find_claim(user_message, _hist_p):
+                            print("[Chat] provenience → běžná cesta "
+                                  "(HANS_PROVENANCE_NOT_LIST_V1)")
+                            logging.getLogger(__name__).info(
+                                'HANS_PROVENANCE_NOT_LIST_V1: /%s zrušen — '
+                                'věta konfrontuje čerstvé tvrzení: %.50s',
+                                _cmd[0], user_message)
+                            _cmd = None
+                except Exception as _pne:
+                    logging.getLogger(__name__).debug(
+                        'HANS_PROVENANCE_NOT_LIST_V1: %s', _pne)
             if _cmd:
                 # HANS_THREAD_V1 — uživatel právě OPRAVIL tutéž cestu, která
                 # odpovídala minule → nepouštět ji znovu (vracela by totéž;
@@ -3179,9 +3213,20 @@ class OpenWebUIDirectHandler:
         # "kdo jsem?" → "<jméno> se ptá: kdo jsem?" → embedding najde kartu osoby
         # místo kdo_je_hans.txt. Originál se ukládá do historie bez prefixu.
         # USER_NAME_PREFIX_PATCH
+        # HANS_ASKER_PREFIX_RETRIEVAL_ONLY_V1 (19.8.) — prefix šel dřív i do
+        # GENERACE a model si tu rámovací větu bral za předlohu odpovědi:
+        # „Stando žádá upřesnění ohledně základů hradu", „Stando přeje dobrý
+        # den", „Zaznamenal jsem připomínku pana Standy" — 5× z 10 odpovědí v
+        # rozhovoru (19.8.), a totéž je nález 8 z testu očima cizího člověka.
+        # Změřeno, že to NEDĚLÁ `cz_names.fix_addressee` (na 1. pád na začátku
+        # věty nesahá) — píše to sám model podle toho, co dostal.
+        # Prefix ale VZNIKL kvůli RAG retrievalu („kdo jsem?" → embedding najde
+        # kartu osoby) a `HANS_QUERY_REWRITER_F1_V1` s ním počítá → nemazat,
+        # jen ZÚŽIT: retrieval ho dostane, generace ne.
         _raw_message = user_message
+        _q_for_retrieval = user_message
         if name and name.lower() not in user_message.lower():
-            user_message = f"{name} se ptá: {user_message}"
+            _q_for_retrieval = f"{name} se ptá: {user_message}"
         # ── HANS_SELFCONSISTENCY_A1_V1 ────────────────────────────────────
         # Předpočítej grounding JEDNOU (šetří RAG oproti výpočtu ve
         # _stream_message) a zjisti výsledek. Jen u 'factual_nofacts'
@@ -3191,7 +3236,7 @@ class OpenWebUIDirectHandler:
         _grounding = _GROUNDING_UNSET
         _a1_abstain = False
         try:
-            _grounding = self._build_grounding(user_message, name)
+            _grounding = self._build_grounding(_q_for_retrieval, name)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
                 from scripts.hans_selfconsistency import is_unstable
                 if is_unstable(self.config, _raw_message) is True:

@@ -165,6 +165,42 @@ def _asks_opinion(message: str) -> bool:
     return not _REQUEST_TO_HANS.search(msg)
 
 
+# HANS_CAP_QUESTION_NOT_ORDER_V1 (19.8.) — dotaz „UMÍŠ to?" není rozkaz.
+# Doloženo testem očima cizího člověka (08:47): „umíte pustit něco na
+# televizi?" → agent zvolil kodi_play_film a `titul` si vzal z HISTORIE
+# (Pelíšky, tři výměny zpět — router dostává posledních N výměn jako
+# kontext). Hans pak odmítal pustit film, na který se nikdo neptal.
+# Táž třída jako HANS_FILM_RECOMMEND_V1 (titul z živého stavu), proto TÝŽ
+# způsob: potlačit akci deterministicky, ne dopisovat větu do promptu.
+_CAP_QUESTION_PAT = re.compile(
+    r"\b(um[íi][šs]|um[íi]te|dok[áa][žz]e[šs]|dok[áa][žz]ete|"
+    r"zvl[áa]dne[šs]|zvl[áa]dnete)\b", re.IGNORECASE)
+
+
+def _asks_capability(message: str, args=None) -> bool:
+    """True = věta se PTÁ, jestli to Hans umí, a NEjmenuje předmět akce.
+
+    Předmět (`titul`) si router doplňuje i z kontextu — a právě to je ten
+    bug. Když ale předmět ve VĚTĚ je („umíš pustit Pelíšky?"), je to
+    legitimní zdvořilá žádost a projde beze změny.
+    """
+    msg = message or ""
+    if not _CAP_QUESTION_PAT.search(msg):
+        return False
+    import unicodedata as _ud
+
+    def _fold(s):
+        return "".join(c for c in _ud.normalize("NFKD", (s or "").lower())
+                       if not _ud.combining(c))
+
+    m = _fold(msg)
+    for v in (args or {}).values():
+        v = _fold(str(v or "")).strip()
+        if v and v in m:
+            return False        # předmět je ve větě → skutečná žádost
+    return True
+
+
 # HANS_PRESENCE_ASK_V1 — ptá se věta na PŘÍTOMNOST konkrétní známé osoby?
 _PRESENCE_PAT = None
 
@@ -1235,6 +1271,18 @@ class AgentRouter:
             if _act is not None and _act.needs_confirm and _asks_opinion(message):
                 log.info("HANS_OPINION_NOT_ORDER_V1: %s potlačen — věta se ptá "
                          "na názor, nežádá akci: %.50s", aid, message)
+                return None
+            # HANS_CAP_QUESTION_NOT_ORDER_V1 — „umíte pustit něco na televizi?"
+            # je dotaz na schopnost, ne pokyn; bez předmětu ve větě by ho
+            # router doplnil z historie. action=null → odpoví volný hovor,
+            # který má v promptu blok schopností (`cap`) a řekne, že to umí.
+            # Jen akce S NÁSLEDKEM (needs_confirm) — informativní report_*
+            # nic neprovede, takže je zbytečné je vetovat.
+            if _act is not None and _act.needs_confirm and \
+                    _asks_capability(message, decision.get("args") or {}):
+                log.info("HANS_CAP_QUESTION_NOT_ORDER_V1: %s potlačen — věta "
+                         "se ptá na schopnost, nejmenuje předmět: %.50s",
+                         aid, message)
                 return None
             # HANS_PRESENCE_ASK_V1 — dotaz na přítomnost konkrétní osoby patří
             # VŽDY na who_home, i v ukecané formě („nevíš, jestli je Jana

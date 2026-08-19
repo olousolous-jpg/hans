@@ -2509,10 +2509,25 @@ def _cmd_zdroje(handler, name, args) -> str:
         return ("K tomuhle nemám v zápiscích žádné čtení, pane."
                 if q else "Zatím jsem si nic nezapsal, pane.")
 
-    s_url, s_bez = [], []
+    # HANS_SOURCES_DEDUP_V1 (19.8.) — týž článek má v deníku `web_read`
+    # I `reading_takeaway`, takže jedno čtení vyšlo dvakrát; a když se čtení
+    # opakovalo (viz HANS_CURIOSITY_COOLDOWN_PERSIST_V1), vypsal se výpis
+    # třikrát tentýž řádek. Doloženo 19.8.: 3× „Třetí skoba pro Kocoura"
+    # v obou sekcích. Dedup na (titul, url), nejnovější výskyt vyhrává.
+    # HANS_SOURCES_DEDUP_V2 — dedup na (titul, url) NESTAČIL: týž článek má
+    # `web_read` S odkazem i `reading_takeaway` BEZ něj, takže vyšel v OBOU
+    # sekcích naráz („mám odkaz" i „odkaz jsem si neuložil" o tomtéž).
+    # Klíč je proto SAMOTNÝ TITUL a vyhrává výskyt S ODKAZEM.
+    _best = {}
     for ts, title, url in rows:
-        d = _dt.fromtimestamp(ts).strftime("%d.%m.")
         t = str(title or "")[:70]
+        k = t.lower()
+        prev = _best.get(k)
+        if prev is None or (url and not prev[2]):
+            _best[k] = (ts, t, url)
+    s_url, s_bez = [], []
+    for ts, t, url in sorted(_best.values(), key=lambda x: -x[0]):
+        d = _dt.fromtimestamp(ts).strftime("%d.%m.")
         (s_url if url else s_bez).append((d, t, url))
 
     out = []
@@ -3643,6 +3658,28 @@ def _soft_memory_ask(msg: str) -> bool:
     return bool(_MEM_SOFT_PAT.search(m))
 
 
+# HANS_CAP_WISH_NOT_LIST_V1 (19.8.) — otázka na TOUHU/MEZERU není žádost
+# o výčet. Doloženo testem očima cizího člověka: „co byste chtěl umět, co
+# zatím NEumíte?" dostalo týž hotový blok jako „co všechno umíte?" (2×
+# během 20 výměn). Router pro to nemá jak: v katalogu je jediný štítek
+# `schopnosti = co všechno umí`, takže si k sobě přitáhne i jeho OPAK.
+# Rozhoduje se to proto tady, deterministicky — další věta do promptu je
+# prompt debt ([[prompt-debt-tool-calling]]).
+# ⚠️ Pořadí slov musí sedět v obou směrech: čeština staví „co BYS CHTĚL"
+# i „co byste CHTĚL"; jednosměrný vzor by minul přesně tu doloženou větu.
+_CAP_WISH_PAT = re.compile(
+    r"((bys|byste)\s+(si\s+)?cht[ěe]l|cht[ěe]l[aoy]?\s+(bys|byste)|"
+    r"(bys|byste)\s+(si\s+)?p[řr]á[lt]|r[áa]d\s+bys(te)?|"
+    r"tou[žz][íi][šs]|tou[žz][íi]te|co\s+(ti|v[áa]m)\s+chyb[íi]|"
+    r"neum[íi]|nedok[áa][žz]e|nezvl[áa]d)", re.I)
+
+
+def _capability_wish_ask(msg: str) -> bool:
+    """True = věta se ptá, co by Hans CHTĚL umět nebo co NEumí — a na to
+    je výčet schopností špatná odpověď (je to jeho opak)."""
+    return bool(_CAP_WISH_PAT.search(msg or ""))
+
+
 def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     """HANS_CMD_LLM_ROUTE_V4 — oprav štítek podle DETERMINISTICKÝCH signálů.
 
@@ -3660,6 +3697,14 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     if cid == "vzpominka" and _soft_memory_ask(msg):
         _log.info("HANS_SOFT_MEMORY_V1: '%.40s' → /vzpominka ZAMÍTNUTO "
                   "(měkký dotaz, ne nejstarší záznam)", msg)
+        return ""
+    # HANS_CAP_WISH_NOT_LIST_V1 — „co bys chtěl umět / co zatím neumíš" je
+    # otázka na MEZERU, ne na výčet. Volný hovor má v promptu blok `direction`
+    # (Hansův vlastní odvozený směr) i `cap`, takže odpoví z toho, co o sobě
+    # skutečně ví — kdežto výčet schopností odpovídá na jinou otázku.
+    if cid == "schopnosti" and _capability_wish_ask(msg):
+        _log.info("HANS_CAP_WISH_NOT_LIST_V1: '%.40s' → /schopnosti ZAMÍTNUTO "
+                  "(ptá se, co NEumí nebo co by chtěl umět)", msg)
         return ""
     if cid not in ("nitky", "rozhovory"):
         return cid

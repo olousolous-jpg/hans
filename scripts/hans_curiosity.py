@@ -135,7 +135,16 @@ class HansCuriosity:
             "interest": 5400,    # 1× za 1.5h na zájem
             "news":     43200,   # 1× za 12h zprávy
         }
-        self._last_read: dict[str, float] = {}  # topic_key → timestamp
+        # HANS_CURIOSITY_COOLDOWN_PERSIST_V1 (19.8.) — cooldown byl JEN
+        # v paměti, takže každý restart Hanse ho vynuloval a co zrovna běželo
+        # na TV se přečetlo znovu. Doloženo 19.8.: „Třetí skoba pro Kocoura"
+        # 9× za den, a časy čtení SEDÍ NA RESTARTY (11:22:08, 11:24:11,
+        # 11:37:13…). Následek není jen výpis navíc: vznikne N zápisků o téže
+        # věci, které si můžou ODPOROVAT (tentýž film „z roku 1984" × „z roku
+        # devětasedmdesát čtyři") — a všechny jdou do paměti i do RAG.
+        # Stav proto do SOUBORU, vzorem je `data/.hans_guard`.
+        self._cooldown_path = Path("data/.curiosity_cooldowns.json")
+        self._last_read: dict[str, float] = self._load_cooldowns()
 
         # Cache posledního přečteného — pro LLM kontext
         self._recent: list[ReadResult] = []
@@ -613,6 +622,29 @@ class HansCuriosity:
 
     # ── Interní ───────────────────────────────────────────────────────────────
 
+    def _load_cooldowns(self) -> dict:
+        """HANS_CURIOSITY_COOLDOWN_PERSIST_V1 — načti mapu z minulého běhu.
+        Fail-open: chybí/rozbitý soubor → prázdno = chová se jako dřív."""
+        try:
+            import json as _j
+            d = _j.loads(self._cooldown_path.read_text(encoding="utf-8"))
+            return {str(k): float(v) for k, v in dict(d).items()}
+        except Exception:
+            return {}
+
+    def _save_cooldowns(self) -> None:
+        """Zápis po každém úspěšném čtení. Chyba se jen zaloguje — cooldown
+        je pojistka proti opakování, ne kritická cesta."""
+        try:
+            import json as _j
+            self._cooldown_path.parent.mkdir(parents=True, exist_ok=True)
+            # drž jen posledních 200 klíčů, ať soubor neroste donekonečna
+            items = sorted(self._last_read.items(), key=lambda x: -x[1])[:200]
+            self._cooldown_path.write_text(
+                _j.dumps(dict(items), ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            _log.debug("cooldown save: %s", e)
+
     def _on_cooldown(self, trigger: str, key: str) -> bool:
         ck  = f"{trigger}:{key}"
         cd  = self._cooldowns.get(trigger, 3600)
@@ -640,6 +672,7 @@ class HansCuriosity:
                     ck = f"{topic}:{key}"
                     with self._lock:
                         self._last_read[ck] = time.time()
+                    self._save_cooldowns()   # přežije restart
                     _log.info("Read OK [%s] '%s': %s",
                               topic, result.title, result.summary[:80])
                     try:
