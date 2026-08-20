@@ -51,3 +51,24 @@ def get_logger(name: str = "facerecog") -> logging.Logger:
         root.addHandler(ch)
 
     return logger
+
+
+# ── HANS_NO_SILENT_CTX_V1 (20.8.) — hlas JEDNOU za běh ──────────────────────
+# Tiché `except: pass` ve skládání promptu schovalo chybu, která se roky dála
+# při KAŽDÉ zprávě (volání @property se závorkami). Debug hlášky by nepomohly
+# — souborový handler je na INFO, takže by nešly nikam. INFO na každou zprávu
+# by zas zaplavilo log (poučení z LOG_CIRCUIT_V1). Kompromis: první výskyt na
+# daném místě se zaloguje, další už ne. Na odhalení „tohle selhává pořád"
+# stačí jeden řádek; na jeho utopení stačí tisíc.
+_once_seen: set = set()
+
+
+def log_once(logger, key: str, msg: str, *args) -> None:
+    """Zaloguje INFO jen při PRVNÍM výskytu daného `key` v tomhle běhu."""
+    if key in _once_seen:
+        return
+    _once_seen.add(key)
+    try:
+        logger.info(msg, *args)
+    except Exception:
+        pass

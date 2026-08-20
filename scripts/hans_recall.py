@@ -18,6 +18,7 @@ jen čisté read-only funkce (testovatelné offline).
 from __future__ import annotations
 
 import logging
+from scripts.logger import log_once
 import re
 import sqlite3
 import time
@@ -1732,8 +1733,10 @@ def self_state_facts(db_path: str, max_items: int = 6,
         if conn is not None:
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as _tiche:
+                log_once(  # HANS_NO_SILENT_CTX_V1
+                    _log, "self_state_facts(ř. 1735)",
+                    "self_state_facts: blok kontextu selhal (ř. 1735): %s", _tiche)
     head = []
     # HANS_SELF_STATE_AWAKE_V1 (7.8.) — PROVOZNÍ STAV jako první fakt.
     # Bez něj si model režim vymýšlel: 7.8. 10:52 tvrdil „Jsem v režimu

@@ -30,6 +30,7 @@ import re
 import time
 from typing import Callable, Optional
 
+from scripts.logger import log_once
 log = logging.getLogger(__name__)
 
 _YES = {"ano", "jo", "jasně", "jasan", "pusť", "pust", "spusť", "spust",
@@ -1694,8 +1695,10 @@ class AgentRouter:
                     parts.append(f"Na TV právě hraje: {np.get('title')}.")
                 else:
                     parts.append("Na TV teď nic nehraje.")
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                log, "_context(ř. 1697)",
+                "_context: blok kontextu selhal (ř. 1697): %s", _tiche)
         # posledních N výměn
         try:
             # HANS_CHAT_CHANNEL_AWARE_V1 — agent kontext JEN z tohoto kanálu
@@ -1712,8 +1715,10 @@ class AgentRouter:
                 who = name if role == "user" else "Hans"
                 if c:
                     parts.append(f"{who}: {c}")
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                log, "_context(ř. 1715)",
+                "_context: blok kontextu selhal (ř. 1715): %s", _tiche)
         return "\n".join(parts)
 
     # ── deník ───────────────────────────────────────────────────────────────

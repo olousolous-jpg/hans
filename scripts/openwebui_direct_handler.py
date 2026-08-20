@@ -11,6 +11,7 @@ Auth:     Bearer token
 import json
 import re
 import logging
+from scripts.logger import log_once
 import threading
 import time
 import os
@@ -642,8 +643,10 @@ class OpenWebUIDirectHandler:
             _tc = getattr(self, '_thread_ctx', None)
             if _tc and str(_tc[0]) == str(_text) and _tc[1] != _tc[0]:
                 _text = _tc[1]
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_grounding(ř. 645)",
+                "_build_grounding: blok kontextu selhal (ř. 645): %s", _tiche)
 
         # HANS_SELFCONSISTENCY_A1_V1 — zaznamenej výsledek groundingu pro
         # volajícího (A1 short-circuit běží jen u 'factual_nofacts').
@@ -706,8 +709,10 @@ class OpenWebUIDirectHandler:
                     self._vysledek_groundingu('grounded', 'reading_recall_tema')
                     return _kc
                 # None = topic JE v paměti → nech normální recall/RAG cestu
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_grounding(ř. 709)",
+                "_build_grounding: blok kontextu selhal (ř. 709): %s", _tiche)
 
         # HANS_RECENT_ACTIVITY_V1 (18.7.) — „co jsi se dnes dozvěděl / co sis
         # zapsal / co jsi dnes dělal"? Deterministický recall Hansovy vlastní
@@ -726,8 +731,10 @@ class OpenWebUIDirectHandler:
                 if _ra:
                     self._vysledek_groundingu('grounded', 'nedavna_aktivita')
                     return _ra
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_grounding(ř. 729)",
+                "_build_grounding: blok kontextu selhal (ř. 729): %s", _tiche)
 
         # HANS_SOURCE_QUERY_V1 — „odkud to víš / kde jsi to četl / máš zdroj"?
         # MUSÍ BÝT PRVNÍ (dřív než _intent/_knowledge gate) — dotaz na
@@ -764,8 +771,10 @@ class OpenWebUIDirectHandler:
             if _ioq(str(_text)):
                 self._vysledek_groundingu('opinion', 'nazor')
                 return ''
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_grounding(ř. 767)",
+                "_build_grounding: blok kontextu selhal (ř. 767): %s", _tiche)
 
         # HANS_CHAT_RECALL_V2 — recall PŘEDCHOZÍHO rozhovoru („pamatuješ na X",
         # „mluvili jsme o…", „co jsi navrhl"). Sémantický RAG vágní recall často
@@ -785,8 +794,10 @@ class OpenWebUIDirectHandler:
                     return ("\n\nSKUTEČNÝ ZÁZNAM dřívějšího rozhovoru (odpověz JEN "
                             "z něj, nevymýšlej datum ani detaily; na co v záznamu "
                             "není, přiznej „to si nevybavuji“):\n" + _blk)
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_grounding(ř. 788)",
+                "_build_grounding: blok kontextu selhal (ř. 788): %s", _tiche)
 
         # HANS_COMMITMENTS_V1 — „co jsi mi slíbil?" → deterministicky z uložených
         # SLIBŮ (ne hledání v textu); prázdno → honestní „nic", NE výmysl.
@@ -799,8 +810,10 @@ class OpenWebUIDirectHandler:
             if _cr:
                 self._vysledek_groundingu('grounded', 'zavazky')
                 return _cr
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_grounding(ř. 802)",
+                "_build_grounding: blok kontextu selhal (ř. 802): %s", _tiche)
 
         # HANS_FILM_RECALL_V1 — dotaz na FILM podle názvu: dohledej Hansovy
         # VLASTNÍ deníkové záznamy (movie_opinion/kodi_playing) o tom filmu, ať
@@ -815,8 +828,10 @@ class OpenWebUIDirectHandler:
             if _fr:
                 self._vysledek_groundingu('grounded', 'film_recall')
                 return _fr
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_grounding(ř. 818)",
+                "_build_grounding: blok kontextu selhal (ř. 818): %s", _tiche)
 
         try:
             # 1) intent — je dotaz faktický?
@@ -844,8 +859,10 @@ class OpenWebUIDirectHandler:
                                 _mo = getattr(_mobj, 'mood', '') or ''
                                 _mr = getattr(getattr(_mobj, '_state', None),
                                               'shift_reason', '') or ''
-                        except Exception:
-                            pass
+                        except Exception as _tiche:
+                            log_once(  # HANS_NO_SILENT_CTX_V1
+                                logging.getLogger(__name__), "_build_grounding(ř. 847)",
+                                "_build_grounding: blok kontextu selhal (ř. 847): %s", _tiche)
                         # HANS_SELF_STATE_AWAKE_V1 — dolož skutečný provozní
                         # stav (spánek/kamera/hlídání), ať si ho model nedomýšlí.
                         _rt_state = {}
@@ -975,8 +992,10 @@ class OpenWebUIDirectHandler:
                                         _skipped_chatlogs.append(1)
                                         continue
                                     all_chunks.append(_ch)
-                        except Exception:
-                            pass
+                        except Exception as _tiche:
+                            log_once(  # HANS_NO_SILENT_CTX_V1
+                                logging.getLogger(__name__), "_build_grounding(ř. 978)",
+                                "_build_grounding: blok kontextu selhal (ř. 978): %s", _tiche)
                     if _pending:
                         logging.getLogger(__name__).info(
                             'G3B: %d/%d kolekcí nestihlo timeout %ss',
@@ -1474,8 +1493,10 @@ class OpenWebUIDirectHandler:
             import unicodedata as _u
             _relf = "".join(c for c in _u.normalize("NFKD", _relf)
                             if not _u.combining(c))
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_system(ř. 1477)",
+                "_build_system: blok kontextu selhal (ř. 1477): %s", _tiche)
         import re as _rre
         _is_knowledge_q = bool(_rre.search(
             r"\b(co\s+(je|jsou|byl|byla)|kdo\s+(je|byl)|co\s+vis|co\s+ses|"
@@ -1739,8 +1760,10 @@ class OpenWebUIDirectHandler:
                 )
                 if surr:
                     surr_ctx = f"\n\n{surr}"
-            except Exception:
-                pass
+            except Exception as _tiche:
+                log_once(  # HANS_NO_SILENT_CTX_V1
+                    logging.getLogger(__name__), "_build_system(ř. 1742)",
+                    "_build_system: blok kontextu selhal (ř. 1742): %s", _tiche)
 
         # Memory — characterization + poslední setkání (T5B_TACTFUL_RECALL_V1)
         # Jen pro plný mód; v RAG módu jde statická paměť přes RAG kolekce.
@@ -2009,8 +2032,10 @@ class OpenWebUIDirectHandler:
                     lessons_ctx += ("\n\nSám sis předsevzal zlepšit svůj projev "
                                     "(drž se toho, nevnucuj, nekomentuj to nahlas):"
                                     "\n- " + "\n- ".join(_scr))
-            except Exception:
-                pass
+            except Exception as _tiche:
+                log_once(  # HANS_NO_SILENT_CTX_V1
+                    logging.getLogger(__name__), "_build_system(ř. 2012)",
+                    "_build_system: blok kontextu selhal (ř. 2012): %s", _tiche)
 
         # _RAG_MODE_BUILD — pro hans-rag model jen LIVE STATE.
         # Identita má vlastní system prompt v OpenWebUI, statická paměť
@@ -2078,8 +2103,10 @@ class OpenWebUIDirectHandler:
                                              key=lambda x: -x[1])[:8]),
                           "sizes": _sizes},
                 )
-            except Exception:
-                pass
+            except Exception as _tiche:
+                log_once(  # HANS_NO_SILENT_CTX_V1
+                    logging.getLogger(__name__), "_build_system(ř. 2081)",
+                    "_build_system: blok kontextu selhal (ř. 2081): %s", _tiche)
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
             # rozvláčnosti (jen chat; greeting má vlastní brevitu).
             if not for_greeting:
@@ -2150,8 +2177,10 @@ class OpenWebUIDirectHandler:
                     if (self.config.get('provenance', {}) or {}).get(
                             'enabled', True):
                         system_msg += "\n\n" + _prov.STEER
-                except Exception:
-                    pass
+                except Exception as _tiche:
+                    log_once(  # HANS_NO_SILENT_CTX_V1
+                        logging.getLogger(__name__), "_build_system(ř. 2153)",
+                        "_build_system: blok kontextu selhal (ř. 2153): %s", _tiche)
                 # HANS_ART_HONESTY_V1 — neslibuj malování, které nespustíš.
                 # Obraz vznikne JEN příkazem „namaluj …" (ten se zpracuje mimo
                 # tuhle odpověď). Když uživatel dá zpětnou vazbu k obrazu,
@@ -2178,8 +2207,10 @@ class OpenWebUIDirectHandler:
                     "history_turns": self.conv_store.summary(),
                 },
             )
-        except Exception:
-            pass
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_system(ř. 2181)",
+                "_build_system: blok kontextu selhal (ř. 2181): %s", _tiche)
         # endregion
         return system_msg
 
