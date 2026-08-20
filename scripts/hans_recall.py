@@ -801,7 +801,13 @@ def sources_answer(db_path: str, user_text: str,
         # POSLEDNÍ Hansova replika. Když ta hlásila, koho vidí, je zdrojem
         # kamera. Funkce si poslední repliky stejně tahá (fallback níž),
         # tak se použije týž zdroj místo nového mechanismu.
-        if not _o_pritomnosti:
+        # ⚠️ Anaforická větev jen u SKUTEČNĚ HOLÉHO doptání. Regresní sada
+        # chytila, že jinak přebije i otázku s vlastním předmětem: „odkud víš,
+        # že Jana ráda vaří?" dostalo odpověď „vidím to kamerou“ jen proto, že
+        # poslední replika náhodou hlásila, koho Hans vidí.
+        _hole = (len((user_text or "").split()) <= 6
+                 and _re.search(r"\bto\b", user_text or "", _re.IGNORECASE))
+        if not _o_pritomnosti and _hole:
             _hlaseni = _re.compile(
                 r"(vid[íi]m\s+(tu|tady)|nikoho\s+nevid[íi]m|"
                 r"zahl[ée]dl\s+jsem|je\s+doma|jsou\s+doma)", _re.IGNORECASE)
