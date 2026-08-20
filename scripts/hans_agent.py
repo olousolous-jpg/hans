@@ -182,6 +182,30 @@ _CAP_QUESTION_PAT = re.compile(
     r"zvl[áa]dne[šs]|zvl[áa]dnete)\b", re.IGNORECASE)
 
 
+# HANS_CAP_QUESTION_SPEECH_VERB_V1 — slovesa, po kterých „umíš…" znamená
+# ŽÁDOST („umíš mi říct/ukázat/vypsat X?"), ne otázku na schopnost.
+_SPEECH_VERB_PAT = re.compile(
+    r"\b(?:[řr][íi]ct|[řr][íi]ci|pov[ěe]d[ěe]t|[řr]ekni|uk[áa]zat|uka[žz]|"
+    r"vypsat|vyp[íi][šs]|sd[ěe]lit|zjistit|zjisti|naj[íi]t|najdi)\b",
+    re.IGNORECASE)
+
+
+# HANS_CAP_LIST_REQUEST_V1 (20.8.) — „co všechno umíš?" je ŽÁDOST O VÝČET
+# schopností (patří na /schopnosti), kdežto „umíš zapisovat poznámky?" je
+# ano/ne dotaz na JEDNU schopnost. Obojí obsahuje totéž sloveso, liší se
+# tázacím „co" — a bez téhle výjimky by pravidlo níž zabilo funkční výpis.
+# Změřeno na reálných zprávách: bez ní by spadlo „co všechno umíte?",
+# „co teda umiš delat?", „a co všechno dokážeš?".
+_CAP_LIST_PAT = re.compile(
+    r"\bco\b.{0,24}\b(um[íi][šs]|um[íi]te|dok[áa][žz]e[šs]|dok[áa][žz]ete|"
+    r"zvl[áa]dne[šs]|zvl[áa]dnete)\b", re.IGNORECASE)
+
+
+def asks_capability_list(message: str) -> bool:
+    """True = „co všechno umíš?" → patří na výpis schopností, ne potlačit."""
+    return bool(_CAP_LIST_PAT.search(message or ""))
+
+
 def _asks_capability(message: str, args=None) -> bool:
     """True = věta se PTÁ, jestli to Hans umí, a NEjmenuje předmět akce.
 
@@ -191,6 +215,12 @@ def _asks_capability(message: str, args=None) -> bool:
     """
     msg = message or ""
     if not _CAP_QUESTION_PAT.search(msg):
+        return False
+    # HANS_CAP_QUESTION_SPEECH_VERB_V1 (20.8.) — „umíš mi ŘÍCT, co mám na
+    # seznamu?" NENÍ dotaz na schopnost, ale zdvořilá ŽÁDOST. Bez téhle
+    # výjimky by se potlačilo i to, co uživatel opravdu chce (a `_asks_opinion`
+    # má proti témuž jevu `_REQUEST_TO_HANS` — stejný princip, jiná slova).
+    if _SPEECH_VERB_PAT.search(msg):
         return False
     import unicodedata as _ud
 

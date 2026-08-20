@@ -3846,6 +3846,29 @@ def resolve_command_llm(message: str, config: dict, turns=None):
                 return None
         except Exception as _ive:
             _log.debug("imperative gate: %s", _ive)
+    # HANS_CMD_LLM_ROUTE_CAPABILITY_V1 (20.8.) — „UMÍŠ X?" NENÍ ŽÁDOST O VÝPIS X.
+    # Doloženo v hovoru 20.8.: „umíš si vlastně zapisovat poznámky?" → router
+    # zvolil /seznam a Hans odpověděl „Seznam je prázdný, pane." Uživatel se
+    # přitom neptal, CO tam má, ale JESTLI to umí.
+    # Je to TŘETÍ případ téže třídy za den (schopnosti, rozhovory, seznam),
+    # tak je pravidlo obecné a ne pro další jeden štítek.
+    # Predikát je AGENTŮV (`_asks_capability`) — týž, kterým se potlačují akce;
+    # jedna pravda o tom, co je dotaz na schopnost.
+    # ⚠️ DVĚ VÝJIMKY, obě vynucené měřením na 961 reálných zprávách:
+    #   • „umíš mi ŘÍCT, co mám na seznamu?" = zdvořilá ŽÁDOST → výpis projde
+    #     (HANS_CAP_QUESTION_SPEECH_VERB_V1),
+    #   • „co všechno umíš?" = žádost o VÝČET schopností → /schopnosti projde
+    #     (HANS_CAP_LIST_REQUEST_V1); bez ní by pravidlo zabilo funkční featuru.
+    # Po výjimkách se pravidlo týká 11 z 961 zpráv a všech 11 jsou skutečné
+    # dotazy na schopnost.
+    try:
+        from scripts.hans_agent import _asks_capability, asks_capability_list
+        if _asks_capability(msg, {}) and not asks_capability_list(msg):
+            _log.info("HANS_CMD_LLM_ROUTE_CAPABILITY_V1: '%.40s' → routing "
+                      "přeskočen (dotaz na schopnost, ne žádost o výpis)", msg)
+            return None
+    except Exception as _cqe:
+        _log.debug("capability gate: %s", _cqe)
     cfg = (config or {}).get("intent", {}) or {}
     if not cfg.get("use_llm", False) or not cfg.get("cmd_route", True):
         return None

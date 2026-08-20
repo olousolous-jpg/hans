@@ -84,3 +84,13 @@ def nezname_rutiny() -> str:
         for m in re.finditer(r"mark\(\s*['\"](\w+)['\"]", f.read_text(encoding="utf-8")):
             volane.add(m.group(1))
     return ",".join(sorted(volane - znama))
+
+
+def blok_o_sobe(varianta: str) -> str:
+    """HANS_SELF_STATE_NO_OFF_MODES_V1 — blok „FAKTA O MĚ" pro daný stav.
+    `guard_on` / `guard_off` — vypnuté hlídání se zmiňovat NESMÍ (model si
+    ho v plném promptu překlopil do kladu a tvrdil, že v noci hlídal)."""
+    from scripts.hans_recall import self_state_facts
+    return self_state_facts("data/hans_diary.db", mood="content",
+                            runtime={"guard": varianta == "guard_on",
+                                     "sleeping": False}) or ""

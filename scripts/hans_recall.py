@@ -771,6 +771,51 @@ def sources_answer(db_path: str, user_text: str,
 
     Vrací string (Hansovým hlasem) nebo None (nic k nabídnutí → propadne do LLM).
     """
+    oslov = _cz_address(asker) if asker else "pane"  # HANS_NAME_INFLECTION_V1
+    # HANS_SOURCE_IS_SENSOR_V1 (20.8.) — NE KAŽDÉ TVRZENÍ POCHÁZÍ ZE ČTENÍ.
+    # Doloženo 20.8.: „a odkud to víš, že tu je Jana?" → „nemám uložený
+    # konkrétní článek s odkazem" — což je nesmysl, přítomnost člověka Hans
+    # nemá z Wikipedie, ale z KAMERY. Celá tahle funkce mlčky předpokládá,
+    # že zdroj = přečtený článek; u živého stavu je zdrojem ČIDLO.
+    # (Chyba vznikla tím, že HANS_PROVENANCE_NOT_LIST_V1 z téhož dne správně
+    # zrušil výpis zdrojů, ale odpověď pak spadla sem.)
+    # Predikát je sdílený s agentem — jedna pravda o tom, co je dotaz na
+    # přítomnost osoby.
+    # ⚠️ NESTAČÍ zeptat se `_asks_person_presence` — ta řeší „je X doma?",
+    # kdežto tady jde o dotaz na PŮVOD tvrzení o přítomnosti. A nestačí ani
+    # samotné jméno: „odkud víš, že Jana ráda vaří?" je tvrzení ZE ZÁPISKŮ,
+    # ne z čidla. Rozhoduje tedy DVOJICE: známá osoba + slovo o přítomnosti.
+    try:
+        import json as _js
+        import re as _re
+        from scripts.cz_names import find_known_person
+        with open("config.json", encoding="utf-8") as _cf:
+            _cfg = _js.load(_cf)
+        _pritomnost = _re.compile(
+            r"\b(tu|tady|doma|p[řr][íi]toms?n|v\s+pokoji|v\s+m[íi]stnosti|"
+            r"vid[íi][šs]|vid[íi]te)\b", _re.IGNORECASE)
+        _o_pritomnosti = bool(
+            find_known_person(user_text or "", _cfg)
+            and _pritomnost.search(user_text or ""))
+        # Holé doptání („a odkud to víš?") jméno NEOBSAHUJE — předmětem je
+        # POSLEDNÍ Hansova replika. Když ta hlásila, koho vidí, je zdrojem
+        # kamera. Funkce si poslední repliky stejně tahá (fallback níž),
+        # tak se použije týž zdroj místo nového mechanismu.
+        if not _o_pritomnosti:
+            _hlaseni = _re.compile(
+                r"(vid[íi]m\s+(tu|tady)|nikoho\s+nevid[íi]m|"
+                r"zahl[ée]dl\s+jsem|je\s+doma|jsou\s+doma)", _re.IGNORECASE)
+            for _r in _last_hans_topics(db_path, limit=2):
+                if _hlaseni.search(_r or ""):
+                    _o_pritomnosti = True
+                    break
+        if _o_pritomnosti:
+            return ("To nemám ze zápisků, %s — vidím to kamerou. "
+                    "Hlásím, koho právě rozpoznávám v místnosti." % oslov)
+    except Exception:
+        pass
+
+
     hit = _find_entity_in_text(db_path, user_text)
     if not hit:
         # fallback z posledních Hansových replik (user řekl jen „a odkud to víš")
@@ -779,7 +824,6 @@ def sources_answer(db_path: str, user_text: str,
             if hit:
                 break
 
-    oslov = _cz_address(asker) if asker else "pane"  # HANS_NAME_INFLECTION_V1
     if hit:
         name, url = hit
         return ("Ano, %s. O tématu '%s' jsem se dočetl na Wikipedii. "
@@ -1687,9 +1731,22 @@ def self_state_facts(db_path: str, max_items: int = 6,
         if runtime.get("vision") is not None:
             _st.append("kamerou vidím" if runtime["vision"]
                        else "kameru mám vypnutou")
-        if runtime.get("guard") is not None:
-            _st.append("hlídací režim je zapnutý" if runtime["guard"]
-                       else "hlídací režim je vypnutý")
+        # HANS_SELF_STATE_NO_OFF_MODES_V1 (20.8.) — VYPNUTÝ hlídací režim se
+        # NEZMIŇUJE. Doloženo 20.8.: na „co jsi dělal v noci?" Hans odpověděl
+        # „byl jsem v režimu hlídání domu", ačkoli tenhle blok měl v promptu
+        # a stálo v něm „hlídací režim je vypnutý" — tedy si protiřečil
+        # s vlastním podkladem.
+        # A/B změřeno: v izolaci model negaci zvládne (3/3 „byl vypnutý"),
+        # v plném ~14 KB promptu ji překlopí. Zmínka je semínko, šum kolem
+        # spouštěč — a semínko jde odstranit. Bez ní odpoví „nemám o tom
+        # informace", což je pravda; obsah noci nese zbytek bloku (studium,
+        # četba). Táž logika jako HANS_NUMERALS_AS_DIGITS_V1: odebrat důvod,
+        # proč model improvizuje, místo hlídání výsledku.
+        # ⚠️ Netýká se ostatních režimů: „kameru mám vypnutou" i „spím" se
+        # uvádět MUSÍ — tam je výchozí očekávání OPAČNÉ (že vidí a bdí),
+        # takže vynechání by vyrobilo chybu na druhou stranu.
+        if runtime.get("guard"):
+            _st.append("hlídací režim je zapnutý")
         if _st:
             head.append("teď: " + ", ".join(_st))
     if mood:
