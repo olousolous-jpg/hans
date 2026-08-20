@@ -1669,9 +1669,21 @@ class AgentRouter:
             hi = getattr(handler, "_hans_idle", None)
             rt = getattr(hi, "_routine", None) if hi else None
             if rt and hasattr(rt, "phase_label"):
-                parts.append(f"Situace: {rt.phase_label()}.")
-        except Exception:
-            pass
+                # HANS_AGENT_CTX_PHASE_FIX_V1 (20.8.) — `phase_label` je
+                # @property, ne metoda. Volání se závorkami tu roky házelo
+                # TypeError, který spolkl `except` pod tím — a řádek
+                # „Situace: …" se do routeru NIKDY nedostal.
+                # ⚠️ NENÍ to kosmetika: bez něj kontext ZAČÍNÁ větou „Na TV
+                # teď nic nehraje." a model se chytí televize. Změřeno na
+                # „zapiš si prosím, že jsem tu dnes byl":
+                #     SE Situace  → add_note 3/3
+                #     BEZ Situace → report_now_playing 3/3
+                # To vysvětluje „nestabilitu routeru" z 20.8.: offline jsem
+                # si Situaci do kontextu vždy dodal, živý běh ji neměl.
+                parts.append(f"Situace: {rt.phase_label}.")
+        except Exception as _pe:
+            # ⚠️ Tiché `pass` tuhle chybu schovalo — ať je aspoň v debugu.
+            log.debug("agent ctx: fáze nedostupná: %s", _pe)
         # živý stav — co hraje na TV
         try:
             hi = getattr(handler, "_hans_idle", None)

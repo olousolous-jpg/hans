@@ -94,3 +94,35 @@ def blok_o_sobe(varianta: str) -> str:
     return self_state_facts("data/hans_diary.db", mood="content",
                             runtime={"guard": varianta == "guard_on",
                                      "sleeping": False}) or ""
+
+
+def agent_kontext_ma_fazi() -> bool:
+    """HANS_AGENT_CTX_PHASE_FIX_V1 — dostane agentní router řádek „Situace: …"?
+
+    `phase_label` je @property; volání se závorkami házelo TypeError, který
+    spolkl `except` pod tím, a řádek z kontextu TIŠE mizel. Není to kosmetika:
+    bez něj kontext začíná větou o televizi a router se jí chytí (změřeno:
+    add_note 3/3 se Situací × report_now_playing 3/3 bez ní).
+    """
+    class _Rutina:
+        @property
+        def phase_label(self):
+            return "ráno"
+
+    class _Idle:
+        _routine = _Rutina()
+        kodi = None
+
+    class _H:
+        _hans_idle = _Idle()
+
+        class conv_store:
+            @staticmethod
+            def get_history(n, **kw):
+                return []
+
+            @staticmethod
+            def get_history_scoped(n, ch):
+                return []
+
+    return "Situace: ráno." in (_router()._context(_H(), "kdokoliv") or "")
