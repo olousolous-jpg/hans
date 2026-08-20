@@ -63,3 +63,24 @@ def tiche_vychody_groundingu() -> int:
     j = src.index("def _build_grounding(", i)
     mimo = src[:i] + src[j:]
     return len(re.findall(r"self\._grounding_outcome\s*=", mimo))
+
+
+def nezname_rutiny() -> str:
+    """HANS_SCHEDULE_NIGHT_STEPS_V1 — hlásí se někde rutina, kterou rozvrh nezná?
+
+    `hans_schedule.mark()` neznámý název **tiše zahodí** (jen debug hláška),
+    takže překlep nebo zapomenutý seed = rutina se tváří, že běží, a nikdy se
+    nezapíše. Tahle kontrola je statická: posbírá názvy ze VŠECH `mark(...)`
+    volání v kódu a porovná je se seedem. Vrací názvy navíc (prázdno = OK).
+    """
+    import re
+    from pathlib import Path
+    from scripts.hans_schedule import _SEED
+    znama = {s[0] for s in _SEED}
+    volane = set()
+    for f in Path("scripts").glob("*.py"):
+        if f.name == "hans_schedule.py":
+            continue
+        for m in re.finditer(r"mark\(\s*['\"](\w+)['\"]", f.read_text(encoding="utf-8")):
+            volane.add(m.group(1))
+    return ",".join(sorted(volane - znama))

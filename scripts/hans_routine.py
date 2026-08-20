@@ -1883,6 +1883,11 @@ class HansRoutine:
                     try:
                         n = self._relationship_reflection.reflect_due_persons()
                         _log.info("Reflexe vztahových karet: %d updatováno", n)
+                        try:   # HANS_SCHEDULE_NIGHT_STEPS_V1
+                            from scripts import hans_schedule as _hs
+                            _hs.mark('relationship_reflection')
+                        except Exception:
+                            pass
                     except Exception as _e:
                         _log.error("Reflexe vztahových karet selhala: %s", _e)
 
@@ -2248,6 +2253,16 @@ class HansRoutine:
                         self._last_writing_date = today
                         self._save_routine_state()
                     _log.info("Autorská session: %s", _wcode)
+                    # HANS_SCHEDULE_NIGHT_STEPS_V1 (20.8.) — noční krok se hlásí
+                    # rozvrhu, aby šlo poznat, že přestal běhat. `deferred`
+                    # = mozek byl dole → NEpočítá se jako úspěšný běh
+                    # (HANS_SCHEDULE_LAST_OK_V1).
+                    try:
+                        from scripts import hans_schedule as _hs
+                        _hs.mark('writing_session', ok=(_wcode != 'deferred'),
+                                 skip_reason='' if _wcode != 'deferred' else 'deferred')
+                    except Exception:
+                        pass
                 except Exception as _aue:
                     _log.warning("Autorská session selhala: %s", _aue)
 
@@ -2269,6 +2284,16 @@ class HansRoutine:
                         self._last_synthesis_date = today
                         self._save_routine_state()
                     _log.info("Synteze nápadů: %s", _ycode)
+                    # HANS_SCHEDULE_NIGHT_STEPS_V1 (20.8.) — noční krok se hlásí
+                    # rozvrhu, aby šlo poznat, že přestal běhat. `deferred`
+                    # = mozek byl dole → NEpočítá se jako úspěšný běh
+                    # (HANS_SCHEDULE_LAST_OK_V1).
+                    try:
+                        from scripts import hans_schedule as _hs
+                        _hs.mark('synthesis_session', ok=(_ycode != 'deferred'),
+                                 skip_reason='' if _ycode != 'deferred' else 'deferred')
+                    except Exception:
+                        pass
                 except Exception as _yue:
                     _log.warning("Synteze nápadů selhala: %s", _yue)
 
@@ -2291,6 +2316,16 @@ class HansRoutine:
                         self._last_selfcritique_date = today
                         self._save_routine_state()
                     _log.info("Sebekritika: %s", _ccode)
+                    # HANS_SCHEDULE_NIGHT_STEPS_V1 (20.8.) — noční krok se hlásí
+                    # rozvrhu, aby šlo poznat, že přestal běhat. `deferred`
+                    # = mozek byl dole → NEpočítá se jako úspěšný běh
+                    # (HANS_SCHEDULE_LAST_OK_V1).
+                    try:
+                        from scripts import hans_schedule as _hs
+                        _hs.mark('selfcritique', ok=(_ccode != 'deferred'),
+                                 skip_reason='' if _ccode != 'deferred' else 'deferred')
+                    except Exception:
+                        pass
                 except Exception as _cue:
                     _log.warning("Sebekritika selhala: %s", _cue)
 
@@ -2319,6 +2354,16 @@ class HansRoutine:
                         self._last_immune_date = today
                         self._save_routine_state()
                     _log.info("Imunitní kontrola: %s", _icode)
+                    # HANS_SCHEDULE_NIGHT_STEPS_V1 (20.8.) — noční krok se hlásí
+                    # rozvrhu, aby šlo poznat, že přestal běhat. `deferred`
+                    # = mozek byl dole → NEpočítá se jako úspěšný běh
+                    # (HANS_SCHEDULE_LAST_OK_V1).
+                    try:
+                        from scripts import hans_schedule as _hs
+                        _hs.mark('immune_check', ok=(_icode != 'deferred'),
+                                 skip_reason='' if _icode != 'deferred' else 'deferred')
+                    except Exception:
+                        pass
                 except Exception as _iue:
                     _log.warning("Imunitní kontrola selhala: %s", _iue)
 
@@ -2404,6 +2449,11 @@ class HansRoutine:
                         self._last_creation_reflection = today
                         self._save_routine_state()
                         _log.info("Reflexe tvorby: zapsána")
+                        try:   # HANS_SCHEDULE_NIGHT_STEPS_V1
+                            from scripts import hans_schedule as _hs
+                            _hs.mark('creation_reflection')
+                        except Exception:
+                            pass
                     else:
                         _log.debug("Reflexe tvorby: neproběhla (mozek/málo dat) "
                                    "— zkusím příště")

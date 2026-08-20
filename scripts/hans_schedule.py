@@ -39,6 +39,27 @@ _log = logging.getLogger(__name__)
 # expected_gap_s = 2× nominální period + malý buffer, ať drobný jitter nehlásí.
 # `hour` u periodic = None; `period_s` u daily = None.
 _SEED = [
+    # ── HANS_SCHEDULE_NIGHT_STEPS_V1 (20.8.) — noční kroky, které se dosud
+    # nehlásily nikam. Bez nich `_run_night_tasks` (602 ř., 17 gated kroků)
+    # mlčí o tom, co reálně proběhlo, a „přestalo se to spouštět" se pozná
+    # jen tím, že něco chybí v deníku.
+    # ⚠️ PRAHY JSOU ZÁMĚRNĚ VOLNÉ (14 dní). Tohle kolo je MĚŘENÍ, ne audit:
+    # nejdřív ať se pár nocí nasbírá, jak často kroky opravdu běží, a teprve
+    # z těch dat se prahy utáhnou. Opačné pořadí už jednou vyrobilo falešné
+    # poplachy (HANS_SCHEDULE_STUDY_GAP_V1: práh 4 h stál na mylném modelu).
+    ("writing_session", "daily", None, None, 14 * 24 * 3600,
+     "Autorská session (dílo na pokračování)"),
+    ("synthesis_session", "daily", None, None, 14 * 24 * 3600,
+     "Synteze nápadů (#2) z nesouvisejících semínek"),
+    ("selfcritique", "daily", None, None, 14 * 24 * 3600,
+     "Sebekritika (#6) z vlastních replik"),
+    ("immune_check", "daily", None, None, 14 * 24 * 3600,
+     "Imunitní kontrola paměti"),
+    ("relationship_reflection", "daily", None, None, 14 * 24 * 3600,
+     "Reflexe vztahových karet"),
+    ("creation_reflection", "daily", None, None, 14 * 24 * 3600,
+     "Reflexe vlastní tvorby"),
+
     # Noční analytika (deepseek reasoning tier přes noc, 3:00).
     ("nightly_analytics", "daily", None, 3, 30 * 3600,
      "Noční analytika (deepseek reasoning tier): syntéza, sebekritika, stance"),
