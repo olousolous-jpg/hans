@@ -1497,8 +1497,18 @@ class OpenWebUIDirectHandler:
         # (3 021 zn = 21 % promptu, a na „co je zajímavého na gotice" nemá vliv).
         # ⚠️ U ŽÁDOSTI zůstává: tenhle blok vznikl proto, že Hans odmítl malovat
         # s tím, že „nemá umělecké sklony" (2.7.) — a to se nesmí vrátit.
+        # HANS_CAP_NOT_FOR_PAST_V1 (20.8.) — VÝČET SCHOPNOSTÍ SE NEVKLÁDÁ
+        # K OTÁZCE NA MINULOST. Doloženo: na „co jsi dělal v noci?" Hans
+        # tvrdil „byl jsem v režimu hlídání", ačkoli hlídání bylo vypnuté.
+        # Zdrojem byl právě tenhle blok — stojí v něm „Umím HLÍDAT místnost,
+        # když nejste doma" a model si „umím" přečetl jako „dělal jsem".
+        # Co dnes dělal, říká blok o sobě (`self_state`); výčet schopností
+        # k tomu nepřidává nic než pokušení.
+        # ⚠️ U ŽÁDOSTI zůstává (`_asks_ability`) — blok vznikl proto, že Hans
+        # odmítl malovat s tím, že „nemá umělecké sklony", a to se nesmí vrátit.
         cap_ctx = ""
-        if not for_greeting and (_asks_ability or not _is_knowledge_q):
+        if not for_greeting and (_asks_ability
+                                 or (not _is_knowledge_q and not _about_self_day)):
             try:
                 from scripts.hans_capabilities import (
                     capabilities_context, recent_gained_context)
@@ -1568,6 +1578,11 @@ class OpenWebUIDirectHandler:
             _lbl = _rt.phase_label if _rt else ""
             _lbl = f"{_lbl}, " if _lbl else ""
             _slovy = _cz_clock_words(_now.hour, _now.minute)
+            try:
+                from scripts.cz_names import greeting_for_hour
+                _pozdrav = greeting_for_hour(_now.hour)
+            except Exception:
+                _pozdrav = "Dobrý den"
             # HANS_DATE_WORDS_V1 (19.8.) — DATUM MUSÍ PŘIJÍT UŽ ROZEPSANÉ.
             # Čas se posílá slovy (`_cz_clock_words`) a model ho opakuje
             # SPRÁVNĚ; datum dostával jen číslicemi a rozepisoval si ho sám —
@@ -1590,7 +1605,12 @@ class OpenWebUIDirectHandler:
                         f"{_now.day}.{_now.month}.{_now.year}"
                         + (f", slovy {_dnes_slovy}" if _dnes_slovy else "")
                         + f". Přesný čas je {_now:%H:%M}, tedy {_slovy}. "
-                        f"Tento čas a datum ber jako fakt, neodhaduj je.")
+                        f"Tento čas a datum ber jako fakt, neodhaduj je."
+                        # HANS_GREETING_BY_HOUR_V1 (20.8.) — hotový pozdrav.
+                        # Čas v promptu byl, ale model si z něj tvar pozdravu
+                        # neodvodil („Dobrý večer" v 11:50). Odvození se mu
+                        # tedy odebere — stejně jako u data rozepsaného slovy.
+                        + f" Když zdravíš, patří teď „{_pozdrav}“.")
         except Exception:
             time_ctx = ""
 

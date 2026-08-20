@@ -1301,7 +1301,18 @@ _RECENT_QUERY_RE = re.compile(
     r"n[ěe]jak[ée]\s+(?:zajímavosti|zaj[ií]mavosti|z[áa]zna?my?)\s+(?:dnes|dneska)?|"
     r"co\s+sis?\s+dnes\s+zapsal|"
     r"co\s+jsi\s+dnes\s+d[ěe]lal|"
-    r"jak\s+jsi\s+d[ne]s\s+str[áa]vil)",
+    r"jak\s+jsi\s+d[ne]s\s+str[áa]vil|"
+    # HANS_RECENT_ACTIVITY_NIGHT_V1 (20.8.) — NOC je totéž jako „dnes".
+    # Doloženo: „co jsi dělal v noci?" bránou neprošlo, odpověď proto skládal
+    # model volně — a persona majordoma si domyslela noční službu („byl jsem
+    # v režimu hlídání", „ujistil jsem se, že dveře a okna jsou zavřená"),
+    # ačkoli hlídání bylo vypnuté. Deterministická odpověď z deníku přitom
+    # existovala, jen se k ní dotaz nedostal. Odstranění důvodu improvizovat,
+    # ne další brzda — táž logika jako HANS_NUMERALS_AS_DIGITS_V1.
+    r"co\s+jsi\s+(?:d[ěe]lal|prov[áa]d[ěe]l)\s+(?:dnes\s+)?v\s+noci|"
+    r"co\s+jsi\s+(?:d[ěe]lal|prov[áa]d[ěe]l)\s+p[řr]es\s+noc|"
+    r"jak\s+jsi\s+str[áa]vil\s+(?:tu\s+)?noc|"
+    r"co\s+bylo\s+v\s+noci)",
     re.I,
 )
 

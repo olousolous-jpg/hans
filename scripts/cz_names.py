@@ -463,3 +463,23 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
             text, cnt2 = pat2.subn(lambda m: m.group(1) + target, text)
             n += cnt2
     return text, n
+
+
+# ── HANS_GREETING_BY_HOUR_V1 (20.8.) — pozdrav podle denní doby ─────────────
+# Doloženo 20.8. 11:50: Hans pozdravil „Dobrý večer, Marku." Informaci o čase
+# přitom v promptu MĚL („Teď je ráno… Přesný čas je 11:58"), jen si z ní
+# nedokázal odvodit správný tvar pozdravu.
+# A/B změřeno: bez hotového pozdravu 1/3 špatně, s ním 0/3. Je to táž logika
+# jako u HANS_DATE_WORDS_V1 — odebrat modelu odvození, které nezvládá, místo
+# aby se hlídal výsledek.
+# Hranice jsou běžný český úzus, ne norma; „dobré ráno" se po deváté už neříká.
+def greeting_for_hour(hour: int) -> str:
+    """Pozdrav, který v danou hodinu sedí (0–23)."""
+    h = int(hour) % 24
+    if 5 <= h < 9:
+        return "Dobré ráno"
+    if 9 <= h < 18:
+        return "Dobrý den"
+    if 18 <= h < 22:
+        return "Dobrý večer"
+    return "Dobrou noc"
