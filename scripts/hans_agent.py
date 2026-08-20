@@ -1254,6 +1254,126 @@ class AgentRouter:
             return False          # skutečný rozkaz — nech projít
         return m.endswith("?") or bool(self._SLEEP_NEGATION.search(m))
 
+    # ── HANS_AGENT_RULES_TABLE_V1 — pravidla, kdy se akce vetuje/přesměruje ──
+    # Pořadí je významné: pravidlo smí přepsat `aid` a další pravidla už vidí
+    # NOVÉ id (tak to fungovalo i v původních `if`ech — např. Koláč přepíše
+    # domácí akci a teprve pak se posuzuje small talk).
+    # Sloupce: na které akce pravidlo míří, podmínka, verdikt (None = potlačit,
+    # jinak nové id akce) a důvod do logu.
+    _PRAVIDLA = (
+        # KOLAC_STATUS_GUARD_V1 — dotaz o Koláčovi (společník) se NESMÍ zrouteovat
+        # na domácí/přítomnostní akce (router občas zvolil home_status → „na TV
+        # hraje…, vidím Janu"). Přesměruj.
+        dict(marker="KOLAC_STATUS_GUARD_V1",
+             akce=("report_home_status", "report_who_is_home", "report_now_playing"),
+             podminka=lambda s, aid, msg, dec, h: s._mentions_kolac(msg),
+             verdikt="report_kolac_status", duvod="dotaz je o Koláčovi"),
+        # HANS_FILM_RECOMMEND_V1 — žádost o DOPORUČENÍ není rozkaz pustit.
+        # Doloženo 2×: „Doporučil bys mi film?" → nabídl pustit sportovní přenos,
+        # co zrovna běžel (název si router vzal z živého stavu).
+        dict(marker="HANS_FILM_RECOMMEND_V1",
+             akce=("kodi_play_film", "add_book_wishlist"),
+             podminka=lambda s, aid, msg, dec, h: _asks_recommendation(msg),
+             verdikt=None, duvod="věta žádá doporučení, ne spuštění"),
+        # HANS_OPINION_NOT_ORDER_V1 — otázka na názor nesmí spustit akci
+        # S NÁSLEDKEM. Informativní `report_*` se NEvetuje: u názorové otázky je
+        # odpověď nanejvýš mimo mísu, ale nic neprovede — kdežto „pustím film"
+        # uživatel řeší tím, že ho zastavuje.
+        dict(marker="HANS_OPINION_NOT_ORDER_V1", jen_confirm=True,
+             podminka=lambda s, aid, msg, dec, h: _asks_opinion(msg),
+             verdikt=None, duvod="věta se ptá na názor, nežádá akci"),
+        # HANS_CAP_QUESTION_NOT_ORDER_V1 — „umíte pustit něco na televizi?" je
+        # dotaz na schopnost; bez předmětu ve větě by ho router doplnil z historie.
+        dict(marker="HANS_CAP_QUESTION_NOT_ORDER_V1", jen_confirm=True,
+             podminka=lambda s, aid, msg, dec, h: _asks_capability(
+                 msg, dec.get("args") or {}),
+             verdikt=None, duvod="ptá se na schopnost, nejmenuje předmět"),
+        # HANS_PRESENCE_ASK_V1 — dotaz na přítomnost konkrétní osoby patří VŽDY
+        # na who_home, i v ukecané formě. Přepisujeme jen mezi `report_*` akcemi,
+        # aby guard neukradl skutečný příkaz.
+        dict(marker="HANS_PRESENCE_ASK_V1", prefix="report_",
+             krome=("report_who_is_home",),
+             podminka=lambda s, aid, msg, dec, h: (
+                 not s._mentions_kolac(msg) and _asks_person_presence(msg, s.config)),
+             verdikt="report_who_is_home", duvod="dotaz na přítomnost osoby"),
+        # HANS_CHAT_STUDY_BRIDGE_GUARD — recall („zjisti víc o / co víš o X") se
+        # NESMÍ zrouteovat na studium (malý model občas splete „víc" a „si").
+        dict(marker="HANS_CHAT_STUDY_BRIDGE_GUARD", akce=("add_study_topic",),
+             podminka=lambda s, aid, msg, dec, h: _looks_like_recall(msg),
+             verdikt=None, duvod="je to recall, ne žádost o studium"),
+        # HANS_STUDY_KNOWN_TOPIC_V1 (6.8.) — DATOVÁ brzda: nenabízej nastudovat
+        # něco, co UŽ máš odškrtnuté. Doloženo 5× po sobě. Regexový guard výše má
+        # nutně díry ve vzorech; tohle se ptá DAT, takže je nezávislé na
+        # formulaci. Chyba dotazu = pravidlo NEPLATÍ (jako dřív try/except).
+        dict(marker="HANS_STUDY_KNOWN_TOPIC_V1", akce=("add_study_topic",),
+             podminka=lambda s, aid, msg, dec, h: s._uz_studovano(dec, h),
+             verdikt=None, duvod="téma už je pokryté, odpovím z paměti"),
+        # HANS_AGENT_SLEEP_QUESTION_GUARD_V1 (7.8.) — OTÁZKA na režim ani KOREKCE
+        # režimu není žádost o uspání. Doloženo 2× živě. Rozlišovač je TVAR VĚTY,
+        # ne téma: rozkaz projde, tázací/záporná věta se potlačí.
+        dict(marker="HANS_AGENT_SLEEP_QUESTION_GUARD_V1", akce=("hans_sleep",),
+             podminka=lambda s, aid, msg, dec, h: s._sleep_question(msg),
+             verdikt=None, duvod="věta se na režim ptá nebo ho opravuje"),
+        # HANS_AGENT_SOCIAL_GUARD_V1/V2 — zdvořilostní dotaz NA HANSE se NESMÍ
+        # zrouteovat na hlášení stavu domácnosti (doloženo i s conf 1.00).
+        # V2: `report_kolac_status` patří do téže množiny („jak se máš?" →
+        # „Koláč zrovna tiše přemítá po mém boku"). ⚠️ Rozhoduje TÝŽ klasifikátor
+        # jako grounding, takže pokrývá i formulace, které nikdo nevypsal.
+        dict(marker="HANS_AGENT_SOCIAL_GUARD_V2",
+             akce=("report_home_status", "report_who_is_home",
+                   "report_now_playing", "report_kolac_status"),
+             podminka=lambda s, aid, msg, dec, h: s._is_small_talk(msg),
+             verdikt=None, duvod="dotaz je o Hansovi, ne o domě/Koláčovi"),
+    )
+
+    def _uz_studovano(self, decision: dict, handler) -> bool:
+        """HANS_STUDY_KNOWN_TOPIC_V1 — je téma už odškrtnuté? (dotaz do DB)"""
+        from scripts.hans_study import already_studied
+        t = (decision.get("args") or {}).get("tema") or ""
+        if not t:
+            return False
+        cov = already_studied(t, _diary_path(handler))
+        if cov:
+            log.info("HANS_STUDY_KNOWN_TOPIC_V1: '%s' už pokryto (%s)", t, cov[0])
+            return True
+        return False
+
+    def _uplatni_pravidla(self, aid, message: str, decision: dict, handler):
+        """Projde `_PRAVIDLA` v pořadí. Vrátí nové `aid`, nebo None (potlačit).
+
+        Selhání podmínky (výjimka) = pravidlo NEPLATÍ a jde se dál — stejně
+        jako to dělaly původní try/except bloky. Pravidlo, které nic nedělá,
+        se do logu nepíše, ať se hláškami nezaplaví běžný provoz.
+        """
+        for pr in self._PRAVIDLA:
+            if not aid:
+                return aid
+            akce, prefix = pr.get("akce", ()), pr.get("prefix", "")
+            if akce and aid not in akce:
+                continue
+            if prefix and not aid.startswith(prefix):
+                continue
+            if aid in pr.get("krome", ()):
+                continue
+            if pr.get("jen_confirm"):
+                a = ACTIONS.get(aid)
+                if a is None or not a.needs_confirm:
+                    continue
+            try:
+                if not pr["podminka"](self, aid, message, decision, handler):
+                    continue
+            except Exception as e:
+                log.debug("pravidlo %s selhalo: %s", pr["marker"], e)
+                continue
+            verdikt = pr["verdikt"]
+            log.info("%s: %s %s — %s: %.50s", pr["marker"], aid,
+                     "potlačen" if verdikt is None else ("→ " + verdikt),
+                     pr["duvod"], message)
+            if verdikt is None:
+                return None
+            aid = verdikt
+        return aid
+
     def propose(self, handler, name: str, message: str) -> Optional[str]:
         """Vrátí propose_text (Hansův návrh + [ano/ne]) nebo None (běžný chat)."""
         # HANS_PERSON_CARD_ACTION_V1 (18.8.) — `report_person` potřebuje CELOU
@@ -1274,110 +1394,15 @@ class AgentRouter:
             if not decision:
                 return None
             aid = decision.get("action")
-            # KOLAC_STATUS_GUARD_V1 — deterministická pojistka: dotaz o Koláčovi
-            # (společník) se NESMÍ zrouteovat na domácí/přítomnostní akce (router
-            # občas zvolí home_status → „na TV hraje…, vidím Janu"). Přesměruj.
-            if aid in ("report_home_status", "report_who_is_home",
-                       "report_now_playing") and self._mentions_kolac(message):
-                aid = "report_kolac_status"
-            # HANS_FILM_RECOMMEND_V1 — žádost o DOPORUČENÍ není rozkaz pustit.
-            # Doloženo 2×: „Doporučil bys mi film?" → nabídl pustit sportovní
-            # přenos, co zrovna běžel (název si router vzal z živého stavu).
-            # action=null → odpoví volný hovor z Hansových zápisků o filmech.
-            if aid in ("kodi_play_film", "add_book_wishlist") and \
-                    _asks_recommendation(message):
-                log.info("HANS_FILM_RECOMMEND_V1: %s potlačen — věta žádá "
-                         "doporučení, ne spuštění: %.50s", aid, message)
-                return None
-            # HANS_OPINION_NOT_ORDER_V1 — otázka na názor nesmí spustit akci
-            # S NÁSLEDKEM. Informativní `report_*` se NEvetuje: u názorové
-            # otázky je odpověď nanejvýš mimo mísu, ale nic neprovede — kdežto
-            # „pustím film" uživatel řeší tím, že ho zastavuje.
-            _act = ACTIONS.get(aid) if aid else None
-            if _act is not None and _act.needs_confirm and _asks_opinion(message):
-                log.info("HANS_OPINION_NOT_ORDER_V1: %s potlačen — věta se ptá "
-                         "na názor, nežádá akci: %.50s", aid, message)
-                return None
-            # HANS_CAP_QUESTION_NOT_ORDER_V1 — „umíte pustit něco na televizi?"
-            # je dotaz na schopnost, ne pokyn; bez předmětu ve větě by ho
-            # router doplnil z historie. action=null → odpoví volný hovor,
-            # který má v promptu blok schopností (`cap`) a řekne, že to umí.
-            # Jen akce S NÁSLEDKEM (needs_confirm) — informativní report_*
-            # nic neprovede, takže je zbytečné je vetovat.
-            if _act is not None and _act.needs_confirm and \
-                    _asks_capability(message, decision.get("args") or {}):
-                log.info("HANS_CAP_QUESTION_NOT_ORDER_V1: %s potlačen — věta "
-                         "se ptá na schopnost, nejmenuje předmět: %.50s",
-                         aid, message)
-                return None
-            # HANS_PRESENCE_ASK_V1 — dotaz na přítomnost konkrétní osoby patří
-            # VŽDY na who_home, i v ukecané formě („nevíš, jestli je Jana
-            # doma?" končilo na report_kolac_status). Přepisujeme jen mezi
-            # `report_*` akcemi, aby guard neukradl skutečný příkaz.
-            if (aid and aid.startswith("report_") and aid != "report_who_is_home"
-                    and not self._mentions_kolac(message)
-                    and _asks_person_presence(message, self.config)):
-                log.info("HANS_PRESENCE_ASK_V1: %s → report_who_is_home "
-                         "(dotaz na přítomnost osoby): %.50s", aid, message)
-                aid = "report_who_is_home"
-            # HANS_CHAT_STUDY_BRIDGE_GUARD — recall („zjisti víc o / co víš o
-            # X") se NESMÍ zrouteovat na studium (malý model občas splete „víc"
-            # a „si") → nech odpovědní/film-recall cestu (action=null).
-            if aid == "add_study_topic" and _looks_like_recall(message):
-                return None
-            # HANS_STUDY_KNOWN_TOPIC_V1 (6.8.) — DATOVÁ brzda: nenabízej
-            # nastudovat něco, co UŽ máš odškrtnuté. Doloženo 5× po sobě
-            # (08:48–09:06) na tématech, u kterých `/studium` hlásilo 12 z 12.
-            # Regexový guard výše má nutně díry ve vzorech; tohle se ptá DAT,
-            # takže je nezávislé na tom, jak se uživatel zeptá.
-            # action=null → odpoví recall/LLM z vlastních zápisků (což umí:
-            # v 08:59 na „ne, jen rekni co uz vis" odpověděl správně).
-            if aid == "add_study_topic":
-                try:
-                    from scripts.hans_study import already_studied
-                    _t = (decision.get("args") or {}).get("tema") or ""
-                    _cov = already_studied(_t, _diary_path(handler)) if _t else None
-                    if _cov:
-                        log.info("HANS_STUDY_KNOWN_TOPIC_V1: '%s' už pokryto "
-                                  "(%s) → nenabízím studium, odpovím z paměti",
-                                  _t, _cov[0])
-                        return None
-                except Exception as _kte:
-                    log.debug("already_studied: %s", _kte)
-            # HANS_AGENT_SOCIAL_GUARD_V1 (4.8.) — zdvořilostní dotaz NA HANSE
-            # („jak se ti daří?", „máš se dobře?", „co je u tebe nového?") se
-            # NESMÍ zrouteovat na hlášení stavu domácnosti. Doloženo testem:
-            # router odpovídal „Na TV právě hraje… Vidím tu Janu" (a to i
-            # s conf 1.00) — věcně mimo, a ještě to zmíní třetí osobu.
-            # Rozhoduje TÝŽ klasifikátor jako grounding (`hans_intent`), tedy
-            # i mini model na Pi → pokrývá i formulace, které nikdo nevypsal
-            # do seznamu. Cena je JEN u těchto tří akcí, ne u každé zprávy.
-            # HANS_AGENT_SOCIAL_GUARD_V2 (6.8.) — `report_kolac_status` PATŘÍ
-            # do stejné množiny. Doloženo živě: „jak se mas?" → „Koláč zrovna
-            # tiše přemítá po mém boku" (conf 0.95). Router má v kontextu
-            # posledních N výměn, a když se pár předchozích točilo kolem
-            # Koláče, přetáhne k němu i osobní otázku. Guard kryl jen tři
-            # „domácí" akce, takže tudy únos prošel.
-            # HANS_AGENT_SLEEP_QUESTION_GUARD_V1 (7.8.) — OTÁZKA na režim ani
-            # KOREKCE režimu není žádost o uspání. Doloženo 2× živě: „jsi
-            # v rezimu spanku?" → návrh hans_sleep (conf 1.00) a „nemel by byt
-            # v rezimu spanku, je 13:00" → „Přecházím do režimu spánku, pane."
-            # Hans přitom nikdy neusnul (v logu žádné `SLEEP: aktivuji`) —
-            # uživatel ale četl text návrhu jako hotovou akci.
-            # Rozlišovač je TVAR VĚTY, ne téma: rozkaz („běž spát", „ztich se")
-            # projde, tázací/záporná věta se potlačí a odpověď obstará
-            # deterministický blok o režimu (HANS_SELF_STATE_AWAKE_V2).
-            # ⚠️ ZÁMĚRNĚ ne přes `_is_small_talk` — ta vrací True i pro „běž
-            # spát" (taky se týká Hanse) a zabila by legitimní příkaz.
-            if aid == "hans_sleep" and self._sleep_question(message):
-                log.info("agent: hans_sleep potlačen — věta se na režim PTÁ "
-                         "nebo ho opravuje, nežádá o uspání: %.50s", message)
-                return None
-            if aid in ("report_home_status", "report_who_is_home",
-                       "report_now_playing", "report_kolac_status"
-                       ) and self._is_small_talk(message):
-                log.info("agent: %s potlačen — dotaz je o Hansovi, "
-                          "ne o domě/Koláčovi", aid)
+            # HANS_AGENT_RULES_TABLE_V1 (20.8.) — devět sémantických pravidel
+            # (veto / přesměrování akce) bývalo devíti `if`y v těle `propose`.
+            # Pořadí se dalo zjistit jen čtením 100 řádků a každé nové pravidlo
+            # znamenalo další větev. Teď jsou to DATA (`_PRAVIDLA`) a tenhle
+            # jeden průchod — pořadí je vidět, pravidlo jde otestovat zvlášť
+            # a přidání je řádek. Chování se NEMĚNÍ: podmínky i pořadí jsou
+            # převzaté doslova (ověřeno rovnocenností proti staré cestě).
+            aid = self._uplatni_pravidla(aid, message, decision, handler)
+            if aid is None:
                 return None
             action = ACTIONS.get(aid)
             if not action:
