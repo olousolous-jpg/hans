@@ -34,3 +34,15 @@ def pravidlo(aid: str, text: str, args: dict | None = None):
     r = _router()
     r._is_small_talk = lambda m: False   # LLM klasifikátor mimo hru
     return r._uplatni_pravidla(aid, text, dec, None)
+
+
+def poradi_bloku(varianta: str) -> str:
+    """HANS_PROMPT_BLOCKS_TABLE_V1 — v jakém pořadí se skládá system prompt?
+    Vrací názvy bloků oddělené '|' (hodnota bloku = jeho jméno)."""
+    from scripts.openwebui_direct_handler import _PROMPT_BLOKY, slozit_prompt
+    return slozit_prompt({n: n + "|" for n, _ in _PROMPT_BLOKY}, varianta)
+
+
+def posledni_blok(varianta: str) -> str:
+    """Poslední blok varianty — u plného promptu MUSÍ být adresát (`current`)."""
+    return poradi_bloku(varianta).rstrip("|").split("|")[-1]

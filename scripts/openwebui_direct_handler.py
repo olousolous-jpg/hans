@@ -109,6 +109,37 @@ class _SkipLookup(Exception):
     instantní dohledání se přeskakuje (jinak by přepsalo jistý fakt domněnkou)."""
 
 
+# ── HANS_PROMPT_BLOCKS_TABLE_V1 (20.8.) — POŘADÍ BLOKŮ SYSTEM PROMPTU ────────
+# Seznam bloků žil na ČTYŘECH místech: tři varianty skládání (plný prompt,
+# pozdrav, RAG model) a sonda velikostí. Už se rozešly — sonda NEMĚŘILA blok
+# `thought`, takže měření z 19.8. bylo o ten blok kratší, než realita.
+# Tady je pořadí JEDNOU a varianty jsou sloupec:
+#     f = plný prompt (běžná odpověď)
+#     g = pozdrav (GREETING_LEAN_SYSTEM_V1 — jen nutné k pozdravení)
+#     r = RAG model (jen smysly a vnitřní stav)
+# ⚠️ POŘADÍ JE VÝZNAMOVÉ, ne kosmetické: `current` (adresát) musí zůstat
+# POSLEDNÍ — HANS_ADDRESSEE_V2 ho sem přesunul právě proto, že ho uprostřed
+# přebíjela recency následujících bloků.
+_PROMPT_BLOKY = (
+    ("system_base", "fg"), ("time", "fgr"), ("persons", "fg"),
+    ("surr", "fr"), ("kodi", "fr"), ("room", "fr"), ("place", "fr"),
+    ("cal", "f"), ("diary", "f"), ("story", "f"), ("study", "f"),
+    ("direction", "f"), ("idea", "f"), ("read", "fr"), ("thought", "fr"),
+    ("body", "fgr"), ("mood", "fgr"), ("health", "f"), ("downtime", "f"),
+    ("severka", "fg"), ("deepen", "f"), ("lessons", "f"), ("teddy", "fr"),
+    ("memory", "f"), ("threads", "f"), ("interests", "f"),
+    ("qsuggest", "f"), ("routine", "f"), ("cap", "f"),
+    ("current", "fgr"),
+)
+
+
+def slozit_prompt(hodnoty: dict, varianta: str) -> str:
+    """HANS_PROMPT_BLOCKS_TABLE_V1 — složí prompt v pořadí `_PROMPT_BLOKY`.
+    Bloky, které do varianty nepatří nebo jsou prázdné, se přeskočí."""
+    return "".join(hodnoty.get(n) or "" for n, kde in _PROMPT_BLOKY
+                   if varianta in kde)
+
+
 class OpenWebUIDirectHandler:
 
     def __init__(self, config: dict):
@@ -1943,6 +1974,23 @@ class OpenWebUIDirectHandler:
         # (deník, vztahové karty, známí lidé) přijde z RAG kolekcí.
         # _build_system tak dodává jen to, co RAG nemůže vědět: co Hans
         # PRÁVĚ TEĎ vidí, slyší, cítí, právě čte, koho má před sebou.
+        # HANS_PROMPT_BLOCKS_TABLE_V1 — jediné místo, kde se název bloku potkává
+        # se svou hodnotou. Pořadí i to, do které varianty blok patří, je
+        # v `_PROMPT_BLOKY` (nahoře v modulu); sonda velikostí čte TOTÉŽ,
+        # takže se nemůže rozejít se skutečným promptem jako dřív.
+        _hodnoty = {
+            "system_base": system_base, "time": time_ctx, "persons": persons_ctx,
+            "surr": surr_ctx, "kodi": kodi_ctx, "room": room_ctx,
+            "place": place_ctx, "cal": cal_ctx, "diary": diary_ctx,
+            "story": story_ctx, "study": study_ctx, "direction": direction_ctx,
+            "idea": idea_ctx, "read": read_ctx, "thought": thought_ctx,
+            "body": body_ctx, "mood": mood_ctx, "health": health_ctx,
+            "downtime": downtime_ctx, "severka": severka_ctx,
+            "deepen": deepen_ctx, "lessons": lessons_ctx, "teddy": teddy_ctx,
+            "memory": memory_ctx, "threads": threads_ctx,
+            "interests": interests_ctx, "qsuggest": qsuggest_ctx,
+            "routine": routine_ctx, "cap": cap_ctx, "current": current,
+        }
         if for_greeting:
             # GREETING_LEAN_SYSTEM_V1 — pozdrav drží JEN to nutné k pozdravení:
             # identita, čas, kdo je tu, fyzický a náladový tón (+ vzácný Severka
@@ -1950,12 +1998,9 @@ class OpenWebUIDirectHandler:
             # okolí, vztahové nitky, zájmy, rytmus…) se do dvouvětého pozdravu
             # NEcpou — co Hans zmíní, řídí výhradně user prompt (jediný prioritní
             # lead). Tím pozdrav přestane mixovat nesouvisející věci.
-            system_msg = (system_base + time_ctx + persons_ctx
-                          + body_ctx + mood_ctx + severka_ctx + current)
+            system_msg = slozit_prompt(_hodnoty, "g")
         elif "rag" in (self.model_name or "").lower():
-            system_msg = (time_ctx + surr_ctx + kodi_ctx + room_ctx + place_ctx + read_ctx
-                          + thought_ctx + body_ctx + mood_ctx
-                          + teddy_ctx + current)
+            system_msg = slozit_prompt(_hodnoty, "r")
             # Lehký úvodní prompt — vysvětlí RAG modelu, co tenhle blok je.
             if system_msg.strip():
                 system_msg = (
@@ -1967,15 +2012,7 @@ class OpenWebUIDirectHandler:
             else:
                 system_msg = ""
         else:
-            system_msg = (system_base + time_ctx + persons_ctx + surr_ctx + kodi_ctx
-                          + room_ctx + place_ctx + cal_ctx + diary_ctx + story_ctx + study_ctx + direction_ctx + idea_ctx + read_ctx + thought_ctx  # PERSONA_READS_NARRATIVE_V1 / HANS_PLACE_V1 / HANS_STUDY_SURFACING_V1 / HANS_DIRECTION_V1 / HANS_SYNTHESIS_IDEAS_V1 / HANS_CALENDAR_V1
-                          + body_ctx + mood_ctx + health_ctx + downtime_ctx + severka_ctx + deepen_ctx + lessons_ctx + teddy_ctx
-                          + memory_ctx + threads_ctx + interests_ctx
-                          + qsuggest_ctx + routine_ctx + cap_ctx
-                          # HANS_ADDRESSEE_V2 — adresát AŽ NA KONEC: dřív byl
-                          # zaražený doprostřed a následovalo ho ještě šest
-                          # bloků kontextu, takže ho recency přebila.
-                          + current)  # …/ HANS_CAPABILITY_AWARENESS_V1
+            system_msg = slozit_prompt(_hodnoty, "f")
             # HANS_PROMPT_SIZE_PROBE_V1 (19.8.) — MĚŘENÍ, ne oprava.
             # Změřeno na 989 reálných dotazech: system prompt má medián 1977 zn,
             # ale MAXIMUM 21 387 a u 40 % dotazů přesáhne 10 000. Grounding
@@ -1986,21 +2023,7 @@ class OpenWebUIDirectHandler:
             # ⚠️ Logují se JEN DÉLKY, žádný obsah — do debug.log nesmí nic
             # osobního ([[privacy-external-outputs]]).
             try:
-                _blocks = {
-                    "system_base": system_base, "time": time_ctx,
-                    "persons": persons_ctx, "surr": surr_ctx, "kodi": kodi_ctx,
-                    "room": room_ctx, "place": place_ctx, "cal": cal_ctx,
-                    "diary": diary_ctx, "story": story_ctx, "study": study_ctx,
-                    "direction": direction_ctx, "idea": idea_ctx,
-                    "read": read_ctx, "body": body_ctx, "mood": mood_ctx,
-                    "health": health_ctx, "downtime": downtime_ctx,
-                    "severka": severka_ctx, "deepen": deepen_ctx,
-                    "lessons": lessons_ctx, "teddy": teddy_ctx,
-                    "memory": memory_ctx, "threads": threads_ctx,
-                    "interests": interests_ctx, "qsuggest": qsuggest_ctx,
-                    "routine": routine_ctx, "cap": cap_ctx,
-                    "current": current,
-                }
+                _blocks = {n: _hodnoty.get(n) for n, kde in _PROMPT_BLOKY if "f" in kde}
                 _sizes = {k: len(v or "") for k, v in _blocks.items()}
                 _sizes = {k: v for k, v in _sizes.items() if v}
                 _dbg(
