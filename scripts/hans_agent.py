@@ -52,6 +52,11 @@ _ACTION_VERBS = {
     "otevri", "otevři", "zavri", "zavři", "jdi", "bez", "běž",
     "hlidej", "hlídej", "nastav", "posli", "pošli", "zjisti", "najdi",
     "zapamatuj", "uloz", "ulož", "prestan", "přestaň", "poznamenej",
+    # HANS_ACTION_VERBS_WRITE_V1 (20.8.) — synonyma pro ZÁPIS chyběla, i když
+    # „poznamenej" a „zapamatuj" tu byly. Doloženo: „z dnešního hovoru si
+    # ZAPIŠ, že sis vymyslel to divadlo" agent neviděl a odpověď obstaral
+    # volný hovor — Hans prohlásil, že si zápis udělal, a nezapsalo se nic.
+    "zapis", "zapiš", "zaznamenej", "poznac", "poznač",
 }
 
 _LATER_PAT = re.compile(
@@ -1077,12 +1082,33 @@ class AgentRouter:
     # heuristika jen rozhoduje JESTLI se Hans vůbec zamyslí. Router = rezidentní
     # hans-czech (VRAM zdarma), cena = latence jednoho krátkého volání.
     def _hint_match(self, text: str) -> bool:
+        """HANS_HINT_CLITIC_ORDER_V1 (20.8.) — dvouslovná nápověda snese
+        PROHOZENÉ pořadí.
+
+        Doloženo: „z dnešního hovoru SI ZAPIŠ hlavně to, že sis vymyslel to
+        divadlo" bránou neprošlo, protože nápověda je doslovné „zapiš si".
+        Čeština klitika běžně přehazuje („si zapiš", „to dej", „spát jdi"),
+        takže agent takovou větu vůbec neviděl → odpověděl volný hovor a
+        Hans PROHLÁSIL, že si zápis udělal, ačkoli se nezapsalo nic.
+        Táž třída jako HANS_HRAJE_WORDORDER_V1 a HANS_STUDY_CONTENT_RECALL_V1.
+
+        ⚠️ ÚZKÉ SCHVÁLNĚ: povoluje se JEN prohození dvou SOUSEDNÍCH slov, ne
+        „slova kdekoli ve větě" — 135 ze 210 nápověd je víceslovných a volné
+        pořadí by z „na tv" udělalo past na skoro každou větu.
+        **Změřeno na 966 reálných zprávách: projde +2, a jsou to přesně ty
+        dvě doložené vadné.** Žádný jiný dopad.
+        """
+        import re as _re
         t = _norm(text)
         if len(t) < 2:
             return False
         for a in ACTIONS.values():
             for h in a.hints:
                 if h in t:
+                    return True
+                w = h.split()
+                if len(w) == 2 and _re.search(
+                        r'\b%s\s+%s\b' % (_re.escape(w[1]), _re.escape(w[0])), t):
                     return True
         return False
 
@@ -1407,10 +1433,23 @@ class AgentRouter:
             # CONFIRM akce — navrhni + ulož pending, čekej na ano/ne.
             # HANS_SHUTDOWN_CONTEXT_V1 — u vypnutí PC přebij text živým stavem
             # (co na PC běží); LLM propose_text to vědět nemůže.
+            # HANS_CONFIRM_TEXT_DETERMINISTIC_V1 (20.8.) — ZNĚNÍ NÁVRHU SKLÁDÁ
+            # PROGRAM, ne model. Doloženo 19.–20.8. opakovaně: LLM `propose_text`
+            # zněl jako HOTOVÁ VĚC — „Rozumím, zapíšu si to: 'divadlo'. Ještě
+            # něco?" nebo „Dobře, zapíšu si: … Ještě něco?" — takže uživatel
+            # neměl jak poznat, že se na něco čeká, a akce zůstala neprovedená.
+            # Navíc si takový text sám končí otazníkem („Ještě něco?"), takže
+            # ani pojistka „nekončí otázkou → přidej 'Mám to udělat?'" nezabrala.
+            # ⚠️ Nic nového se nepsalo: `_default_text` pokrývá VŠECHNY
+            # potvrzované akce („Mám si poznamenat „X"?") a fallback „Mám to
+            # zařídit?" — jen ho dosud přebíjel model. U `pc_shutdown` tohle
+            # rozhodnutí padlo už dřív (HANS_SHUTDOWN_CONTEXT_V1); teď platí
+            # obecně. Model si `propose_text` dál vrací (schéma se nemění),
+            # jen se na potvrzovací cestě nepoužije.
             if action.id == "pc_shutdown":
                 text = _shutdown_confirm_text(handler)
             else:
-                text = (prop.text or self._default_text(action, args)).strip()
+                text = self._default_text(action, args).strip()
             if not text.endswith(("?",)):
                 text += " Mám to udělat?"
             prop.text = text

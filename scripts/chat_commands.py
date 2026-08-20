@@ -469,6 +469,68 @@ def _cmd_seznam(handler, name, args) -> str:  # HANS_AGENT_V1 — poznámky/sezn
         return f"/seznam: chyba ({e})"
 
 
+# ─── zapsání poznámky — DETERMINISTICKÁ cesta (HANS_NOTE_WRITE_PATH_V1) ─────
+# PROČ VZNIKLA (20.8.): „zapiš si, že …" dosud stálo a padalo s agentním
+# routerem, a ten je na téhle třídě nespolehlivý — doloženo: na tutéž větu
+# vrátil offline `add_note` 12/12, ale živě `report_now_playing` (conf 0.95).
+# Když akce nevznikla, odpověď obstaral volný hovor a PROHLÁSIL zápis, který
+# se nestal („Zápis v deníku byl aktualizován", `agent_action` = 0 řádků).
+#
+# ⚠️ ZVAŽOVANÁ ALTERNATIVA ZAMÍTNUTA MĚŘENÍM: post-guard, který takové tvrzení
+# odhalí podle slov, by hlásil hlavně plané poplachy — v deníku je 24 vět typu
+# „zaznamenal jsem", z toho 18 bez agentní akce, a **většina je legitimní**
+# („Zaznamenal jsem přehrávání filmu", „…poslední aktivitu paní domu").
+# Jazyk to nerozliší; proto se místo brzdy dělá to tvrzení PRAVDIVÝM.
+#
+# Rozkaz je jednoznačný, takže se NEPTÁ na potvrzení (agent se ptá proto, že
+# HÁDÁ; regex nehádá) a volá TÝŽ kód jako agentní akce — vzor
+# HANS_UNIFY_ACTIONS_V1: „regexy zůstávají jako rychlá, na mozku nezávislá
+# cesta", jedna pravda o zápisu, ne druhá implementace vedle.
+_NOTE_IMP = re.compile(r"\b(zapi[šs]|poznamenej|zaznamenej|pozna[čc])\b\s*", re.I)
+# Výplň mezi slovesem a obsahem („si prosím, že …", „hlavně to, že …").
+# ⚠️ Hranice slova je nutná: bez ní „sis vymyslel" ztratí „si" a zbude
+# „s vymyslel" (chyceno testem, ne až v provozu).
+_NOTE_FILLER = re.compile(
+    r"^\s*(?:(?:si|prosím|prosim|hlavně|hlavne|to|že|ze)\b|[,:;–-])\s*", re.I)
+
+
+def _note_text(msg: str):
+    """Vytáhne z rozkazu obsah poznámky. None = není co zapsat."""
+    m = _NOTE_IMP.search(msg or "")
+    if not m:
+        return None
+    t = msg[m.end():]
+    prev = None
+    while prev != t:
+        prev = t
+        t = _NOTE_FILLER.sub("", t)
+    t = t.strip(" ,.:;–-")
+    return t or None
+
+
+def _cmd_zapis(handler, name, args) -> str:
+    txt = _note_text(args or "")
+    if not txt:
+        return "Co si mám poznamenat, pane?"
+    # týž kód jako agentní akce `add_note` (včetně větve „má to čas → je to
+    # připomínka", HANS_REMINDER_ADD_V1) — jedna pravda o zápisu
+    from scripts.hans_agent import _run_add_note
+    return _run_add_note(handler, {"text": txt})
+
+
+register(
+    "zapis",
+    slash_aliases=["zapis", "zapiš", "poznamka", "poznámka"],
+    nl_patterns=[
+        r"\bzapi[šs]\s+si\b", r"\bsi\s+zapi[šs]\b",
+        r"\bpoznamenej\s+si\b", r"\bsi\s+poznamenej\b",
+        r"\bzaznamenej\s+si\b", r"\bsi\s+zaznamenej\b",
+    ],
+    handler=_cmd_zapis,
+    help_text='Zapsání poznámky: zapiš si, že …',
+)
+
+
 register(
     "seznam",
     slash_aliases=["seznam", "poznamky", "poznámky", "todo"],
@@ -3610,7 +3672,22 @@ _LLM_ROUTE_MAX_WORDS = 14      # delší věta = vyprávění, ne žádost o vý
 # Bezpečné štítky (seznam, kalendář, zdraví…) branou NEPROCHÁZEJÍ: jsou
 # konkrétní a druhá brána by je jen zdržela (a „co mám na seznamu?" by
 # dokonce zamítla — seznam je uživatelův, ne Hansův).
-_LLM_ROUTE_RISKY = frozenset({"napad", "kritika", "vhledy", "smer", "cetl"})
+# HANS_ROUTE_RISKY_ROZHOVORY_V1 (20.8.) — `rozhovory` PATŘÍ do rizikových.
+# Doloženo 19.8. v hovoru s cizím člověkem: Hans se zeptal „Co byste si rád
+# pustil na televizi?", host odpověděl „třeba ty Strážce Galaxie, o kterých
+# jste mluvil" → router to poslal na /rozhovory a místo puštění filmu přišlo
+# shrnutí 8 výměn. Vazba „o kterých jste mluvil" zní jako dotaz na společnou
+# historii, ale věta JMENUJE FILM — je to odpověď na Hansovu vlastní otázku.
+# ⚠️ Ověřeno měřením, že to nic nerozbije: legitimní formulace („připomeň
+# rozhovor o X", „o čem jsme se bavili?", „vzpomínáš, co jsme řešili?") chytí
+# REGEX v `parse_command` DŘÍV a k routeru se vůbec nedostanou; druhá brána
+# je tedy uvidí jen u vět, které vzory minuly. Na problémovou větu vrací
+# `_asks_own_records` False (= zamítnout), na dotazy na společnou historii True.
+# ⛔ `rozvrh` sem ZÁMĚRNĚ NEPŘIDÁVÁM: na doložené větě („čemu jste se dnes
+# věnoval nejvíce?") vrací brána True, takže by ho to nespravilo — ten nález
+# potřebuje jinou opravu a nemá se schovat pod tuhle.
+_LLM_ROUTE_RISKY = frozenset({"napad", "kritika", "vhledy", "smer", "cetl",
+                              "rozhovory"})
 
 _OWN_RECORDS_SYSTEM = (
     "Uživatel se ptá domácího asistenta. Rozhodni, jestli se ptá na "
@@ -3743,6 +3820,32 @@ def resolve_command_llm(message: str, config: dict, turns=None):
             return None
     except Exception:
         pass
+    # HANS_CMD_LLM_ROUTE_IMPERATIVE_V2 (20.8.) — ROZKAZ NIKDY NEŽÁDÁ VÝPIS.
+    # Dvojče pravidla o korekci hned nad tímhle. Doloženo 20.8.: „zapiš si,
+    # že sis vymyslel to divadlo" → model zvolil /dilo (slovo „vymyslel"
+    # + „divadlo" ho stáhlo k tvorbě) a žádost o poznámku se ukradla agentovi;
+    # Hans pak vypsal seznam esejí. Táž věta o pár slov delší přitom prošla —
+    # jen proto, že překročila limit 14 slov a router se neptal. Na takové
+    # náhodě nemá stát, jestli se poznámka zapíše.
+    # ⚠️ Řešeno DETERMINISTICKY, ne dalším příkladem v promptu: zkoušel jsem
+    # obecné pravidlo v promptu a měření ukázalo drift (tázací věty začaly
+    # sahat po štítcích: „na čem teď pracuješ?" zadny → nitky), přičemž cílový
+    # případ stejně neopravilo. Prompt vrácen do původního stavu.
+    # Slovník sloves je AGENTŮV (`_ACTION_VERBS`) — jedna pravda o tom, co je
+    # povel, ne druhý seznam vedle něj.
+    # **Změřeno na 948 reálných zprávách: pravidlo se týká 37 z nich a všech
+    # 37 jsou skutečné povely** („pusť X", „vypni pc", „připomeň", „zjisti",
+    # „zapiš si") — ani jedna žádost o výpis. Otázky se vylučují rovnou:
+    # výpis se žádá otázkou, povel otazník nemá.
+    if not msg.endswith("?"):
+        try:
+            from scripts.hans_agent import _ACTION_VERBS, _norm
+            if set(_norm(msg).split()) & {_norm(v) for v in _ACTION_VERBS}:
+                _log.info("HANS_CMD_LLM_ROUTE_IMPERATIVE_V2: '%.40s' → routing "
+                          "přeskočen (rozkaz, ne žádost o výpis)", msg)
+                return None
+        except Exception as _ive:
+            _log.debug("imperative gate: %s", _ive)
     cfg = (config or {}).get("intent", {}) or {}
     if not cfg.get("use_llm", False) or not cfg.get("cmd_route", True):
         return None

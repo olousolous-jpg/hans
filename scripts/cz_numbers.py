@@ -127,6 +127,33 @@ def normalize(text: str) -> str:
     text = re.sub(r'(\d+)\s*%',
                   lambda m: cardinal(m.group(1)) + ' procent', text)
 
+    # HANS_YEAR_HUNDREDS_V1 (20.8.) — LETOPOČET se česky říká po stovkách:
+    # „devatenáct set osmdesát čtyři", ne „tisíc devět set osmdesát čtyři".
+    # Obojí je spisovné, ale v mluvě (a tohle jde do TTS) zní přirozeně to
+    # první. Do 19.8. na to nebylo pravidlo — roky padaly do obecného kroku 6.
+    # ⚠️ ÚZKÉ SCHVÁLNĚ: jen v kontextu roku (`roku/roce/rok/letech/léta`),
+    # protože „má 1984 stran" je POČET a ten se po stovkách neříká.
+    # Nad 2000 se nechává „dva tisíce osm" — tam je stovková forma nezvyklá.
+    def _year_hundreds(n: int) -> str:
+        h, r = n // 100, n % 100
+        out = cardinal(h) + ' set'
+        if r:
+            out += ' ' + cardinal(r)
+        return out
+
+    def _yr(y: int) -> str:
+        y = int(y)
+        return _year_hundreds(y) if 1100 <= y <= 1999 else cardinal(y)
+
+    _YCTX = r'((?:roku|roce|rok|letech|léta|letům)\s+)'
+    # rozsah „v letech 1914–1918" NEJDŘÍV — druhý rok kontextové slovo před
+    # sebou nemá, takže samostatné pravidlo níž by ho minulo.
+    text = re.sub(_YCTX + r'(\d{4})(\s*[-–—]\s*)(\d{4})\b',
+                  lambda m: m.group(1) + _yr(m.group(2)) + m.group(3)
+                            + _yr(m.group(4)), text)
+    text = re.sub(_YCTX + r'(\d{4})\b',
+                  lambda m: m.group(1) + _yr(m.group(2)), text)
+
     # 6) Zbylá samostatná celá čísla → kardinálie. (Osamělou „N." ZÁMĚRNĚ
     # neřešíme jako řadovou — „celkem 7." je počet + tečka věty, ne „sedmého";
     # data „D. měsíc" / „DD.MM." pokrývají kroky 1–2. Tečka zůstane na místě.)

@@ -689,10 +689,22 @@ class WebReader:
         z něhož pak čerpá recall/RAG. Deep read teď 3-5 vět; lehké čtení
         (lead, fetch_url) zůstává 2 věty.
         """
+        # HANS_NUMERALS_AS_DIGITS_V1 (20.8.) — model si roky sám rozepisoval
+        # SLOVY a komolil je: „z roku devětasedmdesát čtyři" / „devětadvace-
+        # tosmdesát čtyři" místo 1984 (3 z 9 čtení téhož článku 19.8.), a ten
+        # nesmysl se ULOŽIL jako zápisek do deníku i RAG. Fakt přitom nechyběl
+        # — v 6 z 9 případů napsal správně „1984" a číslice jsou i ve ZDROJI.
+        # Není to tedy konfabulace, ale vada zápisu: model dostal úlohu
+        # (přepsat číslo do češtiny), kterou neumí, a nikdo po něm nechtěl.
+        # Řešení je odebrat mu ji, ne hlídat výsledek — táž logika jako
+        # HANS_DATE_WORDS_V1. Věta patří k ostatním formátovacím pokynům.
+        # ⚠️ TTS si číslice převede na slova sám (`cz_numbers` v tts_speaker),
+        # takže hlasu to nijak neubližuje — v deníku mají zůstat číslice.
         user_prompt = (
             f"Přečetl sis text o tématu '{query}'.\n"
             f"{style}\n"
-            f"Odpovídej česky, max {max_sentences} věty, bez uvozovek.\n\n"
+            f"Odpovídej česky, max {max_sentences} věty, bez uvozovek. "
+            f"Letopočty a čísla piš číslicemi (1984), nikdy slovy.\n\n"
             f"Text:\n{text[:max_text]}"
         )
         # OLLAMA_CLIENT_PATCH_WEBREADER

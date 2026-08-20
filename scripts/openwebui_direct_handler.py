@@ -2892,7 +2892,34 @@ class OpenWebUIDirectHandler:
                 self._thread_ctx = None
                 print(f"[Chat] thread error: {_te}")
             _cmd = parse_command(user_message)
-            if not _cmd:
+            # HANS_CONFIRM_PRECEDENCE_V2 (20.8.) — ČEKÁ-LI AGENT NA POTVRZENÍ,
+            # LLM ROUTER SE NEPTÁ. Princip už platí od 7.8. pro větev
+            # prohloubení (`HANS_CONFIRM_PRECEDENCE_V1`), jen se nikdy
+            # nevztáhl na příkazy — a tudy to teklo.
+            # Doloženo 20.8.: Hans nabídl zapsat poznámku, uživatel odpověděl
+            # „ano" → `HANS_THREAD_LLMROUTE_V1` větu rozvinul na „ano (k tématu:
+            # zápis o tom, že jsem si vymyslel divadlo)", router v tom uviděl
+            # psaní a poslal ji na /dilo („Právě nepíšu, pane…"). Potvrzení se
+            # k agentovi NEDOSTALO a poznámka se nezapsala — přitom Hans o pár
+            # vteřin dřív řekl, že si ji zapisuje.
+            # ⚠️ Vypíná se JEN dohadovací vrstva (LLM router). Regexy a slash
+            # příkazy běží dál: `parse_command('ano'/'ne'/'jo')` vrací None
+            # (ověřeno), takže o nic přijít nemůžou, a explicitní „/studium"
+            # zůstane explicitním příkazem.
+            _confirm_waits = False
+            try:
+                _agc = self._agent_router()
+                _apc = getattr(_agc, "_pending", None) if _agc is not None else None
+                _ppc = _apc.get(name) if _apc else None
+                if _ppc is not None and (time.time() - _ppc.ts) <= 180:
+                    _confirm_waits = True
+            except Exception as _cpe2:
+                logging.getLogger(__name__).debug('confirm precedence v2: %s', _cpe2)
+            if not _cmd and _confirm_waits:
+                logging.getLogger(__name__).info(
+                    'HANS_CONFIRM_PRECEDENCE_V2: čeká potvrzení návrhu → '
+                    'LLM routing přeskočen: %.40s', user_message)
+            elif not _cmd:
                 # HANS_CMD_LLM_ROUTE_V1 (5.8.) — regexy minuly; zeptej se
                 # modelu, jestli věta nežádá o některý ČTECÍ výpis. Řeší
                 # „ptám se jinak, než je ve vzorech" (nález uživatele 4.8.).
@@ -3267,9 +3294,37 @@ class OpenWebUIDirectHandler:
         try:
             _grounding = self._build_grounding(_q_for_retrieval, name)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
-                from scripts.hans_selfconsistency import is_unstable
-                if is_unstable(self.config, _raw_message) is True:
-                    _a1_abstain = True
+                # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
+                # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale
+                # oporu má — jen ne v RAG, nýbrž v system promptu (bloky `cap`,
+                # self_state, přítomnost, kodi, počasí). `factual_nofacts` je
+                # u nich CHYBNÁ DIAGNÓZA a abstinence pak zapře odpověď, kterou
+                # má Hans před sebou. Doloženo 20.8.: „umíte pustit něco na
+                # televizi?" → sim=0.789 thr=0.85 → „nemám spolehlivý záznam",
+                # ačkoli blok schopností v promptu byl. Táž třída jako
+                # HANS_DATETIME_ANSWER_V1 (19.8.), kde totéž potkalo datum.
+                # ⚠️ Klasifikaci NEVYRÁBÍME novou — `self_topic` jen přestal
+                # zahazovat kategorii, kterou `_SELF_SYSTEM` už rozlišoval
+                # (HANS_SELF_TOPIC_V1). Ptáme se AŽ TADY, tedy jen když by
+                # jinak běželo N generací A1 → levnější než to, co nahrazuje.
+                # Ostatní brzdy (grounding_guard, CLAIM_RETRACT, provenience)
+                # zůstávají — tohle vypíná JEN self-consistency.
+                _skip_a1 = False
+                try:
+                    from scripts.hans_intent import self_topic
+                    _st = self_topic(_raw_message, self.config)
+                    if _st in ('asistent', 'dum'):
+                        _skip_a1 = True
+                        logging.getLogger(__name__).info(
+                            'HANS_A1_NOT_FOR_OWN_STATE_V1: A1 přeskočena — '
+                            'dotaz je %r (opora je v promptu, ne v RAG): %.50s',
+                            _st, _raw_message)
+                except Exception as _ste:
+                    logging.getLogger(__name__).debug('self_topic: %s', _ste)
+                if not _skip_a1:
+                    from scripts.hans_selfconsistency import is_unstable
+                    if is_unstable(self.config, _raw_message) is True:
+                        _a1_abstain = True
         except Exception as _a1e:
             logging.getLogger(__name__).warning('A1 gate failed: %s', _a1e)
             _grounding = _GROUNDING_UNSET

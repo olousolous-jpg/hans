@@ -478,6 +478,39 @@ def _ask_classifier(config: dict, system: str, message: str) -> Optional[str]:
         return None
 
 
+def self_topic(message: str, config: dict):
+    """HANS_SELF_TOPIC_V1 (20.8.) — vrať KATEGORII, ne jen ano/ne.
+
+    `_SELF_SYSTEM` rozlišuje `asistent` / `dum` / `osoba`, ale `is_about_self`
+    z toho dělalo `bool` a zbylé dvě kategorie ZAHAZOVALO. Systém tu informaci
+    už měl spočítanou a nikdo se jí nemohl zeptat — a právě to lámalo A1:
+    „umíte pustit něco na televizi?" je `dum` (zmiňuje televizi), takže dotaz
+    propadl na faktickou cestu, kde nemá oporu v RAG (má ji v PROMPTU) →
+    self-consistency se rozešla → deterministická abstinence u otázky, jejíž
+    odpověď měl Hans před sebou. Doloženo 20.8. (sim=0.789 thr=0.85).
+
+    Vrací 'asistent' | 'dum' | 'osoba' | None (neznámo/vypnuto/selhání).
+    """
+    msg = (message or "").strip()
+    if not msg:
+        return None
+    ic = (config or {}).get("intent", {}) or {}
+    if not ic.get("use_llm", False):
+        return None
+    if msg in _self_cache:
+        return _self_cache[msg]
+    out = _ask_classifier(config, _SELF_SYSTEM, msg)
+    if out is None:
+        return None
+    w = (out or "").strip().lower()
+    res = ('asistent' if w.startswith('asist')
+           else 'dum' if w.startswith('dum') or w.startswith('dům')
+           else 'osoba' if w.startswith('osob') else None)
+    if len(_self_cache) < 256:
+        _self_cache[msg] = res
+    return res
+
+
 def is_about_self(message: str, config: dict) -> bool:
     """Ptá se zpráva na HANSE (jeho stav/náladu/činnost)?
 
@@ -495,12 +528,7 @@ def is_about_self(message: str, config: dict) -> bool:
     ic = (config or {}).get("intent", {}) or {}
     if not ic.get("use_llm", False):
         return False
-    if msg in _self_cache:
-        return _self_cache[msg]
-    out = _ask_classifier(config, _SELF_SYSTEM, msg)
-    if out is None:
-        return False
-    res = (out or "").strip().lower().startswith("asist")
-    if len(_self_cache) < 256:
-        _self_cache[msg] = res
-    return res
+    # HANS_SELF_TOPIC_V1 — tenký obal nad `self_topic`, ať existuje JEDNA
+    # pravda o téhle klasifikaci (a jedna cache). Chování beze změny:
+    # True jen pro `asistent`.
+    return self_topic(message, config) == 'asistent'
