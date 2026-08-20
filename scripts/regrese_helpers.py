@@ -46,3 +46,20 @@ def poradi_bloku(varianta: str) -> str:
 def posledni_blok(varianta: str) -> str:
     """Poslední blok varianty — u plného promptu MUSÍ být adresát (`current`)."""
     return poradi_bloku(varianta).rstrip("|").split("|")[-1]
+
+
+def tiche_vychody_groundingu() -> int:
+    """HANS_GROUNDING_OUTCOME_LOG_V1 — kolik východů obchází logovaný setter?
+
+    Musí být 0: každý výsledek groundingu má téct přes
+    `_vysledek_groundingu`, jinak se v logu ztratí, KTERÁ cesta odpověď
+    rozhodla (a přesně to zdržovalo ladění 20.8.). Jediné povolené přiřazení
+    je uvnitř samotného setteru.
+    """
+    import re
+    from pathlib import Path
+    src = Path("scripts/openwebui_direct_handler.py").read_text(encoding="utf-8")
+    i = src.index("def _vysledek_groundingu(")
+    j = src.index("def _build_grounding(", i)
+    mimo = src[:i] + src[j:]
+    return len(re.findall(r"self\._grounding_outcome\s*=", mimo))

@@ -598,6 +598,29 @@ class OpenWebUIDirectHandler:
             logging.getLogger(__name__).debug('knowledge FTS: %s', e)
             return ''
 
+    def _vysledek_groundingu(self, vysledek: str, cesta: str) -> None:
+        """HANS_GROUNDING_OUTCOME_LOG_V1 (20.8.) — JEDNO místo, kde se zapíše
+        výsledek groundingu, a rovnou se pozná, KTERÁ cesta ho vyrobila.
+
+        PROČ: `_build_grounding` má 19 východů a každý si dosud jen tiše
+        přiřadil `_grounding_outcome`. Když pak odpověď dopadla divně, nešlo
+        z logu poznat, kdo ji obsloužil — 20.8. mě to dvakrát zdrželo
+        (u dotazu na schopnosti a u provenienčního dotazu jsem musel příčinu
+        hledat greppem přes markery jednotlivých větví).
+        Chování se NEMĚNÍ: hodnota je táž, přibyl jen záznam.
+
+        `vysledek` = co dostane volající (skip/grounded/opinion/self_state/
+        nonfactual/factual_nofacts), `cesta` = která větev to rozhodla.
+        Je to zároveň příprava na úklid té funkce: než se dá přeskládat,
+        musí být vidět, kudy dotazy reálně tečou.
+        """
+        self._grounding_outcome = vysledek
+        try:
+            logging.getLogger(__name__).info(
+                'GROUNDING: %s ← %s', vysledek, cesta)
+        except Exception:
+            pass
+
     def _build_grounding(self, user, name=None) -> str:
         """G3B_GROUNDING_V1 — vrátí grounding blok pro faktický dotaz.
 
@@ -624,7 +647,7 @@ class OpenWebUIDirectHandler:
 
         # HANS_SELFCONSISTENCY_A1_V1 — zaznamenej výsledek groundingu pro
         # volajícího (A1 short-circuit běží jen u 'factual_nofacts').
-        self._grounding_outcome = 'skip'
+        self._vysledek_groundingu('skip', 'start')
 
         # HANS_KNOWLEDGE_CHECK_V1 (18.7.) — „znáš X?" / „co víš o X?" když X
         # NENÍ v paměti (deník/entities). Bez tohoto hans-czech halucinuje
@@ -669,18 +692,18 @@ class OpenWebUIDirectHandler:
                 except Exception:
                     _pc = ""
                 if _pc:
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'pc_stav')
                     return _pc
                 # HANS_READING_RECALL_V1 — nejdřív deterministicky dohledej, co
                 # si o tom Hans SÁM přečetl (declension-safe, obchází flaky RAG
                 # na tenkých souhrnech). Má přednost před „nemám záznam".
                 _rr = reading_recall_answer(_dbp_kc, str(_text))
                 if _rr:
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'reading_recall')
                     return _rr
                 _kc = knowledge_check_answer(_dbp_kc, str(_text))
                 if _kc:
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'reading_recall_tema')
                     return _kc
                 # None = topic JE v paměti → nech normální recall/RAG cestu
         except Exception:
@@ -701,7 +724,7 @@ class OpenWebUIDirectHandler:
                            or "data/hans_diary.db")
                 _ra = recent_activity_answer(_dbp_ra, days=1)
                 if _ra:
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'nedavna_aktivita')
                     return _ra
         except Exception:
             pass
@@ -719,7 +742,7 @@ class OpenWebUIDirectHandler:
                 _dbp_s = (self.config.get("diary_db")
                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                           or "data/hans_diary.db")
-                self._grounding_outcome = 'grounded'
+                self._vysledek_groundingu('grounded', 'zdroje')
                 _log_dbg.info('HANS_SOURCE_QUERY_V1: match → sources_reply grounding')
                 return sources_reply(_dbp_s, user_text=str(_text))
         except Exception as _sqe:
@@ -739,7 +762,7 @@ class OpenWebUIDirectHandler:
         try:
             from scripts.hans_opinion import is_opinion_query as _ioq
             if _ioq(str(_text)):
-                self._grounding_outcome = 'opinion'
+                self._vysledek_groundingu('opinion', 'nazor')
                 return ''
         except Exception:
             pass
@@ -756,7 +779,7 @@ class OpenWebUIDirectHandler:
                           or "data/hans_diary.db")
                 _rc = conversation_recall(_dbp_r, str(_text), person=name)
                 if _rc:
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'chat_recall')
                     _blk = "\n\n".join("[Dřívější rozhovor — %s]\n%s" % (kdy, note)
                                        for kdy, note in _rc)
                     return ("\n\nSKUTEČNÝ ZÁZNAM dřívějšího rozhovoru (odpověz JEN "
@@ -774,7 +797,7 @@ class OpenWebUIDirectHandler:
                       or "data/hans_diary.db")
             _cr = _commit_ans(_dbp_c, str(_text), person=name)
             if _cr:
-                self._grounding_outcome = 'grounded'
+                self._vysledek_groundingu('grounded', 'zavazky')
                 return _cr
         except Exception:
             pass
@@ -790,7 +813,7 @@ class OpenWebUIDirectHandler:
                       or "data/hans_diary.db")
             _fr = _film_recall(_dbp_f, str(_text))
             if _fr:
-                self._grounding_outcome = 'grounded'
+                self._vysledek_groundingu('grounded', 'film_recall')
                 return _fr
         except Exception:
             pass
@@ -853,11 +876,11 @@ class OpenWebUIDirectHandler:
                         if _ss:
                             logging.getLogger(__name__).info(
                                 'HANS_SELF_STATE_V1 → blok o sobě (%d zn)', len(_ss))
-                            self._grounding_outcome = 'self_state'
+                            self._vysledek_groundingu('self_state', 'self_state')
                             return '\n\n' + _ss
                 except Exception as _sse:
                     logging.getLogger(__name__).debug('self_state: %s', _sse)
-                self._grounding_outcome = 'nonfactual'
+                self._vysledek_groundingu('nonfactual', 'volny_hovor')
                 return ''   # volná konverzace → osobnost, žádný retrieval
 
             # ── HANS_QUERY_REWRITER_F1_V1 ────────────────────────────────
@@ -909,7 +932,7 @@ class OpenWebUIDirectHandler:
                 # C1 / HANS_PERSON_FACT_V1: i bez RAG kolekce máme-li tvrdý
                 # fakt (entita nebo osoba), vrať ho
                 if _ent_fact:
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'karta_osoby')
                     return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
                 return ''
 
@@ -978,19 +1001,19 @@ class OpenWebUIDirectHandler:
                     logging.getLogger(__name__).info(
                         'C1: RAG prázdné, entita ze store → grounded pro %r',
                         str(_text)[:40])
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'chatlog_neni_fakt')
                     return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
                 # HANS_KNOWLEDGE_FTS_V1 — tudy vede REÁLNÁ cesta k abstinenci
                 # (ověřeno v logu 6.8.: „žádná shoda pod prahem → G3C").
                 # Původní patch mířil jen na druhé místo níž a NIC neopravil.
                 _kb = self._knowledge_fts_grounding(str(_text))
                 if _kb:
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'zapisky_fts')
                     return _kb
                 logging.getLogger(__name__).info(
                     'G3B: žádná shoda pod prahem pro [%s] %r → anti-konfab bez fakt (G3C)',
                     res.intent, str(_text)[:40])
-                self._grounding_outcome = 'factual_nofacts'
+                self._vysledek_groundingu('factual_nofacts', 'zapisky_fts_prazdno')
                 return '\n\n' + ANTIKONFAB_NOFACTS
 
             # 5) seřaď VŠECHNY chunky napříč kolekcemi dle distance,
@@ -1065,12 +1088,12 @@ class OpenWebUIDirectHandler:
             if not facts.strip():
                 _kb = self._knowledge_fts_grounding(str(_text))
                 if _kb:
-                    self._grounding_outcome = 'grounded'
+                    self._vysledek_groundingu('grounded', 'zapisky_fallback')
                     return _kb
                 # RAG slabé A žádný autoritativní zdroj = jako by prázdné.
                 logging.getLogger(__name__).info(
                     '#2: bez faktů (RAG slabý, žádná entita/karta) → factual_nofacts')
-                self._grounding_outcome = 'factual_nofacts'
+                self._vysledek_groundingu('factual_nofacts', 'bez_faktu')
                 return '\n\n' + ANTIKONFAB_NOFACTS
 
             _cols_used = sorted(set(c.get('collection', '?') for c in top))
@@ -1079,7 +1102,7 @@ class OpenWebUIDirectHandler:
                 res.intent, _best_dist if _best_dist is not None else -1,
                 len(top), '+'.join(_cols_used) if _cols_used else '-',
                 1 if _ent_fact else 0, 1 if _card_fact else 0)
-            self._grounding_outcome = 'grounded'
+            self._vysledek_groundingu('grounded', 'rag')
             return '\n\n' + ANTIKONFAB + '\n\n' + facts
 
         except Exception as _ge:
