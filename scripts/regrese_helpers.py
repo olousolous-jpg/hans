@@ -179,3 +179,16 @@ def cetba_bez_duplicit() -> bool:
         if t:
             tituly.append(t)
     return len(tituly) == len(set(tituly))
+
+
+def obsazeni_az_za_prepisem() -> bool:
+    """HANS_KODI_CAST_FACT_V2 — stojí blok obsazení AŽ ZA přepisem dotazu?
+
+    Strukturální test, protože chyba nebyla ve funkci, ale v jejím POŘADÍ:
+    blok potřebuje název filmu, který doplní až F1 rewriter. Nad ním dostával
+    holou větu („kdo tam hraje?") a mlčel. Táž třída jako A1 brzda.
+    """
+    src = open("scripts/openwebui_direct_handler.py", encoding="utf-8").read()
+    i_prepis = src.find("_q_for_retrieval = _rw.strip()")
+    i_blok = src.find("self._kodi_cast_fact(")
+    return i_prepis != -1 and i_blok != -1 and i_blok > i_prepis

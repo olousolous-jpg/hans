@@ -922,22 +922,6 @@ class OpenWebUIDirectHandler:
                 logging.getLogger(__name__), "_build_grounding(ř. 802)",
                 "_build_grounding: blok kontextu selhal (ř. 802): %s", _tiche)
 
-        # HANS_KODI_CAST_FACT_V1 (21.8.) — KDO V TOM HRAJE: odpověz z KNIHOVNY,
-        # ne z hlavy. Doloženo 20.8.: „kdo tam hraje?" → Hans vyjmenoval tři
-        # herce, o kterých nemá žádný záznam. Přitom Kodi obsazení VRACÍ —
-        # u dílu „Turecké náušnice" šestnáct jmen včetně Josefa Kemra, kterého
-        # Hans uhodl správně a zbytek si domyslel. Chyběla cesta, ne schopnost.
-        # Titul se bere z rozřešené věty (vlákno/F1), jinak z toho, co běží.
-        try:
-            _cf = self._kodi_cast_fact(str(_text))
-            if _cf:
-                self._vysledek_groundingu('grounded', 'obsazeni_kodi')
-                return _cf
-        except Exception as _tiche:
-            log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_grounding(obsazeni)",
-                "_build_grounding: blok obsazení selhal: %s", _tiche)
-
         # HANS_FILM_RECALL_V1 — dotaz na FILM podle názvu: dohledej Hansovy
         # VLASTNÍ deníkové záznamy (movie_opinion/kodi_playing) o tom filmu, ať
         # nezapře, co ví (doložený případ „Proud krve"). RAG kolekce hans_filmy
@@ -1055,6 +1039,28 @@ class OpenWebUIDirectHandler:
             except Exception as _f1e:
                 logging.getLogger(__name__).debug(
                     'F1: rewriter selhal (%s) — použit originál', _f1e)
+
+            # HANS_KODI_CAST_FACT_V2 (21.8.) — KDO V TOM HRAJE: odpověz
+            # z KNIHOVNY, ne z hlavy. Doloženo 20.8.: „kdo tam hraje?" →
+            # Hans vyjmenoval tři herce, o kterých nemá záznam; přitom Kodi
+            # u dílu „Turecké náušnice" vrací šestnáct jmen včetně Josefa
+            # Kemra, kterého uhodl správně a zbytek domyslel.
+            # ⚠️ MUSÍ STÁT AŽ TADY, ZA PŘEPISEM DOTAZU. V1 seděla nad ním
+            # a dostávala holou větu: `_thread_ctx` u „kdo tam hraje?" předmět
+            # nenajde (změřeno: ('kdo tam hraje?','kdo tam hraje?','')),
+            # kdežto F1 ho doplní na „Kdo hraje v Tureckých náušnicích?".
+            # Blok byl celou dobu správný, jen stál před tím, kdo mu měl
+            # název dodat — táž chyba jako HANS_A1_THREAD_TEXT_V1, kterou
+            # jsem týž den opravoval o pár řádků výš.
+            try:
+                _cf = self._kodi_cast_fact(str(_q_for_retrieval))
+                if _cf:
+                    self._vysledek_groundingu('grounded', 'obsazeni_kodi')
+                    return _cf
+            except Exception as _tiche:
+                log_once(  # HANS_NO_SILENT_CTX_V1
+                    logging.getLogger(__name__), "_build_grounding(obsazeni)",
+                    "_build_grounding: blok obsazení selhal: %s", _tiche)
 
             # C1: entity store — deterministické resolvování ZNÁMÉ entity
             # (z Hansova čtení) PŘED RAG. Autoritativní fakt (definiční věta
