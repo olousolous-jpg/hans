@@ -12,9 +12,44 @@ Config keys (under "kodi"):
 
 import requests
 import logging
+import re
 import time
 
 _log = logging.getLogger("kodi")
+
+
+def _nazev_dilu_sedi(nazev_norm: str, dotaz_norm: str) -> bool:
+    """Sedí název dílu na dotaz i přes skloňování? („v Tureckých náušnicích"
+    × „Turecké náušnice"). Každé obsahové slovo názvu musí mít v dotazu
+    protějšek; jednoslovný název musí být dost dlouhý, ať nechytá plevel."""
+    if not nazev_norm or not dotaz_norm:
+        return False
+    slova = [t for t in nazev_norm.split() if len(t) >= 3]
+    if not slova:
+        return False
+    if len(slova) == 1 and len(slova[0]) < 5:
+        return False
+    q = dotaz_norm.split()
+    return all(any(t == x or _shoda_tokenu(t, x) for x in q) for t in slova)
+
+
+def _substring_na_hranici(kde: str, co: str, min_delka: int = 4) -> bool:
+    """Je `co` v `kde` jako CELÉ SLOVO (nebo skupina slov)? Krátké úlomky
+    se odmítají — shoda uvnitř slova je pro názvy vždycky náhoda."""
+    if not kde or not co or len(co) < min_delka:
+        return False
+    return (kde == co or kde.startswith(co + " ")
+            or kde.endswith(" " + co) or (" " + co + " ") in kde)
+
+
+def _shoda_tokenu(a: str, b: str) -> bool:
+    """Táž shoda tokenů jako u entit (české skloňování). Import je líný —
+    kodi_client musí zůstat použitelný i bez zbytku Hanse."""
+    try:
+        from scripts.hans_entities import _tok_match
+        return bool(_tok_match(a, b))
+    except Exception:
+        return a == b
 
 
 class KodiClient:
@@ -380,7 +415,17 @@ class KodiClient:
             names = [n for n in names if n]
             if any(n == w for n in names):     # přesná shoda = přednost
                 return m
-            if any(w in n or n in w for n in names):   # substring („…2/3")
+            # HANS_KODI_FIND_V3 (21.8.) — SUBSTRING MUSÍ LEŽET NA HRANICI SLOVA
+            # A MÍT ASPOŇ 4 ZNAKY. Volný oboustranný substring byl past:
+            # film „Projekt A" má originaltitle „A", takže „a" sedělo doprostřed
+            # skoro každého dotazu → find_movie vracel „Projekt A" na cokoli
+            # s písmenem „a". Přesně tak vznikl doložený případ z 20.8., kdy
+            # Hans dvakrát po sobě nabídl „Projekt A" na dotaz o jiném filmu
+            # i na uživatelovu korekci. V knihovně je 25 takových krátkých
+            # polí („a", „1", „9", „jo", „ran", „vec"…), takže to nebyl výjimečný
+            # kus smůly, ale systematická chyba vyhledávání.
+            if any(_substring_na_hranici(w, n) or _substring_na_hranici(n, w)
+                   for n in names):
                 best = best or m
         return best
 
@@ -405,6 +450,185 @@ class KodiClient:
             return bool(r) and "error" not in (r or {})
         except Exception:
             return False
+
+    # ── HANS_KODI_EPISODES_V1 (21.8.) — SERIÁLY ────────────────────────────
+    # Knihovna má 968 filmů a 3547 DÍLŮ, ale všechny Hansovy cesty ke Kodi
+    # uměly jen filmy → 79 % knihovny pro něj neexistovalo. Doloženo 20.8.:
+    # uživatel opravil „myslel jsem díl ze seriálu Hříšní lidé" a Hans mohl
+    # nabídnout zase jen film; přitom „Turecké náušnice" je S01E09 téhož
+    # seriálu a v tu chvíli zrovna běžel — i s obsazením a obsahem v knihovně.
+    _EP_SXXEYY = re.compile(r"\bs\s*(\d{1,2})\s*e\s*(\d{1,3})\b", re.IGNORECASE)
+    _EP_CISLO = re.compile(
+        r"\b(?:(\d{1,3})\.?\s*(?:d[íi]l|epizod\w*)|"
+        r"(?:d[íi]l|epizod\w*)\s*(?:[čc]\.?\s*)?(\d{1,3}))\b", re.IGNORECASE)
+    _EP_RADA = re.compile(r"\b(?:[řr]ada|s[ée]ri[ea|e])\s*(\d{1,2})\b",
+                          re.IGNORECASE)
+
+    def _tv_shows(self, limit: int = 500) -> list:
+        r = self._call("VideoLibrary.GetTVShows", {
+            "properties": ["title"],
+            "limits": {"start": 0, "end": int(limit)},
+        })
+        return (r or {}).get("result", {}).get("tvshows", []) if r else []
+
+    def show_episodes(self, tvshowid: int) -> list:
+        """Díly seriálu i se stavem shlédnutí (pro „pusť další díl")."""
+        r = self._call("VideoLibrary.GetEpisodes", {
+            "tvshowid": int(tvshowid),
+            "properties": ["title", "season", "episode", "playcount",
+                           "resume", "showtitle"],
+            "sort": {"method": "episode"},
+        })
+        return (r or {}).get("result", {}).get("episodes", []) if r else []
+
+    @staticmethod
+    def _next_unwatched(eps: list) -> dict | None:
+        """Rozkoukaný díl má přednost před prvním neshlédnutým — kdo se ptá
+        na seriál, obvykle chce POKRAČOVAT, ne začít znovu."""
+        if not eps:
+            return None
+        rozkoukane = [e for e in eps
+                      if float((e.get("resume") or {}).get("position") or 0) > 0]
+        if rozkoukane:
+            return rozkoukane[-1]
+        # Řada 0 = bonusy a speciály; nabízet je jako „další díl" je špatně
+        # (doloženo při stavbě: Columbo → S00E01 místo prvního řádného dílu).
+        radne = sorted([e for e in eps if int(e.get("season") or 0) >= 1],
+                       key=lambda e: (int(e.get("season") or 0),
+                                      int(e.get("episode") or 0))) or eps
+        for e in radne:
+            if not e.get("playcount"):
+                return e
+        return radne[0]
+
+    def find_episode(self, query: str, limit: int = 6000) -> dict | None:
+        """Najdi DÍL podle volného popisu. Vrací dict dílu nebo None.
+
+        Rozumí třem tvarům (v tomhle pořadí, od nejurčitějšího):
+          • název dílu („Turecké náušnice")
+          • seriál + číslo („Hříšní lidé, díl 9", „S01E09", „řada 1 díl 9")
+          • samotný seriál → rozkoukaný, jinak první neshlédnutý díl
+        Read-only, žádná změna stavu — grounding pro agentní akci.
+        """
+        q = self._norm_title(query)
+        if not q:
+            return None
+        m_se = self._EP_SXXEYY.search(query or "")
+        m_c = self._EP_CISLO.search(query or "")
+        m_r = self._EP_RADA.search(query or "")
+        rada = int(m_se.group(1)) if m_se else (int(m_r.group(1)) if m_r else None)
+        cislo = None
+        if m_se:
+            cislo = int(m_se.group(2))
+        elif m_c:
+            cislo = int(m_c.group(1) or m_c.group(2))
+
+        # 1) seriál zmíněný v dotazu? (nejdelší shoda vyhrává)
+        # Uživatel seriál skoro nikdy nejmenuje celý („Hříšní lidé" místo
+        # „Hříšní lidé města pražského"), takže holý substring nestačí —
+        # rozhoduje PŘEKRYV SLOV. Jednoslovný seriál (Columbo, Černobyl) smí
+        # vyhrát na jedno slovo, ale musí být dost dlouhé, ať nechytá plevel.
+        show, show_norm, show_skore = None, "", 0
+        q_slova = set(q.split())
+        for s in self._tv_shows():
+            n = self._norm_title(s.get("label") or s.get("title"))
+            if not n:
+                continue
+            slova = [t for t in n.split() if len(t) >= 3]
+            # Skloňování („od Agathy Christie" × „Agatha Christie") řeší TÁŽ
+            # funkce jako u entit — jedno pravidlo, ne druhá pravda vedle něj.
+            shody = [t for t in slova
+                     if t in q_slova or any(_shoda_tokenu(t, x) for x in q_slova)]
+            if n in q or q in n:
+                skore = len(slova) + 1          # celý název = nejsilnější signál
+            elif len(shody) >= 2 or (len(slova) == 1 and len(shody) == 1
+                                     and len(slova[0]) >= 5):
+                skore = len(shody)
+            else:
+                continue
+            if skore > show_skore or (skore == show_skore and len(n) > len(show_norm)):
+                show, show_norm, show_skore = s, n, skore
+        if show is not None:
+            eps = self.show_episodes(show.get("tvshowid"))
+            if cislo is not None:
+                for e in eps:
+                    if int(e.get("episode") or 0) == cislo and (
+                            rada is None or int(e.get("season") or 0) == rada):
+                        return e
+            # zbytek dotazu (bez názvu seriálu) může být název dílu
+            zbytek = q.replace(show_norm, " ").strip()
+            if zbytek:
+                for e in eps:
+                    n = self._norm_title(e.get("title"))
+                    if n and (n == zbytek or _nazev_dilu_sedi(n, zbytek)):
+                        return e
+            if cislo is None:
+                return self._next_unwatched(eps)
+            return None
+
+        # 2) seriál nezmíněn → hledej podle názvu dílu napříč knihovnou
+        r = self._call("VideoLibrary.GetEpisodes", {
+            "properties": ["title", "season", "episode", "showtitle",
+                           "playcount", "resume"],
+            "limits": {"start": 0, "end": int(limit)},
+        })
+        eps = (r or {}).get("result", {}).get("episodes", []) if r else []
+        castecna = None
+        for e in eps:
+            n = self._norm_title(e.get("title"))
+            if not n:
+                continue
+            if n == q:
+                return e
+            # Skloňování: „kdo hraje v Tureckých náušnicích" musí najít díl
+            # „Turecké náušnice". Holý substring to nikdy netrefí, proto
+            # shoda po SLOVECH (a jednoslovné krátké názvy jsou vyloučené —
+            # „Hra" by jinak sedla skoro na cokoli).
+            if _nazev_dilu_sedi(n, q):
+                castecna = castecna or e
+        return castecna
+
+    def episode_details(self, episodeid: int) -> dict | None:
+        """Obsazení + obsah dílu (grounding faktů o tom, co Hans sleduje).
+        Kodi je má u dílů stejně jako u filmů — jen se na ně nikdo neptal."""
+        r = self._call("VideoLibrary.GetEpisodeDetails", {
+            "episodeid": int(episodeid),
+            "properties": ["title", "showtitle", "season", "episode",
+                           "plot", "cast", "firstaired", "runtime"],
+        })
+        return (r or {}).get("result", {}).get("episodedetails") if r else None
+
+    def movie_details(self, movieid: int) -> dict | None:
+        """Totéž pro film — obsazení knihovna vrací u 40 ze 40 vzorku."""
+        r = self._call("VideoLibrary.GetMovieDetails", {
+            "movieid": int(movieid),
+            "properties": ["title", "year", "plot", "cast", "director",
+                           "runtime"],
+        })
+        return (r or {}).get("result", {}).get("moviedetails") if r else None
+
+    def play_episode(self, episodeid: int) -> bool:
+        """Pusť díl seriálu (Player.Open) — zrcadlo play_movie."""
+        try:
+            r = self._call("Player.Open", {"item": {"episodeid": int(episodeid)}})
+            return bool(r) and "error" not in (r or {})
+        except Exception:
+            return False
+
+    @staticmethod
+    def episode_label(ep: dict) -> str:
+        """Lidský popis dílu: „Hříšní lidé města pražského — S01E09 Turecké
+        náušnice". Jedno místo, ať se to netvoří pokaždé jinak."""
+        if not ep:
+            return ""
+        show = (ep.get("showtitle") or "").strip()
+        nazev = (ep.get("title") or "").strip()
+        se = "S%02dE%02d" % (int(ep.get("season") or 0),
+                             int(ep.get("episode") or 0))
+        casti = [x for x in (show, se, nazev) if x]
+        if show and nazev:
+            return "%s — %s %s" % (show, se, nazev)
+        return " ".join(casti)
 
     def _active_player_id(self) -> int | None:
         """ID aktivního video přehrávače (nebo None)."""

@@ -599,6 +599,107 @@ class OpenWebUIDirectHandler:
             logging.getLogger(__name__).debug('knowledge FTS: %s', e)
             return ''
 
+    # HANS_KODI_CAST_FACT_V1 (21.8.) — dotaz na obsazení / tvůrce z knihovny.
+    # Kodi drží `cast` u filmů (40 ze 40 vzorku) i u dílů seriálů — jen se na
+    # to nikdy nikdo neptal, takže si model herce vymýšlel.
+    _CAST_PAT = re.compile(
+        r"(kdo\s+(tam|v\s+tom|v\s+n[ěe]m|v\s+n[íi])?\s*(hraj|hr[áa]l|ú[čc]ink|"
+        r"uc[íi]nk)|kdo\s+si\s+(tam\s+)?zahr[áa]l|obsazen[íi]|"
+        r"kdo\s+to\s+(re[žz]|nato[čc])|kdo\s+hraje)", re.IGNORECASE)
+
+    def _kodi_cast_fact(self, text: str) -> str:
+        """Obsazení (a režie) toho, o čem je řeč — deterministicky z Kodi.
+
+        Vrací '' když věta o obsazení není, titul se nepodařilo určit, nebo
+        knihovna nic nemá. Prázdný výsledek = Hans dál abstinuje; NIC se
+        nedomýšlí.
+        """
+        t = (text or "").strip()
+        if not t or not self._CAST_PAT.search(t):
+            return ''
+        kodi = getattr(getattr(self, "_hans_idle", None), "kodi", None)
+        if not kodi:
+            return ''
+        # 1) O ČEM je řeč: rozřešená věta z vlákna/F1 (holé „kdo tam hraje?"
+        #    titul nenese), jinak to, co zrovna běží.
+        kandidati = []
+        _f1 = getattr(self, '_f1_query', None)
+        if _f1:
+            kandidati.append(str(_f1))
+        try:
+            _tc = getattr(self, '_thread_ctx', None)
+            if _tc and _tc[1]:
+                kandidati.append(str(_tc[1]))
+            if _tc and len(_tc) > 2 and _tc[2]:
+                kandidati.append(str(_tc[2]))
+        except Exception:
+            pass
+        polozka, popis = None, ''
+        for k in kandidati:
+            try:
+                ep = kodi.find_episode(k)
+            except Exception:
+                ep = None
+            if ep:
+                polozka = kodi.episode_details(ep.get("episodeid"))
+                popis = kodi.episode_label(ep)
+                break
+            try:
+                mv = kodi.find_movie(k)
+            except Exception:
+                mv = None
+            if mv:
+                polozka = kodi.movie_details(mv.get("movieid"))
+                popis = mv.get("title") or ''
+                break
+        if polozka is None:
+            # nikdo titul neřekl → ber, co běží na TV
+            try:
+                np = kodi.get_now_playing() or {}
+            except Exception:
+                np = {}
+            nazev = (np.get("title") or np.get("label") or "").strip()
+            if not nazev:
+                return ''
+            ep = kodi.find_episode(nazev)
+            if ep:
+                polozka = kodi.episode_details(ep.get("episodeid"))
+                popis = kodi.episode_label(ep)
+            else:
+                mv = kodi.find_movie(nazev)
+                if mv:
+                    polozka = kodi.movie_details(mv.get("movieid"))
+                    popis = mv.get("title") or nazev
+        if not polozka:
+            return ''
+        herci = polozka.get("cast") or []
+        if not herci:
+            return ''
+        radky = []
+        for c in herci[:10]:
+            jmeno = (c.get("name") or "").strip()
+            role = (c.get("role") or "").strip()
+            if not jmeno:
+                continue
+            radky.append("- %s%s" % (jmeno, (" jako %s" % role) if role else ""))
+        if not radky:
+            return ''
+        rez = polozka.get("director") or []
+        hlava = "OBSAZENÍ Z MÉ KNIHOVNY — „%s“:" % (popis or "tenhle titul")
+        pata = ("Vyjmenuj POUZE tahle jména. Nikoho nepřidávej, role nedomýšlej; "
+                "co tu není, o tom řekni, že to nevíš.")
+        blok = [hlava] + radky
+        if rez:
+            blok.append("Režie: %s" % ", ".join(rez[:3]))
+        if len(herci) > 10:
+            blok.append("(v seznamu je celkem %d jmen, tohle je prvních %d)"
+                        % (len(herci), len(radky)))
+        blok.append(pata)
+        logging.getLogger(__name__).info(
+            'HANS_KODI_CAST_FACT_V1: obsazení z knihovny pro %r (%d jmen)',
+            popis[:40], len(herci))
+        return '\n\n' + ANTIKONFAB + '\n\n' + "\n".join(blok)
+
     def _vysledek_groundingu(self, vysledek: str, cesta: str) -> None:
         """HANS_GROUNDING_OUTCOME_LOG_V1 (20.8.) — JEDNO místo, kde se zapíše
         výsledek groundingu, a rovnou se pozná, KTERÁ cesta ho vyrobila.
@@ -820,6 +921,22 @@ class OpenWebUIDirectHandler:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 802)",
                 "_build_grounding: blok kontextu selhal (ř. 802): %s", _tiche)
+
+        # HANS_KODI_CAST_FACT_V1 (21.8.) — KDO V TOM HRAJE: odpověz z KNIHOVNY,
+        # ne z hlavy. Doloženo 20.8.: „kdo tam hraje?" → Hans vyjmenoval tři
+        # herce, o kterých nemá žádný záznam. Přitom Kodi obsazení VRACÍ —
+        # u dílu „Turecké náušnice" šestnáct jmen včetně Josefa Kemra, kterého
+        # Hans uhodl správně a zbytek si domyslel. Chyběla cesta, ne schopnost.
+        # Titul se bere z rozřešené věty (vlákno/F1), jinak z toho, co běží.
+        try:
+            _cf = self._kodi_cast_fact(str(_text))
+            if _cf:
+                self._vysledek_groundingu('grounded', 'obsazeni_kodi')
+                return _cf
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_grounding(obsazeni)",
+                "_build_grounding: blok obsazení selhal: %s", _tiche)
 
         # HANS_FILM_RECALL_V1 — dotaz na FILM podle názvu: dohledej Hansovy
         # VLASTNÍ deníkové záznamy (movie_opinion/kodi_playing) o tom filmu, ať

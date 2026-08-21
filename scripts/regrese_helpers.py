@@ -152,3 +152,9 @@ def stejny_navrh(titul_a: str, titul_b: str) -> bool:
     from scripts.hans_agent import _args_hash
     return (_args_hash("kodi_play_film", {"titul": titul_a})
             == _args_hash("kodi_play_film", {"titul": titul_b}))
+
+
+def popis_dilu(ep: dict) -> str:
+    """HANS_KODI_EPISODES_V1 — jednotný lidský popis dílu seriálu."""
+    from scripts.kodi_client import KodiClient
+    return KodiClient.episode_label(ep)

@@ -310,10 +310,22 @@ class Action:
 # ── Handlery akcí ────────────────────────────────────────────────────────────
 
 def _run_kodi_play(handler, args) -> str:
+    kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
+    if not kodi:
+        return "Bohužel se mi teď nedaří k přehrávači připojit, pane."
+    # HANS_KODI_EPISODES_V1 (21.8.) — táž akce pustí film I díl seriálu.
+    # Knihovna má 968 filmů a 3547 dílů; dokud uměla jen filmy, byla pro
+    # Hanse čtyři pětiny knihovny neviditelné (doloženo 20.8.: uživatel chtěl
+    # díl ze seriálu a Hans mohl nabídnout zase jen film).
+    ep = args.get("_episode") or {}
+    if ep.get("episodeid") is not None:
+        popis = kodi.episode_label(ep) or args.get("titul", "")
+        ok = kodi.play_episode(ep["episodeid"])
+        return (f"Pouštím „{popis}“." if ok
+                else "Nepodařilo se mi ten díl spustit, pane.")
     m = args.get("_movie") or {}
     mid, title = m.get("movieid"), m.get("title", args.get("titul", ""))
-    kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
-    if not kodi or mid is None:
+    if mid is None:
         return "Bohužel se mi teď nedaří k přehrávači připojit, pane."
     ok = kodi.play_movie(mid)
     return (f"Pouštím „{title}“." if ok
@@ -434,6 +446,21 @@ def _ground_kodi_play(handler, args):
                          title, alt, m.get("title"))
                 break
     if not m:
+        # HANS_KODI_EPISODES_V1 (21.8.) — SERIÁLY. Než se přizná „nemám",
+        # zkus díl: podle názvu dílu, seriálu (+ řada/díl), nebo samotného
+        # seriálu → rozkoukaný, jinak první neshlédnutý. Zůstává to TÁŽ akce
+        # a týž potvrzovací tok (vzor HANS_UNIFY_ACTIONS_V1) — druhá paralelní
+        # cesta by se dřív nebo později rozešla s první.
+        try:
+            ep = kodi.find_episode(title) if hasattr(kodi, "find_episode") else None
+        except Exception as _ee:
+            log.debug("find_episode: %s", _ee)
+            ep = None
+        if ep:
+            args["_episode"] = ep
+            args["titul"] = kodi.episode_label(ep)
+            log.info("agent: '%s' není film, ale díl → %s", title, args["titul"])
+            return True, args, ""
         return False, args, "film není v knihovně"
     args["_movie"] = m
     args["titul"] = m.get("title", title)  # kanonický název z knihovny
@@ -1559,6 +1586,11 @@ class AgentRouter:
             return False
         movie = (prop.args or {}).get("_movie")
         if not movie or movie.get("movieid") is None:
+            # HANS_KODI_EPISODES_V1 — addon na TV umí jen film (chce movieid);
+            # u dílu se zrcadlení přeskočí a potvrzuje se jen v chatu.
+            if (prop.args or {}).get("_episode"):
+                log.info("agent: díl seriálu → potvrzení jen v chatu "
+                         "(dialog na TV umí jen filmy)")
             return False
         hi = getattr(handler, "_hans_idle", None)
         kodi = getattr(hi, "kodi", None)
