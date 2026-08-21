@@ -1343,6 +1343,15 @@ class AgentRouter:
              akce=("report_home_status", "report_who_is_home", "report_now_playing"),
              podminka=lambda s, aid, msg, dec, h: s._mentions_kolac(msg),
              verdikt="report_kolac_status", duvod="dotaz je o Koláčovi"),
+        # HANS_CAST_NOT_ORDER_V1 (21.8.) — otázka na OBSAZENÍ není rozkaz.
+        # Doloženo v testu 21.8.: na „kdo tam hraje?" agent (s předchozím
+        # návrhem v historii) nabídl díl PUSTIT, místo aby padla odpověď
+        # z knihovny. Vzor je sdílený s groundingem (`hans_intent`).
+        dict(marker="HANS_CAST_NOT_ORDER_V1",
+             akce=("kodi_play_film",),
+             podminka=lambda s, aid, msg, dec, h: __import__(
+                 "scripts.hans_intent", fromlist=["x"]).pta_se_na_obsazeni(msg),
+             verdikt=None, duvod="věta se ptá na obsazení, nežádá spuštění"),
         # HANS_FILM_RECOMMEND_V1 — žádost o DOPORUČENÍ není rozkaz pustit.
         # Doloženo 2×: „Doporučil bys mi film?" → nabídl pustit sportovní přenos,
         # co zrovna běžel (název si router vzal z živého stavu).

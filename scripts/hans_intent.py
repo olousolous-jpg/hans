@@ -532,3 +532,18 @@ def is_about_self(message: str, config: dict) -> bool:
     # pravda o téhle klasifikaci (a jedna cache). Chování beze změny:
     # True jen pro `asistent`.
     return self_topic(message, config) == 'asistent'
+
+
+# HANS_CAST_NOT_ORDER_V1 (21.8.) — „kdo tam hraje?" je dotaz na FAKT, ne pokyn
+# něco pustit. Vzor bydlí tady, protože ho potřebují DVĚ vrstvy: grounding
+# (odpověz z knihovny) i agent (nenavrhuj akci) — a dvě kopie by se rozešly.
+_OBSAZENI_PAT = __import__("re").compile(
+    r"(kdo\s+(tam|v\s+tom|v\s+n[ěe]m|v\s+n[íi])?\s*(hraj|hr[áa]l|ú[čc]ink|"
+    r"uc[íi]nk)|kdo\s+si\s+(tam\s+)?zahr[áa]l|obsazen[íi]|"
+    r"kdo\s+to\s+(re[žz]|nato[čc])|kdo\s+hraje|kdo\s+re[žz][íi]roval)",
+    __import__("re").IGNORECASE)
+
+
+def pta_se_na_obsazeni(text: str) -> bool:
+    """Ptá se věta, KDO ve filmu hraje / kdo ho režíroval?"""
+    return bool(_OBSAZENI_PAT.search(text or ""))

@@ -615,7 +615,13 @@ class OpenWebUIDirectHandler:
         nedomýšlí.
         """
         t = (text or "").strip()
-        if not t or not self._CAST_PAT.search(t):
+        # HANS_CAST_NOT_ORDER_V1 — vzor bydlí v hans_intent (sdílí ho agent).
+        try:
+            from scripts.hans_intent import pta_se_na_obsazeni as _ptaji
+            _je_to_ono = _ptaji(t)
+        except Exception:
+            _je_to_ono = bool(self._CAST_PAT.search(t))
+        if not t or not _je_to_ono:
             return ''
         kodi = getattr(getattr(self, "_hans_idle", None), "kodi", None)
         if not kodi:
@@ -3646,6 +3652,20 @@ class OpenWebUIDirectHandler:
         # G4D_DEDUP_ADDRESS_V1 — očisti opakované oslovení PŘED
         # rozdvojením do conv_store i diary→RAG (oba cíle čisté).
         if response:
+            # HANS_FILM_DIRECTOR_CHECK_V1 (21.8.) — přát si film, který doma
+            # nemáme, je v pořádku (zvídavost), ale režiséra má mít správně.
+            # Doloženo v simulovaném rozhovoru: „Sedmikrásky od Miloše Formana"
+            # (natočila je Věra Chytilová a Hans o tom filmu nemá záznam).
+            # Ověřuje se KNIHOVNOU, jinak Wikipedií; co ověřit nejde, zůstává.
+            try:
+                from scripts.film_director_check import zkontroluj_rezii
+                _kodi_r = getattr(getattr(self, "_hans_idle", None), "kodi", None)
+                _r2 = zkontroluj_rezii(response, kodi=_kodi_r, config=self.config)
+                if _r2 != response:
+                    response = _r2
+            except Exception as _fdc:
+                logging.getLogger(__name__).debug(
+                    'HANS_FILM_DIRECTOR_CHECK_V1 přeskočen: %s', _fdc)
             # GROUNDING_GUARD_V1 — nepřidal si k podkladu vlastní fakta?
             # Doloženo 12.8. (vrak u Sicílie): na PRVNÍ dotaz odpověděl přesně
             # podle zdroje, na DRUHÝ („zjisti více") už nebylo z čeho a vyrobil
