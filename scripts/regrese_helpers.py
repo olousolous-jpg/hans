@@ -192,3 +192,13 @@ def obsazeni_az_za_prepisem() -> bool:
     i_prepis = src.find("_q_for_retrieval = _rw.strip()")
     i_blok = src.find("self._kodi_cast_fact(")
     return i_prepis != -1 and i_blok != -1 and i_blok > i_prepis
+
+
+def veta_se_zmenila(puvodni: str, opravena: str) -> bool:
+    """HANS_CMD_LLM_ROUTE_TYPO_V1 — rozhodlo by se o štítku znovu?
+
+    True = oprava větu opravdu změnila (druhé kolo routeru má proběhnout),
+    False = liší se jen diakritikou/interpunkcí a druhé kolo se přeskočí.
+    """
+    from scripts.chat_commands import _norm_veta
+    return _norm_veta(puvodni) != _norm_veta(opravena)

@@ -3845,6 +3845,17 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     return cid
 
 
+def _norm_veta(s: str) -> str:
+    """HANS_CMD_LLM_ROUTE_TYPO_V1 — tvar věty pro POROVNÁNÍ (ne pro hledání):
+    bez diakritiky, malá písmena, bez interpunkce a přebytečných mezer.
+    Rozhoduje, jestli oprava vůbec něco změnila — když ne, druhé kolo se
+    přeskočí a nestojí nic."""
+    import unicodedata as _ud
+    t = _ud.normalize("NFKD", (s or "").lower())
+    t = "".join(c for c in t if not _ud.combining(c))
+    return " ".join(__import__("re").findall(r"[a-z0-9]+", t))
+
+
 def resolve_command_llm(message: str, config: dict, turns=None):
     """Vrátí (command_id, "") když věta žádá o některý ČTECÍ výpis, jinak None.
 
@@ -3939,6 +3950,39 @@ def resolve_command_llm(message: str, config: dict, turns=None):
     tok = tok[0] if tok else ""
     valid = {c for c, _ in _LLM_ROUTE_CMDS}
     cid = tok if tok in valid else ""
+    # HANS_CMD_LLM_ROUTE_TYPO_V1 (21.8.) — POTVRĎ ŠTÍTEK NA OPRAVENÉ VĚTĚ.
+    # Doloženo 20.8.: „ja vypadal normalitacni proces?" (překlep + chybějící
+    # slovo) → /anomalie, tedy výpis o sledování osob místo odpovědi;
+    # táž otázka napsaná správně routuje na nic. Přidat `anomalie` mezi
+    # RISKY nejde — ZMĚŘENO, že druhá brána pravý dotaz „jaké byly poslední
+    # anomálie?" od překlepu NEROZLIŠÍ (u obou „neptá se na své záznamy"),
+    # takže by to zabilo funkční featuru.
+    # Proto: větu nechá opravit F1 (existující rewriter) a zeptá se znovu.
+    # Změřeno: „ja vypadal normalitacni proces?" → „Jak probíhal normalizační
+    # proces?" → None ✓, „jake byly posledni anomalie?" → anomalie ✓.
+    # ⚠️ Potvrzení smí štítek jen ODEBRAT nebo ZMĚNIT, nikdy PŘIDAT tam, kde
+    # router mlčel — špatně opravený překlep by jinak vyrobil výpis.
+    # Cena: LLM volání navíc JEN když router po výpisu sáhl; když je věta už
+    # napsaná čistě, druhé kolo se přeskočí (porovnání je zadarmo).
+    if cid:
+        try:
+            from scripts.hans_rewriter import (rewrite_for_retrieval as _rw,
+                                               is_enabled as _rw_on)
+            if _rw_on(config):
+                _cista = (_rw(config, msg, history=[], name=None) or "").strip()
+                if _cista and _norm_veta(_cista) != _norm_veta(msg):
+                    _out2 = _ask_classifier(config, _LLM_ROUTE_SYSTEM, _cista)
+                    _t2 = (_out2 or "").strip().lower().strip('".,!?').split()
+                    _t2 = _t2[0] if _t2 else ""
+                    _cid2 = _t2 if _t2 in valid else ""
+                    if _cid2 != cid:
+                        _log.info("HANS_CMD_LLM_ROUTE_TYPO_V1: '%.40s' → /%s, "
+                                  "ale po opravě '%.40s' → %s (platí oprava)",
+                                  msg, cid, _cista, ("/" + _cid2) if _cid2
+                                  else "žádný příkaz")
+                        cid = _cid2
+        except Exception as _te:
+            _log.debug("route typo confirm: %s", _te)
     if cid and cid not in _COMMANDS:      # registr je pravda, ne můj výčet
         _log.warning("cmd route: '%s' není v registru — ignoruji", cid)
         cid = ""
