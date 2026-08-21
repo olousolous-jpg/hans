@@ -2553,11 +2553,36 @@ def _cmd_zdroje(handler, name, args) -> str:
     try:
         cx = _sq.connect("file:%s?mode=ro" % db, uri=True, timeout=5.0)
         if q:
+            # HANS_SOURCES_TOPIC_V1 (21.8.) — hledat přes PAHÝLY, ne přes holé
+            # téma. `_topic_stems` (české skloňování) tu existuje odjakživa,
+            # jen je /zdroje jako jediné nepoužívalo → „normalizaci" by nikdy
+            # nesedlo na zapsané „normalizace" a dotaz by spadl na obecný výpis.
+            try:
+                from scripts.hans_recall import _topic_stems
+                _stems = _topic_stems(q) or [q]
+            except Exception:
+                _stems = [q]
+            # ⚠️ Volné `LIKE %pahýl%` je pro češtinu PAST: „Říp" → pahýl
+            # „říp" sedne doprostřed slova „případ" → na dotaz o Řípu vyšel
+            # Retrográdní pohyb a Rozsudky soudce Ooky (změřeno při stavbě).
+            # Skloňování mění KONEC slova, ne začátek → shoda musí začínat
+            # na hranici slova (začátek textu nebo běžný oddělovač).
+            _predpony = ("", " ", "„", "(", "\"", "\n")
+            _casti, _args = [], []
+            for _s in _stems:
+                _sl = _s.lower()
+                for _p in _predpony:
+                    _vzor = ("%s%%" % _sl) if _p == "" else ("%%%s%s%%" % (_p, _sl))
+                    _casti.append("lower(title) LIKE ?")
+                    _args.append(_vzor)
+                    _casti.append("lower(COALESCE(note,'')) LIKE ?")
+                    _args.append(_vzor)
+            _kde = " OR ".join(_casti)
             rows = cx.execute(
                 "SELECT ts, title, source_url FROM diary "
                 "WHERE event_type IN ('web_read','reading_takeaway','study_note') "
-                "AND (lower(title) LIKE ? OR lower(COALESCE(note,'')) LIKE ?) "
-                "ORDER BY ts DESC LIMIT 8", ("%%%s%%" % q, "%%%s%%" % q)).fetchall()
+                "AND (" + _kde + ") "
+                "ORDER BY ts DESC LIMIT 8", _args).fetchall()
         else:
             rows = cx.execute(
                 "SELECT ts, title, source_url FROM diary "
@@ -2568,7 +2593,10 @@ def _cmd_zdroje(handler, name, args) -> str:
         return "Nepodařilo se mi teď nahlédnout do zápisků, pane."
 
     if not rows:
-        return ("K tomuhle nemám v zápiscích žádné čtení, pane."
+        # HANS_SOURCES_TOPIC_V1 — u pojmenovaného tématu přiznat i to, co
+        # z prázdného výpisu plyne: řečené na žádném zapsaném zdroji nestojí.
+        return ("K tomuhle nemám v zápiscích žádné čtení, pane — co jsem "
+                "o tom říkal, tedy nestojí na žádném mém zdroji."
                 if q else "Zatím jsem si nic nezapsal, pane.")
 
     # HANS_SOURCES_DEDUP_V1 (19.8.) — týž článek má v deníku `web_read`
@@ -2594,7 +2622,12 @@ def _cmd_zdroje(handler, name, args) -> str:
 
     out = []
     if s_url:
-        out.append("Četl jsem tohle, pane:")
+        # HANS_SOURCES_TOPIC_V1 — „Četl jsem tohle" u tématického dotazu
+        # tvrdí PŘÍČINU (odtud to mám), kterou Hans vědět nemůže: generace
+        # si původ nenese. U tématu se proto tvrdí jen fakt — tohle čtení
+        # k tématu mám zapsané. Bez tématu je původní znění v pořádku.
+        out.append("K tomuhle mám v zápiscích tohle čtení, pane:" if q
+                   else "Četl jsem tohle, pane:")
         for d, t, u in s_url:
             out.append("• %s %s — %s" % (d, t, u))
     if s_bez:

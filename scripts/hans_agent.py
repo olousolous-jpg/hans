@@ -106,7 +106,14 @@ _REQUEST_OPENERS = frozenset({
 
 
 def _args_hash(action: str, args: dict) -> str:
-    raw = action + "|" + json.dumps(args or {}, sort_keys=True,
+    """HANS_AGENT_ECHO_HASH_V1 (21.8.) — hodnoty se normalizují (trim, malá
+    písmena, sjednocené mezery), aby „projekt a" a „Projekt A" daly TÝŽ klíč.
+    Bez toho stačilo, aby router napsal titul jinou velikostí písmen, a
+    anti-echo i cooldown minuly cíl — přitom jde o tentýž návrh."""
+    _n = {}
+    for k, v in (args or {}).items():
+        _n[k] = " ".join(str(v).split()).lower() if isinstance(v, str) else v
+    raw = action + "|" + json.dumps(_n, sort_keys=True,
                                     ensure_ascii=False)
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
@@ -1472,6 +1479,25 @@ class AgentRouter:
             prop = Proposal(action, args,
                             decision.get("propose_text", ""), conf,
                             decision.get("reason", ""))
+            # HANS_AGENT_ECHO_HASH_V1 (21.8.) — ANTI-ECHO PODRUHÉ, TÍMŽ KLÍČEM,
+            # JAKÝM SE UKLÁDÁ. Brána výš se ptá na SUROVÝ hash z routeru, ale
+            # odmítnutí se ukládá pod `prop.hash` z argumentů PO groundingu —
+            # a to je jiné číslo, kdykoli grounding argument přepíše (u
+            # `kodi_play_film` přepisuje titul na kanonický VŽDY). Doloženo
+            # 20.8.: „Projekt A" odmítnut ve 14:42, tentýž návrh znovu ve
+            # 14:46. Kontrola tady vidí to, co se ukládá → díra se zavírá pro
+            # všechny akce s groundingem, ne jen pro filmy.
+            _rk2 = f"{name}|{prop.hash}"
+            if time.time() - self._rejected.get(_rk2, 0) < self.reject_cooldown:
+                log.info("agent: %s potlačen — týž návrh už byl odmítnut "
+                         "(args po groundingu: %s)", aid,
+                         {k: args.get(k) for k in action.args})
+                return None
+            if prop.hash != h:
+                log.info("agent: návrh %s — args routeru %s → po groundingu %s",
+                         aid, {k: (decision.get("args", {}) or {}).get(k)
+                               for k in action.args},
+                         {k: args.get(k) for k in action.args})
             # INSTANT akce (needs_confirm=False) — info dotazy jen odpoví
             # z živých dat, žádné ano/ne. Proveď hned a vrať výsledek.
             if not action.needs_confirm:

@@ -929,8 +929,14 @@ def first_memory_answer(db_path: str) -> str:
 # pahýlové „téma" a rozbité „tohle mám o ‚…zajímavého Rád bych…'". `[^?.!]`
 # zastaví u prvního otazníku/tečky.
 _TOPIC_PAT = re.compile(
+    # HANS_SOURCES_TOPIC_V1 (21.8.) — přibyla rodina „čerpal … o X".
+    # Bez ní se provenienční dotaz tvářil jako BEZ tématu a /zdroje vypsalo
+    # poslední čtení — doloženo 20.8.: „odkud jsi čerpal informace
+    # o normalizaci" → seznam dnešní četby, která s normalizací nesouvisí.
+    # Změřeno na 1171 reálných větách: mění se 3, všechny jsou tenhle tvar.
     r"(?:[čc]etla?\s+(?:jsi|sis)?\s*(?:n[ěe]co\s+)?o|"
     r"kdy\s+(?:jsi|sis)\s+[čc]etla?\s+o?|"
+    r"[čc]erpal\w*\s+(?:informace\s+|[úu]daje\s+|to\s+)?o|"
     r"[čc]etla?\s+jsi)\s+([^?.!]{2,60}?)\s*\??$",
     re.IGNORECASE,
 )

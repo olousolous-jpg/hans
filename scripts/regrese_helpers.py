@@ -126,3 +126,29 @@ def agent_kontext_ma_fazi() -> bool:
                 return []
 
     return "Situace: ráno." in (_router()._context(_H(), "kdokoliv") or "")
+
+def zdroje_odpoved(veta: str) -> str:
+    """HANS_SOURCES_TOPIC_V1 — co /zdroje reálně odpoví na danou větu.
+
+    Volá skutečný `_cmd_zdroje` nad živým deníkem (read-only), aby se
+    testovalo chování, ne jen regex. Handler stačí atrapa s configem —
+    příkaz z něj bere jen cestu k DB.
+    """
+    from scripts.chat_commands import _cmd_zdroje
+
+    class _H:
+        def __init__(self):
+            with open("config.json", encoding="utf-8") as f:
+                self.config = json.load(f)
+
+    return _cmd_zdroje(_H(), "Uživatel", veta) or ""
+
+def stejny_navrh(titul_a: str, titul_b: str) -> bool:
+    """HANS_AGENT_ECHO_HASH_V1 — považuje anti-echo dva tituly za TÝŽ návrh?
+
+    Klíč, pod kterým se pamatuje odmítnutí, musí přežít jinou velikost písmen
+    i mezery — jinak se odmítnutý film vrátí (doloženo 20.8., „Projekt A").
+    """
+    from scripts.hans_agent import _args_hash
+    return (_args_hash("kodi_play_film", {"titul": titul_a})
+            == _args_hash("kodi_play_film", {"titul": titul_b}))

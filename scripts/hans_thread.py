@@ -120,6 +120,12 @@ def is_correction(text: str) -> bool:
         # „měl jsem na mysli“ i lidovější „…jsem na mysli, že…“ (doloženo
         # 5.8. 10:53: „ze jsi v jednom kole jsem na mysli, ze mas praci“).
         r"\b(mel\s+)?jsem\s+na\s+mysli\b", r"\bna\s+mysli\s+jsem\b",
+        # HANS_CORRECTION_NO_AUX_V1 (21.8.) — hovorová čeština pomocné sloveso
+        # vypouští: „JÁ MĚL na mysli díl ze seriálu" (doloženo 20.8.). Vzor
+        # výš čekal „jsem na mysli", takže korekce nebyla poznána a Hans
+        # nabídl tentýž film podruhé. Změřeno na 1171 větách: přibude 1 —
+        # právě ta doložená.
+        r"\b(ja\s+)?m[ei]l\w*\s+na\s+mysli\b",
         r"\bnarazel\s+jsem\b",
         r"\bto\s+neby(l|la|lo)\b", r"\bto\s+neni\b", r"\bnemyslel\s+jsem\b",
         r"\bspatne\s+(jsi\s+)?(me\s+)?(pochopil|rozumel)\b",
