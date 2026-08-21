@@ -1005,6 +1005,62 @@ def _topic_stems(topic: str) -> list[str]:
     return out
 
 
+def _vsechna_slova_sedi(text: str, topic: str) -> bool:
+    """HANS_READING_TOPIC_ALLWORDS_V1 (21.8.) — u VÍCESLOVNÉHO tématu musí
+    v záznamu sedět KAŽDÉ slovo, ne jen to nejdelší.
+
+    Doloženo 21.8.: „četl jsi o Václavu Svobodovi?" vrátilo „Meditations —
+    kap. 12", protože pahýl „Svobodo" (uříznuté dva znaky) sedl na
+    „svobodou projevu" — a hledání se u prvního pahýlu se shodou zastaví,
+    takže se k pahýlu „Svobod" a skutečnému článku nikdy nedostane.
+    Příjmení Svoboda JE běžné slovo, takže řezáním se ta kolize odstranit
+    nedá; odstraní ji až požadavek, aby sedělo i „Václav".
+    Jednoslovné téma zůstává beze změny (není co křížit).
+    """
+    slova = [w for w in (topic or "").split() if len(w) >= 3]
+    if len(slova) < 2:
+        return True
+    for w in slova:
+        varianty = []
+        for cut in (0, 1, 2, 3):
+            v = w[:len(w) - cut] if cut else w
+            if len(v) >= 3 and v not in varianty:
+                varianty.append(v)
+        if not any(re.search(r"(?i)\b" + re.escape(v), text) for v in varianty):
+            return False
+    return True
+
+
+def _dedup_cteni(rows, delsi_vyhrava: bool = False):
+    """HANS_READING_DEDUP_V1 — jeden titul = jeden řádek výpisu.
+
+    `rows` jsou (ts, event_type, title, snip) seřazené od nejnovějšího.
+    Klíč je normalizovaný TITUL (ne dvojice s typem): týž článek bývá
+    zapsaný pod několika typy a uživateli je to jedno — vidí dvakrát totéž.
+    `delsi_vyhrava` u tématického dotazu ponechá nejobsáhlejší úryvek,
+    protože tam je hodnota v poznámce, ne v názvu.
+    """
+    nej = {}
+    poradi = []
+    for r in rows:
+        t = (r[2] or "").strip().lower()
+        if not t:
+            poradi.append(r)          # bez názvu nelze slučovat
+            continue
+        stav = nej.get(t)
+        if stav is None:
+            nej[t] = r
+            poradi.append(("__klic__", t))
+        elif delsi_vyhrava and len(str(r[3] or "")) > len(str(stav[3] or "")):
+            # ponech novější datum, ale obsažnější úryvek
+            nej[t] = (stav[0], stav[1], stav[2], r[3])
+    out = []
+    for x in poradi:
+        out.append(nej[x[1]] if (isinstance(x, tuple) and len(x) == 2
+                                 and x[0] == "__klic__") else x)
+    return out
+
+
 def reading_answer(db_path: str, question: str = "",
                    limit: int = 4) -> str:
     """Co/kdy jsem četl — reálné čtecí eventy z deníku, deterministicky.
@@ -1029,15 +1085,23 @@ def reading_answer(db_path: str, question: str = "",
                 # LIKE nemá hranice slov („hradech" chytá i „Vinohradech")
                 # → post-filtr: stem musí začínat na hranici slova
                 _wb = re.compile(r"(?i)\b" + re.escape(stem))
-                rows = [r for r in cand
-                        if _wb.search(" ".join(str(x) for x in r[2:] if x))
-                        ][:limit]
+                rows = []
+                for r in cand:
+                    _txt = " ".join(str(x) for x in r[2:] if x)
+                    if not _wb.search(_txt):
+                        continue
+                    # HANS_READING_TOPIC_ALLWORDS_V1 — víceslovné téma musí
+                    # sednout celé, jinak stačí náhodná shoda na jednom slově.
+                    if not _vsechna_slova_sedi(_txt, topic):
+                        continue
+                    rows.append(r)
                 if rows:
                     break
             if not rows:
                 return (f"Prošel jsem svůj deník, pane — o „{topic}“ v něm "
                         f"žádný záznam čtení nemám. Nebudu si vymýšlet; "
                         f"jestli chcete, mohu si o tom něco přečíst.")
+            rows = _dedup_cteni(rows, delsi_vyhrava=True)[:limit]
             lines = []
             for ts, etype, title, snip in rows:
                 t = (title or "").strip() or "(bez názvu)"
@@ -1048,12 +1112,19 @@ def reading_answer(db_path: str, question: str = "",
             return (f"Ano, pane — tohle mám o „{topic}“ ve svém deníku "
                     f"skutečně zapsáno:\n" + "\n".join(lines))
         # bez tématu → poslední čtení
+        # HANS_READING_DEDUP_V1 (21.8.) — týž titul má v deníku i několik
+        # záznamů (web_read + reading_takeaway, opakované čtení), takže se
+        # z LIMITu ukrajovala místa a výpis „posledních čtyř" ukázal jen dvě
+        # věci dvakrát (doloženo 20.8. uživatelem i 21.8.: „Pride and
+        # Prejudice — kap. 46" 2×, „Design" 2×). Načti víc a ořízni AŽ po
+        # sloučení. Táž zásada jako HANS_SOURCES_DEDUP_V2 u /zdroje.
         rows = conn.execute(
             f"SELECT ts, event_type, title, "
             f"substr(COALESCE(NULLIF(data,''),note),1,120) "
             f"FROM diary WHERE event_type IN ({qmarks}) "
             f"ORDER BY ts DESC LIMIT ?",
-            (*_READ_TYPES, limit)).fetchall()
+            (*_READ_TYPES, limit * 5)).fetchall()
+        rows = _dedup_cteni(rows)[:limit]
         if not rows:
             return ("V deníku zatím žádné čtení zapsané nemám, pane.")
         lines = []

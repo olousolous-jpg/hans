@@ -158,3 +158,24 @@ def popis_dilu(ep: dict) -> str:
     """HANS_KODI_EPISODES_V1 — jednotný lidský popis dílu seriálu."""
     from scripts.kodi_client import KodiClient
     return KodiClient.episode_label(ep)
+
+
+def cetba_bez_duplicit() -> bool:
+    """HANS_READING_DEDUP_V1 — nemá výpis /cetl dvakrát tentýž titul?
+
+    Jede nad živým deníkem: obsah se mění, ale tvrzení „žádný titul dvakrát"
+    platí vždycky. Doloženo 20.–21.8., kdy se ze čtyř řádků staly dva tituly.
+    """
+    from scripts.hans_recall import reading_answer
+    out = reading_answer("data/hans_diary.db", "co jsi dnes cetl?") or ""
+    tituly = []
+    for radek in out.split("\n"):
+        radek = radek.strip()
+        if not radek.startswith("–"):
+            continue
+        # „– 21. srpna (četba): TITUL"
+        _, _, zbytek = radek.partition(":")
+        t = (zbytek or radek).strip().lower()
+        if t:
+            tituly.append(t)
+    return len(tituly) == len(set(tituly))
