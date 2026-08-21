@@ -149,7 +149,17 @@ def _asks_recommendation(message: str) -> bool:
         r"(doporuc|dopurac|co\s+bys\s+(mi\s+)?(vybral|navrhl|doporucil)|"
         r"mas\s+(nejaky\s+)?tip|na\s+co\s+se\s+(mam|mame)\s+podivat|"
         r"co\s+bych\s+si\s+mel\s+pustit|co\s+navrhujes|"
-        r"co\s+stoji\s+za\s+(to\s+)?(videni|shlednuti))", msg))
+        r"co\s+stoji\s+za\s+(to\s+)?(videni|shlednuti)|"
+        # HANS_FILM_RECOMMEND_V2 (21.8.) — otázka na HANSOVU VLASTNÍ CHUŤ je
+        # taky žádost o doporučení, ne rozkaz. Doloženo 20.8.: „který film
+        # bysis rád pustil znova?" → agent nabídl film PUSTIT. Pozor na zápis:
+        # uživatel napsal „bysis" jedním slovem, takže vzor musí snést i to
+        # (na „by sis" se první pokus netrefil vůbec).
+        # Zdvořilá žádost („mohl by sis poznamenat…") sem NEspadá — vyžaduje
+        # se tvar tázací („který/co …"), ne modální sloveso na začátku.
+        r"kter\w*\s+\w+\s+by\s?s\s?is\b|kter\w*\s+\w+\s+bys\s+si\b|"
+        r"co\s+by\s?s\s?is\b|co\s+bys\s+si\b|"
+        r"kter\w*\s+\w+\s+mas\s+(nej)?rad)", msg))
 
 
 # HANS_OPINION_NOT_ORDER_V1 (19.8.) — ptá se věta na NÁZOR, ne o akci?
