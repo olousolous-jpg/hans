@@ -1005,6 +1005,60 @@ def _topic_stems(topic: str) -> list[str]:
     return out
 
 
+# ── HANS_TOPIC_ENTITY_AWARE_V1 (21.8.) — ZEPTEJ SE, CO TO TÉMA JE ──────────
+# Dosud se téma hledalo jako ŘETĚZEC: uřízni pár znaků a hledej podřetězec.
+# Jenže „Václav Svoboda" není řetězec, je to OSOBA — a Hans to ví, entity
+# store drží typované záznamy z jeho čtení (`etype='osoba'`). Jen se ho nikdo
+# neptal, tak se místo toho vymýšlela pravidla o počtu uříznutých znaků.
+# U osoby se proto nehledá pahýl, ale ŽÁDÁ SE CELÉ JMÉNO (křestní i příjmení),
+# skloňování řeší táž funkce jako u entit. Tím zmizí kolize „Svoboda" ×
+# „svobodou projevu" u kořene, ne záplatou.
+def tema_entita(topic: str):
+    """Známá entita pro dané téma (dict), nebo None. Nikdy nevyhodí výjimku —
+    bez entity store se prostě hledá po staru."""
+    t = (topic or "").strip()
+    if not t:
+        return None
+    try:
+        import json as _json
+        from scripts.hans_entities import EntityStore
+        with open("config.json", encoding="utf-8") as f:
+            cfg = _json.load(f)
+        es = EntityStore(cfg, cfg.get("diary_db") or "data/hans_diary.db")
+        return es.resolve(t)
+    except Exception:
+        return None
+
+
+def jmeno_entity(ent) -> str:
+    """Kanonické jméno bez závorkového upřesnění („Václav Svoboda (politik
+    KSČ)" → „Václav Svoboda"). Prázdno, když entita není osoba ani postava."""
+    if not ent or (ent.get("etype") not in ("osoba", "postava")):
+        return ""
+    try:
+        from scripts.hans_entities import _PAREN
+        return _PAREN.sub("", ent.get("name") or "").strip()
+    except Exception:
+        return (ent.get("name") or "").strip()
+
+
+def osoba_sedi(text: str, jmeno: str) -> bool:
+    """Je v textu CELÉ jméno osoby (každé jeho slovo), i skloňované?"""
+    if not jmeno or not text:
+        return False
+    try:
+        from scripts.hans_entities import _tokens, _tok_match
+    except Exception:
+        return jmeno.lower() in (text or "").lower()
+    t_slova = _tokens(text)
+    for w in _tokens(jmeno):
+        if len(w) < 3:
+            continue
+        if not any(w == x or _tok_match(w, x) for x in t_slova):
+            return False
+    return True
+
+
 def _vsechna_slova_sedi(text: str, topic: str) -> bool:
     """HANS_READING_TOPIC_ALLWORDS_V1 (21.8.) — u VÍCESLOVNÉHO tématu musí
     v záznamu sedět KAŽDÉ slovo, ne jen to nejdelší.
@@ -1071,6 +1125,12 @@ def reading_answer(db_path: str, question: str = "",
         conn = _ro(db_path)
         qmarks = ",".join("?" * len(_READ_TYPES))
         if topic:
+            # HANS_TOPIC_ENTITY_AWARE_V1 — je téma ZNÁMÁ OSOBA? Pak se
+            # nehledá pahýl, ale celé jméno (viz komentář u tema_entita).
+            _osoba = jmeno_entity(tema_entita(topic))
+            if _osoba:
+                _log.info("HANS_TOPIC_ENTITY_AWARE_V1: téma %r je osoba %r "
+                          "→ vyžaduji celé jméno", topic[:40], _osoba)
             # hledej podle tématu (title i note, hrubé stemy na skloňování)
             rows = []
             for stem in _topic_stems(topic):
@@ -1090,9 +1150,13 @@ def reading_answer(db_path: str, question: str = "",
                     _txt = " ".join(str(x) for x in r[2:] if x)
                     if not _wb.search(_txt):
                         continue
+                    if _osoba:
+                        # u osoby rozhoduje jméno, ne pahýl tématu
+                        if not osoba_sedi(_txt, _osoba):
+                            continue
                     # HANS_READING_TOPIC_ALLWORDS_V1 — víceslovné téma musí
                     # sednout celé, jinak stačí náhodná shoda na jednom slově.
-                    if not _vsechna_slova_sedi(_txt, topic):
+                    elif not _vsechna_slova_sedi(_txt, topic):
                         continue
                     rows.append(r)
                 if rows:

@@ -2579,10 +2579,25 @@ def _cmd_zdroje(handler, name, args) -> str:
                     _args.append(_vzor)
             _kde = " OR ".join(_casti)
             rows = cx.execute(
-                "SELECT ts, title, source_url FROM diary "
+                "SELECT ts, title, source_url, COALESCE(note,'') FROM diary "
                 "WHERE event_type IN ('web_read','reading_takeaway','study_note') "
                 "AND (" + _kde + ") "
-                "ORDER BY ts DESC LIMIT 8", _args).fetchall()
+                "ORDER BY ts DESC LIMIT 12", _args).fetchall()
+            # HANS_TOPIC_ENTITY_AWARE_V1 (21.8.) — je téma ZNÁMÁ OSOBA? Pak
+            # nestačí pahýl jména: „svobod" sedne na „Svobodné zednářství"
+            # i na „svobodou projevu". U osoby se žádá CELÉ jméno (změřeno:
+            # dotaz na Václava Svobodu vracel i zednářství, hymnu a Kajínka).
+            try:
+                from scripts.hans_recall import (tema_entita, jmeno_entity,
+                                                 osoba_sedi)
+                _osoba = jmeno_entity(tema_entita(q))
+                if _osoba:
+                    rows = [r for r in rows
+                            if osoba_sedi("%s %s" % (r[1] or "", r[3] or ""),
+                                          _osoba)]
+            except Exception:
+                pass
+            rows = [(r[0], r[1], r[2]) for r in rows][:8]
         else:
             rows = cx.execute(
                 "SELECT ts, title, source_url FROM diary "
