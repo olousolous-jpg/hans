@@ -69,7 +69,17 @@ def _tok_match(a: str, b: str) -> bool:
         if ca != cb:
             break
         n += 1
-    return n >= 4 and n >= min(len(a), len(b)) - 3
+    # HANS_ENTITY_PREFIX_MAXLEN_V1 (21.8.) — prefix musi pokryt i DELSI
+    # token, ne jen kratsi. Puvodni pravidlo (min-3) povolilo shodu, kde
+    # se delsi token za prefixem jeste dlouho lisi: objektiv~objevil,
+    # trenbolon~trenuje, stromboli~stromy, zlatovlaska~zlate. Zmereno na
+    # 1138 realnych vetach: 161 -> 149 shod, 12 falesnych trid pryc,
+    # jedina ztrata je startrek ~ Star Trek (film).
+    # ⚠️ Nerozlisi svatba~svatyne (prefix 4, delky 6/7) — ma PRESNE tvar
+    # legitimni dvojice gotika~gotice, takze retezcove pravidlo by zabilo
+    # obe. Tu tridu resi az HANS_NOTES_BEFORE_ENTITY_V1 (zapisky napred).
+    return (n >= 4 and n >= min(len(a), len(b)) - 3
+            and n >= max(len(a), len(b)) - 3)
 
 
 # Odseknout závorkové upřesnění z titulu Wikipedie: „Aj (faraon)" → base „aj",

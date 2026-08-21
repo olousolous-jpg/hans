@@ -652,6 +652,12 @@ class OpenWebUIDirectHandler:
         # volajícího (A1 short-circuit běží jen u 'factual_nofacts').
         self._vysledek_groundingu('skip', 'start')
 
+        # HANS_A1_THREAD_TEXT_V1 (21.8.) — sem si F1 odloží ROZŘEŠENOU podobu
+        # dotazu, aby se podle ní mohla rozhodnout A1 brzda (viz gate níž).
+        # Nulovat je NUTNÉ: bez toho by zvětralá věta z minulého tahu
+        # klasifikovala tah další.
+        self._f1_query = None
+
         # HANS_KNOWLEDGE_CHECK_V1 (18.7.) — „znáš X?" / „co víš o X?" když X
         # NENÍ v paměti (deník/entities). Bez tohoto hans-czech halucinuje
         # „mám v paměti záznamy" i pro věci, o kterých nikdy neslyšel (doložený
@@ -927,6 +933,8 @@ class OpenWebUIDirectHandler:
                             'F1: rewrite %r -> %r',
                             str(_text)[:60], _rw[:60])
                         _q_for_retrieval = _rw.strip()
+                        # HANS_A1_THREAD_TEXT_V1 — schovej pro A1 gate
+                        self._f1_query = _q_for_retrieval
             except Exception as _f1e:
                 logging.getLogger(__name__).debug(
                     'F1: rewriter selhal (%s) — použit originál', _f1e)
@@ -1014,13 +1022,30 @@ class OpenWebUIDirectHandler:
             #    (bez faktů). Faktický dotaz bez záznamů → Hans NESMÍ
             #    konfabulovat. Web ověření přijde post-hoc (G.5).
             if not all_chunks:
+                # HANS_NOTES_BEFORE_ENTITY_V1 (21.8.) — VLASTNÍ ZÁPISKY MAJÍ
+                # PŘEDNOST PŘED ENTITOU. Doloženo 20.8.: na dotaz o svatyni
+                # u Nymburka (Hans o ní ráno četl a zapsal si ji) rozhodla
+                # entitní větev a vrátila „ověřený fakt“ o SVATBĚ — entita se
+                # trefila jen 4znakovým prefixem „svat“. Správný zápisek byl
+                # přitom v FTS na prvním místě, ale FTS se volalo až POD tímhle
+                # returnem, takže se k němu dotaz nikdy nedostal.
+                # Pořadí je teď: co jsem sám četl a zapsal > slovníková glosa.
+                # Změřeno: kde entita rozhoduje správně (Sorge, Jiří z Poděbrad,
+                # Gotika), míří zápisky na tentýž předmět → žádná ztráta C1;
+                # kde zápisky nejsou (Secese), rozhodne dál entita.
+                _kb = self._knowledge_fts_grounding(str(_text))
+                if _kb:
+                    self._vysledek_groundingu('grounded', 'zapisky_pred_entitou')
+                    return _kb
                 # C1: RAG prázdné, ale entita ve store → autoritativní fakt
                 # (Sorge není v RAG, ale Hans o něm četl → deterministický fakt).
                 if _ent_fact:
                     logging.getLogger(__name__).info(
                         'C1: RAG prázdné, entita ze store → grounded pro %r',
                         str(_text)[:40])
-                    self._vysledek_groundingu('grounded', 'chatlog_neni_fakt')
+                    # nálepka byla `chatlog_neni_fakt` — s filtrem chatlogů to
+                    # nemá nic společného a 20.8. to svedlo diagnózu na RAG.
+                    self._vysledek_groundingu('grounded', 'entita_c1')
                     return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
                 # HANS_KNOWLEDGE_FTS_V1 — tudy vede REÁLNÁ cesta k abstinenci
                 # (ověřeno v logu 6.8.: „žádná shoda pod prahem → G3C").
@@ -3409,7 +3434,23 @@ class OpenWebUIDirectHandler:
                 _skip_a1 = False
                 try:
                     from scripts.hans_intent import self_topic
-                    _st = self_topic(_raw_message, self.config)
+                    # HANS_A1_THREAD_TEXT_V1 (21.8.) — KLASIFIKUJ ROZŘEŠENOU
+                    # VĚTU, NE HOLOU. Doloženo 20.8. 14:44: „kdo tam hraje?"
+                    # → self_topic 'dum' (čte to jako dotaz na televizi) → A1
+                    # přeskočena → Hans si vymyslel obsazení filmu, o kterém
+                    # nemá ŽÁDNÝ záznam (tři jména, jedno z nich ani není herec).
+                    # Přitom o řádek výš už F1 věděl, že jde o „Kdo hraje
+                    # v Tureckých náušnicích?" → 'osoba' → brzda by běžela.
+                    # Táž třída jako HANS_THREAD_V1 [[stateless-decision-layer]]:
+                    # detektor dostal holou větu, zatímco kontext byl k mání.
+                    # Změřeno: brzda se od 20.8. vypnula 6×, škodu udělal
+                    # právě tenhle jeden dotaz → překlopí se jen on.
+                    _a1_text = getattr(self, '_f1_query', None) or _raw_message
+                    if _a1_text != _raw_message:
+                        logging.getLogger(__name__).info(
+                            'HANS_A1_THREAD_TEXT_V1: A1 se rozhoduje z %r '
+                            '(místo %r)', _a1_text[:60], _raw_message[:40])
+                    _st = self_topic(_a1_text, self.config)
                     if _st in ('asistent', 'dum'):
                         _skip_a1 = True
                         logging.getLogger(__name__).info(
