@@ -1162,7 +1162,12 @@ class OpenWebUIDirectHandler:
                 # Změřeno: kde entita rozhoduje správně (Sorge, Jiří z Poděbrad,
                 # Gotika), míří zápisky na tentýž předmět → žádná ztráta C1;
                 # kde zápisky nejsou (Secese), rozhodne dál entita.
-                _kb = self._knowledge_fts_grounding(str(_text))
+                # HANS_FTS_USES_REWRITE_V1 (21.8.) — hledej v zápiscích podle
+                # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
+                # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
+                # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
+                _kb = self._knowledge_fts_grounding(
+                    str(_q_for_retrieval or _text))
                 if _kb:
                     self._vysledek_groundingu('grounded', 'zapisky_pred_entitou')
                     return _kb
@@ -1179,7 +1184,12 @@ class OpenWebUIDirectHandler:
                 # HANS_KNOWLEDGE_FTS_V1 — tudy vede REÁLNÁ cesta k abstinenci
                 # (ověřeno v logu 6.8.: „žádná shoda pod prahem → G3C").
                 # Původní patch mířil jen na druhé místo níž a NIC neopravil.
-                _kb = self._knowledge_fts_grounding(str(_text))
+                # HANS_FTS_USES_REWRITE_V1 (21.8.) — hledej v zápiscích podle
+                # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
+                # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
+                # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
+                _kb = self._knowledge_fts_grounding(
+                    str(_q_for_retrieval or _text))
                 if _kb:
                     self._vysledek_groundingu('grounded', 'zapisky_fts')
                     return _kb
@@ -1259,7 +1269,12 @@ class OpenWebUIDirectHandler:
             facts = '\n\n'.join(_parts)
 
             if not facts.strip():
-                _kb = self._knowledge_fts_grounding(str(_text))
+                # HANS_FTS_USES_REWRITE_V1 (21.8.) — hledej v zápiscích podle
+                # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
+                # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
+                # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
+                _kb = self._knowledge_fts_grounding(
+                    str(_q_for_retrieval or _text))
                 if _kb:
                     self._vysledek_groundingu('grounded', 'zapisky_fallback')
                     return _kb

@@ -232,10 +232,37 @@ def recent_turns(handler, name: Optional[str], channel: Optional[str] = None,
         return []
 
 
+# HANS_THREAD_NO_ABSTAIN_SUBJ_V1 (21.8.) — Z „NEVÍM" SE NEDĚLÁ TÉMA HOVORU.
+# Doloženo v simulovaném rozhovoru o Pride and Prejudice: po dvou abstinencích
+# vzalo vlákno jako předmět slovo „Raději" (z věty „RADĚJI přiznám, že si tím
+# nejsem jistý") a další dotaz šel do detektorů jako „a kdy to vyslo?
+# (k tématu: Raději)". Jedno „nevím" tak otrávilo zbytek hovoru — abstinenční
+# kaskáda. Předmět se proto bere z poslední VĚCNÉ repliky; odříkací hlášky se
+# přeskakují, protože o tématu nenesou nic.
+_ABSTAIN_MARKS = (
+    "nemam spolehlivy zaznam", "nerad bych si domyslel",
+    "radeji priznam", "nemam spolehlivou znalost",
+    "zatim jsem si nic nezapsal", "nemam v zapiscich",
+    "nemohu poskytnout presne informace", "neni mi to znamo",
+)
+
+
+def _je_odrikaci(text: str) -> bool:
+    """Je to hláška typu „tohle nevím"? Pak z ní téma netahej."""
+    f = _fold(text or "")
+    return any(m in f for m in _ABSTAIN_MARKS)
+
+
 def last_assistant_text(turns: list) -> str:
+    zaloha = ""
     for role, content in reversed(turns or []):
-        if role == "assistant":
+        if role != "assistant":
+            continue
+        if not _je_odrikaci(content):
             return content
+        zaloha = zaloha or content
+    # samé odříkání → radši nic (prázdný předmět = detektory dostanou
+    # holou větu, což je pořád lepší než bogus téma)
     return ""
 
 

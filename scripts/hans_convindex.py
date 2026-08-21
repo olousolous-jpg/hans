@@ -63,6 +63,18 @@ SOURCES = {
                          "kind": "knowledge"},
     "web_read":         {"label": "z článku", "text": "note",
                          "kind": "knowledge"},
+    # HANS_CONVINDEX_BOOKS_V1 (21.8.) — ČETBA KNIH TU CHYBĚLA.
+    # Doloženo v simulovaném rozhovoru: na „kdo tu knihu napsal?" Hans
+    # u Pride and Prejudice odpověděl, že nemá spolehlivý záznam — přitom má
+    # 21 zápisků, kde píše „paní Austen…", jenže všechny jsou typu
+    # `book_reflection` / `book_read`, a ty index neznal. Proto „Austen"
+    # tři shody vrátí, ale „Pride and Prejudice" ani jednu.
+    # ⚠️ TÁŽ VÝJIMKA se opravovala 15.7. v `_READ_TYPES` pro /cetl — tady
+    # na ni nikdo nesáhl. Když se přidává nový typ čtení, patří do OBOU.
+    "book_reflection":  {"label": "z četby knihy", "text": "data",
+                         "kind": "knowledge"},
+    "book_read":        {"label": "přečtená kapitola", "text": "data",
+                         "kind": "knowledge"},
 }
 
 
@@ -394,11 +406,18 @@ def search(query: str, limit: int = 8, source: Optional[str] = None,
             if rows:
                 break
         if not rows and narrow:
-            curated = ("study_note", "study_mastery")
+            # HANS_CONVINDEX_BOOKS_V1 (21.8.) — knižní reflexe patří mezi
+            # kurátorované zdroje: je to Hansovo VLASTNÍ psaní o knize, kterou
+            # čte (titul „Pride and Prejudice — kap. 12" říká, o čem zápisek
+            # je), ne surový výcuc z webu, kvůli kterému výčet vznikl.
+            # Bez toho končí relaxace naprázdno a Hans zapře i autorku, o níž
+            # má 21 zápisků (doloženo 21.8.).
+            curated = ("study_note", "study_mastery", "book_reflection")
             sql_n = ("SELECT d.ts, d.source, d.partner, d.topic, d.text "
                      "FROM conv_fts f JOIN conv_doc d ON d.id = f.rowid "
-                     "WHERE conv_fts MATCH ? AND d.source IN (?,?) "
-                     "ORDER BY rank, d.ts DESC LIMIT ?")
+                     "WHERE conv_fts MATCH ? AND d.source IN (" +
+                     ",".join("?" * len(curated)) +
+                     ") ORDER BY rank, d.ts DESC LIMIT ?")
             for e in narrow:
                 rows = conn.execute(
                     sql_n, [e] + list(curated) + [limit]).fetchall()

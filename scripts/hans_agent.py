@@ -1343,6 +1343,24 @@ class AgentRouter:
              akce=("report_home_status", "report_who_is_home", "report_now_playing"),
              podminka=lambda s, aid, msg, dec, h: s._mentions_kolac(msg),
              verdikt="report_kolac_status", duvod="dotaz je o Koláčovi"),
+        # HANS_AGENT_CORRECTION_V1 (21.8.) — KOREKCE NEŽÁDÁ NOVOU AKCI.
+        # Princip „korekce nežádá výpis" platil jen pro příkazovou vrstvu;
+        # agent žádné takové pravidlo NEMĚL (zapsáno 20.8., doloženo 21.8.
+        # v simulovaném rozhovoru: na „ne, spíš jsem myslel něco kratšího
+        # na večer" nabídl PUSTIT film). Uživatel opravuje, o čem je řeč —
+        # to není pokyn něco provést.
+        # ⚠️ Výjimka je nutná: korekce SE SLOVESEM AKCE („myslel jsem zjistit
+        # něco o Gregory Peckovi") pokyn nese a veto se na ni nevztahuje.
+        # Změřeno na 1171 reálných větách: veto se týká 28, všechny jsou
+        # skutečné konverzační korekce; jediná korekce se slovesem projde.
+        dict(marker="HANS_AGENT_CORRECTION_V1", jen_confirm=True,
+             podminka=lambda s, aid, msg, dec, h: (
+                 __import__("scripts.hans_thread", fromlist=["x"]
+                            ).is_correction(msg)
+                 and not any(__import__("re").search(
+                     r"\b%s" % __import__("re").escape(w), (msg or "").lower())
+                     for w in _ACTION_VERBS)),
+             verdikt=None, duvod="věta opravuje předmět hovoru, nežádá akci"),
         # HANS_CAST_NOT_ORDER_V1 (21.8.) — otázka na OBSAZENÍ není rozkaz.
         # Doloženo v testu 21.8.: na „kdo tam hraje?" agent (s předchozím
         # návrhem v historii) nabídl díl PUSTIT, místo aby padla odpověď
