@@ -157,23 +157,49 @@ def _init_db(db_path: str) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL,
             zdroj TEXT, tema TEXT, otazka TEXT, odpoved TEXT,
             verdikt TEXT, bez_opory INTEGER, detail TEXT, url TEXT)""")
+        # KOLAC_EXAM_CONFIRM_V1 — migrace za běhu: tabulka už v provozu je,
+        # `ALTER` v `try` je levnější než verzování schématu kvůli jednomu
+        # sloupci. NULL = nález nikdo neposoudil, 1 = potvrzen (je z něj
+        # trvalá otázka), -1 = zamítnut (nepřipomínat).
+        try:
+            _sl = {r[1] for r in db.execute("PRAGMA table_info(kolac_exam)")}
+            if "potvrzeno" not in _sl:
+                db.execute("ALTER TABLE kolac_exam ADD COLUMN "
+                           "potvrzeno INTEGER")
+            # KOLAC_EXAM_KLIC_SLOUPEC_V1 — opravný klíč se MUSÍ uložit.
+            # `detail` nese Hansovy NEPODLOŽENÉ věty (tedy ten výmysl);
+            # udělat z nich při potvrzení „správnou odpověď" by konfabulaci
+            # povýšilo na pravdu. Klíč má proto vlastní sloupec.
+            if "klic" not in _sl:
+                db.execute("ALTER TABLE kolac_exam ADD COLUMN klic TEXT")
+        except Exception as _me:
+            _log.warning("migrace kolac_exam.potvrzeno selhala: %s", _me)
         db.commit()
 
 
-def zapis(db_path: str, polozka: dict, odpoved: str, hodnoceni: dict) -> None:
+def zapis(db_path: str, polozka: dict, odpoved: str,
+          hodnoceni: dict) -> int:
+    """Zapiš zkoušku, vrať její id (0 = nezapsáno).
+
+    KOLAC_EXAM_NOTIFY_V1 — id je potřeba, aby šlo nález ADRESOVAT
+    (`/nalez <id>`); bez něj by se hlášení nedalo potvrdit."""
     try:
         _init_db(db_path)
         with _conn(db_path) as db:
-            db.execute(
+            _cur = db.execute(
                 "INSERT INTO kolac_exam (ts, zdroj, tema, otazka, odpoved, "
-                "verdikt, bez_opory, detail, url) VALUES (?,?,?,?,?,?,?,?,?)",
+                "verdikt, bez_opory, detail, url, klic) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (time.time(), polozka.get("zdroj", ""), polozka.get("tema", ""),
                  polozka.get("otazka", ""), (odpoved or "")[:4000],
                  hodnoceni.get("verdikt", ""), int(hodnoceni.get("bez_opory", 0)),
-                 (hodnoceni.get("detail") or "")[:500], polozka.get("url", "")))
+                 (hodnoceni.get("detail") or "")[:500], polozka.get("url", ""),
+                 _zkrat(polozka.get("klic"), 1200)))
             db.commit()
+            return int(_cur.lastrowid or 0)
     except Exception as e:
         _log.warning("zápis zkoušky selhal: %s", e)
+        return 0
 
 
 def pocet_zkousek(db_path: str) -> int:
@@ -184,6 +210,105 @@ def pocet_zkousek(db_path: str) -> int:
                 "SELECT COUNT(*) FROM kolac_exam").fetchone()[0])
     except Exception:
         return 0
+
+
+# ── NÁLEZY: OD HLÁŠENÍ K TRVALÉ OTÁZCE ──────────────────────────────────────
+# KOLAC_EXAM_CONFIRM_V1 (22.8., rozhodl uživatel) — druhý krok za hlášením.
+# Samo hlášení nic nezmění: příště se táž chyba zeptá znovu jen náhodou.
+# Potvrzený nález se proto zapíše do souboru vlastních otázek (zdroj `soubor`),
+# odkud se vrací napořád — doložený případ se tím nemůže tiše vrátit zpátky.
+# ⚠️ Posuzuje ČLOVĚK, ne stroj: verdikt zatím není spolehlivý (hodnocení se
+# dnes dvakrát spletlo) a nechat Hanse učit se z vlastní vymyšlené odpovědi
+# je přesně ta otrava paměti, kvůli které zkoušení běží pod testovací
+# identitou. Automatické učení až podle shody verdiktů s lidským čtením.
+
+
+def nalezy(db_path: str, limit: int = 10) -> list:
+    """Neposouzené nálezy (nejnovější první). Vrací seznam dict."""
+    try:
+        _init_db(db_path)
+        with _conn(db_path) as db:
+            rows = db.execute(
+                "SELECT id, ts, zdroj, tema, otazka, verdikt, bez_opory "
+                "FROM kolac_exam WHERE potvrzeno IS NULL AND verdikt IN "
+                "(?,?) ORDER BY id DESC LIMIT ?",
+                (_HLASIT_VYCHOZI[0], _HLASIT_VYCHOZI[1], int(limit))).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        _log.warning("čtení nálezů selhalo: %s", e)
+        return []
+
+
+def _radek_souboru(otazka: str, klic: str) -> str:
+    """Jeden řádek souboru otázek: „otázka | klíč". Svislítko v textu by
+    formát rozbilo (klíč by se uřízl), proto se nahrazuje."""
+    o = " ".join(str(otazka or "").split()).replace("|", "/")
+    k = " ".join(str(klic or "").split()).replace("|", "/")
+    return "%s | %s" % (o, k)
+
+
+def potvrd(db_path: str, exam_id: int, config: dict) -> str:
+    """Udělej z nálezu trvalou zkušební otázku. Vrací hlášku pro uživatele."""
+    try:
+        _init_db(db_path)
+        with _conn(db_path) as db:
+            r = db.execute(
+                "SELECT id, otazka, odpoved, verdikt, zdroj, tema, klic "
+                "FROM kolac_exam WHERE id = ?", (int(exam_id),)).fetchone()
+    except Exception as e:
+        return "K nálezu jsem se nedostal, pane (%s)." % e
+    if not r:
+        return "Nález #%s neznám, pane." % exam_id
+    # Klíč ze sloupce `klic` (KOLAC_EXAM_KLIC_SLOUPEC_V1). Starší zkoušky
+    # ho nemají — otázka bez klíče je k ničemu, není se s čím porovnat,
+    # tak o řádek požádáme. NIKDY nebrat `detail`: tam jsou Hansovy
+    # nepodložené věty, tedy přesně ten výmysl.
+    klic = " ".join(str(r["klic"] or "").split())
+    if len(klic) < 20:
+        return ("K nálezu #%s nemám uložený klíč, pane — dopište prosím řádek "
+                'ručně do %s ve tvaru: otázka | správná odpověď.'
+                % (exam_id, _cfg(config).get("soubor", SOUBOR_OTAZEK)))
+    cesta = str(_cfg(config).get("soubor", SOUBOR_OTAZEK))
+    radek = _radek_souboru(r["otazka"], klic)
+    try:
+        stavajici = ""
+        if os.path.exists(cesta):
+            with open(cesta, encoding="utf-8") as f:
+                stavajici = f.read()
+        _norm = " ".join(str(r["otazka"] or "").split()).lower()
+        if _norm and _norm in stavajici.lower():
+            _oznac(db_path, exam_id, 1)
+            return ("Tuhle otázku už mezi zkušebními mám, pane — nález #%s "
+                    "beru za vyřízený." % exam_id)
+        with open(cesta, "a", encoding="utf-8") as f:
+            if stavajici and not stavajici.endswith("\n"):
+                f.write("\n")
+            f.write(radek + "\n")
+    except Exception as e:
+        return "Zápis do souboru otázek selhal, pane: %s" % e
+    _oznac(db_path, exam_id, 1)
+    return ("Zapsal jsem si to jako trvalou zkušební otázku, pane:\n%s\n"
+            "(soubor %s — klíč můžete kdykoli upravit ručně.)"
+            % (_zkrat(radek, 300), cesta))
+
+
+def zamitni(db_path: str, exam_id: int) -> str:
+    if _oznac(db_path, exam_id, -1):
+        return "Dobrá, pane — nález #%s už připomínat nebudu." % exam_id
+    return "Nález #%s se mi označit nepodařilo, pane." % exam_id
+
+
+def _oznac(db_path: str, exam_id: int, hodnota: int) -> bool:
+    try:
+        _init_db(db_path)
+        with _conn(db_path) as db:
+            db.execute("UPDATE kolac_exam SET potvrzeno = ? WHERE id = ?",
+                       (int(hodnota), int(exam_id)))
+            db.commit()
+        return True
+    except Exception as e:
+        _log.warning("označení nálezu selhalo: %s", e)
+        return False
 
 
 # ── VÝBĚR OTÁZKY ────────────────────────────────────────────────────────────
@@ -419,6 +544,61 @@ _POPIS = {"ok": "obstál", "castecne": "částečně", "vymyslel": "vymýšlel s
           "dohledal": "dohledal", "priznal": "přiznal neznalost",
           "zapiral": "zapřel vlastní zápisek", "prazdno": "bez odpovědi",
           "neposouzeno": "neposouzeno"}
+
+
+# ── HLÁŠENÍ NÁLEZU ──────────────────────────────────────────────────────────
+# KOLAC_EXAM_NOTIFY_V1 (22.8., rozhodl uživatel) — dokud nález nikdo nečte,
+# je zkoušení k ničemu. Dosud se výsledky ukládaly do tabulky a jediným
+# konzumentem byla jedna věta ve `/zdravi`, o kterou si člověk musí říct.
+# Proto: verdikt, u kterého Hans neobstál, se ohlásí sám. Přes `send_proactive`,
+# takže v tichém okně počká do rána (a fronta přežije restart).
+# Hlásí se JEN špatné verdikty — dvě zkoušky denně znamenají nanejvýš dvě
+# zprávy, spíš míň; kdyby chodilo i „ok", přestane se to číst.
+_HLASIT_VYCHOZI = ("vymyslel", "zapiral")
+
+
+def ma_se_hlasit(config: dict, verdikt: str) -> bool:
+    c = _cfg(config)
+    if not c.get("hlasit", True):
+        return False
+    return str(verdikt or "") in tuple(
+        c.get("hlasit_verdikty", list(_HLASIT_VYCHOZI)))
+
+
+def _zkrat(text: str, limit: int) -> str:
+    """Zkrať na celé věty — půlka věty se čte hůř než o kus kratší text."""
+    t = " ".join(str(text or "").split())
+    if len(t) <= limit:
+        return t
+    rez = t[:limit]
+    for znak in (". ", "! ", "? "):
+        i = rez.rfind(znak)
+        if i > limit // 2:
+            return rez[:i + 1]
+    return rez.rstrip() + "…"
+
+
+def hlaseni(exam_id: int, polozka: dict, odpoved: str,
+            hodnoceni: dict) -> str:
+    """Text zprávy o nálezu. Musí unést posouzení BEZ otevírání databáze —
+    proto nese otázku, odpověď i klíč, ne jen verdikt."""
+    radky = [
+        "Koláč mě vyzkoušel a neobstál jsem (#%d — %s, zdroj: %s)."
+        % (int(exam_id or 0), _POPIS.get(hodnoceni.get("verdikt"),
+                                         hodnoceni.get("verdikt", "?")),
+           polozka.get("zdroj", "?")),
+        "",
+        "Otázka: %s" % _zkrat(polozka.get("otazka"), 200),
+        "Odpověděl jsem: %s" % _zkrat(odpoved, 420),
+        "Klíč: %s" % _zkrat(polozka.get("klic"), 420),
+    ]
+    if polozka.get("url"):
+        radky.append("Zdroj klíče: %s" % polozka["url"])
+    radky += ["",
+              "Když to potvrdíte (/nalez %d), udělám z toho trvalou zkušební "
+              "otázku. Zamítnout: /nalez %d ne."
+              % (int(exam_id or 0), int(exam_id or 0))]
+    return "\n".join(radky)
 
 
 def souhrn(db_path: str, hodin: float = 24) -> str:

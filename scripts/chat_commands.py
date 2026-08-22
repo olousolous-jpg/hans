@@ -3175,6 +3175,58 @@ register(
 )
 
 
+# ─── /nalez — co Koláč u Hanse našel (KOLAC_EXAM_CONFIRM_V1) ─────────────────
+def _cmd_nalez(handler, name, args) -> str:
+    """/nalez — neposouzené nálezy ze zkoušení; /nalez N = udělej z toho
+    trvalou zkušební otázku; /nalez N ne = zamítni.
+
+    Posuzuje ČLOVĚK. Stroj nález jen předloží a po potvrzení z něj udělá
+    trvalý test — automatické učení z vlastní vymyšlené odpovědi by byla
+    přesně ta otrava paměti, kvůli které zkoušení běží pod testovací identitou.
+    """
+    from scripts import kolac_exam as _ke
+    db = _recall_db(handler) or "data/hans_diary.db"
+    cfg = getattr(handler, "config", {}) or {}
+    a = " ".join((args or "").split())
+    _c = a.split()
+    # Číslo nálezu bereme, JEN když je to číslo. Přirozený dotaz („co u tebe
+    # našel Koláč?") dorazí sem s celou větou v argumentech — ta má vypsat
+    # frontu, ne skončit na hlášce, že chybí číslo.
+    if _c and _c[0].lstrip("#").isdigit():
+        _id = _c[0].lstrip("#")
+        _ne = len(_c) > 1 and _c[1].lower() in ("ne", "zamitnout", "zamítnout",
+                                                "nic", "smaz", "smaž")
+        return (_ke.zamitni(db, int(_id)) if _ne
+                else _ke.potvrd(db, int(_id), cfg))
+    polozky = _ke.nalezy(db)
+    if not polozky:
+        return ("Ze zkoušení nemám nic nevyřízeného, pane.")
+    import time as _t
+    radky = ["Co u mě Koláč našel a čeká na vaše posouzení:"]
+    for p in polozky:
+        radky.append("  #%d [%s] %s — %s (%s)" % (
+            p["id"], _t.strftime("%-d.%-m. %H:%M", _t.localtime(p["ts"])),
+            _ke._POPIS.get(p["verdikt"], p["verdikt"]),
+            (p["tema"] or "")[:60], p["zdroj"]))
+    radky.append("")
+    radky.append("Potvrdit jako trvalou otázku: /nalez <číslo>. "
+                 "Zamítnout: /nalez <číslo> ne.")
+    return "\n".join(radky)
+
+
+register(
+    "nalez",
+    slash_aliases=["nalez", "nález", "nalezy", "nálezy", "zkousky", "zkoušky"],
+    nl_patterns=[
+        r"co\s+(u\s+tebe\s+)?na[šs]el\s+kol[áa][čc]",
+        r"(nálezy|nalezy)\s+ze\s+zkou[šs]en[íi]",
+        r"jak\s+jsi\s+(dopadl|obst[áa]l)\s+ve\s+zkou[šs]",
+    ],
+    handler=_cmd_nalez,
+    help_text="Nálezy ze zkoušení Koláčem; /nalez N = trvalá otázka, /nalez N ne = zamítnout",
+)
+
+
 # ─── /nastroj — Hans si najde LLM nástroj pro dílo (HANS_TOOLSCOUT_V1) ────────
 def _cmd_nastroj(handler, name, args) -> str:  # HANS_TOOLSCOUT_V1
     """/nastroj — stav návrhů; /nastroj <téma> = najdi nástroj pro doménu;
@@ -3637,6 +3689,7 @@ _LLM_ROUTE_CMDS = [
     # kolidovalo s „co teď BĚŽÍ v tv" a router posílal dotaz na televizi sem.
     ("rozvrh",     "jeho vlastní rozvrh autonomních rutin a jejich poslední tik"),
     ("zdravi",     "zdraví systému: Ollama, Kodi, PC, disk"),
+    ("nalez",      "nálezy ze zkoušení Koláčem (potvrdit/zamítnout)"),
     # HANS_PERSON_ASK_PAT_V1 — popis byl tak obecný („co koho zajímá"), že si
     # k sobě přitáhl i „co o ní víš" → Hans místo odpovědi vysypal výpis zájmů.
     # ⚠️ V popisu ZÁMĚRNĚ ŽÁDNÉ konkrétní jméno: první verze uváděla příklad

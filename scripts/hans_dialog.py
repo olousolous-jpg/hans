@@ -1054,7 +1054,24 @@ class HansDialog:
         if not odpoved.strip():
             return False
         hodnoceni = ke.ohodnot(polozka["zdroj"], odpoved, polozka.get("klic", ""))
-        ke.zapis(self._diary_path, polozka, odpoved, hodnoceni)
+        _exam_id = ke.zapis(self._diary_path, polozka, odpoved, hodnoceni)
+        # KOLAC_EXAM_NOTIFY_V1 — nález si najde uživatele sám. Notifier visí
+        # na chatovém handleru (`telegram` = historický název), takže tu není
+        # nové drátování. `send_proactive` respektuje tiché okno.
+        if _exam_id and ke.ma_se_hlasit(self.config, hodnoceni["verdikt"]):
+            try:
+                _tg = getattr(handler, "telegram", None)
+                _send = (getattr(_tg, "send_proactive", None)
+                         or getattr(_tg, "send", None)) if _tg else None
+                if _send and getattr(_tg, "enabled", False):
+                    _send(ke.hlaseni(_exam_id, polozka, odpoved, hodnoceni))
+                    _log.info("KOLAC_EXAM_NOTIFY_V1: nález #%d ohlášen",
+                              _exam_id)
+                else:
+                    _log.info("KOLAC_EXAM_NOTIFY_V1: nález #%d bez mostu "
+                              "(zůstává ve /zdravi)", _exam_id)
+            except Exception as _ne:
+                _log.warning("KOLAC_EXAM_NOTIFY_V1: hlášení selhalo: %s", _ne)
         _log.info("KOLAC_EXAM_V1: verdikt %s (%d vět bez opory) — %s",
                   hodnoceni["verdikt"], hodnoceni["bez_opory"], polozka["tema"])
 

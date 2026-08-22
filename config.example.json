@@ -1287,6 +1287,12 @@
     "kazdy_naty": 8,
     "max_denne": 2,
     "_note_max_denne": "KOLAC_EXAM_DENNI_STROP_V1 — nejvýš tolik zkoušek za den (0 = bez stropu).",
+    "hlasit": true,
+    "_note_hlasit": "KOLAC_EXAM_NOTIFY_V1 — nález, u kterého Hans neobstál, se ohlásí sám (Matrix, tiché okno respektuje).",
+    "hlasit_verdikty": [
+      "vymyslel",
+      "zapiral"
+    ],
     "identita": "zkouška",
     "_note_identita": "Jméno, pod kterým se odpovídá. MUSÍ být v test_persons, jinak se zkoušení zapíše do deníku i RAG.",
     "zdroje": [
