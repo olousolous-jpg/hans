@@ -86,6 +86,25 @@ class EyeServoController:
         self._last_tilt = None
         self._last_move_ts = 0.0
         self._released = False
+        # EYE_SMOOTH_TICK_V1 — pohyb očí je ROZPOJENÝ od snímkové smyčky.
+        # Dřív se na serva posílalo přímo z look_at_frac(), tedy jen jednou za
+        # DETECT_EVERY snímků: při 41 fps 13×/s, po zpomalení kamery (rotace
+        # obrazu, 22.8.) 10×/s → viditelné schody. Navíc EMA v _send byla
+        # per-VOLÁNÍ, takže s klesající frekvencí rostla i její časová
+        # konstanta — fps tak měnilo i svižnost pohledu. Teď look_at_frac()
+        # jen uloží CÍL a k němu dojíždí vlákno pevných tick_hz s ČASOVÝM
+        # vyhlazením → plynulost ani svižnost už na fps nezávisí.
+        self._tgt_pan  = None
+        self._tgt_tilt = None
+        self._tick_hz  = float(cfg.get("tick_hz", 50.0))
+        # EYE_TAU_HOTRELOAD_V1 — config drží VÝCHOZÍ rychlost pohledu, ale
+        # eye_calibration.json ji smí přebít a přenačíst se za běhu. Bez toho
+        # stála každá zkouška svižnosti restart Hanse, zatímco střed a zisk
+        # (ty jsou v kalibraci) se ladily okamžitě — ladit se má všechno stejně.
+        self._tau_cfg  = float(cfg.get("smooth_tau_s", 0.10))
+        self._tau      = self._tau_cfg
+        self._tick_thread = None
+        self._tick_lock   = threading.Lock()
 
         self._calib_path = cfg.get("calib_file", "eye_calibration.json")
         self.calib = self._load_calib(self._calib_path)
@@ -94,6 +113,7 @@ class EyeServoController:
         self._pan_ch  = self.calib["channels"].get("pan", "P2")
         self._tilt_ch = self.calib["channels"].get("tilt", "P3")
         self._gaze_tilt_offset = float(self.calib.get("gaze_tilt_offset", 0.0))
+        self._tau = float(self.calib.get("smooth_tau_s", self._tau_cfg))  # EYE_TAU_HOTRELOAD_V1
 
         if not self.enabled:
             _log.info("EyeServoController vypnuto (config eye_servo.enabled=false)")
@@ -278,6 +298,8 @@ class EyeServoController:
                     calib["lids"] = data["lids"]
                 if "gaze_tilt_offset" in data:           # HANS_EYE_GAZE_TILT_OFFSET_V1
                     calib["gaze_tilt_offset"] = data["gaze_tilt_offset"]
+                if "smooth_tau_s" in data:               # EYE_TAU_HOTRELOAD_V1
+                    calib["smooth_tau_s"] = data["smooth_tau_s"]
         except Exception as e:
             _log.warning("eye_servo: čtení kalibrace %s selhalo (%s) — defaulty", path, e)
         return calib
@@ -290,6 +312,14 @@ class EyeServoController:
         center = float(c["center"])
         lo, hi = float(c["min"]), float(c["max"])
         dev = (frac - 0.5) * 2.0          # -1 (levý/horní okraj) .. +1
+        # EYE_GAZE_GAIN_V1 — zisk mapování (eye_calibration.json: pan.gain /
+        # tilt.gain, hot-reload). Rám NENÍ zorný úhel: po otočení kamery o 90°
+        # (22.8.) je vodorovný záběr užší a svislý širší, takže tatáž výchylka
+        # v rámu znamená jiný skutečný úhel — oči vodorovně přestřelují a
+        # svisle podstřelují. gain srovná citlivost, aniž se sahá na min/max
+        # (ty drží fyzické meze serva). 1.0 = beze změny.
+        dev *= float(c.get("gain", 1.0))
+        dev = max(-1.0, min(1.0, dev))
         if invert:
             dev = -dev
         if dev >= 0:
@@ -298,12 +328,19 @@ class EyeServoController:
             angle = center + dev * (center - lo)
         return max(lo, min(hi, angle))
 
-    def _send(self, servo, target: float, ema_attr: str, last_attr: str):
+    def _send(self, servo, target: float, ema_attr: str, last_attr: str,
+              alpha: float = None):
+        """Posune vyhlazenou hodnotu k cíli a pošle ji, až překročí deadband.
+
+        alpha=None → původní per-volání EMA (self._smooth). Vlákno _run_tick
+        dodává alpha spočítanou Z ČASU (EYE_SMOOTH_TICK_V1), takže vyhlazení
+        nezávisí na tom, jak často se volá."""
+        a = self._smooth if alpha is None else alpha
         prev = getattr(self, ema_attr)
         if prev is None:
             ema = target
         else:
-            ema = self._smooth * target + (1 - self._smooth) * prev
+            ema = a * target + (1 - a) * prev
         setattr(self, ema_attr, ema)
         last = getattr(self, last_attr)
         if last is not None and abs(ema - last) < self._deadband:
@@ -329,6 +366,14 @@ class EyeServoController:
         """pulse_width(0) → přeruší PWM → serva limp → přestanou pískat."""
         if not self.available:
             return
+        # EYE_SMOOTH_TICK_RELEASE_V1 — zahoď cíl, jinak by k němu vlákno
+        # (_run_tick) dojíždělo dál a uvolněná serva by hned zase probudilo:
+        # dřív se posílalo přímo z look_at_frac, takže vypnutí očí povely
+        # utnulo samo. Teď to musí říct release() explicitně. Nový cíl přijde
+        # z look_at_frac / center() / recenter(), takže se nic neztrácí.
+        with self._tick_lock:
+            self._tgt_pan = None
+            self._tgt_tilt = None
         with self._io_lock:
             for servo in (self._pan_s, self._tilt_s):
                 try:
@@ -358,13 +403,60 @@ class EyeServoController:
             self._calib_mtime = mt
             self.calib = self._load_calib(self._calib_path)
             self._gaze_tilt_offset = float(self.calib.get("gaze_tilt_offset", 0.0))
+            self._tau = float(self.calib.get("smooth_tau_s", self._tau_cfg))
             _log.info("eye_servo: kalibrace přenačtena (pan center=%.1f "
-                      "tilt center=%.1f tilt_offset=%.1f)",
+                      "tilt center=%.1f tilt_offset=%.1f tau=%.3f "
+                      "gain pan/tilt=%.2f/%.2f)",
                       self.calib["pan"]["center"], self.calib["tilt"]["center"],
-                      self._gaze_tilt_offset)
+                      self._gaze_tilt_offset, self._tau,
+                      float(self.calib["pan"].get("gain", 1.0)),
+                      float(self.calib["tilt"].get("gain", 1.0)))
+
+    def _ensure_tick(self):
+        """EYE_SMOOTH_TICK_V1 — líné spuštění vlákna pohybu očí."""
+        if not self.available or self._tick_thread is not None:
+            return
+        self._tick_thread = threading.Thread(target=self._run_tick,
+                                             daemon=True, name="eye_tick")
+        self._tick_thread.start()
+        _log.info("eye_servo: plynulý pohyb očí zapnut (%.0f Hz, tau=%.2f s)",
+                  self._tick_hz, self._tau)
+
+    def _run_tick(self):
+        """EYE_SMOOTH_TICK_V1 — dojíždí k poslednímu cíli pevnou frekvencí,
+        nezávisle na kameře.
+
+        Vyhlazení je ČASOVÉ: alpha = 1 - exp(-dt/tau), takže tatáž svižnost
+        při jakémkoli fps. Deadband zůstává — jen se kroky posílají tick_hz×/s
+        místo ~10×/s, takže je z nich plynulý náběh a ne schody. Když je EMA
+        na cíli, nepošle se nic → idle_release_s (ticho serv) platí dál.
+        Vlákno běží i s vypnutýma očima (jen mlčí) — cena je jeden sleep."""
+        import math
+        period = 1.0 / max(1.0, self._tick_hz)
+        prev_ts = time.time()
+        while True:
+            time.sleep(period)
+            now = time.time()
+            dt = min(0.5, max(1e-3, now - prev_ts))
+            prev_ts = now
+            with self._tick_lock:
+                tp, tt = self._tgt_pan, self._tgt_tilt
+            if tp is None or tt is None or not self.available:
+                continue
+            alpha = 1.0 - math.exp(-dt / max(1e-3, self._tau))
+            try:
+                self._send(self._pan_s,  tp, "_pan_ema",  "_last_pan",  alpha)
+                self._send(self._tilt_s, tt, "_tilt_ema", "_last_tilt", alpha)
+                self._maybe_release()
+            except Exception as e:
+                _log.debug("eye_servo: tick selhal: %s", e)
 
     def look_at_frac(self, cx: float, cy: float):
-        """cx, cy ∈ 0..1 = střed bboxu osoby v rámu. Pohne očima tam."""
+        """cx, cy ∈ 0..1 = střed bboxu osoby v rámu. ULOŽÍ cíl pohledu.
+
+        Na serva už odsud nejde nic — k cíli dojede vlákno (_run_tick), takže
+        se sem smí volat jak zřídka chce (dnes 1× za DETECT_EVERY snímků).
+        Plynulost drží vlákno, ne frekvence volání. EYE_SMOOTH_TICK_V1."""
         if not self.available:
             return
         self._maybe_reload_calib()
@@ -376,9 +468,9 @@ class EyeServoController:
             _t = self.calib["tilt"]
             tilt = max(float(_t["min"]), min(float(_t["max"]),
                                              tilt + self._gaze_tilt_offset))
-        self._send(self._pan_s,  pan,  "_pan_ema",  "_last_pan")
-        self._send(self._tilt_s, tilt, "_tilt_ema", "_last_tilt")
-        self._maybe_release()
+        with self._tick_lock:
+            self._tgt_pan, self._tgt_tilt = pan, tilt
+        self._ensure_tick()
 
     def center(self):
         if not self.available:

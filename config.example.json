@@ -964,6 +964,9 @@
   "eye_servo": {
     "enabled": true,
     "smooth": 1.0,
+    "tick_hz": 50.0,
+    "smooth_tau_s": 0.1,
+    "_tick_note": "EYE_SMOOTH_TICK_V1 — pohyb očí běží ve vlastním vlákně na tick_hz (50 Hz = nativní perioda PWM serva) a k cíli dojíždí s ČASOVOU konstantou smooth_tau_s. Dřív se posílalo přímo ze snímkové smyčky (1× za detect_every snímků), takže plynulost i svižnost pohledu závisely na fps — po zpomalení kamery rotací (22.8.) se pohyb stal trhaným. Menší tau = svižnější a tvrdší pohled, větší = měkčí a línější. Klíč smooth (per-volání EMA) zůstává jen jako záloha pro přímé volání _send. Změna vyžaduje restart.",
     "deadband_deg": 3.0,
     "pan_invert": false,
     "tilt_invert": false,
