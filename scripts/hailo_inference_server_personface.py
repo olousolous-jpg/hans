@@ -91,6 +91,13 @@ DET_W        = 640
 DET_H        = 640
 LORES_W      = int(_CFG.get('camera', {}).get('lores_width',  640))
 LORES_H      = int(_CFG.get('camera', {}).get('lores_height', 480))
+
+# CAMERA_ROTATION_V1 — klient posila lores UZ OTOCENY (camera.rotation), takze
+# po 90/270 dorazi snimek na vysku. Pocet bajtu je pritom TOTOZNY, takze bez
+# tehle vymeny by se reshape povedl, jen by slozil rozsypany obraz a detekce
+# by tise spadla na nulu. Prohozeni sedi i na letterbox/unletterbox nize.
+if int(_CFG.get('camera', {}).get('rotation', 0)) % 180 == 90:
+    LORES_W, LORES_H = LORES_H, LORES_W
 ARCFACE_SIZE = 112
 ARCFACE_DIM  = 512
 

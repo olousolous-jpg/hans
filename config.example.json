@@ -187,6 +187,7 @@
     "framerate": 40,
     "buffer_count": 1,
     "rotation": 0,
+    "_rotation_note": "O kolik stupňů PO SMĚRU hodinových ručiček software otočí snímek (0/90/180/270) — srovnání fyzicky otočené kamery. 90 = kamera visí otočená proti směru hod. ručiček (22.8.). Rotuje se v display_controller_picam._get_frames (main i lores stejně) a MUSÍ ji znát i hailo_inference_server, který bajty skládá zpět na obrázek. Cena: ~23 ms/snímek (transpozice 2304x1296 + 1280x720).",
     "_res_note": "Hlavní proud 1536x864 → 2304x1296 (10.8.). HQ výřez pro ArcFace se bere z hlavního proudu, takže vyšší rozlišení = víc pixelů na tvář: z 50px tváře je 75px. IMX708 zvládne 2304x1296 až 56 fps (běžíme na 40), platí se propustností paměti a CPU. ⚠️ NEŘEŠÍ hlavní problém (embedding kóduje podmínky, ne identitu) — pomůže jen VZDÁLENÝM tvářím. Lores 1280x720 pro detekci beze změny. ⏳ Vyhodnotit 11.8. spolu s přechodem na manuální ostření: velikost tváří, ostrost, FPS."
   },
   "features": {

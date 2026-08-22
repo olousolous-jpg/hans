@@ -184,6 +184,18 @@ class PicamDisplayController:
         self._click_xy_pending  = None     # (x_px, y_px) | None — k zpracování
         self._HAILO_W = int(cam.get("lores_width", 640))
         self._HAILO_H = int(cam.get("lores_height", 480))
+        # CAMERA_ROTATION_V1 — kamera visi fyzicky otocena, obraz rovname v SW.
+        # config camera.rotation = o kolik stupnu PO SMERU hod. rucicek software
+        # otoci snimek (0/90/180/270). Rotuje se v _get_frames() — main i lores
+        # STEJNE, takze normalizovane boxy z detekce plati na obou dal beze zmeny.
+        _rot = int(cam.get("rotation", 0)) % 360
+        self._rot_code = {90:  cv2.ROTATE_90_CLOCKWISE,
+                          180: cv2.ROTATE_180,
+                          270: cv2.ROTATE_90_COUNTERCLOCKWISE}.get(_rot)
+        self._rot_deg  = _rot if self._rot_code is not None else 0
+        if _rot and self._rot_code is None:
+            print(f"[PicamDisplay] camera.rotation={_rot} neni 0/90/180/270 "
+                  f"— ignoruji, obraz zustane jak leze ze senzoru")
         print(f"[PicamDisplay] Main: {self._MAIN_W}×{self._MAIN_H}  "
               f"Lores: {self._HAILO_W}×{self._HAILO_H}")
 
@@ -276,6 +288,16 @@ class PicamDisplayController:
             except Exception:
                 self._cam_main_size  = (self._MAIN_W, self._MAIN_H)
                 self._cam_lores_size = (self._HAILO_W, self._HAILO_H)
+            # CAMERA_ROTATION_V1 — po 90/270 je obraz na vysku. Konfigurace
+            # kamery je uz za sebou a _cam_*_size drzi SENZOROVE rozmery
+            # (z nich stavi _recover_camera), takze tady uz smime prohodit
+            # rozmery, ktere ctou odberatele (servo cil, HQ vyrez, oci).
+            if self._rot_deg in (90, 270):
+                self._MAIN_W,  self._MAIN_H  = self._MAIN_H,  self._MAIN_W
+                self._HAILO_W, self._HAILO_H = self._HAILO_H, self._HAILO_W
+                print(f"[PicamDisplay] rotace {self._rot_deg}° → "
+                      f"main {self._MAIN_W}×{self._MAIN_H} "
+                      f"lores {self._HAILO_W}×{self._HAILO_H}")
             # hdr_patch
             if self.config.get('camera_model') == 'v3_wide':
                 _hdr = int(self.config.get('hdr_mode', 3))
@@ -1655,11 +1677,29 @@ class PicamDisplayController:
     # ── Frame queue ───────────────────────────────────────────────────────
 
     def _get_frames(self):  # GET_FRAMES_METHOD_V1
-        """Vrací (main, lores) z _frame_q s timeoutem 0.2s, jinak (None, None)."""
+        """Vrací (main, lores) z _frame_q s timeoutem 0.2s, jinak (None, None).
+
+        CAMERA_ROTATION_V1: tady se obraz srovnává podle camera.rotation.
+        Děje se to právě tady, protože _get_frames je JEDINÉ hrdlo pro všechny
+        odběratele (hlavní smyčka, enrollment, video enroll, stall check) —
+        nikdo tak nedostane snímek nakřivo.
+        POZOR: main i lores se otáčí STEJNĚ. Boxy z detekce jsou
+        normalizované (0–1) v lores prostoru a aplikují se na main — jakmile
+        by se orientace rozešla, HQ výřez tváře by seděl jinam a nikdo by to
+        nenahlásil (tichá geometrická chyba).
+        POZOR 2: fisheye undistort je kalibrovaný na SENZOROVOU orientaci —
+        dnes je vypnutý, ale až se zapne, musí běžet PŘED rotací.
+        """
         try:
-            return self._frame_q.get(timeout=0.2)
+            main, lores = self._frame_q.get(timeout=0.2)
         except Exception:
             return None, None
+        if self._rot_code is not None:
+            if main is not None:
+                main = cv2.rotate(main, self._rot_code)
+            if lores is not None:
+                lores = cv2.rotate(lores, self._rot_code)
+        return main, lores
 
     # ── Camera stall recovery ─────────────────────────────────────────────
 
