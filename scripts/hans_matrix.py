@@ -32,6 +32,107 @@ import time
 
 _log = logging.getLogger("hans.matrix")
 
+# ── HANS_MATRIX_DEFERNÍ FRONTA ─────────────────────────────────────────────
+# HANS_MATRIX_DEFERRED_FILE_V1 (22.8.) — ODLOŽENÁ ZPRÁVA JE SOUBOR, NE PAMĚŤ.
+#
+# Doloženo 22.8.: návrh prohloubení studia vznikl v 00:30, tiché okno ho
+# odložilo do 9:00 — jenže fronta byla obyčejný seznam v paměti a Hans se
+# v 08:35 restartoval. Hláška „doručeno N odložených zpráv" NENÍ v logu ani
+# jednou za celou dobu jeho běhu: NIC z tichého okna nikdy nedorazilo, a
+# uživatel se pak přes den bavil o návrhu, o kterém nevěděl. Restart je
+# přitom běžná věc (aktualizace, watchdog), tiché okno trvá jedenáct hodin.
+#
+# Týž princip a týž tvar jako `chat_deferred` pro opačný směr (příchozí
+# zpráva, na kterou nebyl mozek) — [[ollama-deferred-processing]].
+#
+# Zprávy se NEZAHAZUJÍ podle stáří (rozhodl uživatel 22.8.): raději doručit
+# pozdě s poznámkou, odkdy zpráva je, než ji tiše ztratit. Poznámku přidává
+# `odlozena_poznamka` — bez ní by „vytvořil jsem dílo" doručené za dva dny
+# vypadalo jako čerstvá událost.
+_DEFERRED_Q = "data/matrix_deferred.jsonl"
+_DEFERRED_MAX = 50          # pojistka proti zaplavení (paralela chat_deferred)
+
+
+def _dq_nacti(path: str = _DEFERRED_Q) -> list:
+    """Řádky fronty (poškozený řádek se přeskočí, ne aby spadla celá)."""
+    out = []
+    try:
+        if not os.path.exists(path):
+            return out
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception as e:
+        _log.warning("matrix: fronta odložených nešla načíst: %s", e)
+    return out
+
+
+def _dq_pridej(text: str, room: str, path: str = _DEFERRED_Q) -> bool:
+    """Odlož zprávu na disk. False = fronta plná / prázdný text."""
+    text = (text or "").strip()
+    if not text:
+        return False
+    try:
+        if len(_dq_nacti(path)) >= _DEFERRED_MAX:
+            _log.warning("matrix: fronta odložených plná (%d) — zpráva se "
+                         "neuloží: %.40s", _DEFERRED_MAX, text)
+            return False
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": time.time(), "text": text,
+                                "room": room or ""}, ensure_ascii=False) + "\n")
+        return True
+    except Exception as e:
+        _log.warning("matrix: odloženou zprávu nešlo uložit: %s", e)
+        return False
+
+
+def _dq_vyber(path: str = _DEFERRED_Q) -> list:
+    """Vrať frontu a rovnou ji vyprázdni.
+
+    Nejdřív se ubere ze SOUBORU, pak se posílá — kdyby Hans spadl uprostřed
+    doručování, přijde uživatel nanejvýš o zbytek dávky, ale nedostane tutéž
+    zprávu dvakrát. (Odeslání se stejně plánuje bez čekání na výsledek.)
+    """
+    rows = _dq_nacti(path)
+    if not rows:
+        return []
+    try:
+        os.remove(path)
+    except Exception as e:
+        _log.warning("matrix: frontu odložených nešlo vyprázdnit: %s", e)
+        return []
+    return rows
+
+
+def odlozena_poznamka(text: str, ts: float, ted: float = None) -> str:
+    """Přilep informaci, ODKDY zpráva je — jinak vypadá jako čerstvá.
+
+    Do hodiny se nelepí nic (zpráva odložená před chvílí mate poznámkou víc
+    než bez ní); týž den „(odloženo z 00:30)", jindy i s datem.
+    """
+    try:
+        ted = time.time() if ted is None else ted
+        if not ts or ted - ts < 3600:
+            return text
+        kdy = time.localtime(ts)
+        if time.strftime("%Y%m%d", kdy) == time.strftime("%Y%m%d",
+                                                         time.localtime(ted)):
+            popis = time.strftime("%H:%M", kdy)
+        else:
+            popis = time.strftime("%-d.%-m. %H:%M", kdy)
+        return "%s\n\n(odloženo z %s — psal jsem to v tichém okně.)" % (
+            text, popis)
+    except Exception:
+        return text
+
+
 try:
     from nio import (AsyncClient, AsyncClientConfig, InviteMemberEvent,
                      LoginResponse, RoomMessageText, UploadResponse)
@@ -77,7 +178,9 @@ class MatrixBridge:
         # quiet hours (TELEGRAM_QUIET_HOURS_V1 paralela)
         self._quiet_start = int(cfg.get("quiet_start_hour", 22))
         self._quiet_end = int(cfg.get("quiet_end_hour", 9))
-        self._deferred: list = []
+        # HANS_MATRIX_DEFERRED_FILE_V1 — fronta je SOUBOR (přežije restart),
+        # viz komentář u `_dq_pridej` na začátku modulu.
+        self._deferred_q = str(cfg.get("deferred_queue", _DEFERRED_Q))
 
         self._client = None
         self._loop = None
@@ -445,23 +548,40 @@ class MatrixBridge:
             return False
         rid = room_id or self.room_id
         if self._in_quiet_hours():
-            self._deferred.append((text, rid))
-            _log.info("matrix: proaktivní zpráva ODLOŽENA do %d:00", self._quiet_end)
+            if not _dq_pridej(text, rid, self._deferred_q):
+                return False
+            _log.info("matrix: proaktivní zpráva ODLOŽENA do %d:00 (do fronty "
+                      "na disku)", self._quiet_end)
             return True
         return self.send(text, room_id=rid)
 
     def _flush_deferred(self):
-        if not self._deferred or self._in_quiet_hours():
+        # HANS_MATRIX_DEFERRED_FILE_V1 — fronta se čte z disku, takže se
+        # doručí i to, co se odložilo PŘED restartem.
+        if self._in_quiet_hours():
             return
-        pending = self._deferred
-        self._deferred = []
-        for txt, rid in pending:
+        pending = _dq_vyber(self._deferred_q)
+        if not pending:
+            return
+        neodeslano = 0
+        for row in pending:
+            txt = str(row.get("text") or "")
+            rid = str(row.get("room") or "") or self.room_id
+            if not txt or not rid:
+                continue
             try:
-                asyncio.run_coroutine_threadsafe(self._a_send(txt, rid),
-                                                 self._loop)
-            except Exception:
-                pass
-        _log.info("matrix: doručeno %d odložených zpráv", len(pending))
+                asyncio.run_coroutine_threadsafe(
+                    self._a_send(odlozena_poznamka(txt, row.get("ts") or 0.0),
+                                 rid), self._loop)
+            except Exception as e:
+                # Ze souboru je zpráva už pryč → vrať ji tam, ať se ztráta,
+                # kvůli které se tohle celé opravovalo, nevrátí zadními vrátky.
+                _log.warning("matrix: odloženou zprávu nešlo odeslat (vracím "
+                             "do fronty): %s", e)
+                _dq_pridej(txt, rid, self._deferred_q)
+                neodeslano += 1
+        _log.info("matrix: doručeno %d odložených zpráv%s", len(pending),
+                  " (%d zpět ve frontě)" % neodeslano if neodeslano else "")
 
     def send_photo(self, file_path: str, caption: str = "",
                    room_id: str = None) -> bool:

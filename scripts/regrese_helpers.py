@@ -258,6 +258,23 @@ def dedup_osloveni(text: str, jmeno: str) -> str:
     return dedup_address_g4d(text, jmeno, cfg)
 
 
+def fronta_prezije_restart(text: str) -> str:
+    """HANS_MATRIX_DEFERRED_FILE_V1 — odložená zpráva přežije restart mostu.
+
+    Doloženo 22.8.: fronta byla seznam v paměti, Hans se v 08:35 restartoval
+    a návrh prohloubení z 00:30 uživateli nikdy nedorazil. „Restart" se tu
+    simuluje tím, že se čte ZE SOUBORU, ne z objektu, který zprávu uložil.
+    Vrací text doručené zprávy, nebo prázdno.
+    """
+    import tempfile
+    import os
+    from scripts.hans_matrix import _dq_pridej, _dq_vyber
+    cesta = os.path.join(tempfile.mkdtemp(), "odlozene.jsonl")
+    _dq_pridej(text, "!room:matrix.org", cesta)
+    rows = _dq_vyber(cesta)
+    return rows[0]["text"] if rows else ""
+
+
 def guard_zahodil(odpoved: str, podklad: str) -> int:
     """GROUNDING_GUARD_ACTIVE_V2 — kolik vět odpovědi nemá v podkladu oporu."""
     from scripts.grounding_guard import check
