@@ -60,7 +60,11 @@ done
 CORE_FILES=(config.json data/known_faces.pkl data/known_faces_cluster.pkl
             data/known_faces_personface.pkl data/gesture_model.pkl
             data/routine_state.json data/hans_known_capabilities.json
-            eye_calibration.json)
+            eye_calibration.json
+            data/BACKLOG.md)   # BACKLOG_IN_BACKUP_V1 (22.8.) — aktivní handoff
+            # a pracovní seznam. Je gitignorovaný jako CLAUDE.md, ale ten se
+            # bral přes kódový sweep níž (root *.md), zatímco tenhle leží
+            # v data/ → propadal oběma síty a nebyl NIKDE.
 for f in "${CORE_FILES[@]}"; do
     [ -f "$f" ] && { mkdir -p "$STAGE/$(dirname "$f")"; cp -p "$f" "$STAGE/$f"; }
 done
