@@ -2919,7 +2919,28 @@ class OpenWebUIDirectHandler:
                 return None
         except Exception as _cpe:
             logging.getLogger(__name__).debug('confirm precedence: %s', _cpe)
-        # HANS_DEEPEN_QUESTION_GUARD_V1 (19.8.) — OTÁZKA NENÍ ZPĚTNÁ VAZBA.
+        # HANS_DEEPEN_FEEDBACK_GATE_V1 (22.8.) — KE KLASIFIKÁTORU JEN ZPĚTNÁ
+        # VAZBA. Doloženo 22.8.: „rekni vice o zameckem parku u hradu Kost"
+        # (běžná prosba, jen bez otazníku) prošla dosavadní pojistkou, LLM
+        # klasifikátor z ní udělal KRITIZUJE a Hans odpověděl „Beru tvou
+        # kritiku, pane — prohloubím studium Český ráj". Návrh přitom vznikl
+        # v 00:30 v tichém okně a uživateli nikdy nedorazil.
+        # Rozhodnutí je otočené (viz `hans_study.je_reakce_na_navrh`): ne
+        # „není to otázka → klasifikuj", ale „nenese to souhlas/nesouhlas/
+        # kritiku → nech to být".
+        try:
+            from scripts.hans_study import je_reakce_na_navrh as _je_fb
+            if not _je_fb(message):
+                logging.getLogger(__name__).info(
+                    'HANS_DEEPEN_FEEDBACK_GATE_V1: %.40s není zpětná vazba '
+                    '→ návrhu se nedotýkám', (message or "").strip())
+                return None
+        except Exception as _fge:
+            logging.getLogger(__name__).debug('deepen feedback gate: %s', _fge)
+        # HANS_DEEPEN_QUESTION_GUARD_V1 (19.8.) — PŘEDCHŮDCE, dnes podmnožina
+        # brány výš (tázací věta bez schvalovacího slova jí neprojde). Ponechán
+        # jako pojistka, kdyby brána spadla na výjimku.
+        # PŮVODNÍ POPIS: OTÁZKA NENÍ ZPĚTNÁ VAZBA.
         # Dokud leží návrh na prohloubení, posílá se KAŽDÁ další zpráva LLM
         # klasifikátoru (SCHVALUJE/ZAMITA/KRITIZUJE/NIC). Doloženo 19.8.:
         # nevinný dotaz „a Babičku jsi četl ty sám?" vyhodnotil jako KRITIZUJE

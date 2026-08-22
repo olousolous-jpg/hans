@@ -211,6 +211,56 @@ def already_studied(topic: str, db_path: str = "data/hans_diary.db"):
     return None
 
 
+# ── HANS_DEEPEN_FEEDBACK_GATE_V1 (22.8.) ────────────────────────────────────
+# Reakce na návrh prohloubení: schvaluje / zamítá / dává vlastní kritiku.
+# ⚠️ Slovník je schválně ÚZKÝ. Širší (např. „chybí", „málo", „povrchní") by
+# nabral běžný hovor, a chyba tímhle směrem je dražší: falešné SCHVALUJE
+# reaktivuje DOKONČENÝ program (completed → active) a přeskládá studijní
+# frontu, kdežto přehlédnutá kritika stojí jen jedno zopakování nebo
+# „/prohloubit <kritika>".
+# `schval(?!n)` — bez lookaheadu bere „schválně" (doloženo na reálné větě
+# „schvalne jestli vic k cemu slouzil na hrade prevét").
+_FB_RE = re.compile(
+    r"\b(ano|jo|souhlas\w*|schval(?!n)\w*|dob[řr]e|prohlub|prohloub|"
+    r"ne\b|nechci|nesouhlas\w*|zru[šs]|nech\s+to|špatn\w*|"
+    r"slab\w*|m[ěe]l\s+bys|douč|dodělej)\b", re.I)
+
+_OTAZKA_RE = re.compile(
+    r"^\s*(kdo|co|kde|kdy|jak|pro[čc]|kolik|kter|[čc][íi]|zn[áa]|"
+    r"vid[íi]|um[íi][šs]|m[áa][šs]|je\s|jsi\s|byl\s)", re.I)
+
+_FB_MAX_SLOV = 10
+
+
+def je_reakce_na_navrh(zprava: str) -> bool:
+    """HANS_DEEPEN_FEEDBACK_GATE_V1 — smí tahle věta k LLM klasifikátoru?
+
+    PROČ (22.8.): dokud leží návrh na prohloubení, posílala se klasifikátoru
+    (SCHVALUJE/ZAMITA/KRITIZUJE/NIC) KAŽDÁ zpráva, která nemá tvar otázky —
+    a ten si verdikt vymyslel. Doloženo: „rekni vice o zameckem parku u hradu
+    Kost" → „Beru tvou kritiku, pane — prohloubím studium Český ráj". Návrh
+    přitom vznikl v 00:30 v tichém okně a uživateli nikdy nedorazil.
+    Předchůdce `HANS_DEEPEN_QUESTION_GUARD_V1` (19.8.) zavíral jen tázací
+    věty — díra byla ve všem ostatním, což je většina hovoru.
+
+    Rozhodnutí je OTOČENÉ: neptáme se „je to otázka?", ale „nese to vůbec
+    souhlas, nesouhlas nebo kritiku?". Odpověď na návrh je krátká reakce,
+    ne věta s vlastním dotazem.
+
+    Změřeno na 500 skutečných uživatelských replikách z deníku: ke
+    klasifikátoru projde 18 (3,6 %) — samé „ano/ne/ne, děkuji" —, kdežto
+    dosavadní pravidlo pouštělo všechno kromě otázek. Osm reálných
+    formulací souhlasu/zamítnutí/kritiky („ano", „ne, nech to být",
+    „to je slabé, dodělej k tomu víc", …) projde dál.
+    """
+    m = (zprava or "").strip()
+    if not m or not _FB_RE.search(m):
+        return False
+    if "?" in m or _OTAZKA_RE.match(m):
+        return False        # věta s vlastním dotazem není odpověď na návrh
+    return len(m.split()) <= _FB_MAX_SLOV
+
+
 def _cfg(config: dict) -> dict:
     return (config.get("study", {}) or {})
 
