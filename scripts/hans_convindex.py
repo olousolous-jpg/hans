@@ -313,6 +313,36 @@ def _fts_query(text: str, stem: bool = False) -> str:
     return " ".join('"%s"*' % t for t in toks[:8])
 
 
+_KONEC_VETY = ".!?…:;"
+
+
+def kotvy_ve_vete(veta: str) -> list:
+    """Slova s velkým písmenem UVNITŘ věty = předmět dotazu („hrad Kost").
+
+    HANS_CONVINDEX_ANCHOR_SENTENCE_V1 (22.8.) — ZAČÁTEK DALŠÍ VĚTY KOTVA NENÍ.
+    Původní pravidlo („velké písmeno a není to první slovo") bralo i slovo za
+    tečkou. Změřeno na 500 skutečných replikách: ve 20 z nich (4 %) vznikla
+    kotva ze slova jako „Rád", „Myslím", „Půjdu" — a kotva se z relaxace
+    NEUBÍRÁ, takže by takový balast zůstal viset ve všech stupních a hledání
+    by nenašlo nic. To je přesně ta falešná absence, proti které relaxace
+    vznikla (6.8.). Když jméno stojí na začátku věty, kotva prostě nebude
+    a chová se to jako dřív — raději nic než balast.
+
+    Vrací dvojice (pořadí ve slovech, slovo).
+    """
+    out = []
+    text = veta or ""
+    for i, m in enumerate(_WORD.finditer(text)):
+        w = m.group(0)
+        if i == 0 or not w[:1].isupper() or w.isupper():
+            continue
+        pred = text[:m.start()].rstrip()
+        if not pred or pred[-1] in _KONEC_VETY:
+            continue
+        out.append((i, w))
+    return out
+
+
 def relax_attempts(query: str):
     """HANS_CONVINDEX_RELAX_FN_V1 (22.8.) — postupné ubírání slov z dotazu.
 
@@ -343,11 +373,7 @@ def relax_attempts(query: str):
     # Prefix `kost*` trefí kostýmů/kostel/kosti — Pátý element se
     # do podkladu dostal i touhle druhou cestou, takže samotné
     # zachování tokenu by nestačilo (změřeno).
-    _words = _WORD.findall(query or "")
-    _anchor_f = set()
-    for _i, _w in enumerate(_words):
-        if _i > 0 and _w[:1].isupper() and not _w.isupper():
-            _anchor_f.add(_fold(_w))
+    _anchor_f = {_fold(_w) for _, _w in kotvy_ve_vete(query)}
     _orig = {}          # kmen -> (složené slovo, délka originálu)
     for _t in raw:
         _orig.setdefault(_stem(_fold(_t)), (_fold(_t), len(_t)))
@@ -428,20 +454,40 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
     words = _WORD.findall(veta or "")
     if len(words) < 2:
         return None
-    vyn = {_fold(v) for v in (vynech or ())}
-    i = 1
-    while i < len(words):
-        w = words[i]
-        if w[:1].isupper() and not w.isupper():
-            jmeno = [w]
-            j = i + 1
-            while j < len(words) and words[j][:1].isupper() and not words[j].isupper():
-                jmeno.append(words[j]); j += 1
-            if any(_fold(x) in vyn for x in jmeno):
-                i = j; continue
-            druh = _DRUH.get(_fold(words[i - 1]), "")
-            return ((druh + " ") if druh else "") + " ".join(jmeno)
-        i += 1
+    vyn = {_fold(v) for v in (vynech or ()) if v}
+    kotvy = kotvy_ve_vete(veta)
+    idx = {i for i, _ in kotvy}
+
+    def _je_vyloucene(slovo: str) -> bool:
+        # Jméno v dotazu bývá SKLONĚNÉ („Hansi", „Standovi", „Standy") —
+        # holá shoda by vyloučení minula a Hans by šel hledat domácí (nebo
+        # sám sebe) na Wikipedii. Porovnává se proto kmen bez koncové
+        # samohlásky („standa" → „stand"), s dovolenými třemi znaky navíc,
+        # ať se z toho nestane prefixové síto na cokoli.
+        f = _fold(slovo)
+        for v in vyn:
+            if f == v:
+                return True
+            kmen = v[:-1] if v[-1:] in "aeiouy" else v
+            if len(kmen) >= 3 and f.startswith(kmen) and len(f) - len(kmen) <= 3:
+                return True
+        return False
+
+    preskoc_do = 0
+    for i, w in kotvy:
+        if i < preskoc_do:
+            continue        # druhé slovo téhož jména („Sherlock Holmes")
+        jmeno = [w]
+        j = i + 1
+        # Pokračování jména jen po dalších KOTVÁCH — jinak by se „…, Hansi.
+        # Četl jsi…" slepilo na téma „Hansi Četl" (věta mezi tím skončila).
+        while j in idx:
+            jmeno.append(words[j]); j += 1
+        preskoc_do = j
+        if any(_je_vyloucene(x) for x in jmeno):
+            continue
+        druh = _DRUH.get(_fold(words[i - 1]), "")
+        return ((druh + " ") if druh else "") + " ".join(jmeno)
     return None
 
 

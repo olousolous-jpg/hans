@@ -722,6 +722,14 @@ class OpenWebUIDirectHandler:
             _known = tuple((self.config.get("known_persons", {}) or {}).keys()) + \
                 tuple(str(v.get("nom", "")) for v in
                       (self.config.get("known_persons", {}) or {}).values())
+            # Vlastní jméno taky — v oslovení („Dobrý večer, Hansi") je to
+            # kotva jako každá jiná a bez tohohle by se šel hledat na
+            # Wikipedii sám. Skloňované tvary řeší `kotva_tematu`.
+            try:
+                from scripts.hans_persona import persona_name as _pn
+                _known += (str(_pn(self.config) or ""),)
+            except Exception:
+                pass
             tema = kotva_tematu(veta or "", vynech=_known)
             if not tema:
                 return None
