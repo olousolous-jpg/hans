@@ -3749,9 +3749,11 @@ class OpenWebUIDirectHandler:
         except Exception as _oge:
             logging.getLogger(__name__).warning(
                 'G1 opinion grounding failed: %s', _oge)
+        _dohledano = False   # HANS_ANCHOR_LOOKUP_ON_ADMIT_V1 — ať se nehledá 2×
         if _a1_abstain:
             # HANS_ANCHOR_LOOKUP_V1 — než odmítneš, zkus to dohledat.
             response = self._dohledej_kotvu(_raw_message, name) or A1_ABSTAIN_TEXT
+            _dohledano = True
             # CLAIM_RETRACT_V1 — brzda umí ODMÍTNOUT, ale neuměla se OPRAVIT.
             # Doloženo 6.8. 09:10→09:12: Hans tvrdil „hradby až 5 metrů",
             # o 80 s později přiznal „nemám spolehlivý záznam" — ale to číslo
@@ -3859,6 +3861,7 @@ class OpenWebUIDirectHandler:
                         # tenký falešný podklad (odpověď se tvářila jako
                         # `grounded`), takže Hans k přiznání nedošel.
                         _dohl = self._dohledej_kotvu(_raw_message, name)
+                        _dohledano = True
                         response = _dohl or _clean
                     elif _dropped:
                         # ⛔ POUZE HLÁSÍ, NEZASAHUJE (přepnuto 12.8. po dvou
@@ -3878,6 +3881,44 @@ class OpenWebUIDirectHandler:
             except Exception as _gge:
                 logging.getLogger(__name__).warning(
                     'GROUNDING_GUARD_V1 selhal (odpověď ponechána): %s', _gge)
+            # HANS_ANCHOR_LOOKUP_ON_ADMIT_V1 (22.8.) — TŘETÍ spouštěč
+            # dohledání: neznalost přizná SÁM MODEL uvnitř odpovědi.
+            # Doloženo zkoušením (15:12): „potřebuji více informací o Scott
+            # Eastwood" → A1 vyšla `stabilni` (sim 0.857 vs práh 0.85),
+            # grounding `factual_nofacts`, takže ani jeden z dosavadních dvou
+            # spouštěčů (A1 abstinence, vykuchání guardem) nenastal. Hans
+            # slíbil „zkusím si to ověřit" a neověřil nic, ačkoli heslo na
+            # Wikipedii je. Tohle ten slib plní.
+            # Úzké schválně: (a) v tomhle tahu se ještě nedohledávalo,
+            # (b) šlo o FAKTICKÝ dotaz BEZ podkladu (`factual_nofacts`) — u
+            # `grounded` by se přepisovala odpověď, která oporu má, u
+            # `self_state`/`opinion` se na Wikipedii nemá co hledat,
+            # (c) odpověď je CELÁ jen přiznáním (`je_ciste_odrikani`).
+            # Brány se drží FAKTICKÉ cesty: `self_state` (o sobě samém),
+            # `opinion` a `nonfactual` se na Wikipedii dohledávat nemají.
+            # `grounded` naopak ANO — doloženo 16:28, kdy týž dotaz dostal
+            # „oporu" z nesouvisejících chunků (0.651) a výsledek byl přesto
+            # bez obsahu; a když je odpověď CELÁ jen přiznáním, není co ztratit.
+            try:
+                if (not _dohledano
+                        and getattr(self, '_grounding_outcome', '')
+                        in ('factual_nofacts', 'grounded')):
+                    from scripts.hans_thread import je_ciste_odrikani
+                    if je_ciste_odrikani(response):
+                        _dohl2 = self._dohledej_kotvu(_raw_message, name)
+                        if _dohl2:
+                            logging.getLogger(__name__).info(
+                                'HANS_ANCHOR_LOOKUP_ON_ADMIT_V1: přiznal '
+                                'neznalost sám → dohledáno (%.60s)',
+                                _raw_message or '')
+                            response = _dohl2
+                        else:
+                            logging.getLogger(__name__).info(
+                                'HANS_ANCHOR_LOOKUP_ON_ADMIT_V1: přiznání bez '
+                                'dohledání (platí původní odpověď)')
+            except Exception as _aloe:
+                logging.getLogger(__name__).warning(
+                    'HANS_ANCHOR_LOOKUP_ON_ADMIT_V1 selhalo: %s', _aloe)
             try:
                 from scripts.conversation_store import dedup_address_g4d
                 response = dedup_address_g4d(response, name, self.config)

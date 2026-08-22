@@ -239,18 +239,78 @@ def recent_turns(handler, name: Optional[str], channel: Optional[str] = None,
 # (k tématu: Raději)". Jedno „nevím" tak otrávilo zbytek hovoru — abstinenční
 # kaskáda. Předmět se proto bere z poslední VĚCNÉ repliky; odříkací hlášky se
 # přeskakují, protože o tématu nenesou nic.
-_ABSTAIN_MARKS = (
-    "nemam spolehlivy zaznam", "nerad bych si domyslel",
-    "radeji priznam", "nemam spolehlivou znalost",
-    "zatim jsem si nic nezapsal", "nemam v zapiscich",
-    "nemohu poskytnout presne informace", "neni mi to znamo",
-)
+# HANS_ANCHOR_LOOKUP_ON_ADMIT_V2 (22.8.) — VZORY, ne podřetězce.
+# První verze měla seznam celých obratů („nemam spolehlivy zaznam") a živý
+# test ji vyvrátil hned první odpovědí: čeština mezi sloveso a předmět vloží
+# cokoli („nemám K TOMU žádný záznam", „nemám V PAMĚTI spolehlivé informace")
+# a doslovný podřetězec mine. Proto se povoluje pár slov mezi „nemám" a tím,
+# co chybí. Ověřeno na 1 687 skutečných replikách a na obou doložených
+# odpovědích o Scottu Eastwoodovi.
+# ⚠️ Holé „nevím" je tu ZÚŽENÉ: „nevím, zda jste slyšel o filmu X" odříkání
+# není (skutečná replika z hovoru s Koláčem) — proto negativní pohled dopředu.
+_ABSTAIN_RE = re.compile(
+    r"nem[aá]m(?:\s+\w+){0,4}\s+"
+    r"(zaznam\w*|informac\w*|zapis\w*|znalost\w*|podklad\w*|doklad\w*"
+    r"|udaj\w*|nic\b|pristup\b)"
+    r"|nemohu(?:\s+\w+){0,3}\s*(poskytnout|poskytovat|potvrdit|rict|uvest)"
+    r"|nenachazim|nenasel jsem|nedohledal jsem|netusim"
+    r"|nedokazu(?:\s+\w+){0,3}\s*(rict|potvrdit|posoudit|urcit)"
+    r"|neni mi (to )?znamo|nerad bych si domyslel|radeji priznam"
+    r"|nejsem si (tim |timto )?jist\w*|zatim jsem si nic nezapsal"
+    r"|bohuzel (nevim|nemam)|(?<!\w)nevim(?!\s*,?\s*(zda|jestli|co |jak ))")
+
+# Slib dohledání („zkusím si to ověřit") — sám o sobě netvrdí nic o světě,
+# a je to PRÁVĚ ten slib, který má `HANS_ANCHOR_LOOKUP_ON_ADMIT_V1` splnit.
+_SLIB_RE = re.compile(
+    r"overi\w*|overim|dohledam|zjistim|podivam se|pripomen\w*"
+    r"|dam vedet|ozvu se|upresn\w*|sdilet zdroj")
+
+# Zdvořilost a nabídka další služby — netvrdí fakt. JEDNO MÍSTO pro celý
+# repozitář (`kolac_exam` si sem chodí pro totéž, ať nevzniknou dvě pravdy).
+_ZDVORILOST = re.compile(
+    r"pokud (byste|si p[řr]ejete|chcete)|p[řr]ejete[- ]li|r[áa]d (v[áa]m|to)|"
+    r"k dispozici|m[ůu][žz]u (v[áa]m )?(nab[íi]dnout|dohledat|zjistit)|"
+    r"budu[- ]li|dovol[íi]te[- ]li|s dovolen[íi]m", re.IGNORECASE)
+
+# Věta = konec interpunkce, nový řádek NEBO odrážka. Bez odrážek se dlouhý
+# výpis schopností („Co dokážu, pane: • …") tváří jako JEDNA věta a projde
+# jako čisté odříkání — změřeno.
+_VETA_RE = re.compile(r"(?<=[.!?])\s+|\n+|\s+[•\-–]\s+")
 
 
-def _je_odrikaci(text: str) -> bool:
-    """Je to hláška typu „tohle nevím"? Pak z ní téma netahej."""
-    f = _fold(text or "")
-    return any(m in f for m in _ABSTAIN_MARKS)
+def je_odrikaci(text: str) -> bool:
+    """Obsahuje odpověď přiznání neznalosti? (Věcná odpověď s poctivým
+    dovětkem sem taky spadá — na „je to CELÉ jen odříkání" je
+    `je_ciste_odrikani`.)"""
+    return bool(_ABSTAIN_RE.search(_fold(text or "")))
+
+
+def je_ciste_odrikani(text: str) -> bool:
+    """Je CELÁ odpověď jen přiznáním neznalosti (+ slib a zdvořilost)?
+
+    Spouštěč dohledání (`HANS_ANCHOR_LOOKUP_ON_ADMIT_V1`) musí být úzký:
+    kdyby stačilo „obsahuje odříkací obrat", přepsala by se věcná odpověď,
+    která si jen poctivě ohraničí, kam sahá („o dalších povídkách nemám
+    spolehlivé záznamy") — táž past, na kterou narazilo hodnocení zkoušek.
+    Změřeno na 1 678 skutečných replikách: 60 zásahů, samé abstinence.
+    """
+    vety = [v.strip() for v in _VETA_RE.split((text or "").strip()) if v.strip()]
+    if not vety or len(vety) > 8:
+        return False       # dlouhý výklad není odříkání
+    priznani = vecne = 0
+    for v in vety:
+        f = _fold(v)
+        if _ABSTAIN_RE.search(f):
+            priznani += 1
+        elif _SLIB_RE.search(f) or _ZDVORILOST.search(v):
+            continue
+        else:
+            vecne += 1
+    return priznani > 0 and vecne == 0
+
+
+# zpětná kompatibilita (volá se z regresní sady i zevnitř modulu)
+_je_odrikaci = je_odrikaci
 
 
 def last_assistant_text(turns: list) -> str:
