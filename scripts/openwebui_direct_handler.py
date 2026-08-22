@@ -1175,6 +1175,38 @@ class OpenWebUIDirectHandler:
             all_chunks = []
             _skipped_chatlogs = []   # HANS_CHATLOG_NOT_FACT_V1
             _skipped_own = []        # HANS_OWN_WORK_NOT_FACT_V1
+            _skipped_mimo = []       # HANS_GROUNDING_ANCHOR_V1
+            # HANS_GROUNDING_ANCHOR_V1 (22.8.) — OPORA MUSÍ MLUVIT O TOM,
+            # NA CO SE PTÁM. Změřeno na 919 skutečných dotazech z deníku
+            # proti živému RAGu s produkčními parametry: u dotazů, které
+            # nesou vlastní jméno, obsahoval podklad to jméno **0×** —
+            # ani v jednom ze tří chunků, které jdou do promptu:
+            #   osobnost: 144 groundingů, 22 s vlastním jménem, 0 o něm
+            #   film:      65 groundingů, 12 s vlastním jménem, 0 o něm
+            #   „znáš Xqzybwrt Flurbex?" (smyšlené jméno) ← 0.622 „Kdo je Hans"
+            #   „kdo byl Richard Sorge?"                  ← 0.681 reflexe Design
+            #   „Co víš o Icon of the Seas?"              ← 0.694 Pád do Tichého oceánu
+            # Práh to neuhlídá — všechno je POD strict 0.70; u bge-m3 se
+            # relevantní pásmo se šumem překrývá (varování v hans_knowledge),
+            # takže rozhodnout musí TÉMA, ne vzdálenost. Na takové opoře
+            # pak model postaví celou smyšlenou biografii (Scott Eastwood).
+            # Kotva se počítá z PŘEPSANÉHO dotazu (F1 doplní jméno z vlákna).
+            # Prázdno po filtru = dnešní větev „RAG nic nenašel" → vlastní
+            # zápisky → entita → přiznání. Ověřeno, že tudy přijde ta SPRÁVNÁ
+            # opora: „co víš o filmu Avatar: The Way of Water?" → zápisek
+            # o Avataru; „Co víš o Icon of the Seas?" → 3× zápisek o té lodi;
+            # vztahové karty jdou mimo RAG (`_build_card_fact`), takže
+            # dotaz na člena domácnosti („a co víš o Janě?") zůstává
+            # nedotčený.
+            try:
+                from scripts.hans_convindex import (
+                    kotvy_ve_vete as _kv_fn, nese_kotvu as _nk_fn)
+                _kotvy_dotazu = [_w for _i, _w in
+                                 _kv_fn(str(_q_for_retrieval or _text))]
+            except Exception as _kve:
+                logging.getLogger(__name__).debug(
+                    'HANS_GROUNDING_ANCHOR_V1: kotvy nedostupné: %s', _kve)
+                _kotvy_dotazu, _nk_fn = [], None
             try:
                 with _cf.ThreadPoolExecutor(
                         max_workers=len(collections)) as _ex:
@@ -1221,6 +1253,13 @@ class OpenWebUIDirectHandler:
                                     if je_vlastni_tvorba(_txt):
                                         _skipped_own.append(1)
                                         continue
+                                    # HANS_GROUNDING_ANCHOR_V1 — chunk, který
+                                    # o předmětu dotazu nemluví, není opora.
+                                    if (_kotvy_dotazu and _nk_fn is not None
+                                            and not _nk_fn(_txt,
+                                                           _kotvy_dotazu)):
+                                        _skipped_mimo.append(1)
+                                        continue
                                     all_chunks.append(_ch)
                         except Exception as _tiche:
                             log_once(  # HANS_NO_SILENT_CTX_V1
@@ -1244,6 +1283,11 @@ class OpenWebUIDirectHandler:
                 logging.getLogger(__name__).info(
                     'HANS_OWN_WORK_NOT_FACT_V1: %d kusů vlastní tvorby '
                     'vyřazeno z faktického groundingu', len(_skipped_own))
+            if _skipped_mimo:
+                logging.getLogger(__name__).info(
+                    'HANS_GROUNDING_ANCHOR_V1: %d kusů mimo téma (%s) '
+                    'vyřazeno z faktického groundingu', len(_skipped_mimo),
+                    ', '.join(_kotvy_dotazu[:3]))
             # 4) nic relevantního pod prahem → G3C: vrať aspoň anti-konfab
             #    (bez faktů). Faktický dotaz bez záznamů → Hans NESMÍ
             #    konfabulovat. Web ověření přijde post-hoc (G.5).

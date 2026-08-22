@@ -295,18 +295,46 @@ def _stem(tok: str) -> str:
     return tok
 
 
+# HANS_CONVINDEX_ANCHOR_STEM_V1 — nejkratší kmen, na který se smí zkrátit
+# VLASTNÍ JMÉNO. Čtyři znaky („seba", „apol", „jese") trefí běžné slovo.
+_KOTVA_MIN_KMEN = 5
+
+
 def _fts_query(text: str, stem: bool = False) -> str:
     """Uživatelská věta → bezpečný FTS5 výraz s prefixy (kvůli skloňování).
 
     `stem=True` navíc ustřihne koncovku — volnější síť pro druhý pokus.
     """
     toks = []
+    # HANS_CONVINDEX_ANCHOR_STEM_V1 (22.8.) — KMEN KOTVY SE NEZKRACUJE
+    # POD BEZPEČNOU DÉLKU. `_stem` krátí každý token na 4 znaky, což u
+    # vlastního jména vyrobí prefix, který trefí obyčejné české slovo —
+    # a druhý pokus se spouští PRÁVĚ TEHDY, když přesný tvar nic nenašel,
+    # tedy když Hans o věci záznam NEMÁ. Změřeno na skutečných dotazech:
+    #   „a kdo to byl ten Šebánek?"  "sebanek"* nic → "seba"* → Okouník,
+    #                                                Pátý element, Prázdný dům
+    #   „Kdo napsal Válku světů?"    přesně nic    → "valk"*"svet"* →
+    #                                                Captain America: Civil War
+    #   „kdo byl Ješek?"             "jesek"* nic  → "jese"* → Stará Červená Voda
+    #   „co víš o Apollo 13?"        "apollo"* nic → "apol"* → Pride and
+    #                                                Prejudice (apologize!)
+    # Je to tentýž „Pátý element" jako 21.8. u hradu Kost, jen druhou cestou:
+    # HANS_CONVINDEX_ANCHOR_V1 ochránil kotvu KRÁTKOU V ORIGINÁLE (celé
+    # slovo), přes stem se ale pod tu hranici propadne i jméno dlouhé.
+    # Změřeno na 172 dotazech s vlastním jménem: 168 beze změny, 2 falešné
+    # opory pryč, 1 ZLEPŠENÍ („Šebánek" → Okouník → Divadlo Járy Cimrmana),
+    # žádná ztráta. `_stem` zůstává beze změny — jinde jsou 4 znaky správně
+    # („hradech" → „hrad" musí trefit „hrady").
+    _kotvy = {_fold(w) for _, w in kotvy_ve_vete(text)} if stem else set()
     for w in _WORD.findall(text or ""):
         f = _fold(w)
         if len(f) < 3 or f in _STOP:
             continue
         if stem:
-            f = _stem(f)
+            _s = _stem(f)
+            if f in _kotvy and len(_s) < _KOTVA_MIN_KMEN:
+                _s = f[:_KOTVA_MIN_KMEN]
+            f = _s
         if f and f not in toks:
             toks.append(f)
     # Prefix zvládne české koncovky bez slovníku: kentaur* → kentaura.
@@ -341,6 +369,34 @@ def kotvy_ve_vete(veta: str) -> list:
             continue
         out.append((i, w))
     return out
+
+
+def nese_kotvu(text: str, kotvy) -> bool:
+    """Mluví ten text o tom, na co se dotaz ptá?
+
+    HANS_GROUNDING_ANCHOR_V1 (22.8.) — jedna pravda pro OBĚ cesty: zápisky
+    (FTS, tady) i RAG chunky (`openwebui_direct_handler._build_grounding`).
+    `kotvy` = slova z `kotvy_ve_vete` (syrová, skloňování řeší tahle funkce).
+
+    Krátká kotva se hledá jako CELÉ SLOVO — prefix „kost*" trefí kostel,
+    kostým i kosti (poučení z HANS_CONVINDEX_ANCHOR_V1). Delší se hledá na
+    kmeni, aby české skloňování nevadilo („Trosky" ~ „Troskách").
+    Prázdný seznam kotev = pravidlo se neuplatní (vrací True) — dotaz bez
+    vlastního jména se takhle filtrovat NEMÁ.
+    """
+    if not kotvy:
+        return True
+    t = _fold(text or "")
+    for _w in kotvy:
+        f = _fold(_w)
+        if len(f) < 3:
+            continue
+        if len(f) <= 5:
+            if re.search(r"\b%s\b" % re.escape(f), t):
+                return True
+        elif re.search(r"\b%s" % re.escape(f[:-2]), t):
+            return True
+    return False
 
 
 def relax_attempts(query: str):
