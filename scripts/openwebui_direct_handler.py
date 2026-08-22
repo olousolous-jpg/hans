@@ -141,6 +141,42 @@ def slozit_prompt(hodnoty: dict, varianta: str) -> str:
                    if varianta in kde)
 
 
+# ── HANS_OWN_WORK_NOT_FACT_V1 (22.8.) — VLASTNÍ TVORBA NENÍ DOKLAD O SVĚTĚ ──
+# Kolekce `hans_identita` je ve faktické cestě ZÁMĚRNĚ: vztahové karty jsou
+# zdroj pravdy o lidech (`G5A_IDENTITY_GROUNDING_V1`). Míchá ale karty
+# s Hansovou autobiografií a tvorbou — a ta se v retrievalu prosazuje.
+#
+# ZMĚŘENO 22.8. na 444 skutečných faktických dotazech z deníku (produkční
+# parametry, 4 kolekce, k=3, max_distance 0.75, strict 0.70):
+#   • grounding vznikne u 87 dotazů, u 84 z nich je nejlepší shoda z identity
+#     (67 dokumentů) — ne z deníku (1 961), případů (6 108) ani četby (5 658),
+#   • nejčastější typ opory: dokončené dílo 22×, vlastní postřeh 18×,
+#     kapitola životního příběhu 7×, úvaha o tvorbě 2×.
+# Prošel jsem všech 25 dotazů, které tímhle filtrem o oporu přijdou, a ani
+# jeden o ni přijít nemá:
+#   „jaké je venku počasí?"         ← esej o japonské zahradě
+#   „vis kdo to byl Arnold Rimmer?" ← postřeh Mauna Loa × Subdukce × Titanic
+#   „jake je vlastne dnes datum?"   ← postřeh Rudé gardy × Nenapravitelní
+# Vztahové karty („# <jméno> / ## Rodina / ## Údaje") typ nenesou a procházejí
+# dál — kolekce tedy zůstává, mizí jen eseje a postřehy vydávané za doklad.
+#
+# Dlouhý vyprávěcí text leží v embeddingu blízko čemukoli; u bge-m3 se
+# relevantní pásmo (0.64-0.69) se šumem PŘEKRÝVÁ (varování v hans_knowledge).
+# Práh to tedy neuhlídá a rozhodnout musí DRUH dokumentu.
+_NEFAKT_TYP_RE = __import__("re").compile(
+    r"typ:\s*(narrative_chapter|d[íi]lo-dokon[čc]eno|creation_reflection|"
+    r"n[áa]pad)\b", __import__("re").IGNORECASE)
+
+
+def je_vlastni_tvorba(text: str) -> bool:
+    """Je tenhle RAG chunk Hansovo dílo/úvaha, ne doklad o světě?
+
+    Rozhoduje hlavička dokumentu (`typ:` v prvních ~300 znacích), ne obsah —
+    typ zapisuje `hans_synthesis` při uploadu, takže je to tvrdý údaj.
+    """
+    return bool(_NEFAKT_TYP_RE.search(str(text or "")[:300]))
+
+
 class OpenWebUIDirectHandler:
 
     def __init__(self, config: dict):
@@ -1138,6 +1174,7 @@ class OpenWebUIDirectHandler:
             import concurrent.futures as _cf
             all_chunks = []
             _skipped_chatlogs = []   # HANS_CHATLOG_NOT_FACT_V1
+            _skipped_own = []        # HANS_OWN_WORK_NOT_FACT_V1
             try:
                 with _cf.ThreadPoolExecutor(
                         max_workers=len(collections)) as _ex:
@@ -1178,6 +1215,12 @@ class OpenWebUIDirectHandler:
                                     if self._CHATLOG_RE.search(_txt[:120]):
                                         _skipped_chatlogs.append(1)
                                         continue
+                                    # HANS_OWN_WORK_NOT_FACT_V1 (22.8.) —
+                                    # vlastní tvorba není doklad o světě
+                                    # (rozbor u predikátu na začátku modulu).
+                                    if je_vlastni_tvorba(_txt):
+                                        _skipped_own.append(1)
+                                        continue
                                     all_chunks.append(_ch)
                         except Exception as _tiche:
                             log_once(  # HANS_NO_SILENT_CTX_V1
@@ -1197,6 +1240,10 @@ class OpenWebUIDirectHandler:
                 logging.getLogger(__name__).info(
                     'HANS_CHATLOG_NOT_FACT_V1: %d kusů z chatu vyřazeno '
                     'z faktického groundingu', len(_skipped_chatlogs))
+            if _skipped_own:
+                logging.getLogger(__name__).info(
+                    'HANS_OWN_WORK_NOT_FACT_V1: %d kusů vlastní tvorby '
+                    'vyřazeno z faktického groundingu', len(_skipped_own))
             # 4) nic relevantního pod prahem → G3C: vrať aspoň anti-konfab
             #    (bez faktů). Faktický dotaz bez záznamů → Hans NESMÍ
             #    konfabulovat. Web ověření přijde post-hoc (G.5).
