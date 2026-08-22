@@ -313,6 +313,138 @@ def _fts_query(text: str, stem: bool = False) -> str:
     return " ".join('"%s"*' % t for t in toks[:8])
 
 
+def relax_attempts(query: str):
+    """HANS_CONVINDEX_RELAX_FN_V1 (22.8.) — postupné ubírání slov z dotazu.
+
+    Vytaženo ze `search()`, aby šlo TESTOVAT bez FTS indexu (v regresní sadě)
+    a aby žebřík měl jedno místo. Vrací (kroky, uzky):
+      kroky — postupně volnější AND výrazy (bez prvních dvou, ty staví search),
+      uzky  — nejužší stupeň, který se smí hledat jen v TITULU kurátorovaných
+              zdrojů.
+    Chování se extrakcí nemění.
+    """
+    kroky, narrow = [], []
+    raw = [t for t in _WORD.findall(query or "")
+           if len(_fold(t)) >= 3 and _fold(t) not in _STOP]
+    raw.sort(key=len, reverse=True)
+    toks = [_stem(_fold(t)) for t in raw]
+    # HANS_CONVINDEX_ANCHOR_V1 (22.8.) — KOTVA DOTAZU SE NEUBÍRÁ.
+    # Doloženo 21.8. („hrad Kost má zámecký park"): žebřík ubírá
+    # NEJKRATŠÍ token, jenže u českých vlastních jmen je nejkratší
+    # slovo právě to jediné specifické. „Potřebuji více informací
+    # o hradě Kost" ztratilo `kost` hned v prvním stupni, zbyl
+    # balast `potřebuji`+`informací` → vrátilo to zápisky o Pátém
+    # elementu, ty se poslaly do promptu pod hlavičkou „tohle máš
+    # ve svých zápiscích" → Hans o hradu napsal celý smyšlený
+    # článek. („co víš o hradu Kost?" totéž s Cardiffským hradem.)
+    # Kotva = slovo s velkým písmenem UVNITŘ věty (první slovo se
+    # nepočítá, to je velké vždycky). Ta zůstává ve všech stupních.
+    # Druhá půlka opravy: krátká kotva se hledá jako CELÉ SLOVO.
+    # Prefix `kost*` trefí kostýmů/kostel/kosti — Pátý element se
+    # do podkladu dostal i touhle druhou cestou, takže samotné
+    # zachování tokenu by nestačilo (změřeno).
+    _words = _WORD.findall(query or "")
+    _anchor_f = set()
+    for _i, _w in enumerate(_words):
+        if _i > 0 and _w[:1].isupper() and not _w.isupper():
+            _anchor_f.add(_fold(_w))
+    _orig = {}          # kmen -> (složené slovo, délka originálu)
+    for _t in raw:
+        _orig.setdefault(_stem(_fold(_t)), (_fold(_t), len(_t)))
+    _anchor = {_s for _s, (_f, _l) in _orig.items()
+               if _f in _anchor_f}
+
+    def _term(_s):
+        _f, _l = _orig.get(_s, (_s, len(_s)))
+        if _s in _anchor and _l <= 5:
+            return '"%s"' % _f
+        return '"%s"*' % _s
+
+    while len(toks) > 1:
+        _drop = [_i for _i, _t in enumerate(toks) if _t not in _anchor]
+        if not _drop:
+            break       # zbyly samé kotvy — dál se ubírat nesmí
+        toks.pop(_drop[-1])
+        # Na JEDINÉ slovo se smí zúžit jen výraz, který je sám o sobě
+        # dost specifický (≥7 znaků v originále). Bez téhle podmínky
+        # spadlo „co víš o českém ráji" na „1. česká fotbalová liga" —
+        # zbylo obecné „cesk*" a trefilo cokoli českého (6.8.).
+        if len(toks) == 1:
+            # Délka se bere ze SKUTEČNĚ zbylého tokenu (dřív `raw[0]`,
+            # tj. nejdelší slovo — s kotvou už to nemusí být totéž).
+            # Kotva smí zůstat sama i když je krátká: je to předmět
+            # dotazu, ne obecné slovo (a hledá se na celé slovo).
+            if (_orig.get(toks[0], ("", 0))[1] < 7
+                    and toks[0] not in _anchor):
+                break
+            # Nejužší stupeň má dvě pojistky, obě doložené 6.8.:
+            #  (a) hledá POUZE V TITULU — ten říká, o čem zápisek JE,
+            #      kdežto text zmiňuje kdeco okrajově;
+            #  (b) jen ve zdrojích, které Hans SYSTEMATICKY studoval
+            #      (kurátorované tituly „Studium: X — Y"), ne v surové
+            #      četbě. Bez (b) trefila „kvantová teleportace
+            #      mravenců" článek „Seznam majitelů televizních práv"
+            #      (kmen „tele*" sedl na „televizních").
+            narrow.append('topic:%s' % _term(toks[0]))
+            break
+        kroky.append(" ".join(_term(t) for t in toks))
+    return kroky, narrow
+
+
+# HANS_ANCHOR_LOOKUP_V1 (22.8.) — druhové slovo ke kotvě. Samotné „Kost" vede
+# na Wikipedii na KOST JAKO TKÁŇ (změřeno); „hrad Kost" na správný hrad. Klíč =
+# tvary, jak je lidé píšou v dotazu, hodnota = 1. pád do vyhledávání.
+_DRUH = {}
+for _n, _tvary in {
+        "hrad": "hrad hradu hradě hrade hradem hrady hradech",
+        "zámek": "zámek zámku zámkem zámky",
+        "kostel": "kostel kostela kostele kostelem",
+        "klášter": "klášter kláštera klášteře klášterem",
+        "město": "město města městě městem",
+        "obec": "obec obce obci",
+        "řeka": "řeka řeky řece řeku řekou",
+        "hora": "hora hory hoře horu horou",
+        "kniha": "kniha knihy knize knihu knihou",
+        "film": "film filmu filmem filmy",
+        "seriál": "seriál seriálu seriálem",
+        "kapela": "kapela kapely kapele kapelu",
+        "jezero": "jezero jezera jezeře",
+        "ostrov": "ostrov ostrova ostrově",
+        "muzeum": "muzeum muzea muzeu",
+}.items():
+    for _t in _tvary.split():
+        _DRUH[_t] = _n
+
+
+def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
+    """HANS_ANCHOR_LOOKUP_V1 — předmět dotazu jako téma k DOHLEDÁNÍ.
+
+    „co vix muzes rici o hradu Kost?" → „hrad Kost".
+    Kotva se pozná stejně jako v `relax_attempts` (velké písmeno UVNITŘ věty),
+    aby měl systém na „o čem ta otázka je" jedno místo, ne dvě rozcházející se.
+    Vrací None, když kotva není nebo je to jméno člověka (`vynech`) — o lidech
+    z domácnosti se na Wikipedii nehledá.
+    """
+    words = _WORD.findall(veta or "")
+    if len(words) < 2:
+        return None
+    vyn = {_fold(v) for v in (vynech or ())}
+    i = 1
+    while i < len(words):
+        w = words[i]
+        if w[:1].isupper() and not w.isupper():
+            jmeno = [w]
+            j = i + 1
+            while j < len(words) and words[j][:1].isupper() and not words[j].isupper():
+                jmeno.append(words[j]); j += 1
+            if any(_fold(x) in vyn for x in jmeno):
+                i = j; continue
+            druh = _DRUH.get(_fold(words[i - 1]), "")
+            return ((druh + " ") if druh else "") + " ".join(jmeno)
+        i += 1
+    return None
+
+
 def search(query: str, limit: int = 8, source: Optional[str] = None,
            partner: Optional[str] = None, index_path: str = INDEX_PATH,
            diary_path: str = "data/hans_diary.db",
@@ -376,30 +508,9 @@ def search(query: str, limit: int = 8, source: Optional[str] = None,
         # delší specifičtější. U rozhovorů se NErelaxuje: tam by falešný
         # nález znamenal „mluvili jsme o tom", což je horší než mlčet.
         if kind == "knowledge":
-            raw = [t for t in _WORD.findall(query or "")
-                   if len(_fold(t)) >= 3 and _fold(t) not in _STOP]
-            raw.sort(key=len, reverse=True)
-            toks = [_stem(_fold(t)) for t in raw]
-            while len(toks) > 1:
-                toks = toks[:-1]
-                # Na JEDINÉ slovo se smí zúžit jen výraz, který je sám o sobě
-                # dost specifický (≥7 znaků v originále). Bez téhle podmínky
-                # spadlo „co víš o českém ráji" na „1. česká fotbalová liga" —
-                # zbylo obecné „cesk*" a trefilo cokoli českého (6.8.).
-                if len(toks) == 1:
-                    if len(raw[0]) < 7:
-                        break
-                    # Nejužší stupeň má dvě pojistky, obě doložené 6.8.:
-                    #  (a) hledá POUZE V TITULU — ten říká, o čem zápisek JE,
-                    #      kdežto text zmiňuje kdeco okrajově;
-                    #  (b) jen ve zdrojích, které Hans SYSTEMATICKY studoval
-                    #      (kurátorované tituly „Studium: X — Y"), ne v surové
-                    #      četbě. Bez (b) trefila „kvantová teleportace
-                    #      mravenců" článek „Seznam majitelů televizních práv"
-                    #      (kmen „tele*" sedl na „televizních").
-                    narrow.append('topic:"%s"*' % toks[0])
-                    break
-                attempts.append(" ".join('"%s"*' % t for t in toks))
+            _kroky, _uzky = relax_attempts(query)
+            attempts.extend(_kroky)
+            narrow.extend(_uzky)
         rows = []
         for e in attempts:
             rows = conn.execute(sql, [e] + args_tail + [limit]).fetchall()

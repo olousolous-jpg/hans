@@ -202,3 +202,64 @@ def veta_se_zmenila(puvodni: str, opravena: str) -> bool:
     """
     from scripts.chat_commands import _norm_veta
     return _norm_veta(puvodni) != _norm_veta(opravena)
+
+
+def kotva_v_kazdem_stupni(dotaz: str, kotva: str) -> bool:
+    """HANS_CONVINDEX_ANCHOR_V1 — drží se předmět dotazu ve VŠECH stupních?
+
+    Doloženo 21.8. („hrad Kost"): žebřík ubíral nejkratší slovo, takže
+    jediné specifické slovo vypadlo první a zůstal balast — a Hans dostal
+    cizí zápisky pod hlavičkou „tohle máš ve svých zápiscích".
+    """
+    from scripts.hans_convindex import relax_attempts
+    kroky, _ = relax_attempts(dotaz)
+    return bool(kroky) and all(kotva in k for k in kroky)
+
+
+def zebrik_relaxace(dotaz: str) -> str:
+    """Stupně relaxace jako jeden řetězec (ať se dá tvrdit `obsahuje`)."""
+    from scripts.hans_convindex import relax_attempts
+    kroky, uzky = relax_attempts(dotaz)
+    return " | ".join(list(kroky) + list(uzky))
+
+
+def hola_jmena_atributu(soubor: str) -> str:
+    """HANS_CHATLOG_NOT_FACT_V2 — atribut třídy volaný jako holé jméno.
+
+    Doloženo 22.8.: `_CHATLOG_RE.search(...)` uvnitř metody = NameError,
+    takže filtr chatlogů z 19.8. NIKDY neběžel — a protože ho okolní
+    `except` spolkl, přišla o výsledky celá RAG kolekce. Vrací prázdný
+    řetězec, když je soubor čistý; jinak „jméno:řádek".
+    """
+    import re
+    src = open(soubor, encoding="utf-8").read()
+    radky = src.splitlines()
+    nalezy = []
+    for a in set(re.findall(r"^    (_[A-Z][A-Z0-9_]*)\s*=", src, re.M)):
+        for m in re.finditer(r"(?<![.\w])%s\b" % a, src):
+            i = src[:m.start()].count("\n")
+            radek = radky[i]
+            if re.match(r"^    %s\s*=" % a, radek) or radek.lstrip().startswith("#"):
+                continue
+            nalezy.append("%s:%d" % (a, i + 1))
+    return ", ".join(sorted(nalezy))
+
+
+def dedup_osloveni(text: str, jmeno: str) -> str:
+    """G4D_ADDRESS_KNOWN_VOCATIVE_V1 — dedup oslovení s reálným configem.
+
+    Doloženo 22.8.: dřív se mazalo jakékoli slovo končící na -o/-e před
+    čárkou („nesedělo", „toho", „ticho"), protože regex měl IGNORECASE.
+    """
+    import json
+    from scripts.conversation_store import dedup_address_g4d
+    with open("config.json", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    return dedup_address_g4d(text, jmeno, cfg)
+
+
+def guard_zahodil(odpoved: str, podklad: str) -> int:
+    """GROUNDING_GUARD_ACTIVE_V2 — kolik vět odpovědi nemá v podkladu oporu."""
+    from scripts.grounding_guard import check
+    _, zahozene = check(odpoved, podklad)
+    return len(zahozene)

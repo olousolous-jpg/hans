@@ -13,21 +13,67 @@ from datetime import datetime
 
 # ── G4D_DEDUP_ADDRESS_V1 — dedup opakovaného oslovení ──
 import re as _re_g4d
+import unicodedata as _ud_g4d
 
-# oslovení mezi čárkami: "s dovolením" nebo vokativ (Slovo končící -o/-e)
+# Kandidát na oslovení: "s dovolením" nebo slovo končící na -o/-e před čárkou.
+# ⚠️ Tenhle výraz sám o sobě NESTAČÍ — je schválně široký a o tom, co je
+# doopravdy oslovení, rozhoduje až `_vokativy_g4d` (viz G4D_ADDRESS_KNOWN_VOCATIVE_V1).
 _ADDRESS_RE_G4D = _re_g4d.compile(
     r",?\s*(?:s dovolením|[A-ZŠČŘŽÝÁÍÉÚŮ][a-zěščřžýáíéúůďťň]+[oe])\s*,",
     _re_g4d.IGNORECASE,
 )
 
 
-def dedup_address_g4d(text: str) -> str:
+def _fold_g4d(s: str) -> str:
+    s = _ud_g4d.normalize("NFKD", (s or "").lower())
+    return "".join(c for c in s if not _ud_g4d.combining(c)).strip()
+
+
+def _vokativy_g4d(name: str = None, config: dict = None) -> set:
+    """G4D_ADDRESS_KNOWN_VOCATIVE_V1 (22.8.) — koho Hans SKUTEČNĚ oslovuje.
+
+    Bez jména a configu zbude jen „pane"/„paní"/„s dovolením" — vokativ
+    jmen se v tom případě NEDEDUPUJE (radši nechat oslovení dvakrát než
+    ukousnout slovo z věty).
+    """
+    povol = {"pane", "pani", "s dovolenim"}
+    jmena = list((config or {}).get("known_persons", {}) or {})
+    if name:
+        jmena.append(str(name))
+    try:
+        from scripts.cz_names import address as _addr
+    except Exception:
+        return povol
+    for j in jmena:
+        try:
+            povol.add(_fold_g4d(_addr(j, config)))
+        except Exception:
+            pass
+    return povol
+
+
+def dedup_address_g4d(text: str, name: str = None, config: dict = None) -> str:
     """Nech první oslovení/'s dovolením', další opakování zahoď.
     'Stando, s dovolením, Stando, mé povinnosti...' → 'Stando, mé povinnosti...'
-    Mechanické, nedestruktivní k obsahu — maže jen opakované vokativy."""
+    Mechanické, nedestruktivní k obsahu — maže jen opakované vokativy.
+
+    G4D_ADDRESS_KNOWN_VOCATIVE_V1 (22.8.) — OSLOVENÍ SE NEHÁDÁ Z TVARU SLOVA.
+    Regex má IGNORECASE, takže třída `[A-ZŠČŘŽ…]`, která měla znamenat „velké
+    písmeno = jméno", matchovala i malá písmena → za oslovení se považovalo
+    JAKÉKOLI slovo končící na -o/-e před čárkou a druhý výskyt se smazal.
+    Doloženo: „Udělám to v noci a kdyby to nesedělo, ráno se ozvu" přišlo
+    o „nesedělo"; v uložených hovorech je „Podle, co jsem teď našel" (sežráno
+    „toho") a „ticho,". Změřeno na 386 skutečných replikách: dnešní pravidlo
+    zasáhlo 6 zpráv (2 z toho škoda), pravidlo „vokativ známé osoby" 4 — a nic
+    jiného než opravdový vokativ domácího. (Koriguje závěr z 20.8. „post-processing nic
+    nemaže": tehdejší testovací věty měly jen JEDEN match, a při jednom se
+    nemaže nic.)
+    """
     if not text:
         return text
-    matches = list(_ADDRESS_RE_G4D.finditer(text))
+    _povol = _vokativy_g4d(name, config)
+    matches = [m for m in _ADDRESS_RE_G4D.finditer(text)
+               if _fold_g4d(m.group(0).strip(" ,")) in _povol]
     if len(matches) <= 1:
         return text  # 0 nebo 1 oslovení = OK
     out = text
@@ -73,7 +119,7 @@ class ConversationStore:
         if channel is not None:
             msgs = [m for m in msgs if m.get("ch") in (None, channel)]
         return [{"role": m["role"],
-                 "content": (dedup_address_g4d(m["content"])
+                 "content": (dedup_address_g4d(m["content"], name, self.config)
                              if m["role"] == "assistant" else m["content"])}
                 for m in msgs]
 
@@ -82,7 +128,7 @@ class ConversationStore:
         NEZAHRNUJE). Pro paint destilaci — kde cross-channel leak = bug."""
         data = self._load(name)
         return [{"role": m["role"],
-                 "content": (dedup_address_g4d(m["content"])
+                 "content": (dedup_address_g4d(m["content"], name, self.config)
                              if m["role"] == "assistant" else m["content"])}
                 for m in data.get("messages", []) if m.get("ch") == channel]
 
@@ -95,7 +141,7 @@ class ConversationStore:
         if channel:
             _u["ch"] = channel
         msgs.append(_u)
-        assistant_msg = dedup_address_g4d(assistant_msg)  # G4D_DEDUP_ADDRESS_V1
+        assistant_msg = dedup_address_g4d(assistant_msg, name, self.config)  # G4D_DEDUP_ADDRESS_V1
         _a = {"role": "assistant", "content": assistant_msg, "ts": now}
         if channel:
             _a["ch"] = channel

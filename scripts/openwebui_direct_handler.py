@@ -706,6 +706,37 @@ class OpenWebUIDirectHandler:
             popis[:40], len(herci))
         return '\n\n' + ANTIKONFAB + '\n\n' + "\n".join(blok)
 
+    def _dohledej_kotvu(self, veta: str, name: str = None):
+        """HANS_ANCHOR_LOOKUP_V1 (22.8.) — dohledej PŘEDMĚT dotazu a vrať
+        provizorní odpověď, nebo None (pak platí dosavadní chování).
+
+        Téma bere z KOTVY (`hans_convindex.kotva_tematu`), ne z regexu
+        „znáš X?" — ten míjel reálné formulace: ze čtyř skutečných vět
+        o hradu Kost rozpoznal téma jen u jedné (změřeno 22.8.).
+        Zápis jde JEN do čekárny `unverified_findings`; noční ověření
+        a ranní oprava už běží ([[instant-lookup-verify-loop]]).
+        """
+        try:
+            from scripts.hans_convindex import kotva_tematu
+            from scripts.hans_findings import lookup_now
+            _known = tuple((self.config.get("known_persons", {}) or {}).keys()) + \
+                tuple(str(v.get("nom", "")) for v in
+                      (self.config.get("known_persons", {}) or {}).values())
+            tema = kotva_tematu(veta or "", vynech=_known)
+            if not tema:
+                return None
+            _dbp = (self.config.get("hans_idle", {}) or {}).get(
+                "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"
+            out = lookup_now(self.config, _dbp, tema, veta or "", asker=name)
+            logging.getLogger(__name__).info(
+                "HANS_ANCHOR_LOOKUP_V1: téma %r → %s", tema,
+                "dohledáno" if out else "nic (platí dosavadní odpověď)")
+            return out
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "HANS_ANCHOR_LOOKUP_V1 selhalo: %s", e)
+            return None
+
     def _vysledek_groundingu(self, vysledek: str, cesta: str) -> None:
         """HANS_GROUNDING_OUTCOME_LOG_V1 (20.8.) — JEDNO místo, kde se zapíše
         výsledek groundingu, a rovnou se pozná, KTERÁ cesta ho vyrobila.
@@ -723,6 +754,9 @@ class OpenWebUIDirectHandler:
         musí být vidět, kudy dotazy reálně tečou.
         """
         self._grounding_outcome = vysledek
+        # GROUNDING_GUARD_ACTIVE_V2 (22.8.) — cesta se PAMATUJE, ne jen loguje:
+        # guard smí zasáhnout jen u tenkého fallbacku (zápisky), ne u plného RAG.
+        self._grounding_cesta = cesta
         try:
             logging.getLogger(__name__).info(
                 'GROUNDING: %s ← %s', vysledek, cesta)
@@ -1124,8 +1158,16 @@ class OpenWebUIDirectHandler:
                                     # vzniku divadla se uložil 7× a vracel se.
                                     # ⚠️ Pro `conversation_recall` zůstávají —
                                     # tam JSOU na místě („o čem jsme mluvili").
+                                    # HANS_CHATLOG_NOT_FACT_V2 (22.8.) — `self.`
+                                    # ⚠️ `_CHATLOG_RE` je ATRIBUT TŘÍDY; holé
+                                    # jméno uvnitř metody je NameError, takže
+                                    # filtr z 19.8. NIKDY neběžel. A protože ho
+                                    # zdejší `except` spolkne, přišla o chunky
+                                    # celá kolekce → RAG „nic nenašel" → padalo
+                                    # se na FTS zápisky. Tudy přišel 21.8. do
+                                    # podkladu o hradu Kost Pátý element.
                                     _txt = str(_ch.get('text') or '')
-                                    if _CHATLOG_RE.search(_txt[:120]):
+                                    if self._CHATLOG_RE.search(_txt[:120]):
                                         _skipped_chatlogs.append(1)
                                         continue
                                     all_chunks.append(_ch)
@@ -3632,7 +3674,8 @@ class OpenWebUIDirectHandler:
             logging.getLogger(__name__).warning(
                 'G1 opinion grounding failed: %s', _oge)
         if _a1_abstain:
-            response = A1_ABSTAIN_TEXT
+            # HANS_ANCHOR_LOOKUP_V1 — než odmítneš, zkus to dohledat.
+            response = self._dohledej_kotvu(_raw_message, name) or A1_ABSTAIN_TEXT
             # CLAIM_RETRACT_V1 — brzda umí ODMÍTNOUT, ale neuměla se OPRAVIT.
             # Doloženo 6.8. 09:10→09:12: Hans tvrdil „hradby až 5 metrů",
             # o 80 s později přiznal „nemám spolehlivý záznam" — ale to číslo
@@ -3709,7 +3752,39 @@ class OpenWebUIDirectHandler:
                     except Exception:
                         pass
                     _clean, _dropped = _gg_check(response, _facts)
-                    if _dropped:
+                    # GROUNDING_GUARD_ACTIVE_V2 (22.8.) — ÚZKÉ ZAPNUTÍ.
+                    # Doloženo 22.8. na hradu Kost: podklad byl JEDNA věta ze
+                    # studijní poznámky, odpověď osm vět (Bořkovští z Kostedna,
+                    # hradní park, bílá paní) — guard napočítal 6 vět bez opory
+                    # a jen to zapsal do logu. Brzda A1 je u neznámého hesla
+                    # loterie (21.8. zabrala, 22.8. na tutéž otázku ne), protože
+                    # porovnává dva vzorky téhož modelu = shodu dvou výmyslů.
+                    # ZASAHUJE SE JEN, když obojí:
+                    #   (a) podklad je tenký fallback ze zápisků (`zapisky_*`),
+                    #       ne plný RAG — falešné poplachy z 12.8., kvůli kterým
+                    #       se guard vypnul, byly PRÁVĚ na RAG cestě, kam guard
+                    #       nevidí (fakta tečou i z kontextu),
+                    #   (b) bez opory jsou aspoň 4 věty — tamty poplachy byly
+                    #       po JEDNÉ větě, takže tudy neprojdou.
+                    # Mimo tyhle dvě podmínky se chová jako dosud: JEN HLÁSÍ.
+                    _cesta = getattr(self, '_grounding_cesta', '') or ''
+                    _tenky = _cesta.startswith('zapisky')
+                    if _dropped and _tenky and len(_dropped) >= 4:
+                        logging.getLogger(__name__).info(
+                            'GROUNDING_GUARD_ACTIVE_V2: ZASAHUJI — %d vět bez '
+                            'opory u tenkého podkladu (%s). První: %r',
+                            len(_dropped), _cesta, _dropped[0][:80])
+                        # HANS_ANCHOR_LOOKUP_V1 (22.8.) — vykuchaná odpověď
+                        # NENÍ konec. Když se ukázalo, že podklad tvrzení
+                        # neunese, je to totéž jako „nemám záznam" — a na to
+                        # už máme dohledání (HANS_INSTANT_LOOKUP_V1, 4.8.):
+                        # článek TEĎ, do paměti až po nočním ověření. U hradu
+                        # Kost se nikdy nespustilo právě proto, že ho předběhl
+                        # tenký falešný podklad (odpověď se tvářila jako
+                        # `grounded`), takže Hans k přiznání nedošel.
+                        _dohl = self._dohledej_kotvu(_raw_message, name)
+                        response = _dohl or _clean
+                    elif _dropped:
                         # ⛔ POUZE HLÁSÍ, NEZASAHUJE (přepnuto 12.8. po dvou
                         # falešných poplaších naživo). Guard stojí na
                         # předpokladu, že jde vyjmenovat všechno, co model
@@ -3729,7 +3804,7 @@ class OpenWebUIDirectHandler:
                     'GROUNDING_GUARD_V1 selhal (odpověď ponechána): %s', _gge)
             try:
                 from scripts.conversation_store import dedup_address_g4d
-                response = dedup_address_g4d(response)
+                response = dedup_address_g4d(response, name, self.config)
             except Exception:
                 pass
             # HANS_ADDRESSEE_V2 — deterministická oprava oslovení CIZÍ osoby.
