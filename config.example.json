@@ -1277,6 +1277,26 @@
     "alone_window_min": 45,
     "_alone_note": "COMMIT_COND_V1: připomínka s podmínkou alone se ozve, jen když za posledních N minut nebyl vidět nikdo jiný. Aktuální viditelnost nestačí — člověk ve vedlejším pokoji není v záběru, ale doma je."
   },
-  "test_persons": [],
-  "_test_persons_note": "HANS_TEST_PERSON_V1: jména, pod kterými se Hans testuje. Rozhovor s nimi se NEZAPISUJE do deníku (human_chat) ani do RAG — jinak vlastní testovací repliky skončí v paměti jako by to byly znalosti. Chat i historie vlákna fungují normálně."
+  "test_persons": [
+    "zkouška"
+  ],
+  "_test_persons_note": "HANS_TEST_PERSON_V1: jména, pod kterými se Hans testuje. Rozhovor s nimi se NEZAPISUJE do deníku (human_chat) ani do RAG — jinak vlastní testovací repliky skončí v paměti jako by to byly znalosti. Chat i historie vlákna fungují normálně.",
+  "kolac_exam": {
+    "enabled": true,
+    "_note": "KOLAC_EXAM_V1 — společník se místo debaty občas zeptá a odpověď se porovná s klíčem.",
+    "kazdy_naty": 8,
+    "max_denne": 2,
+    "_note_max_denne": "KOLAC_EXAM_DENNI_STROP_V1 — nejvýš tolik zkoušek za den (0 = bez stropu).",
+    "identita": "zkouška",
+    "_note_identita": "Jméno, pod kterým se odpovídá. MUSÍ být v test_persons, jinak se zkoušení zapíše do deníku i RAG.",
+    "zdroje": [
+      "pamet",
+      "wiki",
+      "soubor"
+    ],
+    "soubor": "data/kolac_otazky.txt",
+    "wiki_lang": "cs",
+    "pamet_dnu": 60,
+    "cti_nahlas": false
+  }
 }

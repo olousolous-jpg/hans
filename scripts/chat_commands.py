@@ -3148,6 +3148,16 @@ def _cmd_zdravi(handler, name, args) -> str:  # HANS_HEALTH_V1
                             x["expected_gap_s"] / 3600, reason))
     if res.get("healed"):
         lines.append("(Zaseklý mozek jsem zkusil restartovat.)")
+    # KOLAC_EXAM_V1 (22.8.) — jak jsem obstál ve zkoušení. Patří to sem, ne
+    # do zvláštního příkazu: je to údaj o vlastním stavu, jako mozek či disk.
+    try:
+        from scripts import kolac_exam as _ke
+        _souhrn = _ke.souhrn(_recall_db(handler) or "data/hans_diary.db")
+        if _souhrn:
+            lines.append("")
+            lines.append(_souhrn)
+    except Exception:
+        pass
     return "\n".join(lines)
 
 

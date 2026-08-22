@@ -766,6 +766,23 @@ class HansDialog:
                 self._dialog_count = 0
             self._dialog_count += 1
 
+            # KOLAC_EXAM_WIRE_V1 (22.8.) — každý N-tý dialog je ZKOUŠKA místo
+            # debaty (`kolac_exam.je_na_rade`). Když zkouška z jakéhokoli
+            # důvodu nevyjde (prázdné zdroje, mozek dole), pokračuje se
+            # běžným rozhovorem — zkoušení se nikdy nevynucuje na sílu.
+            try:
+                from scripts import kolac_exam as _ke
+                # KOLAC_EXAM_DENNI_STROP_V1 — DB se předává schválně:
+                # bez ní strop neplatí (viz `je_na_rade`).
+                if _ke.je_na_rade(self.config, self._dialog_count,
+                                  self._diary_path):
+                    if self._run_zkouska():
+                        return
+                    _log.info("KOLAC_EXAM_V1: zkouška nevyšla → běžný rozhovor")
+            except Exception as _kee:
+                _log.warning("KOLAC_EXAM_V1 selhalo (vedu běžný rozhovor): %s",
+                             _kee)
+
             # ── Sestav kontext co Hans dnes zažil ────────────────────────────
             _context_parts = []
 
@@ -997,6 +1014,79 @@ class HansDialog:
         finally:
             self._dialog_lock.release()
 
+
+    def _run_zkouska(self) -> bool:
+        """KOLAC_EXAM_WIRE_V1 — Koláč se ptá, Hans odpovídá BĚŽNOU CHATOVOU
+        CESTOU. True = zkouška proběhla (běžný rozhovor se přeskočí).
+
+        ⚠️ Odpovídá se pod TESTOVACÍ IDENTITOU (`kolac_exam.identita`, musí být
+        v `config.test_persons`) — jinak by si Hans zkoušení uložil do deníku
+        i RAG jako skutečný hovor a příště by si vlastní výmysly „vybavoval"
+        jako zážitek. Historie se po každé zkoušce maže: druhá zkouška nesmí
+        stát na tom, co Hans odpověděl v první.
+        """
+        from scripts import kolac_exam as ke
+        from scripts.hans_persona import persona_name
+        if not self._diary_path:
+            return False
+        handler = getattr(getattr(self, "_hans_idle", None), "chat", None)
+        if handler is None or not hasattr(handler, "send_chat_message"):
+            _log.info("KOLAC_EXAM_V1: chatová cesta není po ruce")
+            return False
+        polozka = ke.vyber_otazku(self.config, self._diary_path)
+        if not polozka:
+            return False
+        jmeno = ke.identita(self.config)
+        _log.info("KOLAC_EXAM_V1: zkouška [%s] téma %r → %r",
+                  polozka["zdroj"], polozka["tema"], polozka["otazka"])
+        try:
+            odpoved = handler.send_chat_message(jmeno, polozka["otazka"],
+                                                channel="zkouska") or ""
+        except Exception as e:
+            _log.warning("KOLAC_EXAM_V1: odpověď selhala: %s", e)
+            return False
+        finally:
+            # historie zkoušky se nekumuluje (a nezůstane ležet na disku)
+            try:
+                handler.conv_store.clear(jmeno)
+            except Exception:
+                pass
+        if not odpoved.strip():
+            return False
+        hodnoceni = ke.ohodnot(polozka["zdroj"], odpoved, polozka.get("klic", ""))
+        ke.zapis(self._diary_path, polozka, odpoved, hodnoceni)
+        _log.info("KOLAC_EXAM_V1: verdikt %s (%d vět bez opory) — %s",
+                  hodnoceni["verdikt"], hodnoceni["bez_opory"], polozka["tema"])
+
+        kname = kolac_name(self.config)
+        prepis = "%s: %s %s\n%s: %s" % (
+            kname, ke.uvod_kolace(), polozka["otazka"],
+            persona_name(self.config), odpoved.strip())
+        # Do deníku jako VLASTNÍ typ (`kolac_exam`), ne `teddy_dialog`:
+        # zkoušení není vzpomínka a nesmí se vracet ani do LLM kontextu
+        # (`get_last_dialog` čte teddy_dialog), ani do koníčků a syntéz.
+        try:
+            import sqlite3 as _sql
+            with _sql.connect(self._diary_path) as _db:
+                _db.execute(
+                    "INSERT INTO diary (ts, event_type, title, note, data) "
+                    "VALUES (?,?,?,?,?)",
+                    (time.time(), "kolac_exam",
+                     "Zkouška: %s" % polozka["tema"][:80], prepis,
+                     __import__("json").dumps(
+                         {"zdroj": polozka["zdroj"],
+                          "verdikt": hodnoceni["verdikt"],
+                          "bez_opory": hodnoceni["bez_opory"],
+                          "url": polozka.get("url", "")}, ensure_ascii=False)))
+                _db.commit()
+        except Exception as e:
+            _log.warning("KOLAC_EXAM_V1: zápis do deníku selhal: %s", e)
+
+        self._recent_replies.append("%s: %s" % (kname, polozka["otazka"]))
+        if (self.config.get("kolac_exam", {}) or {}).get("cti_nahlas", False):
+            if self.tts and getattr(self.tts, "enabled", False):
+                self._speak_dialog(prepis)
+        return True
 
     def _speak_dialog(self, dialog: str):
         """Přečti dialog nahlas — Hans i Kolač s různými hlasy."""
