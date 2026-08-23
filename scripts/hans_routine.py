@@ -1059,6 +1059,15 @@ class HansRoutine:
                     _log.info('SLEEP: vision off (kamera+recognition)')
             except Exception as _e:
                 _log.warning('SLEEP: pause_vision failed: %s', _e)
+            # 4c) Oči na střed + zavřít víčka (SLEEP_EYES_CLOSE_V1) — ve spánku
+            # je řízení očí za vision gate, takže by jinak zůstaly koukat tam,
+            # kde naposled někoho viděly.
+            try:
+                if self._vision is not None and hasattr(self._vision, 'eyes_sleep'):
+                    if self._vision.eyes_sleep():
+                        _log.info('SLEEP: oči na střed, víčka zavřena')
+            except Exception as _e:
+                _log.warning('SLEEP: eyes_sleep failed: %s', _e)
             # 5) Stopa do deníku
             try:
                 from scripts.hans_persona import persona_name as _pn  # PERSONA_NAME_CONFIGURABLE_V1
@@ -1088,6 +1097,13 @@ class HansRoutine:
                     _log.info('SLEEP: vision on (kamera+recognition)')
             except Exception as _e:
                 _log.warning('SLEEP: resume_vision failed: %s', _e)
+            # 1c) Otevřít víčka + oči na střed (SLEEP_EYES_CLOSE_V1)
+            try:
+                if self._vision is not None and hasattr(self._vision, 'eyes_wake'):
+                    if self._vision.eyes_wake():
+                        _log.info('SLEEP: víčka otevřena, oči na střed')
+            except Exception as _e:
+                _log.warning('SLEEP: eyes_wake failed: %s', _e)
             # 2) Vrátit polohu serva (zapamatovaná → fallback move_to_center)
             try:
                 if self._servo is not None:
@@ -2653,19 +2669,25 @@ class HansRoutine:
     def _dream_fragments(self) -> str:
         """DREAM_LLM_V1 — sesbírá útržky dneška z deníku pro grounding snu."""
         import sqlite3 as _sql
-        from datetime import datetime as _dt
-        today = _dt.now().strftime("%Y-%m-%d")
+        import time as _tm
+        # DREAM_FRAGMENTS_24H_V1 — okno posledních 24 h, NE kalendářní „dnešek".
+        # Sen se píše i po půlnoci (podmínka `_last_dream_date != today` se
+        # překlopením data spustí znovu), a tam byl `date(ts)=today` prázdný →
+        # `frags` prázdné → LLM se kvůli `if frags:` ani nezavolalo → pokaždé
+        # generický seed. Doloženo: 6 ze 6 snů v 00:0x bylo 81–92 znaků a
+        # doslovný `_DREAM_SEEDS`, zatímco večerní měly 180–262 znaků.
+        since = _tm.time() - 86400
         bits = []
         try:
             db = _sql.connect(self._diary_path)
             rows = db.execute(
                 "SELECT title, COALESCE(NULLIF(note,''), data) FROM diary "
-                "WHERE date(ts,'unixepoch','localtime')=? "
+                "WHERE ts>=? "
                 "AND event_type IN ('movie_opinion','web_read','reading_takeaway',"
                 "'human_chat','case_opened','case_closed','room_description',"
                 "'introspection') "
                 "AND (title<>'' OR note<>'' OR data<>'') "
-                "ORDER BY RANDOM() LIMIT 6", (today,)).fetchall()
+                "ORDER BY RANDOM() LIMIT 6", (since,)).fetchall()
             bk = db.execute(
                 "SELECT book_title, author FROM hans_library WHERE status='reading' "
                 "ORDER BY started_at DESC LIMIT 1").fetchone()

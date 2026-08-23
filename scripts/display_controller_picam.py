@@ -1661,6 +1661,47 @@ class PicamDisplayController:
         self._vision_paused = False
         print("[Sleep] vision obnoven (frame-gate off)")
 
+    def eyes_sleep(self):  # SLEEP_EYES_CLOSE_V1
+        """Usínání: vrať oči na střed a zavři víčka.
+
+        Ve spánku je `_update_servo` za gate `not self._vision_paused`, takže
+        oči by jinak zůstaly ležet tam, kde naposled někoho viděly — s
+        otevřenými víčky, a nikdo by je už nepřepsal. Volá se z
+        `hans_routine._apply_sleep_mode` hned po `pause_vision()`.
+        Vrací True, když se povel opravdu poslal."""
+        eyes = self._get_eye_servo() if self._eyes_on() else None
+        if eyes is None or not getattr(eyes, "available", False):
+            return False
+        # Čeká na dojetí případného mrknutí — _run_blink na konci víčka OTEVŘE,
+        # takže zavřít dřív by nic neudrželo.
+        for _ in range(50):
+            if not getattr(eyes, "_blinking", False):
+                break
+            time.sleep(0.02)
+        try:
+            eyes.center()
+            eyes.close_lids()
+            print("[Sleep] oči na střed + víčka zavřena")
+            return True
+        except Exception as _e:
+            print(f"[Sleep] eyes_sleep selhal: {_e}")
+            return False
+
+    def eyes_wake(self):  # SLEEP_EYES_CLOSE_V1
+        """Probuzení: otevři víčka a vynuceně na střed (recenter resetuje EMA,
+        ať se nevychází z noční pozice)."""
+        eyes = self._get_eye_servo() if self._eyes_on() else None
+        if eyes is None or not getattr(eyes, "available", False):
+            return False
+        try:
+            eyes.open_lids()
+            eyes.recenter()
+            print("[Sleep] víčka otevřena, oči na střed")
+            return True
+        except Exception as _e:
+            print(f"[Sleep] eyes_wake selhal: {_e}")
+            return False
+
     # ── Terminal input (headless) ─────────────────────────────────────────
 
     def _term_reader(self):  # TERM_READER_METHOD_V1

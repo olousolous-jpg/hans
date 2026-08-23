@@ -142,6 +142,10 @@ DEFAULT_URL     = "http://127.0.0.1:11434"
 DEFAULT_TIMEOUT = 120          # sekundy
 DEFAULT_KEEP_ALIVE = -1         # drž model v VRAM napořád  # KEEPALIVE_FIX_V2
 MAX_RETRIES     = 1            # 1 retry při timeout (celkem 2 pokusy)
+CONNECT_TIMEOUT = 3            # OLLAMA_CONNECT_TIMEOUT_V1 — s, jen na navázání
+# spojení. Vypnutý PC se tím pozná za sekundy místo za celý read timeout (doloženo
+# 22.8. v noci: sen čekal 2×120 s na mrtvý stroj, než sáhl po fallbacku). Read mez
+# zůstává plná — pomalou inferenci tahle změna ZÁMĚRNĚ nezkracuje.
 
 # HANS_WARMUP_PAUSE_V1 — VRAM handoff: uspat keepalive warmup, dokud noční
 # base-model analytika drží VRAM. Bez toho 4min pin hans-czech (8GB) evictuje
@@ -309,7 +313,7 @@ def ollama_warmup(
         r = requests.post(
             f"{url}/api/generate",
             json={"model": model, "prompt": "", "keep_alive": keep_alive},
-            timeout=300,
+            timeout=(CONNECT_TIMEOUT, 300),   # OLLAMA_CONNECT_TIMEOUT_V1
         )
         r.raise_for_status()
         _log.info("Warmup: %s ready (%.1fs)", model, time.time() - t0)
@@ -333,7 +337,8 @@ def _post_with_retry(url: str, payload: dict, timeout: int,
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 2):
         try:
-            r = requests.post(url, json=payload, timeout=timeout)
+            r = requests.post(url, json=payload,
+                              timeout=(CONNECT_TIMEOUT, timeout))  # OLLAMA_CONNECT_TIMEOUT_V1
             r.raise_for_status()
             out = extractor(r.json())
             br.note_success(_log)
