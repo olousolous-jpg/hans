@@ -76,6 +76,16 @@ class EyeServoController:
         self._io_lock = threading.Lock() # serializace I2C (pan/tilt × víčka)
         self._next_blink_ts = 0.0
         self._lid_last_move_ts = 0.0
+        # EYE_POSITION_LOG_V1 (23.8.) — po dni, kdy se serva protočila na
+        # hřídeli a z logu nešlo zjistit ani KDY, ani jestli něco tlačilo na
+        # doraz. Drží se: kolikrát se povel ořízl o mez (to je „jelo se na
+        # doraz"), poslední známé polohy a stav víček.
+        self._clamp_pocet = {"pan": 0, "tilt": 0}
+        self._clamp_max = {"pan": 0.0, "tilt": 0.0}
+        self._clamp_log_ts = 0.0
+        self._pos_log_ts = 0.0
+        self._pos_log_last = None
+        self._lid_state = "?"
         self._lids_released = False
         self.available = False
         self._pan_s = None
@@ -153,9 +163,29 @@ class EyeServoController:
                       self.calib["tilt"]["min"], self.calib["tilt"]["max"])
             self.center()
             self._init_lids()          # HANS_EYE_BLINK_V1
+            self._log_kalibraci()      # EYE_POSITION_LOG_V1
         except Exception as e:
             _log.warning("EyeServoController HW init selhal (%s) — oči neaktivní", e)
             self.available = False
+
+    def _log_kalibraci(self):
+        """EYE_POSITION_LOG_V1 — co přesně platí. Bez toho se po přepsání
+        kalibrace nedá zpětně říct, s jakými čísly Hans jel (23.8. se to
+        muselo rekonstruovat z noční zálohy)."""
+        p, t = self.calib["pan"], self.calib["tilt"]
+        _log.info("eye_servo: kalibrace — pan center=%+.1f meze[%.0f,%.0f] "
+                  "gain=%.2f | tilt center=%+.1f meze[%.0f,%.0f] gain=%.2f | "
+                  "gaze_offset=%+.1f tau=%.3f",
+                  float(p["center"]), float(p["min"]), float(p["max"]),
+                  float(p.get("gain", 1.0)),
+                  float(t["center"]), float(t["min"]), float(t["max"]),
+                  float(t.get("gain", 1.0)), self._gaze_tilt_offset, self._tau)
+        if self._lid_servos:
+            _log.info("eye_servo: víčka — %s", " | ".join(
+                "%s %s zavř=%+.0f otev=%+.0f" % (
+                    k, (self.calib.get("lids", {}).get(k, {}) or {}).get("channel", "?"),
+                    self._lid_closed.get(k, 0.0), self._lid_open.get(k, 0.0))
+                for k in sorted(self._lid_servos)))
 
     # ── víčka / mrkání (HANS_EYE_BLINK_V1) ──────────────────────────────
     def _init_lids(self):
@@ -190,12 +220,23 @@ class EyeServoController:
         if not self._lids_available:
             return
         tbl = self._lid_open if state == "open" else self._lid_closed
+        chyby = []
         with self._io_lock:
             for key, servo in self._lid_servos.items():
                 try:
                     servo.angle(tbl.get(key, 0.0))
                 except Exception as e:
-                    _log.debug("eye_servo: lid angle selhal (%s): %s", key, e)
+                    # EYE_POSITION_LOG_V1 — dřív `debug`, takže víčko, které
+                    # povel nebere, bylo v provozu NEVIDITELNÉ.
+                    chyby.append("%s: %s" % (key, e))
+        if chyby:
+            _log.warning("eye_servo: víčko NEPŘIJALO povel (%s) — %s",
+                         state, "; ".join(chyby))
+        else:
+            _log.info("eye_servo: víčka → %s (%s)", state,
+                      " ".join("%s=%+.0f" % (k, tbl.get(k, 0.0))
+                               for k in sorted(self._lid_servos)))
+        self._lid_state = state         # EYE_POSITION_LOG_V1
         self._lid_last_move_ts = time.time()
         self._lids_released = False
 
@@ -305,6 +346,33 @@ class EyeServoController:
         return calib
 
     # ── mapování ────────────────────────────────────────────────────────
+    def _clip(self, axis: str, angle: float) -> float:
+        """EYE_POSITION_LOG_V1 — ořež na kalibrované meze a ZAPAMATUJ SI to.
+        Ořez znamená, že něco chtělo servo hnát dál, než kam smí — přesně to
+        23.8. povolilo šroubky, a v logu po tom nezůstala ani stopa."""
+        c = self.calib[axis]
+        lo, hi = float(c["min"]), float(c["max"])
+        if angle < lo or angle > hi:
+            self._clamp_pocet[axis] += 1
+            preteceni = (lo - angle) if angle < lo else (angle - hi)
+            if preteceni > self._clamp_max[axis]:
+                self._clamp_max[axis] = preteceni
+            now = time.time()
+            if now - self._clamp_log_ts >= 60.0:
+                self._clamp_log_ts = now
+                _log.warning(
+                    "eye_servo: NA DORAZU — pan %d× (max o %.1f°), tilt %d× "
+                    "(max o %.1f°) za poslední minutu; meze pan[%.0f,%.0f] "
+                    "tilt[%.0f,%.0f]",
+                    self._clamp_pocet["pan"], self._clamp_max["pan"],
+                    self._clamp_pocet["tilt"], self._clamp_max["tilt"],
+                    float(self.calib["pan"]["min"]), float(self.calib["pan"]["max"]),
+                    float(self.calib["tilt"]["min"]), float(self.calib["tilt"]["max"]))
+                self._clamp_pocet = {"pan": 0, "tilt": 0}
+                self._clamp_max = {"pan": 0.0, "tilt": 0.0}
+            return max(lo, min(hi, angle))
+        return angle
+
     def _map_axis(self, frac: float, axis: str, invert: bool) -> float:
         """frac 0..1 (poloha v rámu) → úhel serva. 0.5 = střed.
         Asymetrické: záporná strana škáluje k min, kladná k max."""
@@ -326,7 +394,7 @@ class EyeServoController:
             angle = center + dev * (hi - center)
         else:
             angle = center + dev * (center - lo)
-        return max(lo, min(hi, angle))
+        return self._clip(axis, angle)          # EYE_POSITION_LOG_V1
 
     def _send(self, servo, target: float, ema_attr: str, last_attr: str,
               alpha: float = None):
@@ -352,7 +420,11 @@ class EyeServoController:
             self._last_move_ts = time.time()
             self._released = False
         except Exception as e:
-            _log.debug("eye_servo: angle() selhal: %s", e)
+            # EYE_POSITION_LOG_V1 — throttle: běží 50×/s, ale mlčet nesmí.
+            _now = time.time()
+            if _now - getattr(self, "_angle_err_ts", 0.0) >= 60.0:
+                self._angle_err_ts = _now
+                _log.warning("eye_servo: angle() selhal: %s", e)
 
     def _maybe_release(self):
         """Po idle_release_s bez reálného pohybu uvolní serva (ticho)."""
@@ -448,8 +520,28 @@ class EyeServoController:
                 self._send(self._pan_s,  tp, "_pan_ema",  "_last_pan",  alpha)
                 self._send(self._tilt_s, tt, "_tilt_ema", "_last_tilt", alpha)
                 self._maybe_release()
+                self._log_pozice(now)           # EYE_POSITION_LOG_V1
             except Exception as e:
                 _log.debug("eye_servo: tick selhal: %s", e)
+
+    def _log_pozice(self, now: float, interval_s: float = 300.0):
+        """EYE_POSITION_LOG_V1 — otisk poloh do logu. Jen když se od minule
+        něco pohnulo (jinak by v klidném domě přibývaly identické řádky),
+        a nejvýš jednou za `interval_s`. Vlákno běží 50×/s, takže tady se
+        nesmí nic drahého dělat."""
+        if now - self._pos_log_ts < interval_s:
+            return
+        self._pos_log_ts = now
+        otisk = (round(self._last_pan or 0.0, 1),
+                 round(self._last_tilt or 0.0, 1), self._lid_state)
+        if otisk == self._pos_log_last:
+            return
+        self._pos_log_last = otisk
+        _log.info("eye_servo: poloha pan=%+.1f° tilt=%+.1f° víčka=%s "
+                  "(cíl pan=%+.1f tilt=%+.1f)",
+                  otisk[0], otisk[1], otisk[2],
+                  self._tgt_pan if self._tgt_pan is not None else float("nan"),
+                  self._tgt_tilt if self._tgt_tilt is not None else float("nan"))
 
     def look_at_frac(self, cx: float, cy: float):
         """cx, cy ∈ 0..1 = střed bboxu osoby v rámu. ULOŽÍ cíl pohledu.
@@ -465,9 +557,7 @@ class EyeServoController:
         # HANS_EYE_GAZE_TILT_OFFSET_V1 — posun pohledu nahoru/dolů (kamera výš
         # než oči), oříznutý na kalibrované meze.
         if self._gaze_tilt_offset:
-            _t = self.calib["tilt"]
-            tilt = max(float(_t["min"]), min(float(_t["max"]),
-                                             tilt + self._gaze_tilt_offset))
+            tilt = self._clip("tilt", tilt + self._gaze_tilt_offset)
         with self._tick_lock:
             self._tgt_pan, self._tgt_tilt = pan, tilt
         self._ensure_tick()

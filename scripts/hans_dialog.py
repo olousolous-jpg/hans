@@ -756,6 +756,18 @@ class HansDialog:
             _log.info("Dialog already running — skip")
             return
         try:
+            # KOLAC_EXAM_BRAIN_GATE_V1 (23.8.) — mozek se ptá HNED, ne až u
+            # generování. Bez toho se loop v noci točil ~106×/h (PC vypnuté),
+            # pokaždé zvedl `_dialog_count`, a tím spouštěl zkoušku „každý
+            # osmý dialog" ~13×/h do prázdna: chat vrátil prázdnou odpověď a
+            # zkouška se tiše vzdala. Změřeno 23.8.: 105 pokusů, 96 selhání,
+            # 1 zápis — a všechna selhání v hodinách, kdy PC nejelo.
+            # `brain_available` je sdílená sonda (HANS_BRAIN_GATE_V1), pokrývá
+            # i herní mód; výsledek se drží krátce, ať se nesonduje á 34 s.
+            if not self._brain_up_cached():
+                _log.debug("dialog: přeskočeno (mozek dolů) — nepočítám ani "
+                           "pořadí, aby zkoušení nepropadalo naprázdno")
+                return
             _log.info("Generating Hans+Kolač dialog...")
 
             # Co Hans nedávno četl — může ovlivnit téma
@@ -1052,6 +1064,12 @@ class HansDialog:
             except Exception:
                 pass
         if not odpoved.strip():
+            # KOLAC_EXAM_BRAIN_GATE_V1 — dřív tichý `return False`: jediná
+            # stopa byla „zkouška nevyšla" o patro výš a příčina se musela
+            # dolovat z časů. Prázdná odpověď = chat nic nevrátil (typicky
+            # mozek spadl mezi gate a dotazem).
+            _log.warning("KOLAC_EXAM_V1: prázdná odpověď na %r → zkouška "
+                         "zahozena (mozek nejspíš dolů)", polozka["tema"])
             return False
         hodnoceni = ke.ohodnot(polozka["zdroj"], odpoved, polozka.get("klic", ""))
         _exam_id = ke.zapis(self._diary_path, polozka, odpoved, hodnoceni)
@@ -1153,6 +1171,22 @@ class HansDialog:
             self._kolac_speaking = False
 
     # ── Gemini API ────────────────────────────────────────────────────────────
+
+    def _brain_up_cached(self, platnost_s: float = 60.0) -> bool:
+        """KOLAC_EXAM_BRAIN_GATE_V1 — je mozek nahoře? Sdílená sonda
+        `ollama_client.brain_available` (kryje i herní mód), výsledek platí
+        `platnost_s`, aby noční smyčka nedělala HTTP dotaz každých 34 s."""
+        _ted = time.time()
+        _stav = getattr(self, "_brain_cache", None)
+        if _stav and (_ted - _stav[0]) < platnost_s:
+            return _stav[1]
+        try:
+            from scripts.ollama_client import brain_available
+            _up = bool(brain_available(self.config))
+        except Exception:
+            _up = True          # sonda selhala → nezakazuj, ať se nezasekne
+        self._brain_cache = (_ted, _up)
+        return _up
 
     def _ollama_available(self) -> bool:
         """Zkontroluj jestli je Ollama server dostupny."""

@@ -3439,10 +3439,37 @@ class OpenWebUIDirectHandler:
                         _cmd = None
                 except Exception:
                     pass
+            # HANS_CLAIM_HOLD_V1 (23.8.) — uživatel tvrdí opak toho, co Hans
+            # před chvílí přečetl z deníku („před chvílí jsi říkal 12:15,
+            # která odpověď platí?") → model ustoupil a MOU nepravdu vydával
+            # za údaj z vlastního deníku. Řešení bez nové vrstvy: poslat dotaz
+            # na TÝŽ deterministický příkaz, který odpověď vyrobil poprvé.
+            # Musí to být AŽ ZA `should_suppress` — ta by to sejmula jako
+            # „uživatel opravil tutéž cestu, nepouštěj ji znovu", což je přesně
+            # opačné rozhodnutí, než tady potřebujeme.
+            _hold_claim = None
+            if not _cmd:
+                try:
+                    from scripts.claim_hold import disputed_last_seen
+                    _hold_claim = disputed_last_seen(
+                        user_message, self.conv_store.get_history(name) or [])
+                    if _hold_claim:
+                        _cmd = ("videl", _hold_claim)   # jméno nese tvrzení
+                        logging.getLogger(__name__).info(
+                            "HANS_CLAIM_HOLD_V1: spor o čerstvé tvrzení "
+                            "→ znovu z deníku (%.60s)", _hold_claim)
+                except Exception as _che:
+                    logging.getLogger(__name__).debug(
+                        "HANS_CLAIM_HOLD_V1: %s", _che)
             if _cmd:
                 # CHAT_COMMANDS_LOG_FIX
                 print(f"[Chat] command detected: {_cmd[0]}")
                 _reply = dispatch(_cmd, self, name=name)
+                if _hold_claim:
+                    from scripts.claim_hold import hold
+                    # Bez uvození by odpověď vypadala jako přeslechnutá
+                    # otázka — z deníku přijde slovo od slova táž věta.
+                    _reply = hold(_reply, user_message)
                 try:
                     from scripts import hans_thread as _thr
                     _thr.note_outcome(name, channel, _cmd[0], user_message)
