@@ -22,6 +22,17 @@ GAME_PAT='SteamLaunch|AppId=[0-9]|[Pp]roton|wineserver|wine64|wine-preloader|pv-
 EXTRA_PAT="${EXTRA_PAT:-}"
 [ -n "$EXTRA_PAT" ] && GAME_PAT="${GAME_PAT}|${EXTRA_PAT}"
 
+# HANS_GAME_PAT_NOT_VPN_V1 — procesy, ktere vypadaji jako Proton, ale hra to neni.
+# Dolozeno 20.-23.8.: `[Pp]roton` v GAME_PAT chytal `python3 -m proton.vpn.daemon`
+# (ProtonVPN startuje s bootem a bezi porad) -> watcher vesel do stavu "hraje se"
+# ve stejnou vterinu jako start a UZ Z NEJ NIKDY NEVYSEL, takze SKUTECNA hra
+# nevyvolala zadny prechod. Vzor `[Pp]roton` schvalne NEZUZUJEME (ladil se nazivo
+# 16.7. na Heroic+GE-Proton) — jen odecteme jmenovite to, co hra neni.
+# `protondrive` kryje planovanou zalohu pres rclone, ktera by tuhle chybu jinak
+# za mesic vyrobila znovu, tentokrat bez zjevne souvislosti.
+NOTGAME_PAT='proton\.vpn|protonvpn|protonmail|proton-bridge|protondrive|rclone'
+GAME_MATCH=""              # cmdline procesu, ktery watcher povazuje za hru (do logu)
+
 log() { logger -t hans-game-watch "$*" 2>/dev/null || printf 'hans-game-watch: %s\n' "$*"; }
 
 game_running() {
@@ -31,14 +42,27 @@ game_running() {
     # hru" sám v sobě → trvalý herní mód. Odfiltruj i kernelové [thready].
     local procs
     procs=$(ps -eo args 2>/dev/null | grep -vE '^\[')
-    printf '%s\n' "$procs" | grep -qE "$GAME_PAT"
+    # HANS_GAME_PAT_NOT_VPN_V1: nejdriv odecti ne-hry, teprve pak hledej hru.
+    # Match si drz v GAME_MATCH — bez toho clovek v logu nepozna, ze "HRA" je VPN.
+    GAME_MATCH=$(printf '%s\n' "$procs" | grep -viE "$NOTGAME_PAT" \
+                 | grep -E "$GAME_PAT" | head -1 | cut -c1-120)
+    [ -n "$GAME_MATCH" ]
 }
 brain_paused() {   # skutečný stav z Pi (kvůli úklidu po pádu) — 0=paused
     local s; s=$(curl -s -m 6 "$HANS/api/brain/status" 2>/dev/null)
     [[ "$s" == *'"game_mode":true'* || "$s" == *'"game_mode": true'* ]]
 }
-pause_brain()  { curl -s -m 45 -X POST "$HANS/api/brain/pause"  >/dev/null 2>&1; }
-resume_brain() { curl -s -m 10 -X POST "$HANS/api/brain/resume" >/dev/null 2>&1; }
+# HANS_GAME_POST_VERIFY_V1 — driv se vysledek curlu zahazoval (`>/dev/null 2>&1`),
+# takze se hlaska "herni mod ZAP" vypsala i kdyz Pi nic nedostalo. Dolozeno 20.8.:
+# watcher po bootu "zapnul", ale na Pi po tom nezustala ani stopa (nestala sit).
+post_brain() {   # $1 = pause|resume, $2 = timeout s -> 0 JEN kdyz Pi potvrdilo 200
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' -m "$2" \
+           -X POST "$HANS/api/brain/$1" 2>/dev/null)
+    [ "$code" = "200" ]
+}
+pause_brain()  { post_brain pause 45; }
+resume_brain() { post_brain resume 10; }
 
 # HANS_GAME_LEFTOVER_V1 — herní/wine RUNTIME procesy, které po zavření hry NESMÍ
 # přežít. Vědomě UŽŠÍ a jistější než GAME_PAT: jen jednoznačná herní rezidua
@@ -75,24 +99,35 @@ log "start (HANS=$HANS poll=${POLL_S}s grace=${GRACE_S}s)"
 # rebootu) → vrať ho. Zároveň kryje případ, kdy watcher spadl a systemd ho zvedl.
 if ! game_running && brain_paused; then
     log "start: žádná hra, ale mozek je paused → resume (úklid)"
-    resume_brain
+    resume_brain || log "POZOR: úklidový resume NEPROŠEL — Pi neodpovědělo 200"
 fi
 
-state="idle"; last_seen=0
+state="idle"; last_seen=0; last_fail_log=0
 while true; do
     now=$(date +%s)
     if game_running; then
         last_seen=$now
         if [ "$state" = idle ]; then
-            state=playing
-            log "HRA detekována → herní mód ZAP (uvolňuji VRAM)"
-            pause_brain
+            # HANS_GAME_POST_VERIFY_V1: stav prepneme AZ kdyz Pi potvrdilo. Pri
+            # selhani zustava "idle" -> zkusi se znovu pristi tick (typicky po
+            # bootu, nez stoji sit). Log throttlovany na 1x/60 s, at nezaplavi journal.
+            if pause_brain; then
+                state=playing
+                log "HRA detekována ($GAME_MATCH) → herní mód ZAP (uvolňuji VRAM)"
+            elif [ $((now - last_fail_log)) -ge 60 ]; then
+                last_fail_log=$now
+                log "POZOR: hra běží ($GAME_MATCH), ale POST /brain/pause NEPROŠEL → zkouším dál"
+            fi
         fi
     elif [ "$state" = playing ] && [ $((now - last_seen)) -ge "$GRACE_S" ]; then
-        state=idle
-        log "hra skončila (${GRACE_S}s klid) → herní mód VYP (vracím mozek)"
-        resume_brain
-        check_leftovers   # HANS_GAME_LEFTOVER_V1 — uklidila se hra opravdu?
+        if resume_brain; then
+            state=idle
+            log "hra skončila (${GRACE_S}s klid) → herní mód VYP (vracím mozek)"
+            check_leftovers   # HANS_GAME_LEFTOVER_V1 — uklidila se hra opravdu?
+        elif [ $((now - last_fail_log)) -ge 60 ]; then
+            last_fail_log=$now
+            log "POZOR: hra skončila, ale POST /brain/resume NEPROŠEL → Hans je bez mozku, zkouším dál"
+        fi
     fi
     sleep "$POLL_S"
 done

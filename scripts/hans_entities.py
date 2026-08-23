@@ -133,57 +133,127 @@ def _first_sentence(text: str, max_chars: int = 320) -> str:
 
 
 # Heuristická klasifikace typu z definiční věty (české vzory „X je/byl …").
-_PERSON = re.compile(
-    r"\bbyl[aiy]?\b|\bje\b.{0,40}\b("
-    r"spisovatel|skladatel|malíř|politik|král|císař|faraon|herec|herečka|"
-    r"vědec|fyzik|filozof|hudebník|zpěvák|generál|vojevůdce|panovník|"
-    r"režisér|architekt|básník|autor|matematik|objevitel|vynálezce)",
-    re.IGNORECASE)
+#
+# HANS_ENTITY_CLASSIFY_V3 (23.8.) — proč se filmy, písně a události vedly jako
+# `osoba` (změřeno: 60 ze 104 „osob" stálo JEN na tomhle):
+#  (a) starý `_PERSON` měl jako první alternativu HOLÉ `\bbyl[aiy]?\b` — bez
+#      jakéhokoli podstatného jména člověka. „Adidas Yeezy **byla** módní
+#      spolupráce" → osoba. A ptal se PRVNÍ, takže přebil i větu, která svůj
+#      druh říká výslovně („Rotherham Town FC **byl** fotbalový **klub**").
+#  (b) vzory braly kmen bez konce slova, takže je chytalo i přídavné jméno
+#      („**hra**nice" → dílo, „Dvůr **Král**ové" → osoba).
+#
+# Čtyři pravidla, na kterých teď stojí (každé vzniklo z konkrétního nálezu):
+#  1. Rozhoduje DEFINIČNÍ věta a v ní PRVNÍ spona. Další věty mluví o výrobci
+#     nebo autorech („Návštěvníci … Výrobcem byla ČST" → organizace).
+#  2. Druhové jméno se hledá v okně ZA sponou (45 znaků; u lidí 80, protože
+#     výčet profesí bývá dlouhý: „je český divadelní, filmový … herec").
+#  3. Když jich padne víc, vyhrává BLIŽŠÍ ke sponě — to je podmět věty
+#     („je sci-fi **film**, který natočil **režisér** X" → dílo).
+#  4. Osobní jméno musí být v 1. pádě (`\b` bez pádové koncovky): „je komedie
+#     **režiséra** Jana Hřebejka" je 2. pád a mluví o DÍLE, ne o člověku.
+# Žánrová přídavná jména („filmová bondovka") jsou až záloha, protože
+# „**filmový** režisér" je člověk. Holé „byl" zůstalo poslední před `pojem`.
+_COP = re.compile(r"\b(je|jsou|byl|byla|byli|byly|bylo)\b", re.IGNORECASE)
+_WIN = 45           # okno za sponou pro druhové jméno
+_WIN_PERSON = 80    # u lidí delší (výčet profesí)
+_CASE = r"(?:a|u|e|ě|em|y|ů|ům|ech|ách|ami|ou|í|i|o)?"
+_SENT_BREAK = re.compile(r"\.\s+(?=[A-ZÁ-Ž])")
+
+
+def _n(nouns: str) -> "re.Pattern":
+    """Podstatné jméno v 1. pádě: pádová koncovka ano, přípona ne
+    („film|filmu" ✓, „filmový" ✗)."""
+    return re.compile(r"\b(?:" + nouns + r")" + _CASE + r"\b", re.IGNORECASE)
+
+
 # HANS_ENTITY_POSTAVA_V1 (20.7.) — fiktivní / literární / filmová postava.
-# Kritérium pro dopadu: paint_subject volá img2img z Wiki portrétu (viz gate
-# etype in ('osoba','postava')). Wiki článek fiktivní postavy má obvykle
-# obrázek herce/ilustrace (Rimmer→Chris Barrie, Sherlock→Paget kresba).
+# Kritérium pro dopad: paint_subject volá img2img z Wiki portrétu (viz gate
+# etype in ('osoba','postava')).
 _POSTAVA = re.compile(
-    r"\bje\b.{0,40}\b(fiktivní\s+postav|literární\s+postav|filmov[áa]\s+postav|"
+    r"\b(fiktivní\s+postav|literární\s+postav|filmov[áa]\s+postav|"
     r"seri[áa]lov[áa]\s+postav|animovan[áa]\s+postav|hlavní\s+postav|"
-    r"vedlejší\s+postav|hrdin[aoyi]|postav[ay]\s+seriálu|postav[ay]\s+filmu|"
-    r"postav[ay]\s+románu|postav[ay]\s+knihy)",
-    re.IGNORECASE)
-_PLACE = re.compile(
-    r"\bje\b.{0,40}\b(město|hrad|zámek|hora|řeka|jezero|stát|země|obec|"
-    r"vesnice|ostrov|pohoří|kraj|region|čtvrť|náměstí|budova|katedrála)",
-    re.IGNORECASE)
-_WORK = re.compile(
-    r"\bje\b.{0,40}\b(film|kniha|román|opera|skladba|album|píseň|obraz|"
-    r"báseň|hra|seriál|dílo)",
-    re.IGNORECASE)
-_ORG = re.compile(
-    r"\bje\b.{0,40}\b(organizace|společnost|firma|klub|strana|spolek|"
-    r"instituce|univerzita|škola|tým)",
-    re.IGNORECASE)
-_EVENT = re.compile(
-    r"\bje\b.{0,40}\b(válka|bitva|turnaj|revoluce|povstání|událost|"
-    r"mistrovství|festival|olympiáda)",
-    re.IGNORECASE)
+    r"vedlejší\s+postav|pohádkov[áa]\s+postav|kreslen[áa]\s+postav|"
+    r"komiksov[áa]\s+postav)", re.IGNORECASE)
+# Obecné „postava/hrdina" jen když věta zároveň mluví o fikci — jinak by byl
+# „Hrdina Sovětského svazu" (Richard Sorge) fiktivní postavou.
+_POSTAVA_GEN = re.compile(r"\b(postav[ay]|hrdin[aoy])\b", re.IGNORECASE)
+_FIKCE = re.compile(r"\b(fiktivn|literárn|román|povídk|komiks|seriál|film|"
+                    r"pohádk|animovan|spisovatel|kreslíř|večerníč)", re.IGNORECASE)
+# Ženské tvary se vypisují zvlášť — končí na -a/-ka, kmen mužského tvaru
+# s `\b` by je nechytil.
+_PERSON = re.compile(
+    r"\b(?:"
+    r"spisovatel|spisovatelka|skladatel|skladatelka|malíř|malířka|politik|"
+    r"politička|král|královna|císař|císařovna|faraon|herec|herečka|"
+    r"vědec|vědkyně|fyzik|filozof|filosof|hudebník|zpěvák|zpěvačka|generál|"
+    r"vojevůdce|panovník|panovnice|režisér|režisérka|architekt|architektka|"
+    r"básník|básnířka|autor|autorka|matematik|objevitel|vynálezce|"
+    r"lyžař|lyžařka|sportovec|sportovkyně|fotbalista|fotbalistka|hokejista|"
+    r"atlet|atletka|jezdec|náčelník|kníže|vévoda|vévodkyně|"
+    r"biolog|chemik|lékař|lékařka|historik|historička|novinář|novinářka|"
+    r"podnikatel|voják|důstojník|cestovatel|misionář|kněz|papež|šlechtic|"
+    r"rytíř|zločinec|filantrop|teolog|astronom|geolog|sochař|fotograf|"
+    r"redaktor|redaktorka|scenárista|scenáristka|dramaturg|dramaturgyně|"
+    r"moderátor|moderátorka|producent|producentka|překladatel|překladatelka|"
+    r"kreslíř|kreslířka|ilustrátor|ilustrátorka|rozvědčík|špion|konstruktér|"
+    r"dabér|dabérka|kameraman|zpravodaj|reportér|učitel|učitelka|profesor"
+    r")\b", re.IGNORECASE)
+_PLACE = _n(r"měst|hrad|zámek|hora|řek|jezer|stát|obec|vesnic|ostrov|pohoří|"
+            r"kraj|region|čtvrť|náměstí|budov|katedrál|stavb|pyramid|pevnost|"
+            r"tvrz|klášter|chrám|most|amfiteátr|ulic|přítok|park")
+_WORK = _n(r"film|kniha|knih|román|romanet|oper|skladb|album|píseň|písn|obraz|"
+           r"báseň|básn|hra|seriál|dílo|díl|hymn|časopis|komedie|komiks|"
+           r"muzikál|symfoni|povídk|sbírk|pohádk|epos|dobrodružství|pořad|"
+           r"epizod|bondovk")
+_ORG = _n(r"organizace|společnost|firm|klub|stran|spolek|instituce|univerzit|"
+          r"škol|tým|kapel|nakladatelství|sdružení|stanic")
+_EVENT = _n(r"válk|bitv|turnaj|revoluce|povstání|událost|mistrovství|festival|"
+            r"olympiád|tažení|soutěž|operace")
+# Technické objekty: mají „byla" a žádné druhové jméno z výčtů výš, takže by
+# spadly do poslední záchrany a staly se „osobou" (doloženo: družice FalconSAT-2,
+# sonda Luna 13). Vrací `pojem` — nic lepšího pro ně dnes není.
+_THING = _n(r"družic|sond|satelit|raket|letoun|kluzák|vozidl|stroj|přístroj|"
+            r"počítač|program|protokol|norm|jednotk|prvek|slitin|materiál|"
+            r"spoluprác|značk|projekt|název|označení|technologi|metod")
+# Žánrová přídavná jména — slabší signál (viz „filmový režisér"), proto záloha.
+_ADJ_WORK = re.compile(r"\b(filmov|seri[áa]lov|komiksov|animovan|televizní|"
+                       r"hudební|divadelní|operní)", re.IGNORECASE)
+# Poslední záchrana: holé „byl/byla". Dokud stálo první, spolklo film, klub,
+# město i módní spolupráci.
+_PERSON_WEAK = re.compile(r"\bbyl[aiy]?\b", re.IGNORECASE)
 
 
 def _classify(gloss: str) -> str:
-    g = gloss or ""
-    # POSTAVA první (silnější signál než _PERSON „byl" — fiktivní postava
-    # může mít i „byl vytvořen…" což by shodl _PERSON, ale fikce má přednost).
-    if _POSTAVA.search(g):
+    s = _first_sentence(gloss or "")
+    if _POSTAVA.search(s) or (_POSTAVA_GEN.search(s) and _FIKCE.search(s)):
         return "postava"
-    if _PERSON.search(g):
-        return "osoba"
-    if _PLACE.search(g):
-        return "místo"
-    if _WORK.search(g):
+    m = _COP.search(s)
+    # Okno nesmí přetéct do DALŠÍ věty. `_first_sentence` nedělí za letopočtem
+    # („…z roku 2015. Natočil jej režisér Tarantino" → film by byl osoba),
+    # protože chrání pořadová čísla; tady se dělí před VELKÝM písmenem, aby
+    # „je 19. film" zůstalo celé.
+    def _cut(x: str) -> str:
+        return _SENT_BREAK.split(x, 1)[0]
+
+    win = _cut(s[m.end(): m.end() + _WIN]) if m else ""
+    win_person = _cut(s[m.end(): m.end() + _WIN_PERSON]) if m else ""
+    cands = []
+    for pat, typ in ((_PERSON, "osoba"), (_PLACE, "místo"), (_WORK, "dílo"),
+                     (_ORG, "organizace"), (_EVENT, "událost")):
+        mm = pat.search(win_person if typ == "osoba" else win)
+        if mm:
+            cands.append((mm.end(), typ))
+    if cands:
+        return min(cands, key=lambda t: t[0])[1]   # bližší ke sponě = podmět
+    if _ADJ_WORK.search(win):
         return "dílo"
-    if _ORG.search(g):
-        return "organizace"
-    if _EVENT.search(g):
-        return "událost"
+    if _THING.search(win):
+        return "pojem"
+    if _PERSON_WEAK.search(s):
+        return "osoba"
     return "pojem"
+
 
 
 class EntityStore:

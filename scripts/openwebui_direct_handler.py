@@ -2090,9 +2090,13 @@ class OpenWebUIDirectHandler:
                 _card = _mem.fact(name)
                 _last = _mem.last_encounter(name)  # jen uzavřené (include_open=False)
                 _mparts = []
+                # HANS_LAST_SEEN_NAME_V1 — do promptu patří JMÉNO, ne konfigurační
+                # klíč („jana"); model ho jinak přepíše do odpovědi tak, jak ho vidí.
+                from scripts.cz_names import acc as _cz_acc, display_name as _cz_disp
                 if _card is not None and getattr(_card, 'characterization', ''):
                     _mparts.append(
-                        f"Co o osobě {name} víš z dřívějška: {_card.characterization}")
+                        f"Co o osobě {_cz_disp(name)} víš z dřívějška: "
+                        f"{_card.characterization}")
                 if _last is not None:
                     _ended = _last.get('ended_at') or _last.get('started_at')
                     _gap = time.time() - _ended if _ended else 0.0
@@ -2100,8 +2104,8 @@ class OpenWebUIDirectHandler:
                         _w = _crt(_ended)
                         _mparts.append(
                             f"(Tvá vnitřní znalost — NEVYSLOVUJ to při pozdravu, "
-                            f"slouží jen k vřelosti tónu: osobu {name} jsi naposledy "
-                            f"viděl {_w}.)")
+                            f"slouží jen k vřelosti tónu: {_cz_acc(name)} jsi naposledy "
+                            f"viděl {_w}.)")   # HANS_LAST_SEEN_NAME_V1: klíč → 4. pád
                 if _mparts:
                     memory_ctx = '\n\n' + '\n'.join(_mparts)
             except Exception as _me:

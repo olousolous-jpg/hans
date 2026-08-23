@@ -1280,6 +1280,12 @@ def last_seen_answer(db_path: str, config: dict, question: str,
     person = _resolve_person(question, config, asker)
     if not person:
         return "Nevím jistě, koho máte na mysli, pane."
+    # HANS_LAST_SEEN_NAME_V1 — `person` je KLÍČ z `person_name_forms` („jana"),
+    # ne jméno k vyslovení. Bez skloňování z toho lezlo „Naposledy jsem osobu
+    # jana viděl" (malé písmeno, 1. pád). Tvary drží config (known_persons.acc),
+    # `cz_names.acc` je jen přečte — nic se tu nevymýšlí.
+    from scripts.cz_names import acc as _cz_acc
+    who = "vás" if person == asker else _cz_acc(person, config)
     conn = None
     try:
         conn = _ro(db_path)
@@ -1288,8 +1294,7 @@ def last_seen_answer(db_path: str, config: dict, question: str,
             "AND lower(title) LIKE ? ORDER BY ts DESC LIMIT 40",
             (f"%{person.lower()}%",)).fetchall()
         if not rows:
-            return (f"V deníku nemám žádný záznam, že bych osobu „{person}“ "
-                    f"viděl, pane.")
+            return (f"V deníku nemám žádný záznam, že bych {who} viděl, pane.")
         last = rows[0][0]
         # předchozí NÁVŠTĚVA = starší záznam oddělený > 1 h mezerou
         prev = None
@@ -1297,7 +1302,6 @@ def last_seen_answer(db_path: str, config: dict, question: str,
             if last - ts > 3600:
                 prev = ts
                 break
-        who = "vás" if person == asker else f"osobu {person}"
         gap_min = (time.time() - last) / 60.0
         if gap_min < 15:
             out = f"Vidím {who} právě teď, pane"
