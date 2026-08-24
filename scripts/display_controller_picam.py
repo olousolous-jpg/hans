@@ -1661,6 +1661,18 @@ class PicamDisplayController:
         self._vision_paused = False
         print("[Sleep] vision obnoven (frame-gate off)")
 
+    @staticmethod
+    def _eyes_wait_blink(eyes, timeout_s: float = 1.0):
+        """EYE_OFF_LIDS_CLOSED_V1 — počkej, až dojede případné mrknutí.
+
+        `_run_blink` na svém konci víčka OTEVŘE, takže povel „zavři" vydaný
+        uprostřed mrknutí by se za chvíli sám přepsal. Používá to usínání
+        (SLEEP_EYES_CLOSE_V1) i vypnutí očí — jedno místo, ať se ty dvě cesty
+        nerozejdou."""
+        konec = time.time() + timeout_s
+        while getattr(eyes, "_blinking", False) and time.time() < konec:
+            time.sleep(0.02)
+
     def eyes_sleep(self):  # SLEEP_EYES_CLOSE_V1
         """Usínání: vrať oči na střed a zavři víčka.
 
@@ -1672,12 +1684,7 @@ class PicamDisplayController:
         eyes = self._get_eye_servo() if self._eyes_on() else None
         if eyes is None or not getattr(eyes, "available", False):
             return False
-        # Čeká na dojetí případného mrknutí — _run_blink na konci víčka OTEVŘE,
-        # takže zavřít dřív by nic neudrželo.
-        for _ in range(50):
-            if not getattr(eyes, "_blinking", False):
-                break
-            time.sleep(0.02)
+        self._eyes_wait_blink(eyes)      # EYE_OFF_LIDS_CLOSED_V1
         try:
             eyes.center()
             eyes.close_lids()
@@ -2394,11 +2401,21 @@ class PicamDisplayController:
         """Přepne sledování animatronickýma očima. Vypnuto → oči se uvolní
         (limp, ticho) a kamera se vrátí k PŮVODNÍMU spojitému trackingu
         (jako před instalací očí). Zapnuto → vynuť recenter (ať se off-center
-        pozice z okamžiku vypnutí nebere jako střed). Stav se persistuje."""
+        pozice z okamžiku vypnutí nebere jako střed). Stav se persistuje.
+        EYE_OFF_LIDS_CLOSED_V1: vypnutí ZAVŘE víčka, zapnutí je otevře."""
         self._eyes_enabled = not self._eyes_on()
         if not self._eyes_enabled:
             eyes = getattr(self, "_eye_servo", None)
             if eyes not in (None, "unset"):
+                # EYE_OFF_LIDS_CLOSED_V1 — vypnuté oči vypadají zavřené.
+                # Zavřít MUSÍ přijít před release(): ten uspí jen pan/tilt,
+                # víčka jedou po vlastních kanálech a při lid_release_s=0
+                # zavřenou polohu drží.
+                try:
+                    self._eyes_wait_blink(eyes)
+                    eyes.close_lids()
+                except Exception as _e:
+                    print(f"[Eyes] zavření víček selhalo: {_e}")
                 try:
                     eyes.release()
                 except Exception:
@@ -2408,6 +2425,10 @@ class PicamDisplayController:
             # EYE_SERVO_RECENTER_V1 — reaktivace → vynuceně na střed + reset EMA
             eyes = self._get_eye_servo()
             if eyes not in (None, "unset"):
+                try:
+                    eyes.open_lids()          # EYE_OFF_LIDS_CLOSED_V1
+                except Exception as _e:
+                    print(f"[Eyes] otevření víček selhalo: {_e}")
                 try:
                     eyes.recenter()
                 except Exception:
