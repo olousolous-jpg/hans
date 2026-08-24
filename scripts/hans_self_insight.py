@@ -931,6 +931,11 @@ def _voice_cs(config: dict, insight_en: str) -> Optional[str]:
     return (raw or "").strip() or None
 
 
+# HANS_SELF_INSIGHT_UNSTICK_V1 - (lens, hash) uz zalogovane na INFO v tomhle
+# procesu; dalsi vyskyty jdou na DEBUG.
+_SKIP_LOGGED = set()
+
+
 def _evidence_hash(ev: dict, lens_id: str = "offline_game") -> str:
     """Hash klíčových čísel evidence + lens — dedup per lens.
 
@@ -976,6 +981,23 @@ def _evidence_hash(ev: dict, lens_id: str = "offline_game") -> str:
     else:
         # Bezpečný fallback — hash aspoň nad všemi vrchními klíči (řazeně).
         parts += sorted(str(k) for k in ev.keys())
+    # HANS_SELF_INSIGHT_UNSTICK_V1 (24.8.) - delky seznamu jsou saturovane
+    # LIMITem v collectorech (creative: 12/10/12/10/8), takze u aktivniho Hanse
+    # jsou KONSTANTA a hash se uz nikdy nezmeni -> dedup zamkne lens napored.
+    # Dolozeno: creative visel na hash e497a1065b597fa8 od 30.7. (25 dni).
+    # Primichame nejnovejsi `ts` napric evidenci: meni se JEN kdyz pribude nova
+    # prace, NE kazde volani -> dedup dal funguje (proto NE `now_ts`).
+    _mx = 0.0
+    for _v in ev.values():
+        if not isinstance(_v, list):
+            continue
+        for _it in _v:
+            if isinstance(_it, dict):
+                try:
+                    _mx = max(_mx, float(_it.get("ts") or 0))
+                except (TypeError, ValueError):
+                    pass
+    parts.append("mx=%d" % int(_mx))
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
@@ -1004,9 +1026,20 @@ def run_analysis(diary_db_path: str, config: dict,
                 "SELECT id FROM self_insights WHERE evidence_hash=? AND lens_id=? "
                 "ORDER BY id DESC LIMIT 1", (h, lens_id)).fetchone()
             if row:
-                _log.info("self_insight[%s]: evidence beze změny (hash=%s), skip",
-                          lens_id, h)
+                # HANS_SELF_INSIGHT_UNSTICK_V1 - (a) orazitkuj POKUS, at rotace
+                # jede dal i pri cache-hitu; (b) INFO jen jednou per (lens,hash),
+                # jinak DEBUG - drive 143 radku/noc s tymz hashem (vzor
+                # LOG_CIRCUIT_V1).
                 conn.close()
+                _mark_attempt(diary_db_path, lens_id)
+                _key = (lens_id, h)
+                if _key in _SKIP_LOGGED:
+                    _log.debug("self_insight[%s]: evidence beze změny "
+                               "(hash=%s), skip", lens_id, h)
+                else:
+                    _SKIP_LOGGED.add(_key)
+                    _log.info("self_insight[%s]: evidence beze změny "
+                              "(hash=%s), skip", lens_id, h)
                 return None
         conn.close()
     except Exception as e:
@@ -1053,6 +1086,25 @@ def run_analysis(diary_db_path: str, config: dict,
     return insight_cs
 
 
+def _mark_attempt(diary_db_path: str, lens_id: str) -> None:
+    """HANS_SELF_INSIGHT_UNSTICK_V1 - orazitkuj POKUS o lens (i neuspesny).
+
+    Bez tohohle se rotace posouvala jen zapisem do `self_insights`, takze lens,
+    ktery vzdy skoncil na cache-hitu, blokoval frontu napored.
+    """
+    try:
+        conn = sqlite3.connect(diary_db_path, timeout=5.0)
+        conn.execute("CREATE TABLE IF NOT EXISTS self_insight_attempts ("
+                     "lens_id TEXT PRIMARY KEY, ts REAL NOT NULL DEFAULT 0)")
+        conn.execute("INSERT INTO self_insight_attempts (lens_id, ts) VALUES (?,?) "
+                     "ON CONFLICT(lens_id) DO UPDATE SET ts=excluded.ts",
+                     (lens_id, time.time()))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        _log.debug("self_insight: _mark_attempt(%s): %s", lens_id, e)
+
+
 def _next_lens(diary_db_path: str, config: dict) -> str:
     """Rotace: vezme lens, který nejdéle neběžel (nejstarší `ts` v self_insights
     per lens). Když nikdy → první lens z configu `self_insight.lenses`."""
@@ -1061,6 +1113,10 @@ def _next_lens(diary_db_path: str, config: dict) -> str:
     lenses = [l for l in lenses if l in LENSES]
     if not lenses:
         return DEFAULT_LENS
+    # HANS_SELF_INSIGHT_UNSTICK_V1 (24.8.) - rotace se drive posouvala JEN
+    # uspechem: cache-hit vratil None a nic nezapsal, takze MAX(ts) daneho lens
+    # zustal stat a _next_lens ho vybiral porad dokola -> hladovelo vsech 6.
+    # Ridime se proto max(uspech, POKUS); pokus razitkuje _mark_attempt().
     try:
         conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
                                uri=True, timeout=3.0)
@@ -1068,8 +1124,15 @@ def _next_lens(diary_db_path: str, config: dict) -> str:
         rows = conn.execute(
             "SELECT lens_id, MAX(ts) as last_ts FROM self_insights "
             "GROUP BY lens_id").fetchall()
-        conn.close()
         last = {r["lens_id"]: r["last_ts"] for r in rows}
+        try:
+            for r in conn.execute(
+                    "SELECT lens_id, ts FROM self_insight_attempts").fetchall():
+                last[r["lens_id"]] = max(last.get(r["lens_id"], 0) or 0,
+                                         r["ts"] or 0)
+        except Exception:
+            pass          # tabulka jeste neexistuje -> chovej se jako driv
+        conn.close()
     except Exception:
         last = {}
     # Lens co nikdy neproběhl → prioritně

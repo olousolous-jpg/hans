@@ -515,8 +515,20 @@ class OpenWebUIDirectHandler:
         'misto': ['hans_denik', 'hans_cetba'],
     }
     # HANS_CHATLOG_NOT_FACT_V1 — poznávací znak chatového logu v RAG.
+    # HANS_CHATLOG_NOT_FACT_V3 (24.8.) — V1 chytal JEN formát z
+    # `_upload_chat_memory` (text ZAČÍNAJÍCÍ „Rozhovor s <jméno> (datum):").
+    # Dokumenty skládané `hans_synthesis._build_rag_text` ale začínají titulkem
+    # a datem, takže sekce „## Rozhovor s Koláčem" / „## Rozhovor s osobou"
+    # ležela ZA kotvou `^` → Koláčovy dialogy i chaty procházely do faktického
+    # groundingu. ZMĚŘENO na skutečném tvaru dokumentů (viz
+    # `tests/test_chatlog_filter.py`). Právě touhle cestou se šířil Gutštejn:
+    # dialogy s Koláčem 7.8. a 21.8. ho zopakovaly a nahrály do `hans_pripady`.
+    # ⚠️ Platí JEN pro faktickou cestu (`_build_grounding`);
+    # `conversation_recall` chatové kusy používá dál — tam PATŘÍ (rozhodnutí
+    # u V1). web_read / kodi_playing / book_read / case_* procházejí beze změny.
     _CHATLOG_RE = __import__("re").compile(
-        r"^\s*#*\s*Rozhovor\s+s\s|NEOVĚŘENO — vlastní výrok",
+        r"^\s*#*\s*Rozhovor\s+s\s|NEOVĚŘENO — vlastní výrok"
+        r"|##\s*Rozhovor\s+s\s",
         __import__("re").IGNORECASE)
     _GROUNDING_MAX_DISTANCE = 0.75   # G3B_THRESHOLD_V1 — kalibrováno z dat (bylo 0.70, moc přísné)
     _GROUNDING_TIMEOUT_S = 2         # grounding nikdy nebrzdí odpověď
@@ -1244,7 +1256,9 @@ class OpenWebUIDirectHandler:
                                     # se na FTS zápisky. Tudy přišel 21.8. do
                                     # podkladu o hradu Kost Pátý element.
                                     _txt = str(_ch.get('text') or '')
-                                    if self._CHATLOG_RE.search(_txt[:120]):
+                                    if self._CHATLOG_RE.search(_txt[:200]):  # V3: okno 120→200,
+                                        # sekce „## Rozhovor s …" leží
+                                        # až za titulkem a datem
                                         _skipped_chatlogs.append(1)
                                         continue
                                     # HANS_OWN_WORK_NOT_FACT_V1 (22.8.) —
@@ -2327,6 +2341,27 @@ class OpenWebUIDirectHandler:
                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                       or "data/hans_diary.db")
             _les = _rl(_dbp_l, hours=48, limit=4)
+            # HANS_LESSON_BY_TOPIC_V1 (24.8.) — k časovým lekcím přidej i ty,
+            # co se VÁŽOU NA TÉMA dotazu, a to BEZ expirace. Bez tohohle je
+            # oprava po 48 h pryč, zatímco omyl zůstává v RAGu napořád, takže
+            # omyl nakonec vždy vyhraje (doloženo Gutštejnem: opraven 28.7.,
+            # znovu tvrzen 7.8., 21.8. i 24.8.).
+            # HANS_LESSON_TOPIC_PROHIBIT_V1 (24.8.) — tematické korekce držet
+            # ODDĚLENĚ a formulovat jako ZÁKAZ, ne jako připomínku.
+            # ZMĚŘENO: vložení věty „Hrad Gutštejn se nenachází v Českém ráji"
+            # do obecného seznamu lekcí vedlo u VÝČTOVÉ otázky („jaké hrady jsou
+            # v Českém ráji?") k tomu, že Hans Gutštejn zase vyjmenoval —
+            # zmínka entity v kontextu ji vytáhne do výčtu (selhání negace).
+            # U cílené otázky („existuje hrad Kinský?") negace fungovala.
+            # Proto explicitní pokyn NEZAHRNOVAT do výčtů.
+            _topic_les = []
+            try:
+                from scripts.hans_lessons import lessons_for_topic as _lft
+                _topic_les = [_l for _l in _lft(_dbp_l, str(user_msg or ""),
+                                                limit=3) if _l not in _les]
+            except Exception as _lfte:
+                logging.getLogger(__name__).debug(
+                    "lessons_for_topic (chat): %s", _lfte)
             if _les and not for_greeting:  # GREETING_LEAD_PRIORITY_V1 — lekce do pozdravu nepatří
                 lessons_ctx = ("\n\nNedávno jsi byl opraven / mýlil ses v těchto "
                                "věcech (ber to v potaz, neopakuj tytéž omyly; pokud "
@@ -2334,6 +2369,17 @@ class OpenWebUIDirectHandler:
                                "k tomu nevymýšlej):\n- " + "\n- ".join(_les))
         except Exception:
             lessons_ctx = ""
+        # HANS_LESSON_TOPIC_PROHIBIT_V1 — vlastní blok, silnější formulace.
+        try:
+            if _topic_les and not for_greeting:
+                lessons_ctx += (
+                    "\n\nK TÉMATU DOTAZU UŽ MÁŠ OVĚŘENÉ OPRAVY — tohle PLATÍ "
+                    "a je nadřazené tvé paměti:\n- " + "\n- ".join(_topic_les)
+                    + "\nŘiď se tím: opak NIKDY netvrď a pokud odpovídáš "
+                      "VÝČTEM, vyvrácenou položku do výčtu NEZAHRNUJ ani ji "
+                      "nezmiňuj. Nekomentuj tyhle opravy nahlas.")
+        except Exception:
+            pass
 
         # HANS_SELFCRITIQUE_V1 (#6) — vlastní sebekritika (kvalita projevu, z vlastního
         # popudu). Tichý steer „takhle se chci vyjadřovat" — vedle korekčních lekcí,
@@ -3922,7 +3968,20 @@ class OpenWebUIDirectHandler:
                     # Mimo tyhle dvě podmínky se chová jako dosud: JEN HLÁSÍ.
                     _cesta = getattr(self, '_grounding_cesta', '') or ''
                     _tenky = _cesta.startswith('zapisky')
-                    if _dropped and _tenky and len(_dropped) >= 4:
+                    # GROUNDING_GUARD_ACTIVE_V3 (24.8.) — práh 4 → 2 na TENKÉ
+                    # cestě. ZMĚŘENO na výčtové otázce „jaké hrady jsou v Českém
+                    # ráji?": 11:36 guard ZASÁHL (5 vět bez opory) → Hans přiznal,
+                    # že víc neví. Jakmile odpověď zplynněla, spadl počet na 2-3
+                    # (11:44, 11:46) → guard MLČEL a Hans vyjmenoval Gutštejn,
+                    # Neuschwanstein a Opočno jako hrady Českého ráje.
+                    # Práh 4 tedy propouštěl přesně tu třídu, kvůli které guard je.
+                    # ⚠️ Věrné původnímu zdůvodnění: falešné poplachy z 12.8. byly
+                    # „po JEDNÉ větě" a ty práh 2 dál propustí; a podmínka (a)
+                    # `_tenky` beze změny drží guard mimo plnou RAG cestu, kde
+                    # tamty poplachy vznikly.
+                    _prah = int((self.config.get("grounding_guard", {}) or {})
+                                .get("min_dropped_thin", 2))
+                    if _dropped and _tenky and len(_dropped) >= _prah:
                         logging.getLogger(__name__).info(
                             'GROUNDING_GUARD_ACTIVE_V2: ZASAHUJI — %d vět bez '
                             'opory u tenkého podkladu (%s). První: %r',
@@ -3939,6 +3998,9 @@ class OpenWebUIDirectHandler:
                         _dohledano = True
                         response = _dohl or _clean
                     elif _dropped:
+                        # GROUNDING_GUARD_ACTIVE_V3 — do hlásícího logu i CESTA,
+                        # ať se dá příště ladit z dat (dřív nešlo poznat, jestli
+                        # hlášení přišlo z tenkého fallbacku, nebo z RAG).
                         # ⛔ POUZE HLÁSÍ, NEZASAHUJE (přepnuto 12.8. po dvou
                         # falešných poplaších naživo). Guard stojí na
                         # předpokladu, že jde vyjmenovat všechno, co model
@@ -3950,9 +4012,9 @@ class OpenWebUIDirectHandler:
                         # čím podložit další odpověď).
                         # Zapnout zpět až bude reference úplná — viz BACKLOG.
                         logging.getLogger(__name__).info(
-                            'GROUNDING_GUARD_V1 [jen hlásím]: %d vět bez opory '
-                            'v podkladu. První: %r', len(_dropped),
-                            _dropped[0][:80])
+                            'GROUNDING_GUARD_V1 [jen hlásím, cesta=%s]: %d vět bez opory '
+                            'v podkladu. První: %r', _cesta or '?',
+                            len(_dropped), _dropped[0][:80])
             except Exception as _gge:
                 logging.getLogger(__name__).warning(
                     'GROUNDING_GUARD_V1 selhal (odpověď ponechána): %s', _gge)

@@ -21,23 +21,41 @@ API:
 from __future__ import annotations
 import json
 import logging
+import re
 import sqlite3
 import time
 
 _log = logging.getLogger("hans_lessons")
 
+# HANS_CORRECTION_NO_CLAIM_V1 (24.8.) — `claim` je NEPOVINNÝ.
+# Dřív prompt vyžadoval Hansovo chybné tvrzení DOSLOVNĚ v přepisu, jenže okno
+# extrakce je 26 h (`window_hours`). Doloženo na Gutštejnovi: tvrzení 27.7.
+# 12:20:39, oprava uživatele 28.7. 11:22:24 = o 23 h později → claim ~8 h ZA
+# oknem → model korektně vrátil prázdné pole → 28. ani 29.7. nevznikla ani jedna
+# lekce (strop max_per_night to nebyl). Takhle propadla KAŽDÁ oprava starší než
+# ~den — a to je ten běžný případ, protože chyby si člověk všimne později.
+# ⚠️ Okno se ZÁMĚRNĚ nerozšiřuje (dražší přepis, víc tokenů, a stejně by to
+# selhalo u korekce po týdnu). Anti-konfabulační laťka zůstává, jen míří tam,
+# kam patří: na DOSLOVNÁ SLOVA OSOBY, ne na přítomnost Hansova tvrzení.
 _SYSTEM = (
     "Jsi pozorný analytik. Dostaneš PŘEPIS dnešních rozhovorů jedné osoby s postavou "
     "jménem {persona_name} (řádky „osoba:…\" a „{persona_name}:…\"). Najdi momenty, "
     "kdy osoba {persona_name} OPRAVILA — vyvrátila mu tvrzení, upozornila, že se spletl, "
     "že něco řekl nepřesně nebo si vymyslel. Pro každý takový moment vrať objekt s klíči:\n"
-    "  claim     = co {persona_name} řekl špatně (jeho chybné tvrzení),\n"
+    "  claim     = co {persona_name} řekl špatně (jeho chybné tvrzení). NEPOVINNÉ — "
+    "když jeho původní tvrzení v TOMHLE přepisu není, nech prázdný řetězec.\n"
     "  correction= jak ho osoba opravila / jak to ve skutečnosti je,\n"
     "  lesson    = krátké ponaučení v 1. osobě, co si z toho {persona_name} bere "
     "(např. „Nemám si domýšlet preference lidí, když je neznám.\").\n"
-    "PŘÍSNĚ ANTI-KONFABULACE: zahrň JEN reálné opravy faktu/omylu DOSLOVNĚ obsažené "
-    "v přepisu. NEZAHRNUJ pouhý jiný názor či vkus, běžnou otázku, ani nesouhlas "
-    "v preferenci (to není oprava). Když žádná oprava není, vrať prázdné pole. "
+    "OPRAVA S ODSTUPEM — DŮLEŽITÉ: osoba často opravuje omyl až se zpožděním, klidně "
+    "o několik dní, takže původní chybné tvrzení v přepisu vůbec být NEMUSÍ. Takovou "
+    "opravu zahrň TAKÉ, s prázdným claim. Poznáš ji podle toho, že osoba něco výslovně "
+    "popírá nebo uvádí na pravou míru — „X není Y\", „to je špatně\", „mýlíš se\", "
+    "„ve skutečnosti je to jinak\". Nedomýšlej si, co {persona_name} řekl předtím; "
+    "když jeho tvrzení neznáš, prostě nech claim prázdný.\n"
+    "PŘÍSNĚ ANTI-KONFABULACE: zahrň JEN opravy, jejichž znění je DOSLOVNĚ v přepisu "
+    "ve slovech té osoby. NEZAHRNUJ pouhý jiný názor či vkus, běžnou otázku, ani "
+    "nesouhlas v preferenci (to není oprava). Když žádná oprava není, vrať prázdné pole. "
     "Vrať VÝHRADNĚ JSON pole objektů, nic víc."
 )
 
@@ -53,13 +71,39 @@ def _extract_json_array(raw: str):
             s = s[4:]
     a = s.find("[")
     b = s.rfind("]")
-    if a == -1 or b == -1 or b < a:
-        return []
-    try:
-        out = json.loads(s[a:b + 1])
-        return out if isinstance(out, list) else []
-    except Exception:
-        return []
+    if a != -1 and b != -1 and b > a:
+        try:
+            out = json.loads(s[a:b + 1])
+            if isinstance(out, list):
+                return out
+        except Exception:
+            pass
+    # HANS_CORRECTION_TRUNCATION_V1 — pojistka: když se pole nedoparsuje
+    # (uříznuté generování → chybí `]`), vytáhni aspoň KOMPLETNÍ objekty.
+    # Dřív se celá dávka zahodila kvůli jedné nedopsané položce.
+    return _salvage_objects(s[a:] if a != -1 else s)
+
+
+def _salvage_objects(s: str) -> list:
+    """Kompletní `{...}` objekty z rozbitého/useknutého JSON pole."""
+    out, depth, start = [], 0, None
+    for i, ch in enumerate(s):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        obj = json.loads(s[start:i + 1])
+                        if isinstance(obj, dict):
+                            out.append(obj)
+                    except Exception:
+                        pass
+                    start = None
+    return out
 
 
 def extract_corrections(config: dict, diary_db_path: str,
@@ -86,6 +130,15 @@ def extract_corrections(config: dict, diary_db_path: str,
                 "jobautomation/OpenEuroLLM-Czech:latest")))
     timeout = int(cfg.get("llm_timeout", 300))
     max_per_night = int(cfg.get("max_per_night", 3))
+    _num_predict = int(cfg.get("num_predict", 800))   # HANS_CORRECTION_TRUNCATION_V1
+    # HANS_CORRECTION_NUMCTX_V1 (24.8.) — SKUTEČNÁ příčina uřezaného JSON.
+    # ZMĚŘENO na reálném volání: `done_reason=length`, `prompt_eval=1906`,
+    # `eval_count=142` při `num_ctx` defaultu 2048 → prompt sežral okno a na
+    # výstup zbylo 142 tokenů. `num_predict` je proti tomu bezmocný.
+    # ⚠️ Perverzní důsledek, který to mělo celou dobu: čím DELŠÍ den (delší
+    # přepis), tím MÍŇ místa na odpověď → tím MÉNĚ zachycených korekcí.
+    # Přepis 4000 zn ≈ 1400 tok + system ≈ 500 → 8192 dá pohodlnou rezervu.
+    _num_ctx = int(cfg.get("num_ctx", 8192))
     try:
         from scripts.ollama_client import ollama_generate
     except Exception as e:
@@ -101,13 +154,27 @@ def extract_corrections(config: dict, diary_db_path: str,
     for person, notes in dialogs.items():
         if written >= max_per_night:
             break
-        transcript = "\n\n".join(notes)[:4000]
+        # HANS_CORRECTION_TRUNCATION_V1 (24.8.) — brát KONEC přepisu, ne
+        # začátek. `_gather_dialogs` vrací zprávy chronologicky, takže `[:4000]`
+        # si nechal NEJSTARŠÍ a zahodil nejnovější — tedy přesně ty korekce,
+        # kvůli kterým se to pouští. ZMĚŘENO 24.8.: přepis 5219 zn, oprava
+        # „Gutštejn" na pozici 3536 (prošla), „Karlštejn" 4640 a „Kinský" 4936
+        # (obě uříznuty). Korekce přichází na konci hovoru, ne na začátku.
+        transcript = "\n\n".join(notes)[-4000:]
         if not transcript.strip():
             continue
         try:
+            # HANS_CORRECTION_TRUNCATION_V1 — `num_predict` se NIKDY nenastavil,
+            # takže platil default modelu (~128 tok). ZMĚŘENO: výstup uříznut na
+            # 401 zn uprostřed pole, bez `]` → `_extract_json_array` vrátil []
+            # → z noci 0 lekcí, i když model korekce NAŠEL. Tichá ztráta:
+            # extrakce takhle přicházela o všechno, co se nevešlo do jedné
+            # krátké položky.
             raw = ollama_generate(model=model, prompt=transcript, system=system,
                                   config=config, timeout=timeout, keep_alive=0,
-                                  options={"temperature": 0.1})
+                                  options={"temperature": 0.1,
+                                           "num_predict": _num_predict,
+                                           "num_ctx": _num_ctx})
         except Exception as e:
             _log.warning("extract_corrections LLM (%s): %s", person, e)
             continue
@@ -161,6 +228,134 @@ def recent_lessons(diary_db_path: str, hours: float = 48.0,
                 conn.close()
             except Exception:
                 pass
+
+
+_TOPIC_STOP_EXTRA = {
+    "jake", "jaky", "jaka", "jake", "ktery", "ktera", "ktere", "kteri",
+    "cem", "cim", "proc", "kde", "kdy", "kdo", "jak", "muzes", "muzete",
+    "rici", "rekni", "povez", "vis", "znas", "prosim", "mohl", "mohla",
+    "bys", "byste", "nachazeji", "nachazi", "vsechno", "vsechny", "nejake",
+}
+
+
+def lessons_for_topic(diary_db_path: str, text: str, limit: int = 3,
+                      scan: int = 500) -> list:
+    """HANS_LESSON_BY_TOPIC_V1 — lekce k TÉMATU dotazu, BEZ časového okna.
+
+    Proč to existuje: `recent_lessons` je čistě časové (48-72 h), takže oprava
+    zmizí z kontextu za pár dní, zatímco omyl leží v RAGu napořád. Ta asymetrie
+    znamená, že omyl časem VŽDY vyhraje — doloženo Gutštejnem (opraven 28.7.,
+    znovu tvrzen 7.8., 21.8. i 24.8.). Proto se lekce hledá podle TÉMATU
+    a nikdy neexpiruje.
+
+    Matchuje se proti KONKRÉTNÍM polím (`entity` / `claim` / `correction`),
+    NE proti obecné próze ponaučení — „Musím si ověřovat informace." by jinak
+    sedělo na cokoliv a zaplavilo kontext. České skloňování řeší `_tok_match`
+    ze sdíleného entity store (prefixová shoda), takže „hrady"/„hradu" trefí
+    „hrad". READ-ONLY, chyba → [].
+    """
+    if not (text or "").strip():
+        return []
+    try:
+        from scripts.hans_entities import _tokens, _tok_match
+    except Exception as e:
+        _log.debug("lessons_for_topic: entity primitiva nedostupná: %s", e)
+        return []
+    try:
+        from scripts.hans_recall import _STOPWORDS as _SW
+    except Exception:
+        _SW = set()
+    q = [t for t in _tokens(text)
+         if len(t) >= 4 and t not in _SW and t not in _TOPIC_STOP_EXTRA]
+    if not q:
+        return []
+    conn = None
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path, uri=True,
+                               timeout=3.0)
+        rows = conn.execute(
+            "SELECT note, data FROM diary WHERE event_type='lesson_learned' "
+            "ORDER BY ts DESC LIMIT ?", (int(scan),)).fetchall()
+    except Exception as e:
+        _log.debug("lessons_for_topic failed: %s", e)
+        return []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    # HANS_LESSON_BY_TOPIC_DF_V1 — rozlišující token poznáme podle toho, že je
+    # v korpusu lekcí VZÁCNÝ, ne podle velkého písmene. Kapitálky byly špatný
+    # proxy v OBOU směrech: pouštěly „Česko"/„Hans" a zahazovaly „fotbale"
+    # (malé písmeno) i „2026" (číslice) — „kdo pořádá MS 2026?" pak nenašlo
+    # vlastní lekci o MS. Změřeno na 41 reálných lekcích: šum má vysoké df
+    # (hans 14, standa 10, nemam 10, pane 6, zaznam 5), obsah má df ≤ 3
+    # (fotbale 1, francii 1, jana 1, kost 1, gotika 2, hrad 3).
+    docs = []
+    for note, data in rows:
+        note = (note or "").strip()
+        if not note:
+            continue
+        try:
+            d = json.loads(data or "{}")
+        except Exception:
+            d = {}
+        hay = " ".join(str(d.get(k, "") or "")
+                       for k in ("entity", "claim", "correction")).strip()
+        if not hay:
+            continue        # bez konkrétních polí není co vázat na téma
+        docs.append((note, d, set(t for t in _tokens(hay) if len(t) >= 4)))
+    if not docs:
+        return []
+    df = {}
+    for _n, _d, _s in docs:
+        for t in _s:
+            df[t] = df.get(t, 0) + 1
+    max_df = max(3, len(docs) // 10)
+    # HANS_LESSON_BY_TOPIC_RANK_V1 — řadit podle SPECIFIČNOSTI trefy, ne podle
+    # stáří. Bez toho uřízl limit tu pravou lekci: „kdo pořádá MS 2026?" trefilo
+    # `fotbale` (df 1) i `2026` (df 3), jenže tři novější lekce se shodou na
+    # `2026` se dostaly před ni. Vyhrává nejvzácnější trefený token, při shodě
+    # novější lekce.
+    scored = []
+    for _i, (note, d, htok) in enumerate(docs):
+        htok = [t for t in htok if df.get(t, 0) <= max_df]
+        if not htok:
+            continue
+        # HANS_LESSON_BY_TOPIC_EXACT_V1 — PŘESNÁ shoda tokenu má přednost před
+        # skloňovanou. `_tok_match` je prefixové, takže občas spáruje nesouvisející
+        # slova („porada"~„pořádku", obojí prefix „porad") a protože takový token
+        # bývá vzácný, prolezl by nahoru. Tier 0 = přesná shoda, tier 1 = shoda
+        # přes skloňování (ta je pořád potřeba: „hrady"→„hrad", „Francie"→„Francii").
+        best = None
+        for a in q:
+            for b in htok:
+                if a == b:
+                    _key = (0, df.get(b, 99))
+                elif _tok_match(a, b):
+                    _key = (1, df.get(b, 99))
+                else:
+                    continue
+                if best is None or _key < best:
+                    best = _key
+        if best is None:
+            continue
+        _corr = str(d.get("correction", "") or "").strip()
+        scored.append((best, _i, _corr if len(_corr) >= 8 else note, note))
+    scored.sort(key=lambda r: (r[0], r[1]))   # (přesnost, vzácnost), pak novost
+    out, seen = [], set()
+    for _best, _i, _item, note in scored:
+        if _item in seen or note in seen:
+            continue
+        seen.add(_item)
+        seen.add(note)
+        out.append(_item)
+        if len(out) >= int(limit):
+            break
+    if out:
+        _log.debug("lessons_for_topic: %d lekcí k tématu %r", len(out), text[:60])
+    return out
 
 
 def scan_overnight_lessons(diary_db_path: str, since: float) -> int:

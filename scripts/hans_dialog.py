@@ -89,7 +89,7 @@ def _build_system_prompt(config: dict) -> str:
     return localize_kolac(apply_name(prompt, config), config)  # PERSONA_NAME_CONFIGURABLE_V1 + KOLAC_NAME_CONFIGURABLE_V1
 
 
-def _build_hans_solo_system(config: dict) -> str:
+def _build_hans_solo_system(config: dict, topic_text: str = "") -> str:
     """HANS_KOLAC_MIND_V1 — system prompt JEN pro Hansovu repliku (dvě mysli).
     Hans dostane svou identitu a má říct JEDNU repliku reagující na Koláče —
     NEpíše za Koláče (ten má vlastní generaci s vlastní myslí)."""
@@ -125,6 +125,17 @@ def _build_hans_solo_system(config: dict) -> str:
     try:
         from scripts.hans_lessons import recent_lessons
         _les = recent_lessons(_dbp, hours=72, limit=2)
+        # HANS_LESSON_BY_TOPIC_V1 (24.8.) — 72h okno nestačilo: PRÁVĚ TAHLE cesta
+        # Gutštejna 7.8. a 21.8. znovu vyslovila (a Koláčovy dialogy se nahrávají
+        # do RAG, takže si tím Hans otravoval vlastní paměť). Lekce k tématu
+        # debaty se proto berou bez expirace.
+        try:
+            from scripts.hans_lessons import lessons_for_topic as _lft
+            for _l in _lft(_dbp, str(topic_text or ""), limit=3):
+                if _l not in _les:
+                    _les.append(_l)
+        except Exception:
+            pass
         if _les:
             parts.append(
                 "\n\nNedávno tě někdo opravil / ses mýlil v těchto věcech — "
@@ -1305,7 +1316,8 @@ class HansDialog:
                 and self._recent_replies):
             _hist_n = int(dc.get("history_in_prompt", 16))
             convo_seed = list(self._recent_replies[-_hist_n:])
-        hans_sys = _build_hans_solo_system(self.config)
+        hans_sys = _build_hans_solo_system(
+            self.config, getattr(topic, "subject", "") or "")
         km = self._kolac()
         convo = []
         for i in range(max(2, n_lines)):
