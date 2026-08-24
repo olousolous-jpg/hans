@@ -71,6 +71,11 @@ class HansIdle:
             config        = config,
             diary_db_path = cfg.get("diary_db", "data/hans_diary.db"),
             diary_writer  = self._log_entry,  # DIARY_WRITER_PROPAGATE_IDLE_V2
+            # HANS_PENDING_NO_SYNTHESIS_V1 — až catchup dožije odložené čtení,
+            # teprve tehdy se pustí reflexe (se skutečným obsahem).
+            resummarized_cb = lambda _t, _n: (
+                self._synthesis_hooks.enqueue("web_read", _t, _n)
+                if getattr(self, "_synthesis_hooks", None) else None),
         )
 
         from scripts.hans_body import HansBody
@@ -502,7 +507,18 @@ class HansIdle:
 
     # ── Volá hlavní smyčka ────────────────────────────────────────────────────
         # Auto-enqueue do synthesis hooks (asynchronně)
-        if getattr(self, '_synthesis_hooks', None):
+        # HANS_PENDING_NO_SYNTHESIS_V1 (24.8.) — z NÁHRADNÍHO textu se reflexe
+        # psát NESMÍ. Když je mozek dole, `hans_curiosity` zapíše web_read
+        # s note="[topic] (nezpracováno — mozek byl mimo, doženu to)" a
+        # data.pending=1; ten marker se dosud posílal do hooku JAKO OBSAH
+        # ČLÁNKU, model neměl z čeho psát „co tě zaujalo" → článek si VYMYSLEL.
+        # Doloženo 24.8.: pod titulkem Hitchcockova filmu „Na sever
+        # severozápadní linkou" vznikla reflexe o uchování mozkové tkáně.
+        # Catchup později opraví note u web_read, ale smyšlený
+        # reading_takeaway už v deníku zůstane → kazí DATA.
+        # Reflexe se doplní až z catchupu (`hans_curiosity`, `_resummarized_cb`).
+        _pending = '"pending": 1' in (data or "") or '"pending":1' in (data or "")
+        if getattr(self, '_synthesis_hooks', None) and not _pending:
             try:
                 self._synthesis_hooks.enqueue(event_type, title, note)
             except Exception:

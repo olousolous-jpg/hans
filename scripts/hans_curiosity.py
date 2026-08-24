@@ -110,9 +110,12 @@ class HansCuriosity:
     """
 
     def __init__(self, config: dict, diary_db_path: str,
-                 diary_writer=None):
+                 diary_writer=None, resummarized_cb=None):
         # DIARY_WRITER_PATCH_CURIOSITY
         self._diary_writer = diary_writer
+        # HANS_PENDING_NO_SYNTHESIS_V1 — zavolá se, až catchup vyrobí SKUTEČNÉ
+        # shrnutí odloženého čtení; teprve tehdy má smysl psát reflexi.
+        self._resummarized_cb = resummarized_cb
         self.config        = config
         self._reader       = WebReader(config)
         self._diary_path   = diary_db_path
@@ -902,6 +905,13 @@ class HansCuriosity:
                 conn.commit()
                 done += 1
                 _log.info("Catchup web_read #%s zpracováno: %s", _id, summary[:70])
+                # HANS_PENDING_NO_SYNTHESIS_V1 — reflexe se při pending
+                # ZÁMĚRNĚ nepsala (nebylo z čeho); teď už obsah je.
+                if self._resummarized_cb:
+                    try:
+                        self._resummarized_cb(d.get("query") or "", new_note)
+                    except Exception as _rc:
+                        _log.debug("resummarized_cb: %s", _rc)
             except Exception as e:
                 _log.debug("catchup update #%s: %s", _id, e)
         conn.close()
