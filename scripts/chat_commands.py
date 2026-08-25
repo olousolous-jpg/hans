@@ -3270,9 +3270,13 @@ def _cmd_nastroj(handler, name, args) -> str:  # HANS_TOOLSCOUT_V1
                                   if p.get("size_tag") else "")
         res = ts.pull_model(cfg, _pull)
         if res.get("ok"):
-            store.set_status(pid, "installed")
+            # HANS_TOOLSCOUT_VERIFY_V1 — stav zůstává `approved`. `pull_model`
+            # spouští stahování ODPOJENĚ a vrací ok už při „started", takže
+            # `installed` by tu byla domněnka, ne fakt. Povýší ho až noční
+            # `verify_approved` podle `ollama list`.
             return ("Schváleno, pane. Stahuji %s na počítač — %s. Až doběhne, "
-                    "budu ho moci použít pro dílo." % (_pull, res["detail"]))
+                    "ověřím si, že skutečně dorazil, a pak ho použiji pro "
+                    "dílo." % (_pull, res["detail"]))
         return ("Schválil jsem %s, ale stažení jsem nespustil: %s"
                 % (_pull, res.get("detail", "")))
 

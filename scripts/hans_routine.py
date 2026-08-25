@@ -2174,6 +2174,13 @@ class HansRoutine:
                 try:
                     from scripts import hans_toolscout as _ts
                     if _ts.enabled(self.config):
+                        # HANS_TOOLSCOUT_VERIFY_V1 — napřed ověř, jestli dřív
+                        # schválené stahování doopravdy dorazilo (`ollama pull`
+                        # běží odpojeně, takže to nikdo jinde nezjistí).
+                        try:
+                            _ts.verify_approved(self.config, self._diary_path)
+                        except Exception as _vae:
+                            _log.debug("toolscout verify: %s", _vae)
                         _c = sqlite3.connect(self._diary_path, timeout=10)
                         _done = [r[0] for r in _c.execute(
                             "SELECT topic FROM study_program WHERE "
@@ -2190,7 +2197,14 @@ class HansRoutine:
                                     "Dostudoval jsem %s. Pro finální dílo navrhuji "
                                     "nástroj %s — mrkni na /nastroj." % (
                                         _tp, _top.get("tool_name", "?")))
-                            _log.info("Toolscout '%s': %s", _tp, _r.get("status"))
+                            # HANS_TOOLSCOUT_NO_MATCH_V1 — odložení kvůli síti
+                            # je provozní šum (~20 řádků/noc), ne událost.
+                            if _r.get("status") == "deferred":
+                                _log.debug("Toolscout '%s': deferred (%s)",
+                                           _tp, _r.get("reason"))
+                            else:
+                                _log.info("Toolscout '%s': %s (%s)", _tp,
+                                          _r.get("status"), _r.get("reason", ""))
                             break  # jeden návrh za noc
                 except Exception as _tse:
                     _log.warning("Toolscout selhal: %s", _tse)

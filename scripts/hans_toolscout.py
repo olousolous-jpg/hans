@@ -30,6 +30,11 @@ from scripts.logger import get_logger
 _log = get_logger("hans_toolscout")
 
 _SEARCH_URL = "https://ollama.com/search?q=%s"
+# HANS_TOOLSCOUT_RANK_V2 — počet stažení: `</svg> <span >1.1M</span>` hned za
+# ikonou stahování. ⚠️ Scraping cizího HTML je křehký ([[hans-toolscout]]) —
+# když se čísla začnou tvářit jako velikosti modelu („3B" pulls), je rozbitá
+# právě tahle kotva.
+_PULLS_RE = re.compile(r"</svg>\s*<span[^>]*>\s*([\d.]+[KMB])\s*</span>")
 _MODEL_URL = "https://ollama.com/library/%s"
 
 
@@ -73,10 +78,29 @@ def _est_vram_gb(param_b: float) -> float:
 def search_library(query: str, limit: int = 12,
                    timeout: int = 15) -> list:
     """GROUNDED: parse ollama.com/search. Vrací list dictů {name, sizes[str],
-    sizes_b[float], pulls, capabilities[], url}. Deferral-safe → [] při výpadku."""
+    sizes_b[float], pulls, capabilities[], url}. Deferral-safe → [] při výpadku.
+
+    ⚠️ Prázdný seznam je DVOJZNAČNÝ (výpadek sítě × knihovna nic nemá) —
+    kdo to potřebuje rozlišit, ať volá `search_library_ex`."""
+    return search_library_ex(query, limit, timeout)[0]
+
+
+def search_library_ex(query: str, limit: int = 12,
+                      timeout: int = 15) -> tuple:
+    """HANS_TOOLSCOUT_NO_MATCH_V1 — jako `search_library`, ale vrací
+    `(kandidáti, fetch_ok)`.
+
+    Proč to existuje: `[]` se dosud vracelo I při výpadku sítě, I když
+    knihovna na dotaz prostě nic nemá. Volající ta dvě selhání nerozlišil,
+    takže beznadějné téma zkoušel donekonečna — doloženo 25.8.: téma
+    „historie a památky" dávalo klíč `history`, ollama.com takový model
+    nemá, a Toolscout se na něm zasekl ~20× za noc a BLOKOVAL frontu
+    dalších dostudovaných témat (`break` po prvním tématu bez návrhu).
+    `fetch_ok=True` + prázdno = platná odpověď „nic vhodného není".
+    """
     html = _fetch(_SEARCH_URL % urllib.parse.quote(query), timeout)
     if not html:
-        return []
+        return [], False
     out = []
     seen = set()
     # HANS_TOOLSCOUT_PARSE_V2 (25.7.) — ollama.com zrušil x-test-* atributy;
@@ -93,7 +117,13 @@ def search_library(query: str, limit: int = 12,
         card = part.split('href="/library/')[0]   # jen tato karta
         sizes = re.findall(r">\s*(\d+(?:\.\d+)?b)\s*<", card, re.IGNORECASE)
         caps = re.findall(r"text-indigo-600[^>]*>\s*([A-Za-z]+)\s*<", card)
-        pm = re.search(r"([\d.]+[KMB])\b", card)   # 1. číslo K/M/B = pulls
+        # HANS_TOOLSCOUT_RANK_V2 — pulls MUSÍ být kotvené na span za ikonou
+        # stahování. „1. číslo s K/M/B" bralo číslo z POPISU modelu:
+        # „Stable Code 3B is a coding model…" → pulls „3B" místo 1.1M
+        # (2700× nafouknuto). Změřeno 25.8.: špatně bylo 17 z ~50 karet
+        # (nemotron „70B", llama3.2-vision „11B", dolphin3 „8B"…), a protože
+        # se podle pulls ŘADÍ, dostával přednost náhodný model.
+        pm = _PULLS_RE.search(card)
         out.append({
             "name": name,
             "sizes": sizes,
@@ -104,7 +134,7 @@ def search_library(query: str, limit: int = 12,
         })
         if len(out) >= limit:
             break
-    return out
+    return out, True
 
 
 # ── VRAM fit klasifikace (proti reálné GPU + rezidentní chat) ─────────────────
@@ -149,7 +179,8 @@ def scout_tools_for_topic(config: dict, topic: str,
     použije téma). Vrací {topic, keyword, candidates:[{name,size_tag,est_gb,fit,
     pulls,capabilities,url}]}. Kandidáti = jen ti, co se vejdou. GROUNDED."""
     kw = (keyword or topic).strip()
-    raw = search_library(kw, limit=int(_cfg(config).get("search_limit", 12)))
+    raw, _ok = search_library_ex(
+        kw, limit=int(_cfg(config).get("search_limit", 12)))
     cands = []
     for r in raw:
         fit = _best_fitting_size(r, config)
@@ -161,7 +192,8 @@ def scout_tools_for_topic(config: dict, topic: str,
             "pulls": r["pulls"], "capabilities": r["capabilities"],
             "url": r["url"],
         })
-    return {"topic": topic, "keyword": kw, "candidates": cands}
+    return {"topic": topic, "keyword": kw, "candidates": cands,
+            "fetch_ok": _ok}
 
 
 # ── LLM: klíč z tématu + groundované odůvodnění (deferral-safe) ───────────────
@@ -262,12 +294,20 @@ class ToolStore:
             _log.warning("toolscout ensure: %s", e)
 
     def has_for_topic(self, topic: str) -> bool:
-        """Už existuje živý (pending/approved/installed) návrh pro téma?"""
+        """Už existuje živý (pending/approved/installed) návrh pro téma?
+
+        HANS_TOOLSCOUT_NO_MATCH_V1 — `none` se počítá TAKY: je to uzavřený
+        výsledek („hledal jsem, nic vhodného není"), ne chyba. Bez toho se
+        beznadějné téma zkouší donekonečna a drží frontu (viz
+        `search_library_ex`). `rejected` se schválně NEPOČÍTÁ — když návrh
+        zamítneš, Hans smí příště nabídnout jiný.
+        """
         try:
             c = self._conn()
             r = c.execute(
                 "SELECT 1 FROM tool_proposals WHERE topic=? AND status IN "
-                "('pending','approved','installed') LIMIT 1", (topic,)).fetchone()
+                "('pending','approved','installed','none') LIMIT 1",
+                (topic,)).fetchone()
             c.close()
             return r is not None
         except Exception:
@@ -282,6 +322,27 @@ class ToolStore:
             (time.time(), topic, cand["name"], cand["size_tag"], cand["est_gb"],
              cand["fit"], cand["pulls"], ",".join(cand["capabilities"]),
              rationale, cand["url"]))
+        c.commit()
+        pid = cur.lastrowid
+        c.close()
+        return pid
+
+    def mark_none(self, topic: str, keyword: str) -> int:
+        """HANS_TOOLSCOUT_NO_MATCH_V1 — zapiš, že pro téma nic vhodného není.
+
+        ⛔ ZÁMĚRNĚ se neukládá žádný „náhradní" nástroj — vymyšlený návrh by
+        byl konfabulace ([[anticonfabulation-guiding-principle]]). Řádek nese
+        jen fakt, že se hledalo a nic nesedlo, a `status='none'` ho drží mimo
+        výpis pendingů (`list('pending')`), takže se nedá omylem schválit.
+        """
+        c = self._conn()
+        cur = c.execute(
+            "INSERT INTO tool_proposals (ts, topic, tool_name, size_tag, "
+            "est_gb, fit, pulls, capabilities, rationale, url, status) VALUES "
+            "(?,?,'','',0,'','','',?,'','none')",
+            (time.time(), topic,
+             "Hledal jsem v knihovně modelů pod klíčem „%s“ a nic vhodného "
+             "jsem nenašel. Pro tohle téma nástroj nenavrhuji." % keyword))
         c.commit()
         pid = cur.lastrowid
         c.close()
@@ -343,15 +404,42 @@ def propose_tool(config: dict, db_path: str, topic: str,
     scouted = scout_tools_for_topic(config, topic, kw)
     cands = scouted["candidates"]
     if not cands:
-        return {"status": "deferred", "reason": "žádní kandidáti (síť/knihovna?)"}
-    # seřaď: coexist>on_demand, pak podle popularity (parse pulls M/K)
+        # HANS_TOOLSCOUT_NO_MATCH_V1 — dvě různé situace, dva různé závěry.
+        if scouted.get("fetch_ok"):
+            store.mark_none(topic, kw)      # knihovna nic nemá → HOTOVO
+            return {"status": "none",
+                    "reason": "knihovna nic vhodného pod „%s“ nemá" % kw}
+        return {"status": "deferred", "reason": "hledání selhalo (síť?)"}
+    # seřaď (viz HANS_TOOLSCOUT_RANK_V2 níž): popularita, pak coexist
     def _pull_num(p):
-        m = re.match(r"([0-9.]+)\s*([MK])?", p.get("pulls", "") or "")
+        m = re.match(r"([0-9.]+)\s*([BMK])?", p.get("pulls", "") or "")
         if not m:
             return 0.0
         v = float(m.group(1))
-        return v * (1e6 if m.group(2) == "M" else 1e3 if m.group(2) == "K" else 1)
-    cands.sort(key=lambda c: (0 if c["fit"] == "coexist" else 1, -_pull_num(c)))
+        return v * (1e9 if m.group(2) == "B" else
+                    1e6 if m.group(2) == "M" else
+                    1e3 if m.group(2) == "K" else 1)
+    # HANS_TOOLSCOUT_RANK_V2 — POPULARITA PRVNÍ, „vejde se vedle chatu" až
+    # jako rozřazovač shody. Dřív byl `coexist` tvrdá první podmínka, takže
+    # malý model vždy porazil větší — změřeno 25.8. na tématu hradů: klíč
+    # `vision` by vybral `moondream:1.8b`, ačkoliv Hans má `qwen2.5vl:7b`,
+    # tedy DOWNGRADE. `on_demand` je přitom běžný režim (chat se dočasně
+    # odloží jako při herním módu), není důvod se mu vyhýbat za cenu kvality.
+    _mam = installed_models(config)
+    if _mam:
+        # Nenavrhuj, co už na PC je — jinak hrozí „vezmi si menší verzi toho,
+        # co máš". Prázdná množina = PC dole → radši nefiltrovat než zahodit
+        # kandidáty kvůli neznalosti.
+        _pred = len(cands)
+        cands = [c for c in cands if c["name"] not in _mam]
+        if _pred != len(cands):
+            _log.debug("toolscout: %d kandidátů vynecháno (už nainstalováno)",
+                       _pred - len(cands))
+        if not cands:
+            store.mark_none(topic, kw)
+            return {"status": "none",
+                    "reason": "vše vhodné pod „%s“ už mám nainstalované" % kw}
+    cands.sort(key=lambda c: (-_pull_num(c), 0 if c["fit"] == "coexist" else 1))
     props = []
     for cand in cands[:max_props]:
         rat = _rationale(config, topic, cand)
@@ -383,17 +471,58 @@ def pull_model(config: dict, name: str) -> dict:
         return {"ok": False, "detail": str(e)[:100]}
 
 
-def is_installed(config: dict, name: str) -> bool:
-    """Ověř `ollama list` na PC, že model už je stažený."""
+def installed_models(config: dict) -> set:
+    """HANS_TOOLSCOUT_RANK_V2 — množina ZÁKLADNÍCH jmen modelů na PC.
+
+    Jedno `ollama list` pro celou dávku (ne dotaz na každého kandidáta).
+    Prázdná množina = nevíme (PC dole / pc_remote vypnut) — volající pak
+    NESMÍ nic filtrovat ani razítkovat, aby se z neznalosti nestal závěr.
+    """
     try:
         from scripts import pc_remote
         if not pc_remote.enabled(config):
-            return False
+            return set()
         out = pc_remote.run(config, "ollama list", timeout=12)
-        base = name.split(":")[0]
-        return bool(out) and base in str(out)
-    except Exception:
-        return False
+        if not out:
+            return set()
+        naz = set()
+        for ln in str(out).splitlines()[1:]:      # 1. řádek je hlavička
+            ln = ln.strip()
+            if ln:
+                naz.add(ln.split()[0].split(":")[0])
+        return naz
+    except Exception as e:
+        _log.debug("installed_models: %s", e)
+        return set()
+
+
+def is_installed(config: dict, name: str) -> bool:
+    """Ověř `ollama list` na PC, že model už je stažený."""
+    return name.split(":")[0] in installed_models(config)
+
+
+def verify_approved(config: dict, db_path: str) -> int:
+    """HANS_TOOLSCOUT_VERIFY_V1 — orazítkuj `installed` AŽ když model reálně je.
+
+    `pull_model` spouští `ollama pull` ODPOJENĚ (`nohup … &`) a vrací ok už při
+    „started", takže dřív se `installed` nastavovalo hned po schválení — když
+    stahování selhalo (síť, místo na disku), Hans si myslel, že nástroj má.
+    Tahle kontrola běží v nočním ticku a povýší `approved → installed` teprve
+    podle `ollama list`. Neúspěšný pull zůstane `approved` = poctivé „schváleno,
+    ale ještě to tu není". Vrací počet povýšených.
+    """
+    naz = installed_models(config)
+    if not naz:
+        return 0                      # nevíme → nerazítkovat (viz docstring)
+    store = ToolStore(db_path)
+    n = 0
+    for p in store.list("approved"):
+        if (p.get("tool_name") or "").split(":")[0] in naz:
+            if store.set_status(p["id"], "installed"):
+                n += 1
+                _log.info("HANS_TOOLSCOUT_VERIFY_V1: %s dorazil → installed",
+                          p.get("tool_name"))
+    return n
 
 
 if __name__ == "__main__":
