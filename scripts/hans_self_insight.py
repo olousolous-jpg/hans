@@ -8,7 +8,8 @@
     (18.7.: „jak spolehlivý jsem?")
 
 **Analytická pipeline (dvě fáze, EN→CZ podle [[reasoning-tier-when-to-use]]):**
-  1. **Reasoning:** deepseek-r1:14b (EN prompt, EN evidence, EN výstup) —
+  1. **Reasoning:** `qwen3:30b` (EN prompt, EN evidence, EN výstup; do 25.7.
+     `deepseek-r1:14b`, ten je od 25.8. i smazaný z disku) —
      hledá vzorce, ale prompt NIKDY neobsahuje hotový závěr, jen data.
   2. **Voice:** hans-czech přeloží EN insight do CZ v Hansově hlase.
 
@@ -867,7 +868,7 @@ def _init_insights_table(db) -> None:
         window_days    INTEGER NOT NULL DEFAULT 30,
         insight_cs     TEXT NOT NULL,
         insight_en     TEXT NOT NULL DEFAULT '',
-        source_model   TEXT NOT NULL DEFAULT 'deepseek-r1:14b',
+        source_model   TEXT NOT NULL DEFAULT 'qwen3:30b',
         evidence_hash  TEXT NOT NULL DEFAULT '',
         created_ts     REAL NOT NULL)""")
     # Idempotentní migrace — přidej lens_id pokud chybí (starší DB bez sloupce).
@@ -884,8 +885,13 @@ def _reason_en(config: dict, evidence_en: str) -> Optional[str]:
         from scripts.ollama_client import ollama_chat
     except Exception:
         return None
+    # HANS_REASONING_DEFAULT_QWEN3_V1 (25.8.) — fallback musí ukazovat na
+    # model, který na PC SKUTEČNĚ je. `deepseek-r1:14b` byl 25.7. nahrazen
+    # `qwen3:30b` ve VŠECH `reasoning_model` klíčích (doloženo i daty:
+    # `self_insights.source_model` má deepseek naposledy 20.7.) a 25.8. byl
+    # z disku smazán. Zapomenutý fallback = tichý pád, až klíč v configu vypadne.
     model = ((config.get("self_insight", {}) or {}).get(
-        "reasoning_model", "deepseek-r1:14b"))
+        "reasoning_model", "qwen3:30b"))
     url = ((config.get("self_insight", {}) or {}).get(
         "reasoning_url", "http://192.168.1.100:11434"))
     raw = ollama_chat(
@@ -1075,7 +1081,7 @@ def run_analysis(diary_db_path: str, config: dict,
             "VALUES (?,?,?,?,?,?,?,?)",
             (now, days, insight_cs, insight_en,
              (config.get("self_insight", {}) or {}).get(
-                 "reasoning_model", "deepseek-r1:14b"),
+                 "reasoning_model", "qwen3:30b"),   # viz V1 výše
              h, now, lens_id))
         conn.commit()
         conn.close()
