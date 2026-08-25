@@ -14,6 +14,10 @@ HANS="${HANS:-http://192.168.1.50:7860}"   # web_admin na Raspberry (Hansovo tě
 POLL_S="${POLL_S:-3}"      # jak často kontrolovat procesy (s)
 GRACE_S="${GRACE_S:-20}"   # jak dlouho musí být hra PRYČ, než vrátíme mozek —
                            # kryje krátké mezery při načítání a dobíhající wineserver
+# HANS_GAME_STARTUP_RECONCILE_V1 — kolikrát a jak často se po startu ptát Pi na
+# stav mozku, než to vzdáme (20 x 15 s = 5 min; po bootu síť stojí dávno předtím).
+START_TRIES="${START_TRIES:-20}"
+START_WAIT_S="${START_WAIT_S:-15}"
 
 # Signatury SKUTEČNÉ hry v cmdline procesů. Idle Steam/Heroic je NEMAJÍ; kernelové
 # thready ([oom_reaper] apod.) jsou odfiltrované (řádky v hranatých závorkách).
@@ -48,9 +52,20 @@ game_running() {
                  | grep -E "$GAME_PAT" | head -1 | cut -c1-120)
     [ -n "$GAME_MATCH" ]
 }
-brain_paused() {   # skutečný stav z Pi (kvůli úklidu po pádu) — 0=paused
-    local s; s=$(curl -s -m 6 "$HANS/api/brain/status" 2>/dev/null)
-    [[ "$s" == *'"game_mode":true'* || "$s" == *'"game_mode": true'* ]]
+# HANS_GAME_STARTUP_RECONCILE_V1 — vrací TŘI stavy, ne dva. Dřív `brain_paused`
+# nerozlišilo „mozek běží" od „Pi neodpovědělo" (obojí = nenulový návrat), takže
+# úklid po bootu TIŠE přeskočil, když ještě nestála síť. Doloženo 25.8.: PC reboot
+# v 15:51, mozek pauznutý od 15:47, úklidová hláška se v journalu NIKDY neobjevila
+# a Hans byl němý — každá odpověď v chatu skončila na „herní mód, VRAM patří hře".
+# Prázdná/neočekávaná odpověď je ZÁMĚRNĚ `unreachable`, ne „je čisto".
+brain_state() {   # echo: paused | free | unreachable
+    local s
+    s=$(curl -s -m 6 "$HANS/api/brain/status" 2>/dev/null)
+    case "$s" in
+        *'"game_mode":true'*|*'"game_mode": true'*)   echo paused ;;
+        *'"game_mode":false'*|*'"game_mode": false'*) echo free ;;
+        *)                                            echo unreachable ;;
+    esac
 }
 # HANS_GAME_POST_VERIFY_V1 — driv se vysledek curlu zahazoval (`>/dev/null 2>&1`),
 # takze se hlaska "herni mod ZAP" vypsala i kdyz Pi nic nedostalo. Dolozeno 20.8.:
@@ -97,16 +112,18 @@ log "start (HANS=$HANS poll=${POLL_S}s grace=${GRACE_S}s)"
 
 # Úklid při startu: nic se nehraje, ale mozek je paused (zbytek po pádu hry /
 # rebootu) → vrať ho. Zároveň kryje případ, kdy watcher spadl a systemd ho zvedl.
-if ! game_running && brain_paused; then
-    log "start: žádná hra, ale mozek je paused → resume (úklid)"
-    resume_brain || log "POZOR: úklidový resume NEPROŠEL — Pi neodpovědělo 200"
-fi
+# HANS_GAME_STARTUP_RECONCILE_V1: dřív to byl JEDEN pokus hned po startu — když Pi
+# neodpovědělo, úklid se tiše přeskočil a nic se nezalogovalo. Teď se to zkouší
+# opakovaně PŘÍMO V HLAVNÍ SMYČCE (aby detekce hry mezitím běžela dál) a když se
+# to nepovede ani napodesáté, řekne se to NAHLAS — ticho vypadalo jako úspěch.
+start_pending=1; start_tries=0; last_start_try=0
 
 state="idle"; last_seen=0; last_fail_log=0
 while true; do
     now=$(date +%s)
     if game_running; then
         last_seen=$now
+        start_pending=0   # hra běží → startovní úklid je bezpředmětný
         if [ "$state" = idle ]; then
             # HANS_GAME_POST_VERIFY_V1: stav prepneme AZ kdyz Pi potvrdilo. Pri
             # selhani zustava "idle" -> zkusi se znovu pristi tick (typicky po
@@ -128,6 +145,26 @@ while true; do
             last_fail_log=$now
             log "POZOR: hra skončila, ale POST /brain/resume NEPROŠEL → Hans je bez mozku, zkouším dál"
         fi
+    elif [ "$start_pending" = 1 ] && [ "$state" = idle ] \
+         && [ $((now - last_start_try)) -ge "$START_WAIT_S" ]; then
+        # HANS_GAME_STARTUP_RECONCILE_V1 — dotahni úklid po bootu/pádu.
+        last_start_try=$now; start_tries=$((start_tries + 1))
+        case "$(brain_state)" in
+            paused)
+                start_pending=0
+                if resume_brain; then
+                    log "úklid po startu: nehraje se, ale mozek byl paused → VRÁCEN"
+                else
+                    log "POZOR: úklid po startu: resume NEPROŠEL — Pi neodpovědělo 200"
+                fi ;;
+            free)
+                start_pending=0 ;;   # čisto — mlčky, ať se journal nezaplevelí
+            *)
+                if [ "$start_tries" -ge "$START_TRIES" ]; then
+                    start_pending=0
+                    log "POZOR: úklid po startu NEPROBĚHL — Pi neodpovědělo na /brain/status ani po $START_TRIES pokusech"
+                fi ;;
+        esac
     fi
     sleep "$POLL_S"
 done
