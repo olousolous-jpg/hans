@@ -905,6 +905,15 @@ class HansCuriosity:
                 conn.commit()
                 done += 1
                 _log.info("Catchup web_read #%s zpracováno: %s", _id, summary[:70])
+                # HANS_CONVINDEX_REINDEX_V1 — bez tohohle si fulltext index
+                # nechá NAVŽDY marker „(nezpracováno…)" jako Hansovu znalost:
+                # `sync()` bere jen `id > MAX(id)`, takže PŘEPSANÝ řádek už
+                # nikdy nezachytí (doloženo 25.8. — 19 takových v indexu).
+                try:
+                    from scripts.hans_convindex import reindex as _reindex
+                    _reindex([_id], self._diary_path)
+                except Exception as _rix:
+                    _log.debug("convindex reindex #%s: %s", _id, _rix)
                 # HANS_PENDING_NO_SYNTHESIS_V1 — reflexe se při pending
                 # ZÁMĚRNĚ nepsala (nebylo z čeho); teď už obsah je.
                 if self._resummarized_cb:

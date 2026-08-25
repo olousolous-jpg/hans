@@ -78,6 +78,97 @@ SOURCES = {
 }
 
 
+def _fts_replace(conn, did, text, topic, partner, stare=None) -> None:
+    """HANS_CONVINDEX_REINDEX_V1 — obnov řádek v contentless FTS5.
+
+    ⚠️ `conv_fts` je `content=''`. Změřeno 25.8.:
+    `DELETE FROM conv_fts WHERE rowid=<NEEXISTUJE>` projde jako no-op,
+    ale nad EXISTUJÍCÍM řádkem hodí `cannot DELETE from contentless fts5
+    table`. Původní `sync` proto fungoval jen náhodou — watermark sahal
+    výhradně na nová id, takže se reálně nikdy nemazalo. Důsledek byl, že
+    ZMĚNĚNÝ deníkový řádek už do indexu nikdy neprotekl (doloženo: 19
+    `web_read` drželo v indexu marker „(nezpracováno…)", zatímco v deníku
+    už bylo skutečné shrnutí).
+
+    Správná forma je příkaz 'delete' se STARÝMI hodnotami — FTS si je bez
+    uloženého obsahu nedokáže dohledat sám. Když se to nepovede (např. se
+    `conv_doc` a index rozešly), raději se přizná a zařídí PLNÁ přestavba,
+    než aby v indexu zůstal duplikát: `conv_fts` je celé odvozené z
+    `conv_doc`, přestavba stojí ~0,7 s při 15,5 tis. řádcích.
+    """
+    if stare and any(x is not None for x in stare):
+        try:
+            conn.execute(
+                "INSERT INTO conv_fts(conv_fts, rowid, text, topic, partner) "
+                "VALUES('delete', ?, ?, ?, ?)",
+                (did, stare[0], stare[1], stare[2]))
+        except Exception as e:
+            _log.warning("conv_fts delete #%s selhal (%s) → plná přestavba",
+                         did, e)
+            conn.execute("INSERT INTO conv_fts(conv_fts) VALUES('delete-all')")
+            conn.execute(
+                "INSERT INTO conv_fts(rowid, text, topic, partner) "
+                "SELECT id, text, topic, partner FROM conv_doc")
+            return
+    conn.execute(
+        "INSERT INTO conv_fts(rowid, text, topic, partner) "
+        "VALUES (?,?,?,?)", (did, text, topic, partner))
+
+
+def reindex(diary_ids, diary_path: str = "data/hans_diary.db") -> int:
+    """HANS_CONVINDEX_REINDEX_V1 — promítni ZMĚNĚNÉ deníkové řádky do indexu.
+
+    `sync()` bere jen `id > MAX(id)` per zdroj, takže přepsaný řádek už
+    nikdy nezachytí. Kdo deníkový řádek mění (dnes jediný: catchup
+    v `hans_curiosity`, který marker přepíše skutečným shrnutím), zavolá
+    tohle. Vrací počet skutečně přepsaných řádků.
+    """
+    ids = [int(i) for i in (diary_ids or [])]
+    if not ids:
+        return 0
+    dp = diary_path or "data/hans_diary.db"
+    n = 0
+    conn = None
+    try:
+        conn = sqlite3.connect(INDEX_PATH, timeout=10)
+        src = sqlite3.connect("file:%s?mode=ro" % dp, uri=True, timeout=10)
+        try:
+            q = ",".join("?" * len(ids))
+            rows = src.execute(
+                "SELECT id, ts, event_type, title, data, note FROM diary "
+                "WHERE id IN (%s)" % q, ids).fetchall()
+        finally:
+            src.close()
+        for did, ts, et, title, data, note in rows:
+            if et not in SOURCES:
+                continue
+            doc = _row_to_doc(did, ts, et, title, data, note)
+            if not doc:
+                continue
+            text, topic, partner = doc
+            stare = conn.execute(
+                "SELECT text, topic, partner FROM conv_doc WHERE id=?",
+                (did,)).fetchone()
+            if stare and stare[0] == text and stare[1] == topic \
+                    and stare[2] == partner:
+                continue                  # beze změny → na index nesahat
+            conn.execute(
+                "INSERT OR REPLACE INTO conv_doc"
+                "(id, ts, source, partner, topic, text)"
+                " VALUES (?,?,?,?,?,?)", (did, ts, et, partner, topic, text))
+            _fts_replace(conn, did, text, topic, partner, stare)
+            n += 1
+        conn.commit()
+    except Exception as e:
+        _log.warning("convindex reindex selhal: %s", e)
+    finally:
+        if conn:
+            conn.close()
+    if n:
+        _log.info("HANS_CONVINDEX_REINDEX_V1: přeindexováno %d změněných řádků", n)
+    return n
+
+
 def sources_of_kind(kind: str) -> list:
     """Názvy event_type daného druhu ('talk' / 'knowledge')."""
     return [k for k, v in SOURCES.items() if v.get("kind") == kind]
@@ -236,14 +327,17 @@ def sync(diary_path: str = "data/hans_diary.db",
             if not doc:
                 continue
             text, topic, partner = doc
+            # HANS_CONVINDEX_REINDEX_V1 — STARÉ hodnoty se musí přečíst DŘÍV,
+            # než je `INSERT OR REPLACE` přepíše: contentless FTS5 je smaže
+            # jen tehdy, když mu je předáme přesně (viz `_fts_replace`).
+            _stare = conn.execute(
+                "SELECT text, topic, partner FROM conv_doc WHERE id=?",
+                (did,)).fetchone()
             conn.execute(
                 "INSERT OR REPLACE INTO conv_doc"
                 "(id, ts, source, partner, topic, text)"
                 " VALUES (?,?,?,?,?,?)", (did, ts, et, partner, topic, text))
-            conn.execute("DELETE FROM conv_fts WHERE rowid=?", (did,))
-            conn.execute(
-                "INSERT INTO conv_fts(rowid, text, topic, partner) "
-                "VALUES (?,?,?,?)", (did, text, topic, partner))
+            _fts_replace(conn, did, text, topic, partner, _stare)
             added += 1
         conn.execute("INSERT OR REPLACE INTO conv_meta(k,v) VALUES('synced',?)",
                      (str(time.time()),))
