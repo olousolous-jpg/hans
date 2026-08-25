@@ -37,6 +37,47 @@ _MESICE_GEN = ("", "ledna", "února", "března", "dubna", "května", "června",
 _READ_TYPES = ("web_read", "reading_takeaway", "book_read", "study_note",
                "book_completion_reflection", "book_reflection")
 
+# HANS_READING_KODI_SPLIT_V1 (25.8.) — CETBA vs CLANEK KVULI FILMU.
+# Nalez uzivatele 24.8.: „dotaz na cetbu — do ni micha filmy" (Jakubuv
+# zebrik, Na sever severozapadni linkou). Retez: `kodi_playing` →
+# MOVIE_GROUNDING_V1 si o filmu precte Wikipedii → `web_read` +
+# `reading_takeaway`. Hans opravdu cetl, takze zaznam je spravne — jen to
+# neni JEHO cetba a do vypisu „co jsi cetl" nepatri.
+#
+# ⚠️ ZMERENO 25.8., proc nestaci `json_extract(data,'$.topic')='kodi'`,
+# jak navrhoval backlog: priznak `topic` nese POUZE `web_read`.
+# `reading_takeaway` ma v `data` jen prozu reflexe, takze by filtr chytil
+# 59 ze 154 filmovych zaznamu za 30 dni (38 %) a reflexe k TEMUZ filmu by
+# ve vypisu zustala. Spojka je shodny TITUL: 95 z 493 `reading_takeaway`
+# (19 %) ma titul shodny s nejakym kodi `web_read`.
+#
+# ⛔ Filtruji se JEN tyto dva typy — `book_read`/`book_reflection`/
+# `study_note` nikdy, aby se kniha se stejnym nazvem jako film neschovala.
+_KODI_FILTR_TYPY = ("web_read", "reading_takeaway")
+
+
+def _kodi_tituly(conn) -> set:
+    """Tituly, jejichz clanek vznikl kvuli prehravanemu filmu (lower)."""
+    try:
+        # `LIKE` prefiltr drzi json parsovani mimo vetsinu z 63k radku;
+        # `json_valid` je NUTNY — starsi `web_read` maji `data` prazdne
+        # a `json_extract` na nich shodi cely dotaz na „malformed JSON".
+        rows = conn.execute(
+            "SELECT DISTINCT title FROM diary "
+            "WHERE event_type='web_read' AND data LIKE '%\"kodi\"%' "
+            "AND json_valid(data) "
+            "AND json_extract(data,'$.topic')='kodi'").fetchall()
+    except Exception as e:          # rozbity dotaz nesmi shodit cely /cetl
+        _log.debug("_kodi_tituly selhal: %s", e)
+        return set()
+    return {(r[0] or "").strip().lower() for r in rows if (r[0] or "").strip()}
+
+
+def _je_k_filmu(etype, title, kodi: set) -> bool:
+    """Je tenhle cteci zaznam jen clanek k prehravanemu filmu?"""
+    return bool(kodi) and etype in _KODI_FILTR_TYPY and \
+        (title or "").strip().lower() in kodi
+
 
 _DNY_AKUZ = ("v pondělí", "v úterý", "ve středu", "ve čtvrtek", "v pátek",
              "v sobotu", "v neděli")
@@ -1166,10 +1207,17 @@ def reading_answer(db_path: str, question: str = "",
                         f"žádný záznam čtení nemám. Nebudu si vymýšlet; "
                         f"jestli chcete, mohu si o tom něco přečíst.")
             rows = _dedup_cteni(rows, delsi_vyhrava=True)[:limit]
+            # HANS_READING_KODI_SPLIT_V1 — tady se NEFILTRUJE. Na cileny
+            # dotaz („cetl jsi o Jakubove zebriku?") je vylouceni FALESNE
+            # ZAPRENI — presne trida chyby, kterou recall resi od 15.7.
+            # Zaznam tedy zustava, jen rekne, odkud se vzal.
+            _kodi = _kodi_tituly(conn)
             lines = []
             for ts, etype, title, snip in rows:
                 t = (title or "").strip() or "(bez názvu)"
                 line = f"– {_cz_date(ts)}: {t}"
+                if _je_k_filmu(etype, title, _kodi):
+                    line += " (k filmu)"
                 if snip:
                     line += f" — {str(snip).strip()}"
                 lines.append(line)
@@ -1187,7 +1235,12 @@ def reading_answer(db_path: str, question: str = "",
             f"substr(COALESCE(NULLIF(data,''),note),1,120) "
             f"FROM diary WHERE event_type IN ({qmarks}) "
             f"ORDER BY ts DESC LIMIT ?",
-            (*_READ_TYPES, limit * 5)).fetchall()
+            (*_READ_TYPES, limit * 8)).fetchall()
+        # HANS_READING_KODI_SPLIT_V1 — filmy ven JESTE PRED dedupem i orezem,
+        # jinak by ukrajovaly mista z LIMITu presne jako duplicity, ktere
+        # resil HANS_READING_DEDUP_V1 (proto je nasobitel 5 → 8).
+        _kodi = _kodi_tituly(conn)          # JEDNOU, ne v kazde iteraci
+        rows = [r for r in rows if not _je_k_filmu(r[1], r[2], _kodi)]
         rows = _dedup_cteni(rows)[:limit]
         if not rows:
             return ("V deníku zatím žádné čtení zapsané nemám, pane.")
