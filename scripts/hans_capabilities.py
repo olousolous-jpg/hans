@@ -67,7 +67,7 @@ _CAPABILITIES = [
     ("pc_power", "Umím na povel VYPNOUT počítač (PC) i probudit ho přes síť "
      "(Wake-on-LAN)", "vypni počítač; /vypnipc; /wol"),
     ("guard", "Umím HLÍDAT místnost, když nejste doma — při pohybu nebo náhlé "
-     "změně světla pošlu snímek a video na Telegram", "hlídej dům; /hlidej [stop|stav]"),
+     "změně světla pošlu snímek a video na Matrix", "hlídej dům; /hlidej [stop|stav]"),
 ]
 
 # HANS_LEARNED_CAPABILITIES_V1 — dynamická vrstva: schopnosti, které si Hans SÁM
