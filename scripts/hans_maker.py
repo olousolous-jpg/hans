@@ -290,19 +290,41 @@ def _subpage_html(style: str, topic: str, sub: str, text: str,
     )
 
 
-def _image_prompts_for(config: dict, subs: list) -> dict:
+def _image_prompts_for(config: dict, subs: list, podklady: list = None) -> dict:
     """Jeden LLM call → ANGLICKÝ image prompt pro každé CZ pod-téma (pořadím).
-    {sub: en_prompt}; fallback {} → generický prompt."""
+    {sub: en_prompt}; fallback {} → generický prompt.
+
+    HANS_MAKER_IMAGE_GROUNDED_V1 (26.8.) — `podklady` = text, který Hans
+    o pod-tématu SKUTEČNĚ má (stejný, jaký jde na podstránku). Bez něj dostal
+    model jen NÁZEV a volně ho přeložil na obecninu, kterou SDXL dosadil z toho,
+    co má nejvíc v trénovacích datech. Doloženo (uživatel 24.8.): „Folklór
+    Českého ráje" → maďarský kroj; „Trosky" → generická zřícenina, ačkoli
+    Trosky jsou dvě čedičové věže — a to Hans v zápiscích má.
+    Je to táž nemoc jako jinde: generuje se z NÁZVU místo z podkladu, jen
+    v obrazové větvi. Podklad se KRÁTÍ (prompt má mít 6-12 slov, ne odstavec).
+    Když podklad chybí, chová se funkce jako dřív.
+    """
     out = {}
     if not subs:
         return out
     try:
         from scripts.ollama_client import ollama_generate
-        lst = "\n".join("%d. %s" % (i + 1, s) for i, s in enumerate(subs))
+        pod = list(podklady or [])
+        radky = []
+        for i, s in enumerate(subs):
+            p = (pod[i] if i < len(pod) else "") or ""
+            p = " ".join(str(p).split())[:280]
+            radky.append("%d. %s%s" % (i + 1, s,
+                                       ("\n   PODKLAD: " + p) if p else ""))
+        lst = "\n".join(radky)
         raw = ollama_generate(
             _coder_model(config),
-            "Below are %d Czech topics. For EACH output ONE short English "
-            "image-generation prompt (a concrete visual scene, 6-12 words). "
+            "Below are %d Czech topics. Some have a PODKLAD line — Czech notes "
+            "about what the topic ACTUALLY looks like; when present, base the "
+            "scene on those CONCRETE details (shape, material, landscape, "
+            "colours), not on a generic reading of the title. "
+            "For EACH output ONE short English image-generation prompt "
+            "(a concrete visual scene, 6-12 words). "
             "Output EXACTLY %d numbered lines '1.'..'%d.' and nothing else:\n%s"
             % (len(subs), len(subs), len(subs), lst),
             system="You output only the numbered list of English image prompts.",
@@ -551,7 +573,11 @@ def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
             config, model,
             "Téma: %s\n\nDESIGN BRIEF:\n%s\n\nVrať index.html:" % (topic, brief),
             _LANDING_SYSTEM, landing, brief, " site")
-        img_prompts = _image_prompts_for(config, [sub for _, sub in subs])
+        # HANS_MAKER_IMAGE_GROUNDED_V1 — pošli i to, co Hans o pod-tématu
+        # doopravdy má; `notes` drží týž text, co jde na podstránku.
+        img_prompts = _image_prompts_for(
+            config, [sub for _, sub in subs],
+            [(n or {}).get("text", "") for n in notes])
         style = _extract_style(landing)
         pages = {"index.html": landing}
         for (slug, sub), n in zip(subs, notes):
