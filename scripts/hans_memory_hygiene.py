@@ -54,6 +54,7 @@ def prune_diary(config: dict, diary_db_path: str) -> dict:
 
     now = time.time()
     deleted: dict = {}
+    zapomenout: list = []      # HANS_HYGIENE_FORGET_INDEX_V1 — id pro fulltext
     conn = None
     try:
         conn = sqlite3.connect(diary_db_path, timeout=10.0)
@@ -66,15 +67,39 @@ def prune_diary(config: dict, diary_db_path: str) -> dict:
                 continue  # 0/záporné = neprořezávej (bezpečnostní opt-out)
             cutoff = now - days * 86400
             try:
+                # HANS_HYGIENE_FORGET_INDEX_V1 (26.8.) — napřed si vytáhni ID.
+                # Bez nich se nedá uklidit fulltext, a prořezávání pak
+                # NEZAPOMÍNÁ: řádek zmizí z deníku, ale Hans si ho dál
+                # vyhledá. Doloženo 26.8.: 4638 `teddy_dialog` v indexu bez
+                # protějšku v deníku, hranice přesně na retenci 60 dní.
+                _ids = [r[0] for r in conn.execute(
+                    "SELECT id FROM diary WHERE event_type=? AND ts < ?",
+                    (event_type, cutoff))]
                 cur = conn.execute(
                     "DELETE FROM diary WHERE event_type=? AND ts < ?",
                     (event_type, cutoff))
                 n = cur.rowcount or 0
                 if n:
                     deleted[event_type] = n
+                    zapomenout.extend(_ids)
             except Exception as e:
                 _log.warning("prune_diary[%s] selhal: %s", event_type, e)
         conn.commit()
+
+        # HANS_HYGIENE_FORGET_INDEX_V1 — až PO commitu deníku. Selhání úklidu
+        # indexu nesmí shodit prořezávání (index se dá přestavět, smazaný
+        # deníkový řádek ne), ale musí být VIDĚT — tichý sirotek je přesně to,
+        # co tenhle fix odstraňuje.
+        if zapomenout:
+            try:
+                from scripts.hans_convindex import forget
+                _n = forget(zapomenout)
+                if _n:
+                    _log.info("prune_diary: z fulltextu odstraněno %d řádků", _n)
+            except Exception as e:
+                _log.warning("prune_diary: úklid fulltextu SELHAL (%s) — "
+                             "%d řádků zůstalo vyhledatelných", e,
+                             len(zapomenout))
     except Exception as e:
         _log.warning("prune_diary selhal: %s", e)
         return deleted

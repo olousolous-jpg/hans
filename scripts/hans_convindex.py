@@ -136,6 +136,10 @@ def forget(diary_ids) -> int:
             continue
     if not ids:
         return 0
+    # HANS_CONVINDEX_FORGET_V1 — po DÁVKÁCH: retence umí vrátit tisíce id naráz
+    # a `IN (...)` má v SQLite strop na počet parametrů.
+    if len(ids) > 500:
+        return sum(forget(ids[i:i + 500]) for i in range(0, len(ids), 500))
     conn = _connect()
     try:
         stare = {r[0]: (r[1], r[2], r[3]) for r in conn.execute(
