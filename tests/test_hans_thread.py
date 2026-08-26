@@ -98,5 +98,23 @@ reset()
 t("bez předchozí cesty → nepotlačovat",
   should_suppress("uzivatel", "web", "rozhovory", "myslel jsem X"), False)
 
+# -- A1: napoveda na HRANICI SLOV (HANS_THREAD_ANAPHORA_WORDBOUND_V1, 26.8.) --
+# Doslovna veta z testovaciho rozhovoru 26.8.: 'pre<myslel jsem>' spoustelo
+# rozreseni odkazu ve vete, ktera zadny odkaz nema -> 'odkaz rozresen -> Oldu'.
+# Popisky schvalne BEZ ceskych uvozovek: ASCII " uvnitr nich ukonci retezec.
+_TURNS_JMENO = [("assistant",
+                "Naposledy jsem tu zahledl Standu, ted tu ale nikoho nevidim.")]
+t("premyslel jsem NENI myslel jsem",
+  resolve_reference(
+      "Poslys, premyslel jsem, ze bych ti dal na starost neco navic, "
+      "jenze si nejsem uplne jisty, co vsechno vlastne umis?", _TURNS_JMENO)[1],
+  "")
+t("prava napoveda myslel jsem dal rozresi",
+  resolve_reference("myslel jsem to jinak", _TURNS_JMENO)[1], "Standu")
+t("zkus to dal rozresi",
+  resolve_reference("zkus to znovu", _TURNS_JMENO)[1], "Standu")
+t("veta s vlastnim predmetem se nerozresuje",
+  resolve_reference("co ted delas?", _TURNS_JMENO)[1], "")
+
 print(f"\n{OK} OK, {FAIL} FAIL")
 sys.exit(1 if FAIL else 0)

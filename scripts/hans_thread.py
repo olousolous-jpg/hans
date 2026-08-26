@@ -89,6 +89,18 @@ _ANAPHORA_HINTS = (
     "to znova", "to znovu", "zkus to", "jeste jednou", "znovu to",
 )
 
+# HANS_THREAD_ANAPHORA_WORDBOUND_V1 (26.8.) — nápovědy se hledaly jako HOLÝ
+# PODŘETĚZEC, takže „pře<myslel jsem>" spustilo rozřešení odkazu ve větě, která
+# žádný odkaz nemá. Doloženo: „Poslyš, přemýšlel jsem, že bych ti dal na starost
+# něco navíc… co všechno vlastně umíš?" → `odkaz rozřešen → Oldu` (Title-case
+# záloha vytáhla jméno z předchozí Hansovy repliky). Věta má přitom vlastní
+# předmět víc než dost. Hledá se proto na HRANICÍCH SLOV.
+# ⚠️ Podmínku `not has_own_subject(...) OR nápověda` NELZE přehodit na AND —
+# „namaluj ho" vlastní předmět MÁ („namaluj") a rozřešit se musí; právě kvůli
+# tomu je tam `or`.
+_ANAPHORA_RE = re.compile(
+    r"\b(?:%s)\b" % "|".join(re.escape(h) for h in _ANAPHORA_HINTS))
+
 
 def _tokens(text: str) -> list:
     return [t for t in re.split(r"[^a-z0-9]+", _fold(text)) if t]
@@ -337,7 +349,7 @@ def resolve_reference(text: str, turns: list) -> tuple:
         return text, ""
     f = _fold(text)
     needs = (not has_own_subject(text)
-             or any(h in f for h in _ANAPHORA_HINTS))
+             or bool(_ANAPHORA_RE.search(f)))   # HANS_THREAD_ANAPHORA_WORDBOUND_V1
     if not needs:
         return text, ""
     subj = extract_subject(last_assistant_text(turns))
