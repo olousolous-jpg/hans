@@ -84,6 +84,9 @@ def _fold_diacritics(s: str) -> str:
 
 # ── Parser ─────────────────────────────────────────────────────────────
 
+_HYPOTETICKY = re.compile(r"\bkdyb\w*\b", re.IGNORECASE)
+
+
 def parse_command(message: str) -> Optional[tuple[str, str]]:
     """Pokus se rozpoznat command. Vrátí (command_id, args) nebo None.
     Slash má prioritu. NL detekce běží jen pokud message nezačíná /."""
@@ -104,6 +107,20 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
                 _set_route_origin("slash")
                 return (cmd_id, args)
         return None  # neznámý slash → ne-command
+
+    # HANS_NL_ROUTE_HYPOTHETICAL_V1 (26.8.) — DLOUHÁ HYPOTETICKÁ VĚTA NENÍ POVEL.
+    # Doloženo: „kdybys měl namalovat obraz, který by vystihoval dnešní den…"
+    # spustilo SKUTEČNÉ malování; „kdyby ses měl rozhodnout, jestli pamatovat,
+    # nebo zapomínat" skončilo výpisem studijního programu.
+    # Regexové NL vzory totiž nemají žádnou délkovou brzdu, kdežto LLM router
+    # ano (`_LLM_ROUTE_MAX_WORDS`, „delší věta = vyprávění, ne žádost o výpis").
+    # Tady se týž princip uplatní i na ně — ale JEN v kombinaci s „kdyby":
+    # krátká zdvořilá žádost („kdybys mohl namalovat kočku") projít MUSÍ.
+    # Slash je nedotčený: explicitní příkaz je vždycky příkaz.
+    if (_HYPOTETICKY.search(msg)
+            and len(msg.split()) > _LLM_ROUTE_MAX_WORDS):
+        _log.debug("NL routing přeskočen: dlouhá hypotetická věta")
+        return None
 
     # Natural language (diakritika i bez ní)
     msg_fold = _fold_diacritics(msg)
@@ -427,10 +444,12 @@ def _cmd_ooda(handler, name, args) -> str:  # OODA_CMD_V1
 register(
     "ooda",
     slash_aliases=["ooda"],
-    nl_patterns=[
-        r"\bjak.{0,15}rozhod",
-        r"\bco.{0,10}by.{0,10}d[ěe]lal",
-    ],
+    # HANS_NL_ROUTE_HYPOTHETICAL_V1 (26.8.) — NL vzory ODEBRÁNY. `/ooda` je
+    # interní diagnostika (help sám říká „akci nevykoná") a vzor
+    # `\bjak.{0,15}rozhod` se trefil doprostřed věty „jak se vlastně
+    # rozhoduješ, čemu se budeš věnovat" → uživateli vypadlo
+    # „OODA skóre: movie:2 thought:1 read:4…". Diagnostika patří za slash.
+    nl_patterns=[],
     handler=_cmd_ooda,
     help_text="Diagnostika OODA — co by Hans teď vybral (akci nevykoná)",
 )
