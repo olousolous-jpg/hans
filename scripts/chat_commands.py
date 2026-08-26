@@ -1845,6 +1845,71 @@ def _studium_puvod(store, db: str, args: str) -> str:
             "schvaloval." % (tema, _datum_cz(prog["started_ts"])))
 
 
+# ── /vycet — výčtový dotaz jako SELECT (HANS_FACTS_ENUM_V1, 26.8.) ──────────
+# Doloženo živě: „jaké hrady vlastně znáš?" → Hans vyjmenoval Windsor, Tower of
+# London, Sychrov, Pernštejn a Karlštejn. ŽÁDNÝ z nich nemá v datech — je to
+# výčtová konfabulace na RAG cestě, kterou guard vidí, ale nehlídá.
+# `entity_facts` přitom umí odpovědět deterministicky (Cardiffský hrad, Kost).
+# ⚠️ Formulace je ZÁMĚRNĚ SKROMNÁ: korpus NENÍ úplný (Hans četl o věcech, které
+# se entitou nestaly), takže se tvrdí jen „v ověřených faktech mám tyto",
+# nikdy „tohle je všechno, co znám".
+# `(?:\w+\s+){0,2}` = vsuvka („jaké hrady VLASTNĚ znáš"). Bez ní vzor nesedl.
+_VYCET_PAT = re.compile(
+    # `a` v třídě je nutné: bez diakritiky se píše „jakA města" a extrakce
+    # slova pak spadla na celé souvětí (routing to přežil, ten diakritiku
+    # odstraňuje — extrakce ne).
+    r"\b(jak[éeáa]|kter[éeáa])\s+([a-zá-žA-ZÁ-Ž]{4,})\w*\s+(?:\w+\s+){0,2}"
+    r"(zn[áa][sš]|m[áa][sš]|v[íi][sš]|pamatuje[sš]|studoval)", re.IGNORECASE)
+
+
+def _vycet_dotaz(text: str) -> str:
+    """Vrátí hledané slovo („hrady"), nebo prázdno."""
+    m = _VYCET_PAT.search(text or "")
+    return m.group(2) if m else ""
+
+
+def _cmd_vycet(handler, name, args) -> str:
+    slovo = _vycet_dotaz(args or "") or (args or "").strip()
+    # KMEN NA 4 ZNAKY, ne 5: české skloňování mění koncovku a „mesta" se do
+    # „mesto" netrefí. „hrad", „film", „mest", „knih" projdou.
+    kmen = _norm_veta(slovo)[:4]
+    if len(kmen) < 4:
+        return ""                       # příliš krátké → radši nic netvrdit
+    cfg = getattr(handler, "config", {}) or {}
+    db = cfg.get("diary_db", "data/hans_diary.db")
+    try:
+        import sqlite3 as _sq
+        con = _sq.connect(db, timeout=10)
+        try:
+            rows = con.execute(
+                "SELECT e.name, f.hodnota FROM entity_facts f "
+                "JOIN entities e ON e.id = f.entity_id "
+                "WHERE f.klic='je to' ORDER BY e.name").fetchall()
+        finally:
+            con.close()
+    except Exception as e:
+        _log.debug("HANS_FACTS_ENUM_V1: %s", e)
+        return ""
+    nalez = [n for n, h in rows if kmen in _norm_veta(h)]
+    if not nalez:
+        return ""                       # nic → propadni do běžného hovoru
+    if len(nalez) > 25:
+        vypis = ", ".join(nalez[:25])
+        return ("V ověřených faktech jich mám %d, pane. Prvních pětadvacet: %s."
+                % (len(nalez), vypis))
+    return ("V ověřených faktech mám tyto, pane: %s. Můžu o nich vědět i víc "
+            "z četby, tohle je jen to, co mám doložené." % ", ".join(nalez))
+
+
+register(
+    "vycet",
+    slash_aliases=["vycet", "výčet", "cojeto"],
+    nl_patterns=[_VYCET_PAT.pattern],
+    handler=_cmd_vycet,
+    help_text="Co mám doloženo ve faktech: jaké hrady znáš? jaké filmy znáš?",
+)
+
+
 def _cmd_studium(handler, name, args) -> str:
     """/studium — stav studijního programu; /studium programy = všechny;
     /studium teď = spustí jednu studijní session na pozadí (noční práce ručně)."""
