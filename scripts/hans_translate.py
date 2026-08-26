@@ -84,12 +84,67 @@ def kodi_now_file(config) -> dict:
         # živé vysílání nebo stream — nemá soubor, není co překládat
         return {"ok": False, "duvod": f"„{np.get('label') or np.get('title')}“ nemá soubor "
                                       "(nejspíš živé vysílání) — to přeložit nejde."}
-    smb, mnt = cfg.get("smb_prefix", "smb://192.168.1.10/"), cfg.get("mnt_prefix", "/mnt/")
+    smb = cfg.get("smb_prefix", "smb://192.168.1.10/")
     if not f.startswith(smb):
         return {"ok": False, "duvod": f"Soubor {f} není na známém úložišti."}
-    return {"ok": True, "pc_path": mnt + f[len(smb):],
+    pc = _najdi_na_pc(cfg, f[len(smb):])
+    if not pc:
+        share = f[len(smb):].split("/", 1)[0]
+        return {"ok": False,
+                "duvod": f"„{np.get('label') or np.get('title')}“ leží na sdílení "
+                         f"„{share}“, které PC nemá namontované — nedostanu se k souboru."}
+    return {"ok": True, "pc_path": pc,
             "title": np.get("showtitle") or np.get("title") or np.get("label"),
             "season": np.get("season"), "episode": np.get("episode")}
+
+
+def _mounty(cfg) -> list[str]:
+    try:
+        return [x.strip() for x in _pc(cfg, "ls /mnt", 60).split() if x.strip()]
+    except Exception as e:
+        log.warning("seznam mountů na PC se nepodařilo přečíst: %s", e)
+        return []
+
+
+def _najdi_na_pc(cfg, zbytek: str) -> str | None:
+    """Cesta z Kodi → skutečná cesta na PC.
+
+    ⚠️ Prostý převod prefixu NESTAČÍ. NAS může vystavovat víc sdílení, než má
+    PC namontováno, a část z nich bývají ALIASY na složku uvnitř disku:
+        <slozka><disk>   → /mnt/<disk>/<slozka>     (bez mezery)
+        <slozka> <disk>  → /mnt/<disk>/<slozka>     (s mezerou)
+        <nazev s mezerou> → /mnt/<nazev_s_podtrzitky>
+        <slozka>         → písmeno disku v názvu nemá, hledá se na všech
+    Doloženo 26.8. reálným pádem: sdílení bylo alias a `/mnt/<sdileni>/…`
+    neexistovalo — a chyba vyskočila až o tři kroky dál z ffprobe.
+    Kandidáti se proto OVĚŘUJÍ na PC a bere se první, který existuje.
+    (CIFS je case-insensitive, takže na velikosti písmen nezáleží.)
+    """
+    zbytek = zbytek.lstrip("/")
+    if "/" not in zbytek:
+        return None
+    share, rest = zbytek.split("/", 1)
+    mounty = _mounty(cfg)
+    disky = [m for m in mounty if len(m) == 1]
+
+    kand = [f"/mnt/{share}/{rest}", f"/mnt/{share.replace(' ', '_')}/{rest}"]
+    m = re.match(r"^(.*?)[ _]?([A-Za-z])$", share)      # alias „<slozka><disk>"
+    if m and m.group(2).upper() in [d.upper() for d in disky] and m.group(1).strip():
+        kand.append(f"/mnt/{m.group(2).upper()}/{m.group(1).strip()}/{rest}")
+    for d in mounty:                                    # „hry", „Pohadky" — bez písmene
+        kand.append(f"/mnt/{d}/{share}/{rest}")
+
+    videno, unik = set(), []
+    for k in kand:
+        if k not in videno:
+            videno.add(k); unik.append(k)
+    try:
+        skript = "; ".join(f"test -f {_q(k)} && {{ echo {_q(k)}; exit 0; }}" for k in unik)
+        hit = _pc(cfg, skript + "; exit 0", 120).strip().splitlines()
+        return hit[0] if hit else None
+    except Exception as e:
+        log.warning("hledání souboru na PC selhalo: %s", e)
+        return None
 
 
 def has_czech_audio(cfg, pc_path) -> bool:
@@ -146,6 +201,43 @@ def _ts(x: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
 
 
+# ⚠️ Jen TEXTOVÉ titulky. Obrazové (PGS/VobSub z Blu-ray a DVD) jsou obrázky —
+# do SRT je ffmpeg nepřevede a bez OCR z nich text nedostaneme.
+_TEXT_SUB = {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"}
+
+
+def _vnorene_titulky(cfg, pc_path, jazyk, workdir) -> str | None:
+    """Titulky uvnitř kontejneru. Zadarmo a psané přímo k tomuhle souboru,
+    takže mají přednost před stahováním i před přepisem ze zvuku."""
+    try:
+        out = _pc(cfg, "ffprobe -v error -select_streams s -show_entries "
+                       "stream=index,codec_name:stream_tags=language "
+                       f"-of csv=p=0 {_q(pc_path)}", 180)
+    except Exception as e:
+        log.warning("vnořené titulky se nepodařilo vypsat: %s", e)
+        return None
+    kod = {"cs": ("cze", "ces", "cs"), "en": ("eng", "en")}[jazyk]
+    for radek in out.splitlines():
+        c = [x.strip() for x in radek.split(",")]
+        if len(c) < 3 or c[1].lower() not in _TEXT_SUB:
+            continue
+        if c[2].lower() not in kod:
+            continue
+        loc = os.path.join(workdir, f"vnorene_{jazyk}.srt")
+        try:
+            _pc(cfg, f"ffmpeg -v error -y -i {_q(pc_path)} -map 0:{int(c[0])} "
+                     f"-c:s srt /tmp/hans_vnorene.srt", 900)
+            _pc_get(cfg, "/tmp/hans_vnorene.srt", loc)
+        except Exception as e:
+            log.warning("vytažení vnořených titulků (%s) selhalo: %s", jazyk, e)
+            return None
+        if os.path.getsize(loc) > 200:
+            return loc
+        log.warning("vnořené titulky (%s) vyšly prázdné", jazyk)
+        return None
+    return None
+
+
 def obstarej_titulky(config, pc_path, meta, workdir) -> dict:
     """→ {'srt':cesta, 'jazyk':'cs'|'en', 'zdroj':…}"""
     cfg = _cfg(config)
@@ -156,23 +248,30 @@ def obstarej_titulky(config, pc_path, meta, workdir) -> dict:
         _pc_get(cfg, vedle, loc)
         jazyk = "cs" if _is_czech(loc) else "en"
         return {"srt": loc, "jazyk": jazyk, "zdroj": "titulky vedle souboru"}
-    # 2) OpenSubtitles podle otisku
+    # 2) vnořené titulky v kontejneru + 3) OpenSubtitles.
+    #    ČEŠTINA MÁ PŘEDNOST PŘED ANGLIČTINOU z obou zdrojů — česká stopa
+    #    přeskočí celý překlad. V rámci jazyka jde levnější zdroj první:
+    #    vnořené jsou zadarmo, stažení ukrajuje z denního limitu (20/den).
     osub = OpenSubtitles(config)
-    if osub.enabled:
-        try:
-            h = _pc_hash(cfg, pc_path)
-            for jazyk in ("cs", "en"):
-                hits = osub.by_hash(h, jazyk)
-                if hits:
-                    fid = OpenSubtitles.file_id(hits[0])
-                    if fid:
-                        loc = os.path.join(workdir, f"os_{jazyk}.srt")
-                        osub.download(fid, loc)
-                        return {"srt": loc, "jazyk": jazyk,
-                                "zdroj": f"OpenSubtitles ({jazyk}, shoda otisku)"}
-        except Exception as e:
-            log.warning("OpenSubtitles selhalo, jdu dál: %s", e)
-    # 3) přepis ze zvuku
+    otisk = None
+    for jazyk in ("cs", "en"):
+        loc = _vnorene_titulky(cfg, pc_path, jazyk, workdir)
+        if loc:
+            return {"srt": loc, "jazyk": jazyk, "zdroj": f"vnořené titulky ({jazyk})"}
+        if osub.enabled:
+            try:
+                if otisk is None:
+                    otisk = _pc_hash(cfg, pc_path)
+                hits = osub.by_hash(otisk, jazyk)
+                fid = OpenSubtitles.file_id(hits[0]) if hits else None
+                if fid:
+                    loc = os.path.join(workdir, f"os_{jazyk}.srt")
+                    osub.download(fid, loc)
+                    return {"srt": loc, "jazyk": jazyk,
+                            "zdroj": f"OpenSubtitles ({jazyk}, shoda otisku)"}
+            except Exception as e:
+                log.warning("OpenSubtitles (%s) selhalo, jdu dál: %s", jazyk, e)
+    # 4) přepis ze zvuku
     return {"srt": _stt(cfg, config, pc_path, workdir), "jazyk": "en", "zdroj": "přepis ze zvuku"}
 
 
