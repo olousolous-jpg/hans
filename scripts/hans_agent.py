@@ -849,6 +849,15 @@ def _ground_note(handler, args):
 # co regex mine, a shutdown dostal potvrzení. Regexy zůstávají jako rychlá,
 # na mozku nezávislá cesta. (WOL zůstává deterministický — přes agenta by byl
 # k ničemu: běží na PC, který WOL teprve zapíná.)
+def _run_translate(handler, args) -> str:
+    """HANS_TRANSLATE_V1 — deleguje na `hans_translate`, TÝŽ kód jako /preloz
+    (vzor HANS_UNIFY_ACTIONS_V1: chat i agent musí volat jednu pravdu, jinak
+    se obě cesty časem rozejdou)."""
+    from scripts import hans_translate as ht
+    cfg = getattr(handler, "config", {}) or {}
+    return ht.spust_na_pozadi(cfg, handler)
+
+
 def _run_pc_shutdown(handler, args) -> str:
     from scripts.chat_commands import _cmd_vypnipc
     return _cmd_vypnipc(handler, None, "")
@@ -1041,6 +1050,18 @@ ACTIONS: dict[str, Action] = {
                "vypnout počítač", "vypnout pocitac", "vypni ten pocitac"],
         args=[], run=_run_pc_shutdown, grounding=None,
         needs_confirm=True, cooldown_s=60),
+    "translate_doc": Action(
+        "translate_doc",
+        "Připravit ČESKOU ZVUKOVOU STOPU k cizojazyčnému dokumentu, který teď "
+        "běží v Kodi. Volič u „přelož to“, „přelož ten dokument“, „udělej mi "
+        "českou stopu“. Trvá to minuty, výsledek přijde zprávou. ⛔ Na DOTAZ tuto "
+        "akci NEVOL — ani na průběh („jak jde ten překlad?“), ani na to, co už "
+        "přeloženo BYLO („co jsi přeložil?“, „které dokumenty máš česky?“). "
+        "Volič je jen ROZKAZ přelož.",
+        hints=["přelož", "prelozit", "přeložit", "česká stopa", "ceska stopa",
+               "český dabing", "cesky dabing", "přelož dokument"],
+        args=[], run=_run_translate, grounding=None,
+        needs_confirm=True, cooldown_s=30),
     "guard_toggle": Action(
         "guard_toggle",
         "Zapnout nebo VYPNOUT hlídací režim místnosti (při pohybu/změně světla "
@@ -1791,6 +1812,8 @@ class AgentRouter:
             return f"Mám si poznamenat „{args.get('text')}“?"
         if action.id == "pc_shutdown":
             return "Mám vypnout počítač?"
+        if action.id == "translate_doc":
+            return "Mám k tomu připravit českou stopu?"
         if action.id == "guard_toggle":
             m = (args.get("mode") or "").strip().lower()
             if any(k in m for k in ("stop", "vypni", "off", "konec", "zru")):

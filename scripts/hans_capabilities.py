@@ -68,6 +68,10 @@ _CAPABILITIES = [
      "(Wake-on-LAN)", "vypni počítač; /vypnipc; /wol"),
     ("guard", "Umím HLÍDAT místnost, když nejste doma — při pohybu nebo náhlé "
      "změně světla pošlu snímek a video na Matrix", "hlídej dům; /hlidej [stop|stav]"),
+    ("translate_doc", "Umím k cizojazyčnému dokumentu, který běží v Kodi, "
+     "PŘIPRAVIT ČESKOU ZVUKOVOU STOPU (namluvenou) a uložit ho jako nový soubor. "
+     "Trvá to minuty a ozvu se, až bude hotovo",
+     "přelož ten dokument; /preloz [stav]"),
 ]
 
 # HANS_LEARNED_CAPABILITIES_V1 — dynamická vrstva: schopnosti, které si Hans SÁM

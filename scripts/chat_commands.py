@@ -3260,6 +3260,51 @@ register(
 )
 
 
+# ─── /preloz — česká stopa k cizojazyčnému dokumentu (HANS_TRANSLATE_V1) ─────
+# Zadání uživatele 26.8.: pustí dokument, zjistí že není česky, PAUZNE ho
+# a řekne Hansovi ať ho přeloží. Hans si z Kodi zjistí, co běží, připraví
+# soubor a ozve se. Uživatel si ho pustí sám (ovládat přehrávání nechce).
+
+def cfg_of(handler):
+    return getattr(handler, "config", {}) or {}
+
+
+def _cmd_preloz(handler, name, args) -> str:
+    from scripts import hans_translate as ht
+    a = (args or "").strip().lower()
+    # NL cesta posílá CELOU větu → „jak jde ten překlad" se nesmí tvářit
+    # jako povel spustit další (vzor _cmd_hlidej).
+    if re.search(r"\b(seznam|v[ýy]pis|p[řr]elo[žz]en[éeý])\b"
+                 r"|co\s+(jsi|u[žz]|v[šs]echno)\s+[\w\s]{0,25}?p[řr]elo[žz]"
+                 r"|kter[ée]\s+[\w\s]{0,25}?p[řr]elo[žz]", a):
+        return ht.seznam_text(cfg_of(handler))
+    if re.search(r"\b(stav|status|hotovo|hotov[oý])\b|jak\s+(to\s+)?(jde|pokra[čc]uje|dopadl)|u[žz]\s+(to\s+)?(je\s+)?(hotov|dod[ěe]l)", a):
+        return ht.stav_text()
+    cfg = getattr(handler, "config", {}) or {}
+    if not (cfg.get("translate", {}) or {}).get("enabled", True):
+        return "Překládání dokumentů mám vypnuté, pane."
+    return ht.spust_na_pozadi(cfg, handler)
+
+
+register(
+    "preloz",
+    slash_aliases=["preloz", "přelož", "preklad", "překlad", "translate"],
+    nl_patterns=[
+        r"p[řr]elo[žz]\s+(to|ten|tenhle|tenhleten|mi|nam|n[áa]m)\b",
+        r"p[řr]elo[žz]\s+(ten\s+)?(dokument|film|po[řr]ad|dokument[áa]rn)",
+        r"(ud[ěe]l[aáeě]\w*|p[řr]iprav\w*)\s+(mi\s+)?[čc]esk[ou]\w*\s+(stopu|dabing|verzi)",
+        r"jak\s+(to\s+)?jde\s+(ten\s+)?p[řr]eklad",
+        # DOTAZ na hotové překlady — musí být i TADY, ne jen v obsluze:
+        # nl_patterns rozhodují, jestli se k obsluze vůbec dojde.
+        r"co\s+(jsi|u[žz]|v[šs]echno)\s+[\w\s]{0,25}?p[řr]elo[žz]",
+        r"kter[ée]\s+[\w\s]{0,25}?p[řr]elo[žz]",
+        r"seznam\s+p[řr]eklad|p[řr]elo[žz]en[éy]\s+(dokument|po[řr]ad|film)",
+    ],
+    handler=_cmd_preloz,
+    help_text="Připrav českou stopu k tomu, co běží v Kodi: "
+              "/preloz [stav|seznam]",
+)
+
 # ─── /vypnipc — ruční vypnutí PC (HANS_PC_SHUTDOWN_CMD_V1) ───────────────────
 # Protějšek /wol. Vypínání samo je hotové (HANS_PC_NIGHT_SHUTDOWN: S3 suspend
 # je na téhle desce rozbitý → čistý poweroff přes SSH + ranní WOL); tady se

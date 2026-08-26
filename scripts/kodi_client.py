@@ -173,6 +173,8 @@ class KodiClient:
             'playerid': pid,
             'properties': ['title', 'year', 'genre', 'director',
                            'artist', 'album', 'showtitle', 'season',
+                           'file',   # HANS_TRANSLATE_V1 — cesta k souboru
+                                     # (smb://.../SHARE/... -> /mnt/SHARE/... na PC)
                            'episode', 'plot', 'plotoutline'],  # MOVIE_GROUNDING_V1
         })
         if result and 'result' in result:
