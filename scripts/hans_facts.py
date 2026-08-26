@@ -253,3 +253,87 @@ def save_facts(db_path: str, entity_id: int, res: dict) -> int:
     finally:
         con.close()
     return len(fakta)
+
+
+# ── Backfill ────────────────────────────────────────────────────────────────
+# Dávkově a RESUMOVATELNĚ. Nepotřebuje model → nesoutěží o VRAM a běží i
+# s vypnutým PC, čistě na Pi ([[study-vram-handoff]] se ho netýká).
+
+def _stav_tabulka(db_path: str) -> None:
+    con = sqlite3.connect(db_path, timeout=10)
+    try:
+        con.execute("""CREATE TABLE IF NOT EXISTS entity_facts_stav (
+            entity_id INTEGER PRIMARY KEY,
+            vysledek  TEXT NOT NULL,   -- ok | bez_qid | bez_tvrzeni | typ_bez_schematu
+            poli      INTEGER DEFAULT 0,
+            ts        REAL NOT NULL)""")
+        con.commit()
+    finally:
+        con.close()
+
+
+def kandidati(db_path: str, limit: int = 20) -> list:
+    """Entity, které ještě nebyly zkoušené. Nejdřív ty, o kterých Hans ví nejvíc.
+
+    ⚠️ Vrací JEN typy, které mají schéma — `pojem` se ani nezkouší, aby se
+    zbytečně nechodilo na síť.
+    """
+    _stav_tabulka(db_path)
+    con = sqlite3.connect(db_path, timeout=10)
+    try:
+        typy = [t for t in SCHEMA]
+        q = ("SELECT e.id, e.name, e.etype, e.source_title FROM entities e "
+             "LEFT JOIN entity_facts_stav s ON s.entity_id = e.id "
+             "WHERE s.entity_id IS NULL AND coalesce(e.source_title,'') <> '' "
+             "AND e.etype IN (%s) ORDER BY e.evidence_count DESC LIMIT ?"
+             % ",".join("?" * len(typy)))
+        return con.execute(q, typy + [limit]).fetchall()
+    finally:
+        con.close()
+
+
+def backfill(db_path: str, limit: int = 20, pauza: float = None) -> dict:
+    """Doplň fakta pro N dosud nezkoušených entit. Vrací souhrn.
+
+    ⚠️ `RateLimit` běh UKONČÍ, ale entitu NEODŠKRTNE — vrátíme se k ní příště.
+    Zaměnit „došel limit" za „entita neexistuje" by ji vyřadilo napořád
+    ([[study-findability-guards]]).
+    """
+    _stav_tabulka(db_path)
+    p = PAUZA_S if pauza is None else pauza
+    souhrn = {"zkouseno": 0, "ok": 0, "poli": 0, "bez_qid": 0,
+              "bez_tvrzeni": 0, "rate_limit": False}
+    for eid, name, etype, titul in kandidati(db_path, limit):
+        try:
+            r = facts_for(titul, etype)
+        except RateLimit as e:
+            _log.warning("backfill: rate limit u %r (%s) — končím, "
+                         "entita ZŮSTÁVÁ nezkoušená", name, e)
+            souhrn["rate_limit"] = True
+            break
+        except Exception as e:
+            _log.warning("backfill: %r selhalo (%s) — nechávám na příště",
+                         name, e)
+            continue                       # NEodškrtávat, chyba ≠ výsledek
+        souhrn["zkouseno"] += 1
+        n = save_facts(db_path, eid, r)
+        if r.get("qid") and n:
+            vysledek, souhrn["ok"] = "ok", souhrn["ok"] + 1
+            souhrn["poli"] += n
+        elif r.get("qid"):
+            vysledek = "bez_tvrzeni"       # entita je, tvrzení nemá — LEGITIMNÍ
+            souhrn["bez_tvrzeni"] += 1
+        else:
+            vysledek = "bez_qid"
+            souhrn["bez_qid"] += 1
+        con = sqlite3.connect(db_path, timeout=10)
+        try:
+            con.execute("INSERT OR REPLACE INTO entity_facts_stav "
+                        "(entity_id, vysledek, poli, ts) VALUES (?,?,?,?)",
+                        (eid, vysledek, n, time.time()))
+            con.commit()
+        finally:
+            con.close()
+        _log.info("backfill: %s [%s] → %s (%d polí)", name, etype, vysledek, n)
+        time.sleep(p)
+    return souhrn
