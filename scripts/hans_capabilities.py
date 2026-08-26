@@ -392,3 +392,50 @@ def recent_gained_context(diary_db_path: str = "data/hans_diary.db",
 if __name__ == "__main__":
     print(capabilities_report())
     print("\ndetect (baseline/nové):", detect_new_capabilities("data/hans_diary.db"))
+
+
+# ── Konkrétní schopnost k dotazu (HANS_CAP_HOWTO_V1, 26.8.) ─────────────────
+# Doloženo živě: „a když bys měl hlídat barák, KAM mi pošleš ten snímek?"
+# Hans nejdřív nabídl hlídání zapnout (potlačeno `HANS_AGENT_HOW_NOT_DO_V1`),
+# pak odpověděl abstinencí — přestože odpověď („na Matrix") tady V TOMHLE
+# SOUBORU celou dobu stojí. Nebyla to neznalost, ale nedoručení.
+
+def _norm_cap(t: str) -> list:
+    import re as _re
+    import unicodedata as _ud
+    x = _ud.normalize("NFKD", (t or "").lower())
+    x = "".join(c for c in x if not _ud.combining(c))
+    return _re.findall(r"[a-z0-9]{4,}", x)
+
+
+# Slova, která nic nerozlišují — bez nich by „mi/ten/pošleš" táhlo skóre.
+_CAP_STOP = {"kdyz", "mel", "budes", "posles", "poslat", "muzes", "mohl",
+             "vlastne", "ten", "toho", "tomu", "jak", "kam", "kde", "prosim"}
+
+
+def capability_for(text: str, min_shoda: int = 2) -> str:
+    """Popis JEDNÉ schopnosti, na kterou dotaz míří. Prázdné = nic jistého.
+
+    Skóruje se překryv obsahových slov dotazu s textem schopnosti. Práh
+    `min_shoda` je schválně ≥2: na jedno společné slovo se trefí kdeco
+    a vrátit CIZÍ schopnost je horší než nevrátit nic — dotaz pak propadne
+    do běžného hovoru, kde Hans aspoň nic netvrdí.
+    """
+    dotaz = [w for w in _norm_cap(text) if w not in _CAP_STOP]
+    if not dotaz:
+        return ""
+    # KMENY, ne celá slova: „hlídání" se do „hlídat" ani „místnosti" do
+    # „místnost" netrefí. Čtyři znaky stačí a nezvedly falešné shody
+    # (ověřeno na dotazech mimo téma — „kam jdeš večer", „co je k obědu").
+    kmen = lambda w: w[:4]
+    dotaz_k = {kmen(w) for w in dotaz}
+    nej, nej_skore = None, 0
+    for cid, popis, jak in _all_capabilities():
+        slova = {kmen(w) for w in _norm_cap(popis + " " + jak + " " + cid)}
+        skore = sum(1 for w in dotaz_k if w in slova)
+        if skore > nej_skore:
+            nej, nej_skore = (popis, jak), skore
+    if not nej or nej_skore < min_shoda:
+        return ""
+    popis, jak = nej
+    return popis + ((" (" + jak + ")") if jak else "")

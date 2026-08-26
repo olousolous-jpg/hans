@@ -1457,6 +1457,36 @@ register(
 
 
 # ─── /schopnosti — co Hans reálně umí (HANS_CAPABILITY_AWARENESS_V1) ─────────
+# HANS_CAP_HOWTO_V1 (26.8.) — „kam/kde/jak to funguje" u KONKRÉTNÍ schopnosti.
+# Doloženo: „kam mi pošleš ten snímek?" → Hans nejdřív nabídl hlídání zapnout,
+# po opravě agenta odpověděl abstinencí — a přitom odpověď („na Matrix") je
+# v `hans_capabilities` celou dobu. Nebyla to neznalost, ale NEDORUČENÍ.
+# ⚠️ Fail-open jako `/vycet`: když se žádná schopnost netrefí, vrací prázdno
+# a dotaz propadne do běžného hovoru. Vrátit CIZÍ schopnost je horší než nic.
+_HOWTO_PAT = re.compile(r"\b(kam|kde|jak|jakto)\b", re.IGNORECASE)
+
+
+def _cmd_jakto(handler, name, args) -> str:
+    t = (args or "").strip()
+    if not t or not _HOWTO_PAT.search(t):
+        return ""
+    try:
+        from scripts.hans_capabilities import capability_for
+        popis = capability_for(t)
+    except Exception as e:
+        _log.debug("HANS_CAP_HOWTO_V1: %s", e)
+        return ""
+    return ("%s, pane." % popis.rstrip(" .")) if popis else ""
+
+
+# ⛔ NEREGISTROVAT jako příkaz s vzorem `\b(kam|kde|jak)\b…` — vyzkoušeno
+# 26.8. a KRADE to routing: „jak jde studium?" šlo na `jakto` místo na
+# `studium`, a protože handler vrátil prázdno, deterministická odpověď
+# /studium se ztratila úplně. „jak" je moc běžné slovo.
+# Doručuje se proto GROUNDINGEM (`openwebui_direct_handler`), který routing
+# nesahá. `_cmd_jakto` zůstává jako pomocná funkce.
+
+
 def _cmd_schopnosti(handler, name, args) -> str:
     # HANS_CAP_SUMMARY_V1 — plný výčet se slash-příkazy zahltí nováčka. Proto:
     # jen EXPLICITNÍ slash /schopnosti (origin "slash") → plný report; přirozený

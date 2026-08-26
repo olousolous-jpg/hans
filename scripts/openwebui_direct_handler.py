@@ -1168,7 +1168,8 @@ class OpenWebUIDirectHandler:
             _ent_fact = (self._self_runtime_fact(str(_text))
                          or self._person_fact(str(_text))
                          or self._person_fact(_q_for_retrieval)
-                         or self._entity_fact(_q_for_retrieval))
+                         or self._entity_fact(_q_for_retrieval)
+                         or self._capability_fact(str(_text)))
 
             # 2) vyber kolekce dle třídy (G3B_MULTICOLLECTION_V1 — list)
             collections = self._GROUNDING_COLLECTION.get(res.intent)
@@ -1478,6 +1479,34 @@ class OpenWebUIDirectHandler:
         except Exception:
             self._es_inst = None
         return self._es_inst
+
+    def _capability_fact(self, text: str) -> str:
+        """HANS_CAP_HOWTO_V1 (26.8.) — „kam/kde/jak" u KONKRÉTNÍ schopnosti.
+
+        Doloženo: „kam mi pošleš ten snímek?" → Hans nejdřív nabídl hlídání
+        zapnout, po opravě agenta odpověděl abstinencí — a přitom odpověď
+        („na Matrix") je v `hans_capabilities` celou dobu. Celý VÝČET schopností
+        v promptu je (`capabilities_context`), jenže se v něm ztratí a zafunguje
+        abstinenční brzda. Tady se dodá JEDNA konkrétní jako tvrdý podklad.
+
+        ⚠️ Doručuje se GROUNDINGEM, ne příkazem: vzor na „kam|kde|jak" jako
+        `nl_patterns` KRADE routing — vyzkoušeno 26.8., „jak jde studium?"
+        pak šlo mimo `/studium`. Grounding do routingu nesahá.
+        Prázdné = nic jistého → dotaz jde normální cestou.
+        """
+        try:
+            t = str(text or "")
+            if not re.search(r"\b(kam|kde|jak|jakto)\b", t, re.IGNORECASE):
+                return ''
+            from scripts.hans_capabilities import capability_for
+            popis = capability_for(t)
+            if not popis:
+                return ''
+            logging.getLogger(__name__).info(
+                'HANS_CAP_HOWTO_V1: dotaz míří na schopnost → %.60s', popis)
+            return "Ověřený fakt o mé schopnosti: " + popis
+        except Exception:
+            return ''
 
     def _entity_facts_line(self, text: str) -> str:
         """HANS_ENTITY_FACTS_ALSO_WITH_NOTES_V1 — jen řádek strukturovaných
