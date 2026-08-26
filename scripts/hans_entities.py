@@ -234,6 +234,11 @@ _ADJ_WORK = re.compile(r"\b(filmov|seri[áa]lov|komiksov|animovan|televizní|"
 # ⚠️ HANS_ENTITY_CLASSIFY_V4 (26.8.) — hledalo se v CELÉ VĚTĚ, takže stačilo
 # „byla" z VEDLEJŠÍ věty: „Konobrže **je** zaniklá osada, která **byla**
 # součástí obce" → osoba. Test se proto dělá na HLAVNÍ sponě, ne hledáním.
+# HANS_ENTITY_NO_INDEX_PAGES_V1 — názvy stránek, které NEJSOU entity.
+_INDEX_PAGE = re.compile(
+    r"^\s*(seznam|list of|kategorie|category|portál|portal|wikiprojekt)\b"
+    r"|\((rozcestník|rozcestnik|disambiguation)\)\s*$", re.IGNORECASE)
+
 _PERSON_WEAK = re.compile(r"\bbyl[aiy]?\b", re.IGNORECASE)
 
 
@@ -347,8 +352,20 @@ class EntityStore:
     def capture_from_reading(self, title: str, raw_text: str, *,
                              url: str = "", lang: str = "cs") -> bool:
         """Zachyť entitu z právě přečteného článku: name=vyřešený titul,
-        gloss=první definiční věta (verbatim ze zdroje → 0 konfabulace)."""
+        gloss=první definiční věta (verbatim ze zdroje → 0 konfabulace).
+
+        HANS_ENTITY_NO_INDEX_PAGES_V1 (26.8.) — ROZCESTNÍKY a SEZNAMY se
+        nezachytávají. Nejsou to entity, jsou to indexy Wikipedie, a v paměti
+        jen ředí recall („co víš o X" může vrátit výpis dílů). Odhalil je
+        backfill faktů: 8 kusů s `je to = seznam na projektech Wikimedia`,
+        vesměs „Seznam dílů seriálu …" z dohledávání epizod.
+        ⚠️ Ověřeno proti CELÉ DB (463 entit): pravidlo odmítne přesně 10 a
+        všech 10 jsou opravdu indexy — žádná legitimní entita nepadne.
+        """
         if not (self.cfg.get("enabled", True)):
+            return False
+        if _INDEX_PAGE.search(title or ""):
+            _log.debug("entity: %r je index/rozcestník → nezachytávám", title)
             return False
         gloss = _first_sentence(raw_text or "")
         # glos musí opravdu vypadat definičně (obsahuje „je/byl" apod.),
