@@ -125,7 +125,14 @@ def qid_for(source_title: str, lang: str = "cs") -> tuple:
 
 
 def _popisky(qids: set, lang: str = "cs") -> dict:
-    """QID → český (nebo anglický) název. Jedním dávkovým dotazem."""
+    """QID → (český název, ANGLICKÝ název). Jedním dávkovým dotazem.
+
+    HANS_FACTS_EN_V1 (26.8.) — angličtina se dřív tahala a ZAHAZOVALA. Přitom
+    je to přesně to, co potřebuje obrazový model: „Neo-Gothic architecture"
+    se dá do promptu připojit DETERMINISTICKY, kdežto české „novogotika" musí
+    někdo přeložit — a když se o to poprosí LLM, dosadí si svoje.
+    Doloženo: fakt `sloh: novogotika` → model napsal „Norman architecture".
+    """
     if not qids:
         return {}
     out = {}
@@ -137,9 +144,10 @@ def _popisky(qids: set, lang: str = "cs") -> dict:
         try:
             for q, e in (_get(u).get("entities") or {}).items():
                 L = e.get("labels") or {}
-                v = (L.get(lang) or L.get("en") or {}).get("value")
-                if v:
-                    out[q] = v
+                cs = (L.get(lang) or {}).get("value")
+                en = (L.get("en") or {}).get("value")
+                if cs or en:
+                    out[q] = (cs or en, en or "")
         except RateLimit:
             raise
         except Exception as e:
@@ -202,11 +210,19 @@ def facts_for(source_title: str, etype: str, lang: str = "cs") -> dict:
     if k_dobrani:
         time.sleep(PAUZA_S)
         lab = _popisky(k_dobrani, lang)
+
+        def _cs(x):
+            return lab.get(x, (x, ""))[0]
+
+        def _en(x):
+            return lab.get(x, ("", ""))[1]
+
         for klic, (v, prop) in list(syrove.items()):
             if isinstance(v, list):       # vícehodnotová vlastnost
-                syrove[klic] = (", ".join(lab.get(x, x) for x in v), prop)
+                syrove[klic] = (", ".join(_cs(x) for x in v), prop,
+                                ", ".join(e for e in (_en(x) for x in v) if e))
             elif v in lab:
-                syrove[klic] = (lab[v], prop)
+                syrove[klic] = (_cs(v), prop, _en(v))
     return {"qid": qid, "clanek": clanek, "fakta": syrove, "duvod": ""}
 
 
@@ -226,6 +242,11 @@ def ensure_table(db_path: str) -> None:
             prop      TEXT,
             ts        REAL NOT NULL,
             PRIMARY KEY (entity_id, klic))""")
+        # HANS_FACTS_EN_V1 — přidáno později, proto ALTER (starší DB ho nemá).
+        try:
+            con.execute("ALTER TABLE entity_facts ADD COLUMN hodnota_en TEXT")
+        except Exception:
+            pass                       # sloupec už existuje
         con.execute("CREATE INDEX IF NOT EXISTS idx_ef_klic "
                     "ON entity_facts(klic, hodnota)")
         con.commit()
@@ -242,13 +263,16 @@ def save_facts(db_path: str, entity_id: int, res: dict) -> int:
     now = time.time()
     con = sqlite3.connect(db_path, timeout=10)
     try:
-        for klic, (hod, prop) in fakta.items():
+        for klic, polozka in fakta.items():
+            hod, prop = polozka[0], polozka[1]
+            en = polozka[2] if len(polozka) > 2 else ""
             con.execute(
-                "INSERT INTO entity_facts (entity_id, klic, hodnota, qid, prop, ts) "
-                "VALUES (?,?,?,?,?,?) ON CONFLICT(entity_id, klic) DO UPDATE SET "
-                "hodnota=excluded.hodnota, qid=excluded.qid, prop=excluded.prop, "
-                "ts=excluded.ts",
-                (entity_id, klic, str(hod), res.get("qid"), prop, now))
+                "INSERT INTO entity_facts "
+                "(entity_id, klic, hodnota, hodnota_en, qid, prop, ts) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(entity_id, klic) DO UPDATE SET "
+                "hodnota=excluded.hodnota, hodnota_en=excluded.hodnota_en, "
+                "qid=excluded.qid, prop=excluded.prop, ts=excluded.ts",
+                (entity_id, klic, str(hod), en or None, res.get("qid"), prop, now))
         con.commit()
     finally:
         con.close()

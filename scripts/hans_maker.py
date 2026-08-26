@@ -290,7 +290,70 @@ def _subpage_html(style: str, topic: str, sub: str, text: str,
     )
 
 
-def _image_prompts_for(config: dict, subs: list, podklady: list = None) -> dict:
+# HANS_MAKER_IMAGE_FACTS_V1 (26.8.) — tvrdá fakta o entitě do obrazového promptu.
+# Zápisky nesou vizuální detail JEN NĚKDY (doloženo: Trosky ano, folklór ne —
+# jeho jediný zápisek je etymologický). `entity_facts` mají sloh, materiál,
+# polohu deterministicky z Wikidat, takže doplní přesně to, co próze chybí.
+# Jen to, co ovlivní VZHLED. „vznik" a „stát" se nepřipojují — rok ani jméno
+# státu obrazový model nenakreslí, jen ředí prompt.
+# `sloh` je vizuální VŽDY. `je to` jen u staveb a míst: „castle" obrazu pomůže,
+# ale „literary work" u Obrazu Doriana Graye je čirý šum (doloženo 26.8.).
+_SLOH_VZDY = "sloh"
+_JE_TO_JEN_PRO = ("místo", "organizace")
+
+
+def _norm_tok(s: str) -> list:
+    import unicodedata as _ud
+    t = _ud.normalize("NFKD", (s or "").lower())
+    t = "".join(c for c in t if not _ud.combining(c))
+    return re.findall(r"[a-z0-9]+", t)
+
+
+def _fakta_k_podtematu(db_path: str, sub: str) -> str:
+    """Fakta k entitě, kterou pod-téma POJMENOVÁVÁ. Prázdné = nic nevnucovat.
+
+    ⚠️ ZÁMĚRNĚ TVRDÁ SHODA: každý token názvu entity musí být v pod-tématu jako
+    CELÉ SLOVO. `EntityStore.resolve` (i s `loose=False`) je na tohle moc
+    velkorysý — „Folklór Českého ráje" u něj vyjde jako entita **Česko**,
+    protože „cesko" je prefix „ceskeho". Do obrázku by to vpravilo fakta
+    o státu. U malby je falešná shoda HORŠÍ než žádná: obraz pak zobrazí
+    něco jiného, než o čem je text. Cena: české skloňování v názvu
+    pod-tématu shodu neprojde — a to je správná strana omylu.
+    """
+    if not sub:
+        return ""
+    try:
+        con = sqlite3.connect(db_path, timeout=10)
+        try:
+            radky = con.execute(
+                "SELECT e.name, f.klic, "
+                "       coalesce(nullif(f.hodnota_en,''), f.hodnota), e.etype "
+                "FROM entity_facts f JOIN entities e ON e.id = f.entity_id"
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception as e:
+        _log.debug("fakta k pod-tématu: %s", e)
+        return ""
+    st = set(_norm_tok(sub))
+    nej, nej_len, nej_typ = {}, 0, ""
+    for name, klic, hod, etype in radky:
+        toks = [t for t in _norm_tok(name) if len(t) >= 3]
+        if not toks or not all(t in st for t in toks):
+            continue
+        d = sum(len(t) for t in toks)
+        if d > nej_len:                    # vyhraje NEJSPECIFIČTĚJŠÍ shoda
+            nej, nej_len, nej_typ = {}, d, etype
+        if d == nej_len:
+            nej[klic] = hod
+    poradi = [_SLOH_VZDY]
+    if nej_typ in _JE_TO_JEN_PRO:
+        poradi.append("je to")
+    return ", ".join(nej[k] for k in poradi if nej.get(k))
+
+
+def _image_prompts_for(config: dict, subs: list, podklady: list = None,
+                      db_path: str = None) -> dict:
     """Jeden LLM call → ANGLICKÝ image prompt pro každé CZ pod-téma (pořadím).
     {sub: en_prompt}; fallback {} → generický prompt.
 
@@ -314,15 +377,19 @@ def _image_prompts_for(config: dict, subs: list, podklady: list = None) -> dict:
         for i, s in enumerate(subs):
             p = (pod[i] if i < len(pod) else "") or ""
             p = " ".join(str(p).split())[:280]
+            # HANS_MAKER_IMAGE_FACTS_V1 — tvrdá fakta mají PŘEDNOST před prózou:
+            # „sloh: gotická architektura" řekne o vzhledu víc než odstavec.
             radky.append("%d. %s%s" % (i + 1, s,
                                        ("\n   PODKLAD: " + p) if p else ""))
         lst = "\n".join(radky)
         raw = ollama_generate(
             _coder_model(config),
-            "Below are %d Czech topics. Some have a PODKLAD line — Czech notes "
-            "about what the topic ACTUALLY looks like; when present, base the "
-            "scene on those CONCRETE details (shape, material, landscape, "
-            "colours), not on a generic reading of the title. "
+            "Below are %d Czech topics. A FAKTA line holds verified facts "
+            "(type, architectural style, location, year) — trust it FIRST and "
+            "let it decide the look. A PODKLAD line holds Czech notes about "
+            "what the topic actually looks like; use those CONCRETE details "
+            "(shape, material, landscape, colours) too. Never fall back on a "
+            "generic reading of the title when either line is present. "
             "For EACH output ONE short English image-generation prompt "
             "(a concrete visual scene, 6-12 words). "
             "Output EXACTLY %d numbered lines '1.'..'%d.' and nothing else:\n%s"
@@ -335,7 +402,14 @@ def _image_prompts_for(config: dict, subs: list, podklady: list = None) -> dict:
                  for l in (raw or "").splitlines() if l.strip()]
         if len(lines) >= len(subs):
             for s, p in zip(subs, lines[:len(subs)]):
-                out[s] = p
+                # HANS_MAKER_IMAGE_FACTS_V1 — ověřená fakta se PŘIPOJÍ, ne
+                # předhodí modelu k uvážení. Doloženo 26.8.: s `sloh:
+                # novogotika` v promptu model napsal „Norman architecture" —
+                # dosadil si vlastní znalost. Připojením v ANGLIČTINĚ (přímo
+                # z Wikidat) se ta možnost odebírá: fakt se do promptu dostane
+                # doslova, nebo vůbec.
+                fk = _fakta_k_podtematu(db_path, s) if db_path else ""
+                out[s] = ("%s, %s" % (p.rstrip(" .,"), fk)) if fk else p
     except Exception as e:
         _log.debug("maker image prompts: %s", e)
     return out
@@ -577,7 +651,8 @@ def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
         # doopravdy má; `notes` drží týž text, co jde na podstránku.
         img_prompts = _image_prompts_for(
             config, [sub for _, sub in subs],
-            [(n or {}).get("text", "") for n in notes])
+            [(n or {}).get("text", "") for n in notes],
+            db_path=db_path)          # HANS_MAKER_IMAGE_FACTS_V1
         style = _extract_style(landing)
         pages = {"index.html": landing}
         for (slug, sub), n in zip(subs, notes):
