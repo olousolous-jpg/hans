@@ -49,7 +49,14 @@ MIN_SUPPORT = 0.45
 MIN_STEMS = 3          # kratší věty se neposuzují (zdvořilost, spojky)
 
 _WORD = re.compile(r"[a-záčďéěíňóřšťúůýž]+")
-_SENT = re.compile(r"(?<=[.!?])\s+")
+# GROUNDING_GUARD_SENT_SPLIT_V2 (26.8.) — dělilo se za KAŽDOU tečkou, takže
+# „pevnost ze 14. století" spadlo na dvě „věty". Guard pak zahodil přední půlku
+# jako bez opory a v odpovědi zůstal osiřelý zlomek: doloženo živě —
+# „Hrad Kost jsem studoval nedávno. století a postupně přestavovanou…".
+# Rozlišovač: NOVÁ VĚTA ZAČÍNÁ VELKÝM PÍSMENEM; pořadové číslo („14. století")
+# i zkratka s číslem („r. 1300") pokračují malým písmenem nebo číslicí.
+# Ověřeno 6/6 včetně „Rok 1990. Pak…", kde se dělit MÁ.
+_SENT = re.compile(r"(?<=[.!?])\s+(?![a-záčďéěíňóřšťúůýž0-9])")
 
 # Věta, která nic netvrdí o tématu — jen se sloví. Kdyby prošla přes pásma,
 # nevadí; tohle je jen zrychlení a ochrana proti krátkým zdvořilostem.
