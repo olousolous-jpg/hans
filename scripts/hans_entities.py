@@ -201,11 +201,16 @@ _PERSON = re.compile(
     r")\b", re.IGNORECASE)
 _PLACE = _n(r"měst|hrad|zámek|hora|řek|jezer|stát|obec|vesnic|ostrov|pohoří|"
             r"kraj|region|čtvrť|náměstí|budov|katedrál|stavb|pyramid|pevnost|"
-            r"tvrz|klášter|chrám|most|amfiteátr|ulic|přítok|park")
+            r"tvrz|klášter|chrám|most|amfiteátr|ulic|přítok|park|"
+            # HANS_ENTITY_CLASSIFY_V4 (26.8.) — doloženo backfillem faktů:
+            r"osad|samot|lokalit|nalezišt")
 _WORK = _n(r"film|kniha|knih|román|romanet|oper|skladb|album|píseň|písn|obraz|"
            r"báseň|básn|hra|seriál|dílo|díl|hymn|časopis|komedie|komiks|"
            r"muzikál|symfoni|povídk|sbírk|pohádk|epos|dobrodružství|pořad|"
-           r"epizod|bondovk")
+           r"epizod|bondovk|"
+           # HANS_ENTITY_CLASSIFY_V4 — „byl třídílný CYKLUS" a „je spaghetti
+           # WESTERN" spadaly na osobu, protože predikátové jméno chybělo.
+           r"cykl|western|dokument|thriller|sitcom|muzik[áa]l")
 _ORG = _n(r"organizace|společnost|firm|klub|stran|spolek|instituce|univerzit|"
           r"škol|tým|kapel|nakladatelství|sdružení|stanic")
 _EVENT = _n(r"válk|bitv|turnaj|revoluce|povstání|událost|mistrovství|festival|"
@@ -215,12 +220,20 @@ _EVENT = _n(r"válk|bitv|turnaj|revoluce|povstání|událost|mistrovství|festiv
 # sonda Luna 13). Vrací `pojem` — nic lepšího pro ně dnes není.
 _THING = _n(r"družic|sond|satelit|raket|letoun|kluzák|vozidl|stroj|přístroj|"
             r"počítač|program|protokol|norm|jednotk|prvek|slitin|materiál|"
-            r"spoluprác|značk|projekt|název|označení|technologi|metod")
+            r"spoluprác|značk|projekt|název|označení|technologi|metod|"
+            # HANS_ENTITY_CLASSIFY_V4 (26.8.) — predikátová jména, která
+            # backfill faktů odhalil: bez nich spadly na „osobu" LOĎ, obec
+            # i PRŮMYSLOVÁ REVOLUCE.
+            r"loď|lodi|lodě|plavidl|změn|směs|tradic|způsob|soustav|systém|"
+            r"říš|impéri|zvyk|obdob")
 # Žánrová přídavná jména — slabší signál (viz „filmový režisér"), proto záloha.
 _ADJ_WORK = re.compile(r"\b(filmov|seri[áa]lov|komiksov|animovan|televizní|"
                        r"hudební|divadelní|operní)", re.IGNORECASE)
 # Poslední záchrana: holé „byl/byla". Dokud stálo první, spolklo film, klub,
 # město i módní spolupráci.
+# ⚠️ HANS_ENTITY_CLASSIFY_V4 (26.8.) — hledalo se v CELÉ VĚTĚ, takže stačilo
+# „byla" z VEDLEJŠÍ věty: „Konobrže **je** zaniklá osada, která **byla**
+# součástí obce" → osoba. Test se proto dělá na HLAVNÍ sponě, ne hledáním.
 _PERSON_WEAK = re.compile(r"\bbyl[aiy]?\b", re.IGNORECASE)
 
 
@@ -250,7 +263,8 @@ def _classify(gloss: str) -> str:
         return "dílo"
     if _THING.search(win):
         return "pojem"
-    if _PERSON_WEAK.search(s):
+    # HANS_ENTITY_CLASSIFY_V4 — jen když je HLAVNÍ spona v minulém čase.
+    if m and _PERSON_WEAK.fullmatch(m.group(0)):
         return "osoba"
     return "pojem"
 
