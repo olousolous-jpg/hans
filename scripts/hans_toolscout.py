@@ -160,13 +160,25 @@ def _fit_class(param_b: float, config: dict) -> dict:
 
 
 def _best_fitting_size(cand: dict, config: dict) -> Optional[dict]:
-    """Z velikostí modelu vyber NEJVĚTŠÍ, která se ještě vejde (coexist>on_demand).
-    Vrací {size_tag, **fit} nebo None když se nevejde žádná."""
+    """Z velikostí modelu vyber NEJVĚTŠÍ, která se ještě vejde.
+    Vrací {size_tag, **fit} nebo None když se nevejde žádná.
+
+    HANS_TOOLSCOUT_SIZE_COMMENT_FIX_V1 (26.8.) — tenhle docstring i komentář
+    níž dřív tvrdily „coexist > on_demand", což je PŘESNÝ OPAK toho, co kód
+    dělá. ZMĚŘENO 26.8. na velikostech 1.8b/7b/14b: vybere **14b (on_demand)**.
+    Je to tak správně a schválně — `on_demand` je u Hanse běžný režim (chat se
+    dočasně odloží jako při herním módu), takže není důvod brát slabší model
+    jen proto, že se vejde vedle chatu. Táž úvaha jako `HANS_TOOLSCOUT_RANK_V2`.
+    ⛔ Neopravovat kód „podle komentáře" — vrátil by se tím downgrade
+    (`moondream:1.8b` místo `qwen2.5vl:7b`, doloženo 25.8.).
+    """
     best = None
     for tag, b in zip(cand["sizes"], cand["sizes_b"]):
         fc = _fit_class(b, config)
         if fc["fit"] in ("coexist", "on_demand"):
-            # preferuj větší model, ale coexist má přednost před on_demand
+            # `>` níž znamená: vyhrává VĚTŠÍ tuple → on_demand (1) přebije
+            # coexist (0) a při shodě rozhodne větší `b`. Tedy: největší,
+            # co se vejde. (Viz varování v docstringu.)
             rank = (0 if fc["fit"] == "coexist" else 1, b)
             if best is None or rank > best[0]:
                 best = (rank, {"size_tag": tag, **fc})
