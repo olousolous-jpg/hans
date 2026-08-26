@@ -118,6 +118,21 @@ def uklid(db: str, jmeno: str, znacka: int, od_ts: float, do_ts: float,
                     % ",".join(str(r[0]) for r in vyber))
         con.commit()
     con.close()
+
+    # HANS_CONVINDEX_FORGET_V1 (26.8.) — smazat z DENÍKU nestačí. Rozhovor je
+    # mezitím zaindexovaný ve fulltextu, takže testovací hovor zůstával
+    # VYHLEDATELNÝ a Hans si ho vybavoval jako skutečný (doloženo: dotaz
+    # „severnim kridle" vrátil hodinu starý smazaný test i s konfabulací).
+    # Vzor „nová věc patří do OBOU cest" z CLAUDE.md platí i na mazání.
+    if not jen_ukazat and vyber:
+        try:
+            from scripts.hans_convindex import forget
+            n_idx = forget([r[0] for r in vyber])
+            if n_idx:
+                print("   z fulltextu odstraněno %d řádků" % n_idx)
+        except Exception as e:
+            print("   ⚠️  index se vyčistit nepodařilo (%s) — testovací hovor "
+                  "zůstal vyhledatelný!" % e)
     p = Path("data/conversations/%s.json" % jmeno)
     if not jen_ukazat and p.exists():
         p.unlink()

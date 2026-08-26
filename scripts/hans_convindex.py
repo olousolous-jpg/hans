@@ -115,6 +115,53 @@ def _fts_replace(conn, did, text, topic, partner, stare=None) -> None:
         "VALUES (?,?,?,?)", (did, text, topic, partner))
 
 
+def forget(diary_ids) -> int:
+    """HANS_CONVINDEX_FORGET_V1 (26.8.) — vyhoď řádky z indexu úplně.
+
+    PROČ: `test_rozhovor.py --uklid` maže testovací rozhovor z DENÍKU, ale
+    index si ho nechával → smazaný test zůstal **plně vyhledatelný** a Hans si
+    ho mohl vybavit jako skutečnou vzpomínku. Doloženo 26.8.: dotaz „severnim
+    kridle" vrátil testovací rozhovor smazaný o hodinu dřív, i s konfabulací,
+    kterou v něm Hans vyrobil. Přesně to, čemu měl úklid zabránit.
+
+    Pořadí je schválně: napřed `conv_doc`, pak FTS. Kdyby se FTS delete
+    nepovedl, přestavba už čte VYČIŠTĚNÝ `conv_doc` → nikdy nezůstane
+    duplikát ani sirotek. Vrací počet skutečně odstraněných řádků.
+    """
+    ids = []
+    for i in diary_ids or []:
+        try:
+            ids.append(int(i))
+        except Exception:
+            continue
+    if not ids:
+        return 0
+    conn = _connect()
+    try:
+        stare = {r[0]: (r[1], r[2], r[3]) for r in conn.execute(
+            "SELECT id, text, topic, partner FROM conv_doc WHERE id IN (%s)"
+            % ",".join("?" * len(ids)), ids)}
+        if not stare:
+            return 0
+        conn.execute("DELETE FROM conv_doc WHERE id IN (%s)"
+                     % ",".join("?" * len(stare)), list(stare))
+        try:
+            for did, (txt, top, par) in stare.items():
+                conn.execute(
+                    "INSERT INTO conv_fts(conv_fts, rowid, text, topic, partner) "
+                    "VALUES('delete', ?, ?, ?, ?)", (did, txt, top, par))
+        except Exception as e:
+            _log.warning("conv_fts forget selhal (%s) → plná přestavba", e)
+            conn.execute("INSERT INTO conv_fts(conv_fts) VALUES('delete-all')")
+            conn.execute(
+                "INSERT INTO conv_fts(rowid, text, topic, partner) "
+                "SELECT id, text, topic, partner FROM conv_doc")
+        conn.commit()
+        return len(stare)
+    finally:
+        conn.close()
+
+
 def reindex(diary_ids, diary_path: str = "data/hans_diary.db") -> int:
     """HANS_CONVINDEX_REINDEX_V1 — promítni ZMĚNĚNÉ deníkové řádky do indexu.
 
