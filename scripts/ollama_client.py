@@ -343,13 +343,34 @@ def _post_with_retry(url: str, payload: dict, timeout: int,
             out = extractor(r.json())
             br.note_success(_log)
             return out
-        except requests.exceptions.Timeout as exc:
+        except requests.exceptions.ConnectTimeout as exc:
+            # OLLAMA_CONNECT_TIMEOUT_LOG_V1 (26.8.) — ConnectTimeout je PODTŘÍDA
+            # Timeout, takže dřív spadl do větve níž a ta vypsala READ mez
+            # (25/120 s), i když se reálně čekalo jen CONNECT_TIMEOUT (3 s).
+            # Log tím lhal o tom, jak dlouho Hans čekal, a svedl diagnostiku:
+            # 26.8. ráno to vypadalo, že OLLAMA_CONNECT_TIMEOUT_V1 nefunguje,
+            # přestože fungoval. Chování se NEMĚNÍ, mění se jen pravdivost hlášky.
+            # ⚠️ Tahle větev MUSÍ zůstat NAD `except Timeout`, jinak ji nikdy
+            # nedostane. A NEsmí se hlásit přes LOG_CIRCUIT breaker —
+            # `_log_circuit.is_conn_error` timeouty záměrně nebere, aby se
+            # neschovaly reálné pomalé cesty (rozhodnuto 23.8.).
             last_exc = exc
             if attempt <= MAX_RETRIES:
-                _log.warning("Ollama timeout (%ds), retry %d/%d: %s",
+                _log.warning("Ollama nedostupná (spojení nenavázáno do %d s), "
+                             "retry %d/%d: %s",
+                             CONNECT_TIMEOUT, attempt, MAX_RETRIES, url)
+            else:
+                _log.error("Ollama nedostupná (spojení nenavázáno do %d s) ani "
+                           "po %d pokusech — stroj je nejspíš vypnutý: %s",
+                           CONNECT_TIMEOUT, attempt, url)
+        except requests.exceptions.Timeout as exc:
+            # sem už padá JEN read timeout — spojení stálo, ale odpověď nedorazila
+            last_exc = exc
+            if attempt <= MAX_RETRIES:
+                _log.warning("Ollama neodpověděla do %d s, retry %d/%d: %s",
                              timeout, attempt, MAX_RETRIES, url)
             else:
-                _log.error("Ollama timeout (%ds) after %d attempts: %s",
+                _log.error("Ollama neodpověděla do %d s ani po %d pokusech: %s",
                            timeout, attempt, url)
         except requests.exceptions.ConnectionError as exc:
             if br.should_log(exc):
