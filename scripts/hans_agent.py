@@ -1364,6 +1364,27 @@ class AgentRouter:
             return False          # skutečný rozkaz — nech projít
         return m.endswith("?") or bool(self._SLEEP_NEGATION.search(m))
 
+    # HANS_AGENT_HOW_NOT_DO_V1 (26.8.) — otázka JAK/KAM něco funguje není
+    # žádost, ať se to spustí. Doloženo: „a když bys měl hlídat barák, kam mi
+    # pošleš ten snímek?" → návrh `guard_toggle` conf=0.95 („Mám spustit
+    # hlídací režim?") místo odpovědi „na Matrix".
+    # Rozlišovač je opět TVAR VĚTY: rozkaz projde, tázací věta s KAM/KDE/JAK
+    # se potlačí. Popis akce sice říká „na pouhý dotaz NEvol", jenže to je
+    # instrukce v promptu — a ta nestačí, jak dnešek ukázal už potřetí.
+    _HOW_WORD = re.compile(r"\b(kam|kde|jak|jakto|čím|cim)\b", re.IGNORECASE)
+    _DO_IMPERATIVE = re.compile(
+        r"\b(zapni|spus[tť]|hl[íi]dej|str[ěe][žz]|vypni|zastav|zru[šs])\b",
+        re.IGNORECASE)
+
+    def _how_question(self, message: str) -> bool:
+        """Ptá se věta, JAK/KAM to funguje (→ NENÍ to povel ke spuštění)?"""
+        m = (message or "").strip()
+        if not m or not self._HOW_WORD.search(m):
+            return False
+        if self._DO_IMPERATIVE.search(m):
+            return False          # skutečný rozkaz — nech projít
+        return m.endswith("?")
+
     def _past_viewing_talk(self, message: str) -> bool:
         """HANS_AGENT_PLAY_NARRATION_GUARD_V1 — vypráví věta o tom, co uživatel
         UŽ VIDĚL (→ NENÍ to povel k přehrávání)? Rozkaz má přednost, stejně jako
@@ -1494,6 +1515,12 @@ class AgentRouter:
                    "report_who_is_home"),
              podminka=lambda s, aid, msg, dec, h: s._why_about_past(msg),
              verdikt=None, duvod="věta se ptá PROČ se něco stalo, ne na stav teď"),
+        # HANS_AGENT_HOW_NOT_DO_V1 — „kam mi pošleš snímek?" není „zapni to".
+        dict(marker="HANS_AGENT_HOW_NOT_DO_V1",
+             akce=("guard_toggle", "pc_shutdown", "hans_sleep",
+                   "kodi_play_film", "kodi_resume"),
+             podminka=lambda s, aid, msg, dec, h: s._how_question(msg),
+             verdikt=None, duvod="věta se ptá JAK/KAM to funguje, nežádá spuštění"),
     )
 
     def _uz_studovano(self, decision: dict, handler) -> bool:
