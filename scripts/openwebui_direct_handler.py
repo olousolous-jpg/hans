@@ -1324,6 +1324,17 @@ class OpenWebUIDirectHandler:
                 _kb = self._knowledge_fts_grounding(
                     str(_q_for_retrieval or _text))
                 if _kb:
+                    # HANS_ENTITY_FACTS_ALSO_WITH_NOTES_V1 (26.8.) — zápisky
+                    # mají přednost, ale STRUKTUROVANÁ FAKTA si s nimi
+                    # NEKONKURUJÍ: je to jeden krátký ověřený řádek z Wikidat,
+                    # ne konkurenční próza. Doloženo: na „v jakém slohu je
+                    # Cardiffský hrad" se entita RESOLVOVALA (ev=21), ale
+                    # vyhrály zápisky → fakt `sloh = novogotika` se zahodil
+                    # a Hans napsal „gotickou stavbou". Kost fungovala jen
+                    # proto, že žádné zápisky neměla.
+                    _fl = self._entity_facts_line(_q_for_retrieval)
+                    if _fl:
+                        _kb = _kb + '\n' + _fl
                     self._vysledek_groundingu('grounded', 'zapisky_pred_entitou')
                     return _kb
                 # C1: RAG prázdné, ale entita ve store → autoritativní fakt
@@ -1467,6 +1478,21 @@ class OpenWebUIDirectHandler:
         except Exception:
             self._es_inst = None
         return self._es_inst
+
+    def _entity_facts_line(self, text: str) -> str:
+        """HANS_ENTITY_FACTS_ALSO_WITH_NOTES_V1 — jen řádek strukturovaných
+        faktů k entitě z dotazu (bez glosy). Prázdné, když entita není nebo
+        fakta nemá — nic se nedomýšlí."""
+        try:
+            _es = self._entity_store()
+            if _es is None:
+                return ''
+            _ent = _es.resolve(str(text))
+            if not _ent:
+                return ''
+            return _es._facts_line(_ent.get('id'))
+        except Exception:
+            return ''
 
     def _entity_fact(self, text: str) -> str:
         """HANS_ENTITY_STORE_C1_V1 — deterministicky resolvuj entitu z dotazu

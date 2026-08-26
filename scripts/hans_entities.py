@@ -409,7 +409,10 @@ class EntityStore:
                     (entity_id,)).fetchone()
             if not r:
                 return None
-            return {"name": r[0], "etype": r[1], "gloss": r[2],
+            # HANS_ENTITY_FACTS_IN_CHAT_V1 — `id` je tu proto, aby se k entitě
+            # daly dohledat strukturovaná fakta (`entity_facts`). Přidání klíče
+            # nic nerozbije: konzumenti čtou konkrétní jména, ne pořadí.
+            return {"id": entity_id, "name": r[0], "etype": r[1], "gloss": r[2],
                     "source": r[3], "source_title": r[4],
                     "disambig": r[5], "evidence_count": r[6]}
         except Exception:
@@ -500,7 +503,41 @@ class EntityStore:
             pre = "Ověřený fakt o „%s“ (z mého čtení, zdroj: %s): " % (nm, src)
         else:
             pre = "Ověřený fakt o „%s“ (z mého čtení): " % nm
-        return pre + body
+
+        # HANS_ENTITY_FACTS_IN_CHAT_V1 (26.8.) — připoj STRUKTUROVANÁ fakta.
+        # Doloženo kontrolním rozhovorem: Hans měl v `entity_facts` 722 faktů
+        # s proveniencí (Kost = gotická architektura, Cardiff = novogotika)
+        # a v chatu na „v jakém slohu je hrad Kost?" odpověděl „nemám
+        # detailnější informace". Korpus byl odříznutý od jediného místa,
+        # kde se ho někdo ptá — fakta se dosud napojila jen do malování.
+        # Váže se na `entity.id`, takže se NIC nedohledává a nehrozí jmenovec:
+        # když je entita resolvovaná správně, jsou správně i fakta.
+        struktura = self._facts_line(entity.get("id"))
+        return pre + body + (("\n" + struktura) if struktura else "")
+
+    # Pořadí je kurátorované: co odpovídá na „jaký/kde/kdy", ne co je v DB první.
+    _FACT_ORDER = ("je to", "sloh", "leží v", "stát", "vznik", "vlastník",
+                   "autor", "vydáno", "žánr", "narození", "úmrtí", "profese",
+                   "národnost", "sídlo", "datum", "místo", "vystupuje v")
+
+    def _facts_line(self, entity_id) -> str:
+        """HANS_ENTITY_FACTS_IN_CHAT_V1 — řádek strukturovaných faktů (Wikidata).
+        Prázdné = entita fakta nemá; to je legitimní a nic se nedomýšlí."""
+        if not entity_id:
+            return ""
+        try:
+            with self._conn(ro=True) as c:
+                rows = dict(c.execute(
+                    "SELECT klic, hodnota FROM entity_facts WHERE entity_id=?",
+                    (entity_id,)).fetchall())
+        except Exception:
+            return ""                     # tabulka nemusí existovat (starší DB)
+        if not rows:
+            return ""
+        poradi = [k for k in self._FACT_ORDER if rows.get(k)]
+        poradi += [k for k in rows if k not in self._FACT_ORDER]
+        return ("Ověřená fakta (Wikidata): "
+                + "; ".join("%s = %s" % (k, rows[k]) for k in poradi))
 
     def count(self) -> int:
         try:
