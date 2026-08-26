@@ -1719,6 +1719,14 @@ register(
 
 # ─── /studium — studijní program z koníčku (HANS_STUDY_V1, #1 odbornost) ──
 _STUDY_NOW = {"teď", "ted", "now", "session", "studuj"}
+# HANS_STUDY_ORIGIN_V1 (26.8.) — „vybral sis to sám, nebo jsem ti to zadal já?"
+# Doloženo 26.8.: dotaz na původ studia se zaroutoval jako `volny_hovor`
+# (nonfactual) → bez groundingu → Hans si vymyslel, že to plyne „z deníku z 26.
+# srpna v 06:15" (což byl web_read zpráv z ČT24; Cimrman je program z 30.7.).
+# Persona smí vyprávět o domě, ale NESMÍ si vymýšlet, CO MÁ ZAPSÁNO.
+# Odpověď je deterministická z DB, bez LLM — vzor HANS_STUDY_RECALL_V1, který
+# vznikl na tutéž třídu chyby („copak jsi studoval" → vymyšlený report).
+_STUDY_ORIGIN = {"původ", "puvod", "kdo", "odkud", "proč", "proc", "zadal"}
 # HANS_STUDY_NUDGE_V1 (4.8.) — ruční popostrčení, když se studium zaseklo na
 # pod-tématu, ke kterému encyklopedie nemá článek. Automatika ho přeskočí až po
 # `max_subtopic_failures` NOCÍCH (default 3) — tohle je zkratka pro uživatele.
@@ -1745,6 +1753,96 @@ def _notify_user(handler, msg: str) -> bool:
     except Exception as _e:
         _log.debug("notify_user: %s", _e)
         return False
+
+
+def _datum_cz(ts) -> str:
+    """HANS_STUDY_ORIGIN_V1 — „30.7.2026" z unixového času; hlásí se, když neví."""
+    try:
+        import datetime as _d
+        return _d.datetime.fromtimestamp(float(ts)).strftime("%-d.%-m.%Y")
+    except Exception:
+        return "neznámo kdy"
+
+
+_ORIGIN_PAT = re.compile(
+    r"(vybral|zvolil|urcil|určil)\s+(sis|jsi\s+si|sis\s+to|si)\b"
+    # obrácený slovosled je v češtině stejně běžný: „to SIS VYBRAL ty sám"
+    r"|\b(sis|jsi\s+si)\s+(to\s+)?(vybral|zvolil|ur[cč]il)\b"
+    r"|\bsám\s+(sis|jsi)\b|\bsam\s+(sis|jsi)\b"
+    r"|\b(zadal|ulozil|uložil|rekl|řekl)\s+(jsem|ti|mi)\b"
+    r"|\bkdo\s+(ti|vám|vam)\s+(to\s+)?(zadal|ur[cč]il|vybral)\b"
+    r"|\bod[kK]ud\s+(m[áa][sš]|se\s+vzalo)\b", re.IGNORECASE)
+
+
+def _je_dotaz_na_puvod(text: str) -> bool:
+    """HANS_STUDY_ORIGIN_V1 — ptá se věta, KDO téma vybral?"""
+    return bool(_ORIGIN_PAT.search(text or ""))
+
+
+def _studium_puvod(store, db: str, args: str) -> str:
+    """HANS_STUDY_ORIGIN_V1 — kdo zvolil téma: uživatel, nebo Hans sám?
+
+    Deterministicky z DB. `add_study_topic → accepted` = zadal uživatel (a KDY);
+    když takový záznam není, vybral si program Hans sám (`ensure_program`
+    z durable koníčků) a platí datum `started_ts`.
+    ⚠️ Absence záznamu je tu ZÁMĚRNĚ brána jako „vybral jsem si sám" — tak to
+    dnes v systému opravdu funguje. Kdyby přibyla další cesta k založení
+    programu, tahle úvaha se musí přepsat.
+    """
+    import json as _json
+    import sqlite3 as _sq
+    prog = None
+    try:
+        con = _sq.connect(db)
+        con.row_factory = _sq.Row
+        radky = con.execute(
+            "SELECT topic, topic_norm, status, started_ts FROM study_program "
+            "ORDER BY id").fetchall()
+        hledane = _norm_veta(args)
+        if hledane:
+            for r in radky:            # shoda na jádrových slovech, ne přesná
+                t = _norm_veta(r["topic"])
+                if hledane in t or t in hledane or any(
+                        w in t for w in hledane.split() if len(w) > 3):
+                    prog = r
+                    break
+        if prog is None:
+            prog = (store.get_active_program() or
+                    (dict(radky[-1]) if radky else None))
+        if prog is None:
+            con.close()
+            return "Zatím jsem nezačal žádný studijní program, pane."
+        tema = prog["topic"]
+        zadano = con.execute(
+            "SELECT ts, data FROM diary WHERE event_type='agent_action' "
+            "AND title LIKE 'add_study_topic%' ORDER BY id DESC").fetchall()
+        con.close()
+    except Exception as e:
+        _log.warning("HANS_STUDY_ORIGIN_V1: %s", e)
+        return "K původu tématu se mi teď nepodařilo dostat, pane."
+
+    tn = _norm_veta(tema)
+    for r in zadano:
+        try:
+            d = _json.loads(r["data"] or "{}")
+        except Exception:
+            continue
+        if d.get("outcome") != "accepted":
+            continue
+        t = _norm_veta((d.get("args") or {}).get("tema") or "")
+        if not t or (t not in tn and tn not in t):
+            continue
+        # ⚠️ `accepted` znamená NÁVRH + VAŠE SCHVÁLENÍ. Z dat se NEDÁ poznat,
+        # jestli téma původně padlo z vaší věty, nebo si ho vymyslel Hans —
+        # obojí projde toutéž cestou (router → návrh → potvrzení). Proto se
+        # tvrdí jen to, co je doložené, a nedomýšlí se původce.
+        kdo = d.get("person") or ""
+        return ("Téma „%s\" máme v deníku jako schválené, pane — návrh padl %s "
+                "a byl přijat%s. Kdo s ním přišel první, ze záznamu nepoznám."
+                % (tema, _datum_cz(r["ts"]), (" (" + kdo + ")") if kdo else ""))
+    return ("Téma „%s\" jsem si zvolil sám, pane — založil jsem si ho %s "
+            "z trvalých zájmů. V deníku nemám žádný záznam, že byste ho "
+            "schvaloval." % (tema, _datum_cz(prog["started_ts"])))
 
 
 def _cmd_studium(handler, name, args) -> str:
@@ -1839,6 +1937,9 @@ def _cmd_studium(handler, name, args) -> str:
                 "(%d z %d). Nastuduji ho v noci — nebo hned, řeknete-li "
                 "„/studium teď\"."
                 % (skipped, curriculum[nxt], nxt + 1, len(curriculum)))
+
+    if sub in _STUDY_ORIGIN or _je_dotaz_na_puvod(args):
+        return _studium_puvod(store, db, args)
 
     if sub in {"programy", "programs", "vše", "vse", "all"}:
         progs = store.all_programs()
@@ -1938,6 +2039,12 @@ register(
         r"co\s+ses\s+(?:na)?u[cč]il",
         r"jak\s+.{0,12}(?:tv[eé]\s+)?studium",
         r"na\s+[cč]em\s+.{0,6}studuje[sš]",
+        # HANS_STUDY_ORIGIN_V1 — kdo téma vybral (jinak to zodpoví LLM
+        # konfabulací; doloženo 26.8. vymyšlenou citací vlastního deníku).
+        # ⚠️ JEDEN ZDROJ PRAVDY: tentýž vzor, jakým se rozhoduje uvnitř příkazu.
+        # Dvě kopie se hned rozešly — psal jsem je zvlášť a slovosled „to SIS
+        # VYBRAL" byl opravený jen v jedné, takže dotaz k příkazu vůbec nedošel.
+        _ORIGIN_PAT.pattern,
     ],
     handler=_cmd_studium,
     help_text="Studijní program: /studium [programy|teď|přeskoč]",
