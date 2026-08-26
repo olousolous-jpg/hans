@@ -2,7 +2,7 @@
 """HANS_GUARD_V1 — hlídací režim („/hlidej“), když nikdo není doma.
 
 Hans začne místnost střežit jako kamera: při POHYBU nebo NÁHLÉ ZMĚNĚ SVĚTLA
-(rozsvícení, ne postupné rozednívání) pošle snímek na Telegram.
+(rozsvícení, ne postupné rozednívání) pošle snímek na Matrix.
 
 Návrh (a proč tak):
 - **Stav v SOUBORU** (`data/.hans_guard`), ne v paměti → přežije restart Hanse
@@ -371,7 +371,7 @@ def status_text() -> str:
     st = state()
     if not st.get("armed"):
         return ("Hlídání je vypnuté. Zapnu ho příkazem /hlidej — pak při "
-                "pohybu nebo náhlé změně světla pošlu snímek na Telegram.")
+                "pohybu nebo náhlé změně světla pošlu snímek na Matrix.")
     since = st.get("since") or 0
     h = (time.time() - since) / 3600.0
     return ("Hlídám. Zapnuto před %s, dnes odesláno %d snímků. "

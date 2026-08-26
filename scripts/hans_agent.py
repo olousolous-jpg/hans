@@ -1044,7 +1044,7 @@ ACTIONS: dict[str, Action] = {
     "guard_toggle": Action(
         "guard_toggle",
         "Zapnout nebo VYPNOUT hlídací režim místnosti (při pohybu/změně světla "
-        "pošle snímek na Telegram — pro hlídání prázdného domu). Argument "
+        "pošle snímek na Matrix — pro hlídání prázdného domu). Argument "
         "'mode' = 'on' (zapni hlídání) nebo 'stop' (vypni hlídání). Volič u "
         "„hlídej dům/místnost“, „zapni hlídání“, „vypni hlídání“. Na pouhý "
         "DOTAZ na stav („hlídáš ještě?“) tuto akci NEvol.",

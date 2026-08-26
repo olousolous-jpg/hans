@@ -1630,10 +1630,14 @@ class PicamDisplayController:
         g.tick(frame)
 
     def _guard_notify(self, path: str, caption: str):  # HANS_GUARD_V1
-        """Snímek na Telegram (jediný kanál, který dosáhne mimo dům)."""
+        """Snímek ven přes Notifier — dnes Matrix (jediný kanál mimo dům).
+
+        ⚠️ Atribut se pořád jmenuje `telegram`, ale drží `Notifier`
+        (fan-out, system_manager.py) → skutečný most je Matrix.
+        """
         tg = getattr(self.openwebui_chat, "telegram", None)
         if tg is None or not getattr(tg, "enabled", False):
-            _syslog.warning("guard: Telegram není zapojen → snímek jen na disku")
+            _syslog.warning("guard: notifikace nejsou zapojené → snímek jen na disku")
             return
         tg.send_photo(path, caption=caption)
 
@@ -1642,7 +1646,7 @@ class PicamDisplayController:
         v LAN) → posíláme rovnou soubor. Video zůstává i lokálně v data/guard/."""
         tg = getattr(self.openwebui_chat, "telegram", None)
         if tg is None or not getattr(tg, "enabled", False):
-            _syslog.warning("guard: Telegram není zapojen → záznam jen na disku (%s)", path)
+            _syslog.warning("guard: notifikace nejsou zapojené → záznam jen na disku (%s)", path)
             return
         if not tg.send_video(path, caption=caption):
             _syslog.warning("guard: záznam se nepodařilo odeslat → zůstává na disku (%s)", path)

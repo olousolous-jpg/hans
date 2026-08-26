@@ -3089,7 +3089,7 @@ register(
 
 # ─── /hlidej — hlídací režim (HANS_GUARD_V1) ─────────────────────────────────
 # Prázdný dům: Hans střeží místnost a při POHYBU / NÁHLÉ ZMĚNĚ SVĚTLA pošle
-# snímek na Telegram. Obchází noční spánek vidění (framy tečou vždy) a drží
+# snímek na Matrix. Obchází noční spánek vidění (framy tečou vždy) a drží
 # kameru v místnosti (jinak by v noci koukala do stropu).
 
 def _guard_camera_down(handler) -> None:
@@ -3120,13 +3120,13 @@ def _cmd_hlidej(handler, name, args) -> str:
     cfg = getattr(handler, "config", {}) or {}
     tg = getattr(handler, "telegram", None)
     if tg is None or not getattr(tg, "enabled", False):
-        return ("Hlídat mohu, ale nemám kam poslat snímky — Telegram není "
+        return ("Hlídat mohu, ale nemám kam poslat snímky — Matrix není "
                 "zapojený, pane. Bez něj by poplach nikdo neviděl.")
     g.arm(by=name or "")
     _guard_camera_down(handler)
     c = (cfg.get("guard", {}) or {})
     return ("Hlídám, pane. Při pohybu nebo náhlé změně světla pošlu snímek "
-            "na Telegram (nejvýš jednou za %d s, do %d snímků denně). "
+            "na Matrix (nejvýš jednou za %d s, do %d snímků denně). "
             "Postupné rozednívání poplach nespustí. Kamera zůstane namířená "
             "do místnosti i v noci. Vypnout: /hlidej stop."
             % (int(c.get("cooldown_s", 60)), int(c.get("max_per_day", 60))))
@@ -3142,7 +3142,7 @@ register(
     ],
     handler=_cmd_hlidej,
     help_text="Hlídací režim: /hlidej [stop|stav] — při pohybu/změně světla "
-              "pošlu snímek na Telegram",
+              "pošlu snímek na Matrix",
 )
 
 
