@@ -1111,12 +1111,20 @@ def _diary_path(handler) -> str:
 
 class Proposal:
     def __init__(self, action: Action, args: dict, text: str,
-                 confidence: float, reason: str = ""):
+                 confidence: float, reason: str = "", person: str = ""):
         self.action = action
         self.args = args
         self.text = text
         self.confidence = confidence
         self.reason = reason
+        # HANS_AGENT_LOG_PERSON_V1 (26.8.) — KOMU se navrhovalo. Deníkový řádek
+        # `agent_action` mluvčího dosud NENESL (jméno bylo jen v system.log),
+        # takže se z něj nedalo poznat, čí ta akce je. Doloženo 25.8.: úklid
+        # v test_rozhovor.py maže agent_action podle ČASOVÉHO OKNA a spolkl
+        # reálné potvrzení, které uživatel poslal z Matrixu.
+        # Drží se na NÁVRHU (ne na potvrzení) schválně — pending Proposal přežívá
+        # mezi tahy, takže `proposed` i `accepted` řádek nesou totéž jméno.
+        self.person = person
         self.ts = time.time()
         self.hash = _args_hash(action.id, {k: args.get(k) for k in action.args})
 
@@ -1320,6 +1328,33 @@ class AgentRouter:
     _SLEEP_NEGATION = re.compile(r"\bne\w{0,3}(m[ěe]l|m[áa][sš]|jsi|budeš|bys)\b",
                                  re.IGNORECASE)
 
+    # HANS_AGENT_PLAY_NARRATION_GUARD_V1 (26.8.) — VYPRÁVĚNÍ o tom, co uživatel
+    # sám viděl, NENÍ povel k přehrávání. Doloženo 26.8.: věta „vcera vecer jsem
+    # pustil anglicky dokument o chemii, vis o tom neco?" (otázka na ZNALOST)
+    # skončila jako `instant kodi_resume conf=0.70` → Hans se pokusil rozjet
+    # televizi. `kodi_resume` je instant, tedy BEZ potvrzení — neprojevilo se
+    # jen proto, že nebylo co obnovovat.
+    # Rozlišovač je TVAR VĚTY, ne téma (vzor _sleep_question): rozkaz projde,
+    # vyprávění v 1. osobě minulého času se potlačí.
+    _PLAY_IMPERATIVE = re.compile(
+        r"\b(pus[tť]|spus[tť]|zapni|pokra[cč]uj|odpauzuj|hraj|p[řr]ehraj|"
+        r"zastav|pauzni|stopni|vypni|dej)\b", re.IGNORECASE)
+    # HANS_AGENT_WHY_NOT_STATUS_V1 (26.8.) — otázka PROČ se něco stalo NENÍ
+    # žádost o výpis aktuálního stavu. Doloženo 26.8.: „ráno mě ve 4 probudila
+    # televize, nevíš proč se zapla?" → `report_home_status` → „Doma je klid,
+    # na TV nic nehraje" = odpověď na jinou otázku.
+    # Záměrně jen `proč` + minulý čas, ne `proč` samotné: „proč je doma zima"
+    # je dotaz na TEĎ a stavové hlášení k němu smysl dává.
+    _WHY_WORD = re.compile(r"\bpro[cč]\b", re.IGNORECASE)
+    # české příčestí minulé: sloveso na -l/-la/-lo/-li/-ly (zapla, probudila…)
+    _PAST_VERB = re.compile(r"\b\w{3,}[lř]a?o?\b(?<!\bale)(?<!\btelevize)",
+                            re.IGNORECASE)
+    # „jsem pustil" / „koukal jsem" — mluvčí popisuje SVOU minulou činnost.
+    _PAST_VIEWING = re.compile(
+        r"\b(?:jsem|jsme)\s+(?:si\s+)?(?:pust|kouk|d[íi]val|sledoval|vid[ěe]l|dal)\w*"
+        r"|\b(?:pust|kouk|d[íi]val|sledoval|vid[ěe]l)\w*\s+(?:jsem|jsme)\b",
+        re.IGNORECASE)
+
     def _sleep_question(self, message: str) -> bool:
         """Ptá se věta na režim / opravuje ho (→ NENÍ to žádost o uspání)?"""
         m = (message or "").strip()
@@ -1328,6 +1363,24 @@ class AgentRouter:
         if self._SLEEP_IMPERATIVE.search(m):
             return False          # skutečný rozkaz — nech projít
         return m.endswith("?") or bool(self._SLEEP_NEGATION.search(m))
+
+    def _past_viewing_talk(self, message: str) -> bool:
+        """HANS_AGENT_PLAY_NARRATION_GUARD_V1 — vypráví věta o tom, co uživatel
+        UŽ VIDĚL (→ NENÍ to povel k přehrávání)? Rozkaz má přednost, stejně jako
+        u `_sleep_question`: „pusť to dál" projde i ve větě o včerejšku."""
+        m = (message or "").strip()
+        if not m:
+            return False
+        if self._PLAY_IMPERATIVE.search(m):
+            return False          # skutečný rozkaz — nech projít
+        return bool(self._PAST_VIEWING.search(m))
+
+    def _why_about_past(self, message: str) -> bool:
+        """HANS_AGENT_WHY_NOT_STATUS_V1 — ptá se věta PROČ se něco STALO?"""
+        m = (message or "").strip()
+        if not m or not self._WHY_WORD.search(m):
+            return False
+        return bool(self._PAST_VERB.search(m))
 
     # ── HANS_AGENT_RULES_TABLE_V1 — pravidla, kdy se akce vetuje/přesměruje ──
     # Pořadí je významné: pravidlo smí přepsat `aid` a další pravidla už vidí
@@ -1426,6 +1479,21 @@ class AgentRouter:
                    "report_now_playing", "report_kolac_status"),
              podminka=lambda s, aid, msg, dec, h: s._is_small_talk(msg),
              verdikt=None, duvod="dotaz je o Hansovi, ne o domě/Koláčovi"),
+        # HANS_AGENT_PLAY_NARRATION_GUARD_V1 — vyprávění „co jsem včera pustil"
+        # se NESMÍ zrouteovat na ovládání přehrávání. Míří i na `kodi_play_film`
+        # („včera jsem koukal na Matrix" nesmí Matrix spustit). Radši nespustit
+        # než spustit: tyhle akce sahají na fyzické zařízení a `kodi_resume`
+        # i `kodi_play_film` běží BEZ potvrzení.
+        dict(marker="HANS_AGENT_PLAY_NARRATION_GUARD_V1",
+             akce=("kodi_resume", "kodi_play_film", "kodi_pause", "kodi_stop"),
+             podminka=lambda s, aid, msg, dec, h: s._past_viewing_talk(msg),
+             verdikt=None, duvod="věta vypráví o už zhlédnutém, není to povel"),
+        # HANS_AGENT_WHY_NOT_STATUS_V1 — „proč se to stalo" ≠ „vypiš stav teď".
+        dict(marker="HANS_AGENT_WHY_NOT_STATUS_V1",
+             akce=("report_home_status", "report_now_playing",
+                   "report_who_is_home"),
+             podminka=lambda s, aid, msg, dec, h: s._why_about_past(msg),
+             verdikt=None, duvod="věta se ptá PROČ se něco stalo, ne na stav teď"),
     )
 
     def _uz_studovano(self, decision: dict, handler) -> bool:
@@ -1542,7 +1610,8 @@ class AgentRouter:
                     return None
             prop = Proposal(action, args,
                             decision.get("propose_text", ""), conf,
-                            decision.get("reason", ""))
+                            decision.get("reason", ""),
+                            person=name)   # HANS_AGENT_LOG_PERSON_V1
             # HANS_AGENT_ECHO_HASH_V1 (21.8.) — ANTI-ECHO PODRUHÉ, TÍMŽ KLÍČEM,
             # JAKÝM SE UKLÁDÁ. Brána výš se ptá na SUROVÝ hash z routeru, ale
             # odmítnutí se ukládá pod `prop.hash` z argumentů PO groundingu —
@@ -1828,7 +1897,9 @@ class AgentRouter:
                                      "args": {k: prop.args.get(k)
                                               for k in prop.action.args},
                                      "outcome": outcome,
-                                     "confidence": round(prop.confidence, 2)},
+                                     "confidence": round(prop.confidence, 2),
+                                     # HANS_AGENT_LOG_PERSON_V1 — komu se navrhovalo
+                                     "person": getattr(prop, "person", "")},
                                     ensure_ascii=False),
                     note=(result or prop.text)[:300])
         except Exception:

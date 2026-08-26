@@ -17,6 +17,13 @@ CO DĚLÁ:
   • `--uklid` smaže, co test v deníku vyrobil, a Hansovo VLASTNÍ dění z té
     doby nechá být (maže se po položkách, ne plošným návratem zálohy).
 
+⚠️ ÚKLID MAŽE JEN SVÉ (TEST_ROZHOVOR_UKLID_PERSON_V1, 26.8.): `agent_action` se
+dřív mazal podle ČASOVÉHO OKNA, bez ohledu na to, čí je — a 25.8. tím spolkl
+reálné potvrzení, které uživatel poslal Hansovi z Matrixu, protože náhodou
+spadlo doprostřed testu. Teď se maže jen řádek, jehož `data.person` se shoduje
+s testovacím mluvčím. Starší řádky (bez `person`) se NEMAŽOU — jen se vypíšou,
+ať je vidět, že tam byly.
+
 POUŽITÍ:
   python3 scripts/test_rozhovor.py -m "co jsi dnes cetl?" -m "a jak se ti to libi?"
   python3 scripts/test_rozhovor.py -f otazky.txt --uklid
@@ -64,18 +71,48 @@ def postav_handler(cfg: dict):
     return h
 
 
+def _je_muj(data_json: str, jmeno: str) -> bool:
+    """TEST_ROZHOVOR_UKLID_PERSON_V1 — vyrobil tenhle `agent_action` test?
+
+    Rozhoduje `data.person` (HANS_AGENT_LOG_PERSON_V1). Když klíč chybí (řádky
+    z doby před 26.8.) nebo se data nedají přečíst, vrací False = NEMAZAT.
+    Radši nechat cizí řádek ležet než smazat uživatelovu skutečnou akci."""
+    try:
+        return json.loads(data_json or "{}").get("person") == jmeno
+    except Exception:
+        return False
+
+
 def uklid(db: str, jmeno: str, znacka: int, od_ts: float, do_ts: float,
           jen_ukazat: bool = False) -> int:
-    """Smaž, co test vyrobil. Hansovo vlastní dění z té doby ZŮSTÁVÁ."""
+    """Smaž, co test vyrobil. Hansovo vlastní dění z té doby ZŮSTÁVÁ.
+
+    U `agent_action` nestačí časové okno — do něj spadne i to, co mezitím udělal
+    skutečný uživatel (25.8. tak zmizelo potvrzení poslané z Matrixu). Proto se
+    maže jen řádek s odpovídajícím `data.person`."""
     con = sqlite3.connect(db)
-    vyber = con.execute(
-        "SELECT id, datetime(ts,'unixepoch','localtime'), event_type, title "
+    radky = con.execute(
+        "SELECT id, datetime(ts,'unixepoch','localtime'), event_type, title, "
+        "       coalesce(data,'') "
         "FROM diary WHERE id > ? AND ("
         "  (event_type='human_chat' AND title=?) "
         "  OR (event_type='agent_action' AND ts BETWEEN ? AND ?)) ORDER BY id",
         (znacka, jmeno, od_ts, do_ts)).fetchall()
+
+    vyber, cizi = [], []
+    for r in radky:
+        if r[2] == "agent_action" and not _je_muj(r[4], jmeno):
+            cizi.append(r)
+        else:
+            vyber.append(r)
+
     for r in vyber:
         print("   %s  %-14s %s" % (r[1], r[2], (r[3] or "")[:44]))
+    if cizi:
+        print("   — v okně, ale NENÍ z testu (nechávám): —")
+        for r in cizi:
+            print("   %s  %-14s %s" % (r[1], r[2], (r[3] or "")[:44]))
+
     if not jen_ukazat and vyber:
         con.execute("DELETE FROM diary WHERE id IN (%s)"
                     % ",".join(str(r[0]) for r in vyber))
