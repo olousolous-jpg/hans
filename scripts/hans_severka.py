@@ -357,7 +357,14 @@ class Severka:
             _log.debug("severka behaviour block failed: %s", _be)
             bev_block = "(žádná data)"
         prompt = (f"DOSAVADNÍ ROLE (CORE):\n{core}\n\n"
-                  f"TRVALÉ TENDENCE — hodnoty/postoje (filtr stálosti):\n{tnd_block}\n\n"
+                  # SEVERKA_EVIDENCE_LABEL_V1 (27.8.) — behaviorální blok se
+                  # níž představuje jako „měřená data, ne můj vlastní popis";
+                  # tendence žádný takový popisek neměly, ačkoli vznikají
+                  # extrakcí z textu, který o sobě Hans sám napsal. Model má
+                  # vědět, který důkaz je jakého druhu.
+                  f"TRVALÉ TENDENCE — hodnoty/postoje (filtr stálosti). "
+                  f"POZOR: vznikly extrakcí z mých VLASTNÍCH deníkových zápisů, "
+                  f"tedy z toho, jak sám sebe popisuji:\n{tnd_block}\n\n"
                   f"TRVALÉ KONÍČKY — dlouhodobé zájmy (filtr stálosti):\n{hob_block}\n\n"
                   f"HLOUBKOVÉ STUDIUM — co jsem do hloubky nastudoval (reálná "
                   f"znalost, ne jen zájem):\n{study_block}\n\n"

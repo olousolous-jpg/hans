@@ -27,6 +27,16 @@ Tři vrstvy, každá tvrdší než ta předchozí:
 model v hlase persony. Archiv 10.6. navíc explicitně rozhodl, že Koláč není
 zdroj postojů („ten kecá").
 
+⚠️ HANS_BEHAVIOUR_EVIDENCE_V2 (27.8.) opravila DVĚ vady V1, obě vlastní výroby:
+  a) `ignored` se slepilo s `rejected` → hlásilo se „přijal/odmítl 10 / 37".
+     `ignored` ale není odmítnutí, nýbrž „pán zrovna řešil něco jiného".
+     Skutečná bilance je 10 ANO : 11 NE. Viz poznámka u `_odezva`.
+  b) Čtyři položky se počítaly za CELOU HISTORII pod nadpisem „posledních
+     60 dní" (cíle, dostudovaná témata, zamítnutá prohloubení). Teď má okno
+     všechno a nadpisy ho jmenují.
+📌 Obecně: čísla v tomhle bloku rozhodují o IDENTITĚ, takže každý ukazatel
+musí říkat přesně to, co měří — jinak si Hans o sobě odvodí nepravdu.
+
 API:  block(config, diary_db_path, window_days=60) -> str   ('' když nic)
 """
 from __future__ import annotations
@@ -76,8 +86,10 @@ def _cinnost(conn, since: float) -> list:
     d = [
         ("studijních sezení", _q1(conn, "SELECT count(*) FROM diary WHERE "
             "event_type='study_note' AND ts>=?", (since,))),
+        # V2: okno i tady — dřív to bylo za CELOU historii pod nadpisem
+        # „posledních 60 dní"
         ("dostudovaných témat do hloubky", _q1(conn, "SELECT count(*) FROM "
-            "study_program WHERE status='completed'")),
+            "study_program WHERE status='completed' AND started_ts>=?", (since,))),
         ("namalovaných obrazů", _q1(conn, "SELECT count(*) FROM diary WHERE "
             "event_type='artwork' AND ts>=?", (since,))),
         ("napsaných sekcí díla", _q1(conn, "SELECT count(*) FROM diary WHERE "
@@ -101,11 +113,24 @@ def _odezva(conn, since: float) -> list:
         return _q1(conn, "SELECT count(*) FROM diary WHERE event_type="
                    "'agent_action' AND title LIKE ? AND ts>=?",
                    ("%→ " + stav, since))
-    prijato, odmitnuto = _agent("accepted"), _agent("rejected") + _agent("ignored")
+    # ⚠️ HANS_BEHAVIOUR_EVIDENCE_V2 (27.8.) — V1 SLEPILA `ignored` s `rejected`
+    # a hlásila „přijal/odmítl 10 / 37", tedy poměr 4:1 v neprospěch Hanse.
+    # Bylo to NEPRAVDIVÉ: `ignored` NENÍ odmítnutí. `hans_agent` ho zapisuje,
+    # když uživatelova další zpráva není ano ani ne („nejednoznačné — návrh
+    # zahoď a nech projít do běžného chatu"), tedy když mluvil o něčem jiném.
+    # Skutečná bilance rozhodnutí je 10 ANO : 11 NE = vyrovnaná. Rozdíl je
+    # zásadní: „skoro všechno mi zamítá" × „rozhodujeme se půl na půl".
+    # Tenhle blok krmí rozhodnutí o IDENTITĚ, takže falešný signál tu váží víc
+    # než kdekoli jinde. Drží se odděleně a s poctivými popisky.
+    prijato, odmitnuto, minulo = (_agent("accepted"), _agent("rejected"),
+                                  _agent("ignored"))
     out = []
     if prijato or odmitnuto:
-        out.append(("mých návrhů pán přijal / odmítl nebo nechal být",
-                    "%d / %d" % (prijato, odmitnuto)))
+        out.append(("na mé návrhy pán řekl ano / ne", "%d / %d"
+                    % (prijato, odmitnuto)))
+    if minulo:
+        out.append(("mých návrhů přišlo ve chvíli, kdy pán řešil něco jiného",
+                    str(minulo)))
     n = _q1(conn, "SELECT count(*) FROM diary WHERE event_type IN "
             "('lesson_learned','fact_correction') AND ts>=?", (since,))
     if n:
@@ -114,12 +139,14 @@ def _odezva(conn, since: float) -> list:
             "AND ts>=?", (since,))
     if n:
         out.append(("kolikrát jsem v rozepři ustoupil ze svého postoje", str(n)))
-    hotovo = _q1(conn, "SELECT count(*) FROM hans_goals WHERE status='completed'")
-    vzdano = _q1(conn, "SELECT count(*) FROM hans_goals WHERE status='abandoned'")
+    hotovo = _q1(conn, "SELECT count(*) FROM hans_goals WHERE status='completed' "
+                 "AND opened_at>=?", (since,))
+    vzdano = _q1(conn, "SELECT count(*) FROM hans_goals WHERE status='abandoned' "
+                 "AND opened_at>=?", (since,))
     if hotovo or vzdano:
         out.append(("cílů dotažených / vzdaných", "%d / %d" % (hotovo, vzdano)))
     n = _q1(conn, "SELECT count(*) FROM deepen_proposals WHERE status IN "
-            "('rejected','expired')")
+            "('rejected','expired') AND ts>=?", (since,))
     if n:
         out.append(("kolikrát pán zamítl, abych šel v tématu hlouběji", str(n)))
     return out
@@ -152,7 +179,8 @@ def block(config: dict, diary_db_path: str, window_days: int = None) -> str:
         p.append("Čím jsem strávil posledních %d dní:" % window_days)
         p += ["- %s: %d" % (k, v) for k, v in cin]
     if odz:
-        p.append("\nJak na mě reagovalo okolí (tohle jsem si nenapsal sám):")
+        p.append("\nJak na mě reagovalo okolí za posledních %d dní "
+                 "(tohle jsem si nenapsal sám):" % window_days)
         p += ["- %s: %s" % (k, v) for k, v in odz]
     if ins:
         p.append("\nCo jsem si sám všiml ve svých datech (vlastní rozbor):")
