@@ -625,9 +625,16 @@ def _collect_evidence_creative(diary_db_path: str, days: int = 30) -> dict:
             {"ts": r["ts"], "title": r["title"],
              "snippet": (r["snip"] or "").strip()} for r in rows]
         # spontaneous
+        # HANS_SPONTANEOUS_TEMPLATE_MARK_V1/V2 (27.8.; V2 kotví na začátek
+        # pole — `%"template"%` kdekoli by tiše zahodilo článek,
+        # který o šablonách jen píše) — bez tohohle filtru
+        # dostával model jako „SPONTANEOUS THOUGHTS" náhodné šablony
+        # („Stříbro je přeleštěno, zásoby doplněny.") a stavěl na nich vhled
+        # o tom, kým Hans je.
         rows = conn.execute(
             "SELECT ts, substr(note,1,140) AS snip FROM diary "
             "WHERE event_type='spontaneous' AND ts>=? "
+            "AND coalesce(data,'') NOT LIKE '{\"template\":%' "
             "ORDER BY ts DESC LIMIT 10", (since,)).fetchall()
         out["spontaneous"] = [
             {"ts": r["ts"], "snippet": (r["snip"] or "").strip()} for r in rows]

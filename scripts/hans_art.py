@@ -2398,6 +2398,11 @@ def _day_fragments(db_path: str) -> str:
             "WHERE date(ts,'unixepoch','localtime')=date('now','localtime') "
             "AND event_type IN (%s) "
             "AND COALESCE(NULLIF(note,''), data)<>'' "
+            # HANS_SPONTANEOUS_TEMPLATE_MARK_V1/V2 (27.8.; V2 kotví na začátek
+            # pole — `%"template"%` kdekoli by tiše zahodilo článek,
+            # který o šablonách jen píše) — obraz dne se nesmí
+            # opírat o šablonu. ⚠️ `%%` je nutné: celý řetězec jde přes `% ph`.
+            "AND COALESCE(data,'') NOT LIKE '{\"template\":%%' "
             "ORDER BY COALESCE(importance,0) DESC, RANDOM() LIMIT 6" % ph,
             _DAY_EVENT_TYPES).fetchall()
         con.close()

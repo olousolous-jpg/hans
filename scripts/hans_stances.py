@@ -53,6 +53,39 @@ def _normalize(claim: str) -> str:
     return _WS.sub(" ", (claim or "").strip().lower())
 
 
+# HANS_STANCE_SHAPE_GUARD_V1 (27.8.) — postoj musí mít TVAR tvrzení.
+# Doloženo prověrkou 27.8.: mezi 28 postoji seděly dva zlomky vět —
+#   id 9  „Zda je to pozitivní vývoj, posoudí čas."
+#   id 10 „Je to, co činí plnění povinností tak uspokojivé, a to vidět, …"
+# a jeden v 1. osobě MNOŽNÉ („Ceníme si vzdělání…"), ačkoli postoj je z
+# definice Hansův vlastní (viz `hans_severka` — „stances = postoje v 1. osobě").
+# Zlomek se pak dostal až mezi „Pevně držím" v `tendency_snapshot`, tedy do
+# podkladu, ze kterého Severka rozhoduje o identitě.
+# ⚠️ ZÁMĚRNĚ ÚZKÉ: netestuje se „je to hezky česky", jen se odmítne věta
+# začínající spojkou / vztažným zájmenem (= utržená vedlejší věta) a 1. osoba
+# množná. Široký filtr by trestal legitimní tvrzení bez „já" na začátku
+# („Čas strávený s knihou je vždycky dobře utracený."). Každé odmítnutí se
+# loguje — kdyby to přeblokovávalo, pozná se to z logu, ne až z prázdné persony.
+_FRAGMENT_START = re.compile(
+    r"^\s*(zda|jestli|protože|poněvadž|jelikož|což|kter[ýáéíá]\w*|"
+    r"ačkoli\w*|přestože|nicméně|avšak|takže|neboť|"
+    r"a|ale|nebo|proto|tedy|však)\b|^\s*je\s+to,\s*co\b", re.I)
+_PLURAL_START = re.compile(r"^\s*\w+(íme|eme|áme)\b", re.I)
+_MIN_CLAIM_LEN = 15
+
+
+def _valid_claim(claim: str):
+    """(ok, důvod). Nikdy nevyhazuje výjimku."""
+    c = (claim or "").strip()
+    if len(c) < _MIN_CLAIM_LEN:
+        return False, "kratší než %d znaků" % _MIN_CLAIM_LEN
+    if _FRAGMENT_START.match(c):
+        return False, "začíná spojkou/vztažným zájmenem = zlomek věty"
+    if _PLURAL_START.match(c):
+        return False, "1. osoba množného čísla, postoj má být Hansův vlastní"
+    return True, ""
+
+
 # STANCE_DIALECTIC_V1 — counterargs jako JSON list (dedup dle normalizace)
 def _load_cargs(raw) -> list:
     if not raw:
@@ -186,6 +219,11 @@ class StanceStore:
                          counterarg: str = None) -> Optional[int]:
         """Nový claim -> insert; existující (claim_norm match, active) -> reinforce
         (confidence asymptoticky k CONF_CAP, evidence_count++). Vrací id nebo None."""
+        # HANS_STANCE_SHAPE_GUARD_V1 (27.8.) — jedno hrdlo pro všechny volající.
+        ok, why = _valid_claim(claim)
+        if not ok:
+            _log.info("stance ODMÍTNUT (%s): %.80s", why, claim)
+            return None
         norm = _normalize(claim)
         if not norm:
             return None

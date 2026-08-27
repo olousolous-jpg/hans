@@ -8,7 +8,9 @@
     "reasoning_num_gpu": 0,
     "reasoning_num_ctx": 8192,
     "reasoning_num_predict": 3072,
-    "reasoning_timeout": 900
+    "reasoning_timeout": 900,
+    "stance_catchup_days": 3,
+    "_stance_catchup_days_note": "STANCE_EXTRACT_CATCHUP_V1 — kolik dní zpět doextrahovat postoje z reflexí, kterým extrakce spadla (Ollama dole). 0 = vypnuto. ZÁMĚRNĚ KRÁTKÉ: doběh nastaví last_seen na teď, takže dohánění staré historie by falšovalo čerstvost postojů, kterou čte Severčin gate i výběr postojů do promptu."
   },
   "debug": false,
   "debug_verbose": false,

@@ -132,13 +132,34 @@ def recent_stances(db_path: str, limit: int = 5) -> str:
     if not db_path:
         return ""
     import sqlite3
+    import time as _t
     conn = None
     try:
         conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=2.0)
+        # HANS_PERSONA_STANCE_DURABLE_V1 (27.8.) — dřív `ORDER BY confidence
+        # DESC, evidence_count DESC`. Confidence ale dominovala a jediné
+        # pozorování stačí na conf 0.9, takže do system promptu chodily
+        # JEDNORÁZOVÉ a MRTVÉ postoje. Změřeno 27.8.: 3 z 5 měly
+        # evidence_count=1 a dva byly 45 a 56 dní staré — zatímco postoje
+        # s ev 48/44/24/21 (všímavost k detailu, pečlivost, plynutí času,
+        # předvídatelnost) se do promptu nedostaly NIKDY.
+        # Severčin gate (`hans_severka.durable_tendencies`) přitom filtruje
+        # správně — dva konzumenti téže tabulky si protiřečili. Tady je
+        # měkčí obdoba téhož gatu, ať persona stojí na tom, co Severka
+        # považuje za trvalé.
+        _MIN_EV, _FRESH_DAYS = 3, 21
         rows = conn.execute(
             "SELECT claim FROM stances WHERE status='active' "
-            "ORDER BY confidence DESC, evidence_count DESC LIMIT ?", (int(limit),)
-        ).fetchall()
+            "AND evidence_count >= ? AND last_seen >= ? "
+            "ORDER BY evidence_count DESC, confidence DESC LIMIT ?",
+            (_MIN_EV, _t.time() - _FRESH_DAYS * 86400, int(limit))).fetchall()
+        if not rows:
+            # Pojistka — radši starý postoj než persona bez postojů (cold start,
+            # čerstvá DB). Řazení zůstává podle evidence, ne podle confidence.
+            rows = conn.execute(
+                "SELECT claim FROM stances WHERE status='active' "
+                "ORDER BY evidence_count DESC, confidence DESC LIMIT ?",
+                (int(limit),)).fetchall()
         claims = [r[0].strip() for r in rows if r and r[0] and r[0].strip()]
         return "; ".join(claims)
     except Exception as _e:

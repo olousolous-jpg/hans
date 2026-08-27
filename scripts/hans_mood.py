@@ -238,7 +238,12 @@ class HansMood:
     def get_spontaneous_text(self) -> str | None:
         """
         Vrátí text spontánní poznámky nebo None.
-        Volá LLM pro generování na základě nálady a kontextu.
+
+        HANS_SPONTANEOUS_TEMPLATE_MARK_V1 (27.8.) — docstring dřív tvrdil
+        „Volá LLM pro generování na základě nálady a kontextu"; NEVOLÁ.
+        Je to `random.choice(MOOD_OBSERVATIONS[nálada])` + `.format()`.
+        Volající to proto v deníku razítkuje `data={"template": "mood"}`,
+        aby se z šablony nestal doklad Hansova nitra.
         """
         import random
         templates = MOOD_OBSERVATIONS.get(self._state.mood, [])

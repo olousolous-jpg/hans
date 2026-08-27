@@ -1551,10 +1551,16 @@ def recent_activity_answer(db_path: str, days: int = 1,
         conn = _ro(db_path)
         conn.row_factory = sqlite3.Row
         for label, etype, lim in cats:
+            # HANS_SPONTANEOUS_TEMPLATE_MARK_V1/V2 (27.8.; V2 kotví na začátek
+            # pole — `%"template"%` kdekoli by tiše zahodilo článek,
+            # který o šablonách jen píše) — „Mě napadlo"
+            # nesmí být šablona. Filtr je psaný obecně (platí na kterýkoli typ
+            # označený jako šablona), ne jen na `spontaneous`.
             rows = conn.execute(
                 "SELECT ts, title, note, data FROM diary "
                 "WHERE event_type=? AND ts >= ? "
                 "AND coalesce(note, data, '') != '' "
+                "AND coalesce(data,'') NOT LIKE '{\"template\":%' "
                 "ORDER BY ts DESC LIMIT ?",
                 (etype, since, lim)).fetchall()
             if not rows:

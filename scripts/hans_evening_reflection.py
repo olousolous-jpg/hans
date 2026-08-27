@@ -113,6 +113,11 @@ class HansEveningReflection:
         # skutečný posun vs echo) přes reasoning model. Odděleno od `model` (ten
         # dělá CZ prózu reflexe = nativní čeština). '' = legacy base model.
         self._stance_reasoning_model = str(cfg.get("reasoning_model", "") or "").strip()
+        # STANCE_EXTRACT_CATCHUP_V1 — okno doběhu. Krátké schválně: doběh
+        # posouvá `last_seen` na teď, takže dohánět starou historii by
+        # falšovalo čerstvost postojů (čte ji Severčin gate i persona).
+        self._stance_catchup_days = int(cfg.get("stance_catchup_days", 3))
+        self._stance_last_result = "llm_down"
         self._stance_reasoning_num_gpu = int(cfg.get("reasoning_num_gpu", 0))
         self._stance_reasoning_num_ctx = int(cfg.get("reasoning_num_ctx", 8192))
         self._stance_reasoning_num_predict = int(cfg.get("reasoning_num_predict", 3072))
@@ -153,14 +158,16 @@ class HansEveningReflection:
             return None
 
         # Ulož do deníku
-        self._write_to_diary(text, date_str)
+        # STANCE_EXTRACT_CATCHUP_V1 — id je potřeba, aby šlo evidovat,
+        # jestli z TÉHLE reflexe už extrakce postojů proběhla.
+        _refl_id = self._write_to_diary(text, date_str)
 
         # Push do RAGu
         if self._knowledge and self._knowledge.enabled:
             self._upload_to_knowledge(text, date_str)
 
         # STANCE_EXTRACT_V1 — nazory z reflexe do stance store (mimo RAG)
-        self._extract_stances(text, date_str)
+        self._extract_stances(text, date_str, diary_id=_refl_id)
 
         # HANS_TENDENCIES_V2 (3b) — po extrakci postojů přepočti tendence.
         # Tady (ne v calleru), ať to dostane manuální /denik i noční automatika.
@@ -220,6 +227,19 @@ class HansEveningReflection:
                 _log.info("provenance: doplněno %d řádků (noční catchup)", _pn)
         except Exception as _pe:
             _log.warning("provenance catchup selhal (reflexe OK): %s", _pe)
+
+        # STANCE_CATCHUP_HOOK_V1 — doextrahuj postoje z reflexí, kterým to
+        # minule spadlo na výpadku Ollamy. Schválně TADY: tenhle blok běží jen
+        # když se dnešní reflexe povedla, tedy když mozek prokazatelně jede —
+        # což je přesně chvíle, kdy má smysl zkoušet doběh. Při úplně mrtvé
+        # Ollamě se reflexe vůbec nevygeneruje a doběh se odloží na příště.
+        try:
+            _cu = self.catchup_stances()
+            if _cu.get("doextrahovano"):
+                _log.info("stance catchup: doextrahováno %d reflexí",
+                          _cu["doextrahovano"])
+        except Exception as _se:
+            _log.warning("stance catchup selhal (reflexe OK): %s", _se)
 
         # HANS_THREADS_WIRING_V1 — Frontier #4: z dnešních dialogů vytáhni
         # rozjeté nitky per osoba + uzavři vyřešené (base model keep_alive=0,
@@ -551,7 +571,117 @@ class HansEveningReflection:
                   len(text), len(items))
         return text
 
-    def _extract_stances(self, text: str, date_str: str):
+    def _extract_stances(self, text: str, date_str: str, diary_id=None):
+        """STANCE_EXTRACT_CATCHUP_V1 (27.8.) — OBAL nad vlastní extrakcí.
+
+        Proč vznikl: `_extract_stances` se volala JEN inline hned po zápisu
+        reflexe a neměla retry. Když byla v tu vteřinu Ollama dole, větev
+        skončila `return` a den byl NENÁVRATNĚ pryč — text reflexe v deníku
+        zůstal, ale nikdo ho už nepřečetl. Doloženo na noci 26.-27.8.:
+        03:15:02 `Ollama WEDGED -> restartuji`, 03:15:03 `stance extract:
+        zadna odpoved, skip`, 03:25:05 `obnoveno - vse OK`. Ollama byla o deset
+        minut později zpátky; stačilo zkusit znovu.
+
+        Bolí to, protože `stances` je JEDINÝ vstup Severky (identita) — každá
+        zaseklá noc ubere den evidence a posune `evidence_count`/`first_seen`,
+        na kterých stojí její gate. Porušovalo to zásadu, že výpadek LLM nesmí
+        ztratit data.
+
+        Obal zapíše VÝSLEDEK pokusu do `stance_extract_runs` (klíč = id
+        deníkového řádku), takže `catchup_stances` pozná rozdíl mezi
+        "nezkoušeno / spadlo" a "zkoušeno, model nic nenašel". Bez toho se
+        nedá rozlišit legitimní `0 nazoru` od výpadku.
+
+        ⚠️ Default je PESIMISTICKÝ (`llm_down` = zkusit znovu): neznámý konec
+        se musí opakovat, ne zahodit.
+        """
+        self._stance_last_result = "llm_down"
+        try:
+            self._extract_stances_run(text, date_str)
+        finally:
+            if diary_id:
+                self._mark_stance_run(diary_id, date_str,
+                                      getattr(self, "_stance_last_result",
+                                              "llm_down"))
+
+    # ── STANCE_EXTRACT_CATCHUP_V1 — evidence pokusů + doběh ─────────────────
+    def _stance_runs_conn(self):
+        import sqlite3 as _s
+        conn = _s.connect(self._diary_path, timeout=10.0)
+        conn.execute("""CREATE TABLE IF NOT EXISTS stance_extract_runs (
+                            diary_id INTEGER PRIMARY KEY,
+                            date     TEXT NOT NULL,
+                            ts       REAL NOT NULL,
+                            result   TEXT NOT NULL,
+                            tries    INTEGER NOT NULL DEFAULT 1)""")
+        return conn
+
+    def _mark_stance_run(self, diary_id: int, date_str: str, result: str):
+        """Zapiš, JAK pokus dopadl. Nikdy nevyhazuje výjimku."""
+        try:
+            conn = self._stance_runs_conn()
+            try:
+                conn.execute(
+                    "INSERT INTO stance_extract_runs (diary_id, date, ts, result, tries) "
+                    "VALUES (?,?,?,?,1) ON CONFLICT(diary_id) DO UPDATE SET "
+                    "ts=excluded.ts, result=excluded.result, tries=tries+1",
+                    (int(diary_id), date_str, time.time(), result))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as _e:
+            _log.debug("stance run mark selhal: %s", _e)
+
+    def catchup_stances(self, days: int = None) -> dict:
+        """Doextrahuj postoje z reflexí, kterým to spadlo. Vrací souhrn.
+
+        Bere JEN `evening_reflection` (denní, tady byla doložená ztráta) a JEN
+        z posledních `days` dní.
+        ⚠️ HISTORII ZÁMĚRNĚ NEDOHÁNÍ: `add_or_reinforce` nastavuje `last_seen`
+        na TEĎ, takže doextrahování dva měsíce staré reflexe by starému postoji
+        podvrhlo čerstvost. Tu veličinu čte Severčin gate i persona výběr —
+        radši nechat starý den ztracený než falšovat živost.
+        ⚠️ Idempotence stojí na `stance_extract_runs`: den se `result` `ok`
+        nebo `no_items` se NEOPAKUJE, jinak by druhý průchod nafoukl
+        `evidence_count` — přesně tu veličinu, na které gate stojí.
+        """
+        import sqlite3 as _s
+        if days is None:
+            days = self._stance_catchup_days
+        out = {"kandidatu": 0, "doextrahovano": 0, "porad_dole": 0}
+        if not self._stances or days <= 0:
+            return out
+        since = time.time() - days * 86400.0
+        try:
+            conn = self._stance_runs_conn()
+            try:
+                rows = conn.execute(
+                    "SELECT d.id, d.note, date(d.ts,'unixepoch','localtime') "
+                    "FROM diary d LEFT JOIN stance_extract_runs r ON r.diary_id=d.id "
+                    "WHERE d.event_type='evening_reflection' AND d.ts>=? "
+                    "AND coalesce(d.note,'')<>'' "
+                    "AND (r.diary_id IS NULL OR r.result NOT IN ('ok','no_items')) "
+                    "ORDER BY d.ts ASC", (since,)).fetchall()
+            finally:
+                conn.close()
+        except Exception as _e:
+            _log.warning("catchup_stances: dotaz selhal: %s", _e)
+            return out
+        out["kandidatu"] = len(rows)
+        if not rows:
+            return out
+        for did, note, dstr in rows:
+            self._extract_stances(note, dstr, diary_id=did)
+            if getattr(self, "_stance_last_result", "llm_down") in ("ok", "no_items"):
+                out["doextrahovano"] += 1
+            else:
+                out["porad_dole"] += 1
+                break   # Ollama je dole -> nemlátit ji zbytkem fronty
+        _log.info("catchup_stances: kandidatu %d, doextrahovano %d, porad dole %d",
+                  out["kandidatu"], out["doextrahovano"], out["porad_dole"])
+        return out
+
+    def _extract_stances_run(self, text: str, date_str: str):
         """STANCE_EXTRACT_V1 — z reflexe vytahne Hansovy nazory (claim +
         confidence) do StanceStore (mimo RAG). LLM dotaz; offline/parse fail
         -> tichy skip. Anti-konfabulace: jen nazory, ktere text vyjadruje."""
@@ -617,6 +747,7 @@ class HansEveningReflection:
         items = self._parse_stances(raw)
         if not items:
             _log.info("stance extract: 0 nazoru z reflexe %s", date_str)
+            self._stance_last_result = "no_items"   # STANCE_EXTRACT_CATCHUP_V1
             return
         written = 0
         weakened = 0
@@ -648,6 +779,7 @@ class HansEveningReflection:
                 written += 1
         _log.info("stance extract %s: zpracovano %d, oslabeno %d / %d nazoru",
                   date_str, written, weakened, len(items))
+        self._stance_last_result = "ok"   # STANCE_EXTRACT_CATCHUP_V1
 
     def _extract_stances_reasoning(self, text: str, date_str: str):
         """STANCE_REASONING_TIER_V1 (EN→CZ) — reasoning model dělá úsudek ANGLICKY
@@ -705,6 +837,7 @@ class HansEveningReflection:
         items = self._parse_stances(raw)
         if not items:
             _log.info("stance extract(reasoning): 0 nazoru z reflexe %s", date_str)
+            self._stance_last_result = "no_items"   # STANCE_EXTRACT_CATCHUP_V1
             return
         # posbírej EN řetězce k překladu (nové claimy + contradict claim_en + counterargy)
         to_tr = []
@@ -752,6 +885,7 @@ class HansEveningReflection:
                 written += 1
         _log.info("stance extract(reasoning) %s: zpracovano %d, oslabeno %d / %d",
                   date_str, written, weakened, len(items))
+        self._stance_last_result = "ok"   # STANCE_EXTRACT_CATCHUP_V1
 
     def _translate_to_cz(self, en_list: list) -> dict:
         """Přelož EN výroky do nativní češtiny (hans-czech, rezidentní ve VRAM →
@@ -809,10 +943,16 @@ class HansEveningReflection:
         try:
             db = sqlite3.connect(self._diary_path)
             for evt, limit in _LIMITS.items():
+                # HANS_SPONTANEOUS_TEMPLATE_MARK_V1/V2 (27.8.; V2 kotví na začátek
+                # pole — `%"template"%` kdekoli by tiše zahodilo článek,
+                # který o šablonách jen píše) — šablonové
+                # záznamy ven. Tudy tekly do reflexe, z ní do extrakce postojů
+                # a odtud do Severčina rozhodnutí o identitě.
                 rows = db.execute(
                     "SELECT title, note FROM diary "
                     "WHERE event_type=? "
                     "AND date(ts,'unixepoch','localtime')=? "
+                    "AND coalesce(data,'') NOT LIKE '{\"template\":%' "
                     "ORDER BY ts ASC LIMIT ?",
                     (evt, date_str, limit),
                 ).fetchall()
@@ -844,19 +984,24 @@ class HansEveningReflection:
     # ── Zápis ────────────────────────────────────────────────────────────────
 
     def _write_to_diary(self, text: str, date_str: str):
+        # STANCE_EXTRACT_CATCHUP_V1 — vrací id vloženého řádku (None při
+        # chybě), aby volající mohl svázat extrakci postojů s reflexí.
         try:
             db = sqlite3.connect(self._diary_path)
-            db.execute(
+            cur = db.execute(
                 "INSERT INTO diary (ts, event_type, title, note) "
                 "VALUES (?,?,?,?)",
                 (time.time(), "evening_reflection",
                  f"Reflexe dne {date_str}", text),
             )
+            _rid = cur.lastrowid
             db.commit()
             db.close()
             _log.info("Reflexe zapsána do deníku (%d znaků)", len(text))
+            return _rid
         except Exception as e:
             _log.error("Zápis reflexe do deníku selhal: %s", e)
+            return None
 
     def _upload_to_knowledge(self, text: str, date_str: str):
         try:

@@ -1201,10 +1201,23 @@ class HansIdle:
                             text = self._cases.get_dialog_directive()
                         except Exception:
                             text = None
+                    # HANS_SPONTANEOUS_TEMPLATE_MARK_V1 (27.8.) — OBĚ
+                    # větve jsou ŠABLONY, ne Hansova myšlenka: `case` =
+                    # `HansCases.get_dialog_directive()`, `mood` =
+                    # `random.choice(MOOD_OBSERVATIONS[nálada])`. Změřeno 27.8.:
+                    # ze 429 záznamů za 30 dní je šablonových 429 (66 % mood,
+                    # 34 % case) — genuinní myšlenka tam nebyla ani jedna.
+                    # Bez razítka je konzumenti brali jako doklad Hansova nitra
+                    # (self_insight „SPONTANEOUS THOUGHTS", večerní reflexe →
+                    # extrakce postojů → Severka, recall „Mě napadlo", semínka
+                    # obrazů). Záznam ZŮSTÁVÁ (Hans to opravdu řekl nahlas),
+                    # značka ho jen přestane vydávat za myšlenku.
+                    _sp_src = "case" if text else "mood"
                     if not text:
                         text = self._mood.get_spontaneous_text()
                     if text:
-                        self._log_entry("spontaneous", note=text)
+                        self._log_entry("spontaneous", note=text,
+                                        data='{"template": "%s"}' % _sp_src)
                         _tts = getattr(
                             getattr(self, '_hans_dialog', None),
                             'tts', None)
