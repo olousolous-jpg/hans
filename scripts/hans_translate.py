@@ -25,6 +25,7 @@ import tempfile
 import time
 import urllib.request
 
+from scripts import hans_youtube as hy
 from scripts import srt_track as st
 from scripts import tts_engine
 from scripts.hans_subtitles import OpenSubtitles
@@ -52,10 +53,10 @@ def _pc(cfg, cmd: str, timeout=600) -> str:
     return r.stdout
 
 
-def _pc_put(cfg, local, remote):
+def _pc_put(cfg, local, remote, timeout=None):
     subprocess.run(["scp", "-q", "-i", os.path.expanduser(cfg.get("pc_key", "~/.ssh/hans_pc")),
                     local, f"{cfg.get('pc_user','user')}@{cfg.get('pc_host','192.168.1.10')}:{remote}"],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, timeout=timeout)
 
 
 def _pc_get(cfg, remote, local):
@@ -84,6 +85,13 @@ def kodi_now_file(config) -> dict:
         # živé vysílání nebo stream — nemá soubor, není co překládat
         return {"ok": False, "duvod": f"„{np.get('label') or np.get('title')}“ nemá soubor "
                                       "(nejspíš živé vysílání) — to přeložit nejde."}
+    # HANS_YT_TRANSLATE_V1: YouTube hraje Kodi přes plugin, takže `file` není
+    # cesta k souboru, ale `plugin://plugin.video.youtube/...`. Musí se to
+    # poznat TADY — jinak to propadne níž a Hans ohlásí nesmysl o úložišti.
+    vid = hy.video_id(f)
+    if vid:
+        return {"ok": True, "pc_path": None, "yt_id": vid,
+                "title": np.get("title") or np.get("label") or "video z YouTube"}
     smb = cfg.get("smb_prefix", "smb://192.168.1.10/")
     if not f.startswith(smb):
         return {"ok": False, "duvod": f"Soubor {f} není na známém úložišti."}
@@ -332,7 +340,7 @@ def prelozit_srt(config, src_srt, dst_srt, progress=None) -> dict:
 
 
 # ── sestavení výsledku ───────────────────────────────────────────────────────
-def zamichat(config, pc_path, wav_local, out_name) -> str:
+def zamichat(config, pc_path, wav_local, out_name, rezim=None) -> str:
     """Video se jen KOPÍRUJE. Výsledek má DVĚ stopy: české lektorské čtení
     (originál ztlumený pod ní) a originál.
 
@@ -343,7 +351,9 @@ def zamichat(config, pc_path, wav_local, out_name) -> str:
     # HANS_TRANSLATE_OUT_V1 (26.8., pokyn uživatele): nové MKV vzniká VEDLE
     # originálu, originál zůstává. Až uživatel zhlédne pár přeložených pořadů,
     # přepne se na `nahradit` — proto je to volba v configu, ne natvrdo.
-    rezim = cfg.get("out_mode", "vedle")
+    # `rezim` zvenčí přebíjí config: u videa staženého z YouTube nemá `vedle`
+    # smysl (žádný originál v knihovně tam neleží) → volající pošle `stranou`.
+    rezim = rezim or cfg.get("out_mode", "vedle")
     if rezim == "vedle":
         outdir = os.path.dirname(pc_path)
     elif rezim == "stranou":
@@ -379,24 +389,140 @@ def zamichat(config, pc_path, wav_local, out_name) -> str:
     return out
 
 
+# ── YouTube jako zdroj (HANS_YT_TRANSLATE_V1) ────────────────────────────────
+def _nahraj_zdroj_na_pc(cfg, lokalni_video: str, vid: str) -> str:
+    """Stažené video z Pi na PC. Všechno, co sahá na video (ffprobe, mux),
+    běží na PC — Pi jen stahuje, protože na PC blokuje nové programy
+    OpenSnitch a chybí tam pip."""
+    zdrojdir = (cfg.get("out_dir") or "/mnt/D/Hans_preklad").rstrip("/") + "/_zdroj"
+    _pc(cfg, f"mkdir -p {_q(zdrojdir)}", 60)
+    remote = f"{zdrojdir}/yt_{vid}{os.path.splitext(lokalni_video)[1]}"
+    _pc_put(cfg, lokalni_video, remote,
+            timeout=int(((cfg.get("youtube") or {}).get("upload_timeout_s", 1800))))
+    return remote
+
+
+def _uklid_zdroje(cfg, pc_path: str) -> None:
+    """Stažený zdroj po ÚSPĚŠNÉM složení smazat — jeho obraz i zvuk jsou
+    beze změny uvnitř výsledku, takže by to byla jen druhá kopie téhož.
+    Při jakémkoli selhání zůstane ležet, aby šel běh zopakovat bez stahování.
+    Kdo chce originál podržet, přepne `translate.youtube.keep_source`."""
+    if (cfg.get("youtube") or {}).get("keep_source", False):
+        return
+    try:
+        _pc(cfg, f"rm -f {_q(pc_path)}", 60)
+    except Exception as e:
+        log.warning("stažený zdroj se nepodařilo uklidit: %s", e)
+
+
+def _delka_videa(cfg, pc_path: str) -> float:
+    return float(_pc(cfg, f"ffprobe -v error -show_entries format=duration "
+                          f"-of csv=p=0 {_q(pc_path)}", 180).strip())
+
+
+def zamichat_zpomalene(config, pc_path, wav_local, out_name, f: float) -> str:
+    """Jako `zamichat`, ale obraz I originální zvuk se ZPOMALÍ faktorem `f`.
+
+    Nápad uživatele 27.8. Důvod je početní: český text potřeboval o 18 % víc
+    času než video, a stlačit řeč jde nejvýš o 15 % (FLOOR 0.85). Chybějící
+    čas se tedy musí VYROBIT — prodloužením pořadu. 6 % je na obraze
+    neznatelných a řeči pak stačí zbylých ~11 %.
+
+    ⚠️ ZPOMALIT SE MUSÍ OBOJÍ, jinak zvuk uteče obrazu (na to se ptal uživatel
+    a je to reálná past — `duration` kontejneru je jen `max()` přes stopy,
+    takže při zpomalení SAMOTNÉHO zvuku ukáže TÝŽ výsledek a vypadá to dobře).
+    Průkazné jsou až časové značky posledního paketu: ověřeno 27.8. na reálném
+    souboru — obraz 901,03 → 955,09 s (poměr přesně 1,0600), zvuk 955,14 s,
+    rozdíl 0,05 s po šestnácti minutách.
+
+    Obraz se NEPŘEKÓDOVÁVÁ: `-itsscale` přenásobí časové značky a `-c:v copy`
+    nechá snímky být (ověřeno: 27 032 snímků před i po). Překóduje se jen zvuk.
+
+    ⛔ Tohle je YOUTUBE cesta. `zamichat` zůstává beze změny pro dokumenty ze
+    souborů, kterým dnešní chování vyhovuje (pokyn uživatele 27.8.).
+    """
+    cfg = _cfg(config)
+    outdir = cfg.get("out_dir", "/mnt/D/Hans_preklad")
+    out = f"{outdir}/{out_name}"
+    _pc(cfg, f"mkdir -p {_q(outdir)}", 60)
+    _pc_put(cfg, wav_local, "/tmp/hans_cz_track.wav",
+            timeout=int((cfg.get("youtube") or {}).get("upload_timeout_s", 1800)))
+    vol = float(cfg.get("orig_volume", 0.22))
+    inv = 1.0 / f
+    cmd = (f"ffmpeg -v error -y -itsscale {f:.6f} -i {_q(pc_path)} -i {_q(pc_path)} "
+           f"-i /tmp/hans_cz_track.wav -filter_complex "
+           f"\"[1:a:0]atempo={inv:.6f},aresample=48000[orig];"
+           f"[orig]asplit=2[o1][o2];[o1]volume={vol}[oq];"
+           f"[2:a]aresample=48000[cz];"
+           f"[oq][cz]amix=inputs=2:duration=longest:normalize=0[lekt]\" "
+           f"-map 0:v:0 -map \"[lekt]\" -map \"[o2]\" "
+           f"-c:v copy -c:a aac -b:a 160k "
+           f"-metadata:s:a:0 language=ces -metadata:s:a:0 title=\"Cesky (lektorske)\" "
+           f"-metadata:s:a:1 language=eng -metadata:s:a:1 title=\"Original\" "
+           f"-disposition:a:0 default {_q(out)}")
+    _pc(cfg, cmd, 3600)
+    velikost = int(_pc(cfg, f"stat -c%s {_q(out)}", 60).strip())
+    if velikost < 1_000_000:
+        raise RuntimeError(f"výsledek má jen {velikost} B — mux se nepovedl")
+    return out
+
+
 # ── celý běh ─────────────────────────────────────────────────────────────────
 def preloz(config, pc_path=None, meta=None, progress=None) -> dict:
     cfg = _cfg(config)
     t0 = time.time()
-    if pc_path is None:
+    # ⚠️ `pc_path is None` NEZNAMENÁ „zeptej se Kodi". U YouTube je None správný
+    # stav — soubor ještě neexistuje — a zadání nese `yt_id`. Bez téhle podmínky
+    # se Kodi doptá podruhé a přeloží se to, co běží TEĎ, ne to, co volající
+    # zadal. (Odhaleno testem 27.8.: běh dostal id videa a pustil se do pořadu,
+    # který zrovna hrál.)
+    if pc_path is None and not (meta or {}).get("yt_id"):
         info = kodi_now_file(config)
         if not info["ok"]:
             return {"ok": False, "duvod": info["duvod"]}
-        pc_path, meta = info["pc_path"], info
+        pc_path, meta = info.get("pc_path"), info
     meta = meta or {}
     say = progress or (lambda *_a, **_k: None)
+    yt_id = meta.get("yt_id")
 
-    if has_czech_audio(cfg, pc_path):
+    # U YouTube soubor zatím neexistuje → kontrola české stopy až po stažení.
+    if pc_path and has_czech_audio(cfg, pc_path):
         return {"ok": False, "duvod": "Tenhle pořad už českou zvukovou stopu má."}
 
     with tempfile.TemporaryDirectory(prefix="hans_preklad_") as wd:
+        yt = None
+        if yt_id and not pc_path:
+            yt = hy.stahni(config, yt_id, wd, say)
+            say("nahrávám video na PC")
+            pc_path = _nahraj_zdroj_na_pc(cfg, yt["video"], yt_id)
+            meta = {**meta, "title": yt["titul"]}
+
         say("hledám titulky")
-        zdroj = obstarej_titulky(config, pc_path, meta, wd)
+        if yt and yt.get("srt"):
+            # yt-dlp přinesl titulky rovnou s časováním → přepis ze zvuku,
+            # největší zdroj chyb u dokumentů, se u YouTube vůbec nepoužije.
+            # HANS_YT_SILENCE_V1: u automatického přepisu se švy přesadí na
+            # skutečné pauzy ve zvuku. Časy rolujících titulků totiž navazují
+            # i tam, kde mluvčí mlčí, takže skládání stopy nemá kde srovnat
+            # skluz — bez tohohle kroku byl na patnáctiminutovém pořadu 41 s.
+            yt_cfg = (cfg.get("youtube") or {})
+            if yt.get("rolujici") and yt.get("vtt") and yt_cfg.get("use_silence", True):
+                say("hledám pauzy ve zvuku")
+                ticho = hy.zjisti_ticho(cfg, pc_path, lambda c, t: _pc(cfg, c, t),
+                                        float(yt_cfg.get("silence_db", -35)),
+                                        float(yt_cfg.get("min_pauza_s", 0.35)))
+                if ticho:
+                    s2 = os.path.join(wd, "yt_ticho.srt")
+                    try:
+                        n = hy.srt_s_tichem(yt["vtt"], s2, ticho, yt_cfg)
+                        if n > 0:
+                            yt["srt"] = s2
+                            log.info("švy přesazeny na pauzy ve zvuku: %d frází", n)
+                    except Exception as e:
+                        log.warning("přesazení švů selhalo, beru původní: %s", e)
+            zdroj = {"srt": yt["srt"], "jazyk": yt["jazyk"], "zdroj": yt["zdroj"]}
+        else:
+            zdroj = obstarej_titulky(config, pc_path, meta, wd)
         log.info("zdroj textu: %s (%s)", zdroj["zdroj"], zdroj["jazyk"])
 
         srt = zdroj["srt"]
@@ -407,20 +533,52 @@ def preloz(config, pc_path=None, meta=None, progress=None) -> dict:
             prel = prelozit_srt(config, zdroj["srt"], srt,
                                 lambda a, b: say(f"překládám {a}/{b}"))
 
-        say("namlouvám")
         wav = os.path.join(wd, "cz.wav")
-        hlas = tts_engine.synth_srt(srt, wav, config)
+        rp = None
+        if yt:
+            # HANS_YT_TIMEBUDGET_V1: čeština je delší než originál a musí se do
+            # pořadu vejít. Rozpočet rozdělí schodek mezi zpomalení obrazu
+            # a zrychlení řeči — a když ani to nestačí, radši to řekne, než aby
+            # tiše vyrobil soubor, který se ke konci rozejde o minutu.
+            rp = hy.rozpocet(st.load_cues(srt), _delka_videa(cfg, pc_path),
+                             cfg.get("youtube") or {})
+            log.info("rozpočet času: %s", rp)
+            if rp["verdikt"] == "odmitnout":
+                return {"ok": False, "duvod": rp["hlaska"]}
+            if rp["f_video"] > 1.001:
+                s2 = os.path.join(wd, "cz_zpomaleno.srt")
+                hy.preskaluj_srt(srt, s2, rp["f_video"])
+                srt = s2
+            say("namlouvám")
+            hlas = hy.namluv_s_tempem(srt, wav, config, rp["zaklad_pct"])
+        else:
+            say("namlouvám")
+            hlas = tts_engine.synth_srt(srt, wav, config)
 
         say("skládám soubor")
-        jmeno = os.path.splitext(os.path.basename(pc_path))[0] + " [CZ].mkv"
-        out = zamichat(config, pc_path, wav, jmeno)
+        if yt:
+            jmeno = hy.nazev_souboru(yt["titul"], yt_id)
+            out = (zamichat_zpomalene(config, pc_path, wav, jmeno, rp["f_video"])
+                   if rp["f_video"] > 1.001
+                   else zamichat(config, pc_path, wav, jmeno, rezim="stranou"))
+        else:
+            jmeno = os.path.splitext(os.path.basename(pc_path))[0] + " [CZ].mkv"
+            out = zamichat(config, pc_path, wav, jmeno)
 
-    _zapis_do_deniku(config, pc_path, out,
+    if yt:
+        _uklid_zdroje(cfg, pc_path)
+    _zapis_do_deniku(config, (yt or {}).get("url") or pc_path, out,
                      {"zdroj": zdroj["zdroj"], "motor": hlas["engine"],
                       "trvalo_s": round(time.time() - t0),
-                      "posun_s": (hlas.get("stats") or {}).get("max_opozdeni_s")})
+                      "youtube": (yt or {}).get("url"),
+                      "zpomaleni": (rp or {}).get("f_video"),
+                      "rec_pct": (rp or {}).get("zaklad_pct"),
+                      "posun_s": (hlas.get("stats") or {}).get("max_opozdeni_s")},
+                     popis=(yt or {}).get("titul"))
     return {"ok": True, "soubor": out, "zdroj": zdroj["zdroj"], "motor": hlas["engine"],
             "posun_s": (hlas.get("stats") or {}).get("max_opozdeni_s"),
+            "zpomaleni": (rp or {}).get("f_video"), "rec_pct": (rp or {}).get("zaklad_pct"),
+            "upozorneni": (rp or {}).get("hlaska") or None,
             "dozadano": prel.get("dozadano"), "trvalo_s": round(time.time() - t0)}
 
 
@@ -431,7 +589,7 @@ def preloz(config, pc_path=None, meta=None, progress=None) -> dict:
 # Píše se do DENÍKU, ne do vlastního souboru — jeden zdroj pravdy a chodí to
 # do záloh spolu se zbytkem Hansovy paměti.
 
-def _zapis_do_deniku(config, orig: str, out: str, extra: dict) -> None:
+def _zapis_do_deniku(config, orig: str, out: str, extra: dict, popis=None) -> None:
     try:
         import sqlite3
         db = (config.get("diary_db")
@@ -441,8 +599,9 @@ def _zapis_do_deniku(config, orig: str, out: str, extra: dict) -> None:
         c = sqlite3.connect(db, timeout=5.0)
         c.execute("INSERT INTO diary (ts, event_type, title, data, note) VALUES (?,?,?,?,?)",
                   (time.time(), "translate_done", os.path.basename(out), data,
-                   "Připravil jsem českou stopu k „%s“. Originál jsem nechal na místě."
-                   % os.path.basename(orig)))
+                   ("Připravil jsem českou stopu k „%s“ z YouTube." % popis) if popis
+                   else ("Připravil jsem českou stopu k „%s“. Originál jsem nechal "
+                         "na místě." % os.path.basename(orig))))
         c.commit()
         c.close()
     except Exception as e:
@@ -547,7 +706,7 @@ def spust_na_pozadi(config, handler) -> str:
 
     def beh():
         try:
-            r = preloz(config, pc_path=info["pc_path"], meta=info,
+            r = preloz(config, pc_path=info.get("pc_path"), meta=info,
                        progress=lambda m, *a: _job.__setitem__("stav", m))
         except Exception as e:
             log.exception("překlad spadl")
