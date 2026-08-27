@@ -1362,5 +1362,14 @@
     "smb_prefix": "smb://192.168.1.10/",
     "mnt_prefix": "/mnt/",
     "_path_note": "Prevod cesty z Kodi na cestu na PC: co Kodi hlasi jako smb://<NAS>/<SHARE>/... lezi na PC jako /mnt/<SHARE>/... Musi sedet s tim, jak mate NAS namountovany."
+  },
+  "severka": {
+    "num_ctx": 8192,
+    "behaviour_window_days": 60,
+    "_num_ctx_note": "SEVERKA_NUM_CTX_V1 — MUSÍ pokrýt celý prompt (CORE + tendence + koníčky + studium + vzpomínky + příběh + chování, dnes ~4700 tokenů). Bez toho platí výchozích 2048, uřízne se ZAČÁTEK (role i tendence) a Severka rozhoduje naslepo — doloženo sondou 27.8.",
+    "_behaviour_window_days_note": "HANS_BEHAVIOUR_EVIDENCE_V1 — okno pro měřená data o tom, co Hans dělal a jak na to reagovalo okolí (persona-free protiváha k postojům).",
+    "voice_model": "hans-czech:latest",
+    "voice_timeout": 180,
+    "_voice_model_note": "SEVERKA_CZ_OUTPUT_V1 — base model vrací analysis/rationale anglicky (v EN je úsudek čistší); CZ-facing text projde hlasovým krokem. PŘEKLAD ANO, KOREKTURA NE: korektura překlopila „Jsi Hans\" na „Jsem Hans\" a chybu neopravila — na text, který se zapisuje do config.persona.core, se 8B modelem nesahá."
   }
 }

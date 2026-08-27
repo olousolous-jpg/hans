@@ -425,7 +425,13 @@ class HansDirection:
                     system=_DIRECTION_SYSTEM.format(
                         persona_name=_pn(self._config)),
                     config=self._config, timeout=self._timeout,
-                    keep_alive=0, options={"temperature": 0.2})
+                    keep_alive=0,
+                    # DIRECTION_NUM_CTX_V1 (27.8.) — pojistka. Tahle legacy
+                    # větev dnes spí (config má reasoning_model), ale bez
+                    # num_ctx by se jí prompt tiše uřízl na 2048 tokenů,
+                    # jako se to dělo Severce. Držet stejně jako výš.
+                    options={"temperature": 0.2,
+                             "num_ctx": int(cfg.get("reasoning_num_ctx", 12288))})
         except Exception as e:
             _log.warning("direction: LLM failed: %s", e)
             return None, True

@@ -36,6 +36,44 @@ from typing import List, Optional
 
 _log = logging.getLogger("hans_severka")
 
+# ── SEVERKA_CZ_OUTPUT_V1 (27.8.) — výstup k člověku musí být česky ──────────
+# Base model vrací `analysis` i `rationale` ANGLICKY (v EN je úsudek čistší,
+# viz [[reasoning-tier-when-to-use]]), jenže se to lepilo syrové do české
+# zprávy: „Důvod: The existing core focuses solely on the butler role…".
+# Řešení podle domácího vzoru: úsudek zůstane v EN, CZ-facing text projde
+# HLASOVÝM krokem (hans-czech, rezidentní → 0 VRAM navíc).
+_CZ_DIAK = set("ěščřžýáíéúůňťďó")
+_EN_WORDS = (" the ", " and ", " his ", " that ", " with ", " from ", " has ",
+             " have ", " this ", " which ", " while ", " their ", " beyond ")
+
+
+def _looks_czech(text: str) -> bool:
+    """Hrubý, ale spolehlivý rozlišovač. Nemá být chytrý — má poznat,
+    jestli text NENÍ anglický."""
+    t = (text or "").lower()
+    if not t.strip():
+        return True                      # prázdno nepřekládáme
+    diak = sum(1 for ch in t if ch in _CZ_DIAK)
+    en = sum(t.count(w) for w in _EN_WORDS)
+    return diak >= 3 and diak > en
+
+
+_VOICE_PREKLAD = (
+    "Jsi překladatel do přirozené, kultivované češtiny. Přelož text do češtiny. "
+    "ZACHOVEJ všechna fakta, délku i GRAMATICKOU OSOBU — když text někoho "
+    "oslovuje (\"Jsi Hans...\"), musí oslovovat i překlad. Nic nepřidávej "
+    "ani neubírej. Vrať POUZE přeložený text, bez uvozovek a bez poznámek."
+)
+# ⛔ KOREKTURA ČEŠTINY BYLA VYZKOUŠENA A ZAMÍTNUTA (27.8.). Měla spravit
+# „myšlenky jsou často ZABAVENY složitými koncepty" v navrženém CORE.
+# Skutečný výsledek na tomtéž vstupu: překlopila oslovení z 2. do 1. osoby
+# („Jsi Hans." → „Jsem Hans.") — což by ROZBILO systémový prompt, ten musí
+# personu oslovovat — a „zabaveny" přitom neopravila vůbec. Model si text
+# přepisuje po svém. Nechávat 8B model sahat na text, který se zapisuje do
+# `config.persona.core`, je horší než kostrbaté slovo, které stejně uvidí
+# člověk při schvalování. Překládá se JEN to, co není česky.
+
+
 # Defaulty gate (config["severka"] je přebije)
 MIN_EVIDENCE = 8
 MIN_AGE_DAYS = 21
@@ -95,6 +133,20 @@ class Severka:
         self._model = str(cfg.get("model",
                                   er.get("model", "jobautomation/OpenEuroLLM-Czech:latest")))
         self._timeout = int(cfg.get("llm_timeout", 300))
+        # SEVERKA_NUM_CTX_V1 (27.8.) — bez tohohle platil výchozí num_ctx
+        # 2048, zatímco prompt má ~3630 tokenů. Sonda to potvrdila: na
+        # otázku "jak zní PRVNÍ řádek zadání" vrátil model bez num_ctx
+        # "O se měn" (nesmysl), s num_ctx 8192 "DOSAVADNÍ ROLE (CORE):
+        # Tvoje jmeno je Hans." Severka tedy NEVIDĚLA roli ani tendence —
+        # obojí je na začátku promptu — a rozhodovala "přerostly tendence
+        # roli?" naslepo. Každé dosavadní "drift malý" je tím zpochybněné.
+        # ⚠️ Musí zůstat nad součtem VŠECH bloků včetně behaviorálního.
+        self._num_ctx = int(cfg.get("num_ctx", 8192))
+        # SEVERKA_CZ_OUTPUT_V1 — hlas pro CZ-facing výstup
+        self._voice_model = str(cfg.get("voice_model",
+                                        er.get("voice_model",
+                                               "hans-czech:latest")))
+        self._voice_timeout = int(cfg.get("voice_timeout", 180))
 
     # ── IdentityStore (lazy) ────────────────────────────────────────────────
     def _store(self):
@@ -116,6 +168,47 @@ class Severka:
             if cur and cur.core:
                 return cur.core
         return (self._config.get("persona", {}) or {}).get("core", "")
+
+    # ── SEVERKA_CZ_OUTPUT_V1 ────────────────────────────────────────────────
+    def _do_cestiny(self, text: str, co: str = "text") -> str:
+        """Přeloží text do češtiny, když ČESKY NENÍ. Česky psaný text vrací
+        BEZE ZMĚNY — korektura je vědomě zamítnutá (viz poznámka výše).
+        ⚠️ Při JAKÉKOLI chybě vrací PŮVODNÍ text — radši kostrbatá věta než
+        ztracený návrh identity."""
+        t = (text or "").strip()
+        if len(t) < 15:
+            return text
+        if _looks_czech(t):
+            return text          # už česky → nesahat (viz poznámka u překladu)
+        system = _VOICE_PREKLAD
+        try:
+            from scripts.ollama_client import ollama_generate
+            out = ollama_generate(
+                model=self._voice_model, prompt=t, system=system,
+                config=self._config, timeout=self._voice_timeout,
+                options={"temperature": 0.2, "num_ctx": 4096})
+        except Exception as _e:
+            _log.warning("severka: hlasový krok (%s) selhal: %s", co, _e)
+            return text
+        out = (out or "").strip().strip('"').strip()
+        if not out:
+            _log.warning("severka: překlad (%s) vrátil prázdno, "
+                         "nechávám původní", co)
+            return text
+        if len(out) < len(t) * 0.5:
+            _log.warning("severka: překlad (%s) text zkrátil %d→%d — "
+                         "nejspíš utržená odpověď, nechávám původní",
+                         co, len(t), len(out))
+            return text
+        # Pojistka na gramatickou osobu: CORE oslovuje („Jsi Hans"), překlad to
+        # nesmí překlopit do „Jsem Hans" — rozbilo by to systémový prompt.
+        if " jsi " in (" " + t.lower()) and " jsem " in (" " + out.lower()) \
+                and " jsi " not in (" " + out.lower()):
+            _log.warning("severka: překlad (%s) překlopil oslovení do 1. osoby, "
+                         "nechávám původní", co)
+            return text
+        _log.info("severka: %s přeložen z angličtiny (%d znaků)", co, len(out))
+        return out
 
     # ── DATA-GATE (deterministicky, read-only) ──────────────────────────────
     def durable_tendencies(self) -> List[dict]:
@@ -167,8 +260,34 @@ class Severka:
         try:
             from scripts.hans_hobbies import HobbyStore
             hs = HobbyStore(self._config, self._diary_path)
-            return [h.as_dict() for h in hs.durable_hobbies(
+            hobs = [h for h in hs.durable_hobbies(
                 self._min_evidence, self._min_age_days, self._min_recent_days)]
+            # SEVERKA_HOBBY_ENGAGEMENT_V1 (27.8.) — `evidence_count` je jen
+            # DENNÍ POČÍTADLO: distill posílí všech 12 koníčků každý den
+            # (doloženo `hobby_history`: 12 zápisů denně), takže rozpětí je
+            # 57–68 = 1,2× a Severka neměla jak cokoli odlišit. Skutečné
+            # zaujetí (počet zmínek instancí napříč čtením/studiem/dialogy)
+            # má rozpětí 12–2129 = 177×: Design 2129, hrady 786, historie 448,
+            # filmy 12. Teprve tohle je podpis osobnosti.
+            # `_topic_engagement` už existuje v hans_study (a jeho docstring
+            # tenhle rozdíl sám pojmenovává) — protahuji ho, nepíšu nový.
+            # ⚠️ `Hobby` má __slots__ → atribut na něj NEJDE přidat. První
+            # verze to zkoušela, AttributeError spolkl `except` a zaujetí bylo
+            # tiše 0 u všeho. Počítá se rovnou do slovníku.
+            out = []
+            try:
+                from scripts.hans_study import _topic_engagement
+            except Exception as _ee:
+                _log.warning("severka: _topic_engagement nedostupný (%s) — "
+                             "koníčky zůstanou nesetříděné", _ee)
+                _topic_engagement = None
+            for h in hobs:
+                d = h.as_dict()
+                d["engagement"] = (_topic_engagement(self._diary_path, h.examples)
+                                   if _topic_engagement else 0)
+                out.append(d)
+            out.sort(key=lambda x: x["engagement"], reverse=True)
+            return out
         except Exception as _e:
             _log.debug("severka _durable_hobbies failed: %s", _e)
             return []
@@ -192,8 +311,10 @@ class Severka:
             f"{t['age_days']} dní]"
             + (f" | výhrada: {t['counterargs'][-1]}" if t["counterargs"] else "")
             for t in durable) or "(žádné)"
+        # SEVERKA_HOBBY_ENGAGEMENT_V1 — řadí a popisuje podle ZAUJETÍ
         hob_block = "\n".join(
-            f"- {h['name']} [×{h['evidence_count']}, {h['age_days']} dní]"
+            f"- {h['name']} [zaujetí {h.get('engagement', 0)}, "
+            f"{h['age_days']} dní]"
             + (f" (např. {', '.join(h['examples'][:4])})" if h.get('examples') else "")
             for h in durable_h) or "(žádné)"
         # AUTOBIOGRAPHICAL_SELF_MEMORIES_V1 (krok 2) — pivotní epizody jako kontext
@@ -221,13 +342,42 @@ class Severka:
         except Exception as _se:
             _log.debug("severka studium block failed: %s", _se)
             study_block = "(zatím žádné dokončené studium)"
+        # SEVERKA_BEHAVIOUR_V1 (27.8.) — persona-free protiváha k tendencím.
+        # Tendence se extrahují z večerní reflexe, kterou synthesize generuje
+        # s předřazeným persona_core a se stylovým promptem, jenž modelu říká
+        # „Máš britskou rezervovanost a smysl pro detail" — proto jsou dva
+        # nejsilnější postoje „Všímám si detailů" a „Cením si pečlivosti".
+        # Je to ozvěna role, ne nález o Hansovi. Tenhle blok bere jen to, co
+        # Hans UDĚLAL a jak na to reagovalo okolí; nic z toho nepsal model
+        # v jeho hlase. Detail a co je vědomě vynecháno: hans_behaviour_evidence.
+        try:
+            from scripts.hans_behaviour_evidence import block as _bev_block
+            bev_block = _bev_block(self._config, self._diary_path) or "(žádná data)"
+        except Exception as _be:
+            _log.debug("severka behaviour block failed: %s", _be)
+            bev_block = "(žádná data)"
         prompt = (f"DOSAVADNÍ ROLE (CORE):\n{core}\n\n"
                   f"TRVALÉ TENDENCE — hodnoty/postoje (filtr stálosti):\n{tnd_block}\n\n"
                   f"TRVALÉ KONÍČKY — dlouhodobé zájmy (filtr stálosti):\n{hob_block}\n\n"
                   f"HLOUBKOVÉ STUDIUM — co jsem do hloubky nastudoval (reálná "
                   f"znalost, ne jen zájem):\n{study_block}\n\n"
                   f"SEBE-DEFINUJÍCÍ VZPOMÍNKY — pivotní epizody (kontext pro koherenci):\n{mem_block}\n\n"
-                  f"PŘÍBĚH — poslední kapitola (souvislé ohlédnutí za vývojem):\n{chapter}")
+                  f"PŘÍBĚH — poslední kapitola (souvislé ohlédnutí za vývojem):\n{chapter}\n\n"
+                  f"CO JSEM SKUTEČNĚ DĚLAL A JAK NA MĚ REAGOVALO OKOLÍ "
+                  f"(měřená data, ne můj vlastní popis):\n{bev_block}")
+
+        # SEVERKA_CTX_FIT_GUARD_V1 (27.8.) — prompt roste s každým novým
+        # blokem (tendence, koníčky, studium, vzpomínky, příběh, chování).
+        # Když přeteče num_ctx, uřízne se ZAČÁTEK — tedy CORE a tendence — a
+        # model místo rozhodnutí vrátí rozbor textu; parser selže a navenek to
+        # vypadá jako klidné „držím roli". Přesně tohle se dělo do 27.8.
+        # Radši hlučná hláška než další tichý měsíc.
+        _odhad = (len(prompt) + len(_SYSTEM)) // 3
+        if _odhad > self._num_ctx * 0.9:
+            _log.warning("severka: prompt ~%d tokenů se blíží num_ctx %d — "
+                         "hrozí uříznutí ZAČÁTKU (CORE + tendence). "
+                         "Zvedni severka.num_ctx v configu.",
+                         _odhad, self._num_ctx)
 
         # NIGHT_DEFERRAL_SAFE_V1 — 'deferred':True signalizuje, že LLM NEBĚŽEL
         # (Ollama dole / timeout → raw None). Volající (routine) pak NEnastaví
@@ -248,7 +398,8 @@ class Severka:
                 model=self._model, prompt=prompt, system=_system,
                 config=self._config, timeout=self._timeout,
                 keep_alive=0,  # MODEL_KEEPALIVE_TIERS_V1 — analytika on-demand
-                options={"temperature": 0.2})
+                options={"temperature": 0.2,
+                         "num_ctx": self._num_ctx})   # SEVERKA_NUM_CTX_V1
         except Exception as e:
             _log.warning("severka: LLM call failed: %s", e)
             return {"decision": "keep", "gate": True, "durable": durable,
@@ -259,7 +410,20 @@ class Severka:
                     "message": "", "error": "llm None", "deferred": True}
 
         parsed = self._parse(raw)
-        if not parsed or parsed.get("decision") != "propose":
+        # SEVERKA_PARSE_HONEST_V1 (27.8.) — dřív se OBĚ větve (model řekl keep
+        # × odpověď nešla rozparsovat) logovaly jako „LLM rozhodl 'keep' (gate
+        # prošel, drift malý)". To bylo NEPRAVDIVÉ tvrzení a schovalo vadu na
+        # měsíce: při uříznutém promptu (SEVERKA_NUM_CTX_V1) model vracel
+        # literární rozbor vstupu místo rozhodnutí, parser selhal a do logu
+        # se napsalo, že Hans se rozhodl držet roli. Tichá porucha, která se
+        # hlásila jako úspěch. Teď se ty dva stavy rozlišují.
+        if not parsed:
+            _log.warning("severka %s: odpověď NEŠLA rozparsovat (%d znaků) — "
+                         "držím roli, ale NENÍ to rozhodnutí modelu. Začátek: %.120s",
+                         date_str, len(raw or ""), (raw or "").replace("\n", " "))
+            return {"decision": "keep", "gate": True, "durable": durable,
+                    "message": "", "parse_failed": True}
+        if parsed.get("decision") != "propose":
             _log.info("severka %s: LLM rozhodl 'keep' (gate prošel, drift malý)",
                       date_str)
             return {"decision": "keep", "gate": True, "durable": durable,
@@ -267,6 +431,12 @@ class Severka:
 
         new_core = (parsed.get("proposed_core") or "").strip()
         rationale = (parsed.get("rationale") or "").strip()
+        # SEVERKA_CZ_OUTPUT_V1 — obojí uvidí člověk a CORE se navíc zapisuje do
+        # `config.persona.core`, odkud se stává systémovým promptem. Chyba
+        # v češtině tam kazí každou další generaci, anglické zdůvodnění je
+        # v české zprávě cizí těleso. Proto oba přes hlasový krok.
+        new_core = self._do_cestiny(new_core, "navržený CORE")
+        rationale = self._do_cestiny(rationale, "zdůvodnění")
         if not new_core:
             _log.info("severka %s: 'propose' bez proposed_core → držím roli", date_str)
             return {"decision": "keep", "gate": True, "durable": durable,
