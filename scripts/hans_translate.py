@@ -283,6 +283,61 @@ def obstarej_titulky(config, pc_path, meta, workdir) -> dict:
     return {"srt": _stt(cfg, config, pc_path, workdir), "jazyk": "en", "zdroj": "přepis ze zvuku"}
 
 
+# ── notičky pro neslyšící (HANS_SUB_CLEAN_V1) ────────────────────────────────
+# Nález uživatele 27.8.: „v titulkách jsou notičky pro hluché, jako hudba".
+# Hans je četl nahlas — uprostřed dokumentu tedy lektor prohlásil „muž".
+#
+# ZMĚŘENO na reálných titulcích uživatele: značí se, KDO mluví nebo co je
+# slyšet, kulatou závorkou ve dvou pozicích — celý řádek („(zpěv)",
+# „(žena, šeptem)") nebo začátek řádku, za kterým následuje řeč („(muž) …",
+# „(chlapec) …"). Anglické automatické titulky mají totéž hranatě:
+# [Music] 185×, [Applause] 14×, [Laughter] 6×.
+#
+# ⚠️ ROZLIŠUJE SE POZICÍ, NE VÝZNAMEM. Uprostřed věty jsou závorky běžný text
+# („(USA)", „(však víte)") a sahat se na ně NESMÍ — plošné mazání závorek by
+# ubíralo obsah. Proto jen celý řádek a začátek řádku.
+_NOTICKA_CELA = re.compile(r"^[\(\[][^\)\]]{0,40}[\)\]]$")
+_NOTICKA_ZACATEK = re.compile(r"^[\(\[][^\)\]]{0,40}[\)\]]\s*")
+_KREDIT = re.compile(r"^(titulky|p[řr]eklad|translated|subtitles|korekce|"
+                     r"[čc]asov[áa]n[íi]|sync)\b\s*[:\-]", re.I)
+
+
+def _bez_noticek(src: str, dst: str) -> dict:
+    """Očistí ZDROJOVÉ titulky. Běží před překladem, takže se notičky ani
+    nepřekládají, ani nenamlouvají — a platí to pro OBĚ cesty (soubor i YouTube),
+    protože se to volá v místě, kde se obě potkávají."""
+    cues = st.load_cues(src)
+    if not cues:
+        return {"zmeneno": False, "zahozeno": 0, "ocisteno": 0}
+    ven, zahozeno, ocisteno = [], 0, 0
+    for c in cues:
+        t = (c["text"] or "").strip()
+        if not t:
+            continue
+        if _NOTICKA_CELA.match(t) or _KREDIT.match(t):
+            zahozeno += 1
+            continue
+        nove = _NOTICKA_ZACATEK.sub("", t, count=1).strip()
+        if nove != t:
+            if not nove:
+                zahozeno += 1
+                continue
+            ocisteno += 1
+            t = nove
+        ven.append({"start": c["start"], "end": c["end"], "text": t})
+    # Pojistka: kdyby vzor na neobvyklém souboru zdivočel, radši nechat
+    # původní titulky být, než vyrobit stopu s dírami.
+    if not ven or zahozeno > len(cues) * 0.30:
+        log.warning("čištění notiček by zahodilo %d z %d replik — nechávám "
+                    "titulky beze změny", zahozeno, len(cues))
+        return {"zmeneno": False, "zahozeno": 0, "ocisteno": 0}
+    with open(dst, "w", encoding="utf-8") as f:
+        for i, c in enumerate(ven, 1):
+            f.write(f"{i}\n{_ts(c['start'])} --> {_ts(c['end'])}\n{c['text']}\n\n")
+    return {"zmeneno": bool(zahozeno or ocisteno), "zahozeno": zahozeno,
+            "ocisteno": ocisteno, "replik": len(ven)}
+
+
 # ── překlad ──────────────────────────────────────────────────────────────────
 _HEAD = ("You are a professional English (en) to Czech (cs) translator. "
          "Produce only the Czech translation, without any additional explanations "
@@ -526,6 +581,13 @@ def preloz(config, pc_path=None, meta=None, progress=None) -> dict:
         log.info("zdroj textu: %s (%s)", zdroj["zdroj"], zdroj["jazyk"])
 
         srt = zdroj["srt"]
+        # HANS_SUB_CLEAN_V1 — jedno místo pro obě cesty, PŘED překladem
+        _cist = os.path.join(wd, "bez_noticek.srt")
+        _u = _bez_noticek(srt, _cist)
+        if _u["zmeneno"]:
+            srt = _cist
+            log.info("notičky pro neslyšící: %d replik zahozeno, %d očištěno",
+                     _u["zahozeno"], _u["ocisteno"])
         prel = {}
         if zdroj["jazyk"] != "cs":
             say("překládám")
