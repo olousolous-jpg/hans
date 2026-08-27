@@ -30,14 +30,14 @@ echo "── NESMÍ platit za hru ──"
 t nic "ProtonVPN daemon (skutečný viník)" '/usr/bin/python3 -m proton.vpn.daemon'
 t nic "ProtonVPN GUI"                     '/usr/bin/protonvpn-app'
 t nic "ProtonMail bridge"                 '/usr/bin/protonmail-bridge --noninteractive'
-t nic "rclone záloha na Proton Drive"     'rclone copy /home/olda/zaloha protondrive:hans'
+t nic "rclone záloha na Proton Drive"     'rclone copy /home/user/zaloha protondrive:hans'
 t nic "kernel thread"                     '[oom_reaper]'
 t nic "běžný desktop proces"              '/usr/lib/firefox/firefox'
-t nic "idle Steam (bez hry)"              '/home/olda/.local/share/Steam/ubuntu12_32/steamwebhelper'
+t nic "idle Steam (bez hry)"              '/home/user/.local/share/Steam/ubuntu12_32/steamwebhelper'
 
 echo "── MUSÍ platit za hru (regrese detekce) ──"
-t hra "Heroic + GE-Proton"                '/home/olda/.config/heroic/tools/proton/GE-Proton9-20/proton waitforexitandrun /games/007/game.exe'
-t hra "Steam launch reaper"               '/home/olda/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=1174180 -- /usr/bin/pv-bwrap'
+t hra "Heroic + GE-Proton"                '/home/user/.config/heroic/tools/proton/GE-Proton9-20/proton waitforexitandrun /games/007/game.exe'
+t hra "Steam launch reaper"               '/home/user/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=1174180 -- /usr/bin/pv-bwrap'
 t hra "AppId v cmdline"                   'steamwebhelper AppId=730'
 t hra "wineserver"                        'C:\\windows\\system32\\wineserver.exe'
 t hra "pressure-vessel / pv-bwrap"        '/usr/share/steam/pressure-vessel/bin/pv-bwrap --args 42'
@@ -45,7 +45,7 @@ t hra "gamescope"                         'gamescope -W 2560 -H 1440 -- %command
 t hra "wine-preloader"                    '/usr/bin/wine-preloader z:\\games\\hra.exe'
 
 echo "── směs: VPN + hra naráz (VPN nesmí zastínit ani vyrobit hru) ──"
-mix=$'/usr/bin/python3 -m proton.vpn.daemon\n/usr/lib/firefox/firefox\n/home/olda/.config/heroic/tools/proton/GE-Proton9-20/proton run hra.exe'
+mix=$'/usr/bin/python3 -m proton.vpn.daemon\n/usr/lib/firefox/firefox\n/home/user/.config/heroic/tools/proton/GE-Proton9-20/proton run hra.exe'
 if got=$(printf '%s\n' "$mix" | match); then
     case "$got" in *GE-Proton*) ok=$((ok+1)); echo "  ✓ vybrán herní proces, ne VPN → ${got:0:60}…";;
                    *) bad=$((bad+1)); echo "  ✗ vybráno špatně: $got";; esac
