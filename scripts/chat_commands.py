@@ -121,8 +121,14 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
     # příkaz. Kotvy na začátek i konec drží riziko nízko — aby se to spustilo,
     # musí uživatel napsat to slovo a nic jiného, což je fakticky povel.
     # Nové příkazy tím dostanou totéž chování samy, bez dalšího vzoru.
+    # ⛔ Tyhle NE. Holý tvar smí spustit jen to, co se dá vzít zpět.
+    # `/vypnipc` volá `systemctl poweroff` BEZ POTVRZENÍ (ověřeno 28.8. čtením
+    # obsluhy — potvrzovací krok je v agentní cestě, ne tady), `zapomen` sahá
+    # na paměť. Destruktivní byly i předtím, ale přes lomítko; sundat jim ho
+    # kvůli pohodlí by bylo špatně. U nich zůstává `/prikaz` povinné.
+    _BEZ_HOLEHO_TVARU = {"vypnipc", "zapomen", "enroll", "herni", "sleep", "experiment"}
     holy = _fold_diacritics(msg.lower()).strip().rstrip("!?.,").strip()
-    if holy and " " not in holy:
+    if holy and " " not in holy and holy not in _BEZ_HOLEHO_TVARU:
         for cmd_id, spec in _COMMANDS.items():
             if holy in [_fold_diacritics(a) for a in spec["slash"]]:
                 _set_route_origin("bare")
@@ -3298,7 +3304,14 @@ def _cmd_preloz(handler, name, args) -> str:
                  r"|co\s+(jsi|u[žz]|v[šs]echno)\s+[\w\s]{0,25}?p[řr]elo[žz]"
                  r"|kter[ée]\s+[\w\s]{0,25}?p[řr]elo[žz]", a):
         return ht.seznam_text(cfg_of(handler))
-    if re.search(r"\b(stav|status|hotovo|hotov[oý])\b|jak\s+(to\s+)?(jde|pokra[čc]uje|dopadl)|u[žz]\s+(to\s+)?(je\s+)?(hotov|dod[ěe]l)", a):
+    # ⚠️ Vzory MUSÍ počítat s psaním BEZ DIAKRITIKY — uživatel píše z mobilu.
+    # Doloženo 28.8.: „uz mas hotovy preklad?" se k obsluze dostalo, ale
+    # `hotov[oý]` neobsahovalo prosté „y", takže by to místo hlášení stavu
+    # SPUSTILO DALŠÍ PŘEKLAD. nl_patterns se skládají i bez diakritiky
+    # (nl_fold), tahle větev uvnitř obsluhy ne — proto tu jsou obě podoby.
+    if re.search(r"\b(stav|status|hotovo|hotov[oýy])\b|jak\s+(to\s+)?(jde|pokra[čc]uje|dopadl)"
+                 r"|u[žz]\s+(to\s+)?(je\s+)?(hotov|dod[ěe]l)"
+                 r"|(m[áa][šs]|je)\s+[\w\s]{0,12}?hotov", a):
         return ht.stav_text()
     cfg = getattr(handler, "config", {}) or {}
     if not (cfg.get("translate", {}) or {}).get("enabled", True):
@@ -3323,6 +3336,9 @@ register(
         r"p[řr]elo[žz]\s+(ten\s+)?(dokument|film|po[řr]ad|dokument[áa]rn)",
         r"(ud[ěe]l[aáeě]\w*|p[řr]iprav\w*)\s+(mi\s+)?[čc]esk[ou]\w*\s+(stopu|dabing|verzi)",
         r"jak\s+(to\s+)?jde\s+(ten\s+)?p[řr]eklad",
+        # 28.8.: „uz mas hotovy preklad?" LLM router poslal na /dilo, takže
+        # uživatel dostal odpověď o něčem jiném, zatímco překlad běžel.
+        r"hotov\w*\s+p[řr]eklad|p[řr]eklad\w*\s+(u[žz]\s+)?hotov",
         # DOTAZ na hotové překlady — musí být i TADY, ne jen v obsluze:
         # nl_patterns rozhodují, jestli se k obsluze vůbec dojde.
         r"co\s+(jsi|u[žz]|v[šs]echno)\s+[\w\s]{0,25}?p[řr]elo[žz]",
