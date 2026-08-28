@@ -203,9 +203,16 @@ class HansCuriosity:
         if not topic or self._on_cooldown("topic", topic):
             return
         _log.info("Curiosity trigger: topic — '%s' (cil)", topic)
+        # HANS_GOAL_SELF_EVIDENCE_V1 (28.8.) — označit jako 'goal', NE 'interest'.
+        # Tohle je čtení NA OBJEDNÁVKU aktivního cíle, ne projev zvídavosti.
+        # Doloženo: cíl „Design" si takhle objednával čtení téhož článku několikrát
+        # denně (21× za 7 dní), detektor opakovaných titulků to bral jako důkaz
+        # „vrací se k tématu" a otevřel cíl znovu — 17 z 18 cílů byl Design,
+        # tři měsíce. CÍL BYL SÁM SOBĚ DŮKAZEM. Spontánní četba je přitom pestrá
+        # (91 různých článků týdně), jen se neopakuje, takže ji detektor nevidí.
         self._read_async(
             fn    = lambda q=topic: self._reader.wikipedia_read(q),
-            topic = "interest",
+            topic = "goal",
             key   = "goal:%s" % topic[:40],
         )
 

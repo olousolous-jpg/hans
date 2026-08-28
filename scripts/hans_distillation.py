@@ -202,9 +202,16 @@ class HansDistillation:
         try:
             cur = conn.cursor()
             since = int(time.time()) - 86400 * self._window_days
+            # HANS_GOAL_SELF_EVIDENCE_V1 (28.8.) — NEPOČÍTAT čtení, které si
+            # objednal aktivní cíl (`[goal]` prefix v note). Jinak si cíl vyrábí
+            # vlastní důkaz a volí se donekonečna sám: 17 z 18 cílů byl Design.
+            # ⚠️ Historické záznamy jsou značené `[interest]`, takže Design bude
+            # kandidátem, dokud nevypadne z okna (7 dní) — pak se to srovná samo,
+            # bez zásahu do dat.
             cur.execute("""
                 SELECT id, title, ts FROM diary
                 WHERE event_type = 'web_read' AND ts > ?
+                  AND COALESCE(note, '') NOT LIKE '[goal]%'
                 ORDER BY title, ts
             """, (since,))
             rows = cur.fetchall()
