@@ -1384,6 +1384,8 @@
     },
     "out_dir": "/mnt/D/Hans_preklad",
     "_out_dir_note": "Kam na PC ulozit vysledne MKV. Do knihovny se ZATIM nezapisuje; az bude odladeno, bude se nahrazovat original.",
+    "llm_timeout_s": 180,
+    "_llm_timeout_note": "HANS_TRANSLATE_TIMEOUT_V1: timeout jednoho volani prekladoveho modelu. Drive 900 s natvrdo — 28.8. se jeden blok zasekl a cekalo se na nej celych 15 minut (12:06 → 12:21), pak se jeho repliky dozadaly po jedne a preklad 26minutoveho videa trval 62 min misto ~14. Kratsi timeout selze rychle a preskoci na dozadani jednotlivych replik.",
     "mount_retry": 3,
     "mount_retry_delay_s": 4.0,
     "_mount_retry_note": "HANS_MOUNT_RETRY_V1: kolikrat zkusit najit soubor na PC a s jakou prodlevou. Sdileni nemusi byt po ruce hned — 28.8. PC nabootovalo v 08:32, systemd zkusil navazat sest sdileni naraz a Windows je odmitly (STATUS_REQUEST_NOT_ACCEPTED); za par minut uz prihlaseni proslo, ale x-systemd.automount mountuje az PRI PRISTUPU, takze adresare zustaly prazdne a Hans hlasil, ze sdileni neni namontovane. Mezi pokusy se sahne na koreny /mnt/X, aby se automount rozjel.",

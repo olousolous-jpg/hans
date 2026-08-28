@@ -390,7 +390,13 @@ def _ollama(config, cfg, prompt, npred=3000) -> str:
                         "num_gpu": int(cfg.get("num_gpu", 99))}}
     r = urllib.request.urlopen(urllib.request.Request(
         host.rstrip("/") + "/api/generate", data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"}), timeout=900)
+        headers={"Content-Type": "application/json"}),
+        # HANS_TRANSLATE_TIMEOUT_V1 (28.8.) — 900 s bylo na blok 40 titulku
+        # nesmyslne dlouho. Doloženo: 28.8. se jeden blok zasekl a cekalo se
+        # na nej CELYCH 15 MINUT (12:06 → 12:21), pak se jeho repliky dozadaly
+        # po jedne a cely preklad 26minutoveho videa trval 62 min misto ~14.
+        # Kratsi timeout selze rychle a preskoci na dozadani.
+        timeout=float(cfg.get("llm_timeout_s", 180)))
     return json.loads(r.read()).get("response", "")
 
 
@@ -398,7 +404,7 @@ def prelozit_srt(config, src_srt, dst_srt, progress=None) -> dict:
     cfg = _cfg(config)
     cues = st.load_cues(src_srt)
     chunk = int(cfg.get("chunk_cues", 40))
-    hotovo, dozadano = [None] * len(cues), 0
+    hotovo, dozadano, nepreloz = [None] * len(cues), 0, 0
     for a in range(0, len(cues), chunk):
         blk = cues[a:a + chunk]
         body = "\n".join(f"{i+1}|{c['text']}" for i, c in enumerate(blk))
@@ -419,14 +425,21 @@ def prelozit_srt(config, src_srt, dst_srt, progress=None) -> dict:
                                 "translator. Produce only the Czech translation.\n\n\n"
                                 + c["text"], 300).strip().split("\n")[0]
                 except Exception:
-                    t = c["text"]     # radši původní než díra ve stopě
+                    # ⚠️ Původní ANGLICKÁ věta jde do české stopy a Vlasta ji
+                    # přečte česky. Radši to než díra — ale MUSÍ se to spočítat
+                    # a říct, jinak na to uživatel narazí až uprostřed sledování.
+                    t = c["text"]
+                    nepreloz += 1
             hotovo[a + i] = t
         if progress:
             progress(min(a + chunk, len(cues)), len(cues))
     with open(dst_srt, "w", encoding="utf-8") as f:
         for i, (c, t) in enumerate(zip(cues, hotovo), 1):
             f.write(f"{i}\n{_ts(c['start'])} --> {_ts(c['end'])}\n{t}\n\n")
-    return {"replik": len(cues), "dozadano": dozadano}
+    if nepreloz:
+        log.warning("nepřeloženo %d z %d replik — zůstaly v originále",
+                    nepreloz, len(cues))
+    return {"replik": len(cues), "dozadano": dozadano, "nepreloz": nepreloz}
 
 
 # ── sestavení výsledku ───────────────────────────────────────────────────────
@@ -670,13 +683,16 @@ def preloz(config, pc_path=None, meta=None, progress=None) -> dict:
                       "youtube": (yt or {}).get("url"),
                       "zpomaleni": (rp or {}).get("f_video"),
                       "rec_pct": (rp or {}).get("zaklad_pct"),
+                      "dozadano": prel.get("dozadano"),
+                      "nepreloz": prel.get("nepreloz"),
                       "posun_s": (hlas.get("stats") or {}).get("max_opozdeni_s")},
                      popis=(yt or {}).get("titul"))
     return {"ok": True, "soubor": out, "zdroj": zdroj["zdroj"], "motor": hlas["engine"],
             "posun_s": (hlas.get("stats") or {}).get("max_opozdeni_s"),
             "zpomaleni": (rp or {}).get("f_video"), "rec_pct": (rp or {}).get("zaklad_pct"),
             "upozorneni": (rp or {}).get("hlaska") or None,
-            "dozadano": prel.get("dozadano"), "trvalo_s": round(time.time() - t0)}
+            "dozadano": prel.get("dozadano"), "nepreloz": prel.get("nepreloz"),
+            "replik": prel.get("replik"), "trvalo_s": round(time.time() - t0)}
 
 
 # ── evidence hotových překladů ───────────────────────────────────────────────
@@ -816,9 +832,18 @@ def spust_na_pozadi(config, handler) -> str:
         if r.get("ok"):
             mins = round(r.get("trvalo_s", 0) / 60)
             pozn = "" if r.get("motor") == "edge" else " (záložním hlasem — cloud nebyl k dispozici)"
+            # Nepřeložené repliky se PŘIZNÁVAJÍ. Zůstala v nich angličtina,
+            # kterou český hlas přečte — bez téhle věty by to uživatel zjistil
+            # až uprostřed sledování a neměl by tušení proč.
+            nep = r.get("nepreloz") or 0
+            vada = ""
+            if nep:
+                z_kolika = r.get("replik") or 0
+                vada = (f"\n⚠️ {nep} z {z_kolika} replik se mi přeložit nepodařilo — "
+                        f"zůstaly v angličtině a hlas je přečte tak, jak jsou.")
             n.send(f"Překlad je hotový, pane{pozn}. Trvalo to {mins} min.\n"
                    f"Soubor: {r['soubor']}\n"
-                   f"Zdroj textu: {r.get('zdroj')}")
+                   f"Zdroj textu: {r.get('zdroj')}{vada}")
         else:
             n.send(f"Překlad se nepovedl, pane: {r.get('duvod')}")
 
