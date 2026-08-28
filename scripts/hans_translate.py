@@ -146,13 +146,48 @@ def _najdi_na_pc(cfg, zbytek: str) -> str | None:
     for k in kand:
         if k not in videno:
             videno.add(k); unik.append(k)
+
+    # HANS_MOUNT_RETRY_V1 (28.8.) — sdílení nemusí být po ruce HNED.
+    # Doloženo: PC nabootovalo v 08:32, systemd zkusil navázat šest sdílení
+    # naráz a Windows je odmítly (STATUS_REQUEST_NOT_ACCEPTED). Za pár minut
+    # už přihlášení procházelo, ale `x-systemd.automount` mountuje až PŘI
+    # PŘÍSTUPU — takže adresáře zůstaly prázdné, dokud do nich někdo nesáhl,
+    # a Hans mezitím hlásil, že sdílení není namontované. Jeden pokus navíc
+    # s prodlevou tuhle třídu výpadků pokryje: samotný `test -f` automount
+    # spustí, jen mu chvíli trvá, než sezení naváže.
+    pokusy = max(1, int(cfg.get("mount_retry", 3)))
+    prodleva = float(cfg.get("mount_retry_delay_s", 4.0))
+    skript = "; ".join(f"test -f {_q(k)} && {{ echo {_q(k)}; exit 0; }}" for k in unik)
+    for pokus in range(pokusy):
+        try:
+            hit = _pc(cfg, skript + "; exit 0", 120).strip().splitlines()
+            if hit:
+                if pokus:
+                    log.info("soubor se našel až na %d. pokus (mount naskočil se zpožděním)",
+                             pokus + 1)
+                return hit[0]
+        except Exception as e:
+            log.warning("hledání souboru na PC selhalo (pokus %d/%d): %s",
+                        pokus + 1, pokusy, e)
+        if pokus < pokusy - 1:
+            _probud_mounty(cfg, unik)
+            time.sleep(prodleva)
+    return None
+
+
+def _probud_mounty(cfg, cesty) -> None:
+    """Sáhne na přípojné body, aby se rozjel automount.
+
+    `test -f` na hlubokou cestu automount spustí taky, ale když se mount
+    nestihne, vrátí rovnou false. Tohle na kořeny sáhne zvlášť a chybu spolkne
+    — jde jen o to dát systemd podnět, ne o výsledek."""
+    koreny = sorted({"/".join(c.split("/")[:3]) for c in cesty if c.startswith("/mnt/")})
+    if not koreny:
+        return
     try:
-        skript = "; ".join(f"test -f {_q(k)} && {{ echo {_q(k)}; exit 0; }}" for k in unik)
-        hit = _pc(cfg, skript + "; exit 0", 120).strip().splitlines()
-        return hit[0] if hit else None
+        _pc(cfg, "; ".join(f"ls {_q(k)} >/dev/null 2>&1" for k in koreny) + "; exit 0", 90)
     except Exception as e:
-        log.warning("hledání souboru na PC selhalo: %s", e)
-        return None
+        log.debug("probuzení mountů selhalo, jedu dál: %s", e)
 
 
 def has_czech_audio(cfg, pc_path) -> bool:
