@@ -331,6 +331,16 @@ def obstarej_titulky(config, pc_path, meta, workdir) -> dict:
 # ⚠️ ROZLIŠUJE SE POZICÍ, NE VÝZNAMEM. Uprostřed věty jsou závorky běžný text
 # („(USA)", „(však víte)") a sahat se na ně NESMÍ — plošné mazání závorek by
 # ubíralo obsah. Proto jen celý řádek a začátek řádku.
+_HRANATA = re.compile(r"\[[^\]]{0,40}\]")     # [music], [Applause], [Officer] — vždy popis
+_SIPKY = re.compile(r"&gt;&gt;|>>")             # značka střídání mluvčího v CC
+
+
+def _unescape(t: str) -> str:
+    """HTML entity → znaky. Bez toho jde do namlouvání doslovné `&gt;&gt;`."""
+    import html as _h
+    return _h.unescape(t or "")
+
+
 _NOTICKA_CELA = re.compile(r"^[\(\[][^\)\]]{0,40}[\)\]]$")
 _NOTICKA_ZACATEK = re.compile(r"^[\(\[][^\)\]]{0,40}[\)\]]\s*")
 _KREDIT = re.compile(r"^(titulky|p[řr]eklad|translated|subtitles|korekce|"
@@ -344,10 +354,31 @@ def _bez_noticek(src: str, dst: str) -> dict:
     cues = st.load_cues(src)
     if not cues:
         return {"zmeneno": False, "zahozeno": 0, "ocisteno": 0}
-    ven, zahozeno, ocisteno = [], 0, 0
+    ven, zahozeno, ocisteno, upraveno = [], 0, 0, 0
     for c in cues:
         t = (c["text"] or "").strip()
         if not t:
+            continue
+        # HANS_SUB_CLEAN_V2 (28.8.) — nález uživatele po poslechu: „hudba" se
+        # pořád ozývala. Důvod: `[music]` nesedí na vlastním řádku, ale UPROSTŘED
+        # věty mezi značkami střídání mluvčích:
+        #     …in a truly original fashion. &gt;&gt; [music] &gt;&gt; I…
+        # V1 řešila jen celý řádek a začátek řádku → 24 replik z 86 prošlo.
+        # ⚠️ Hranaté závorky se mažou KDEKOLI, kulaté NE. Není to nedůslednost:
+        # ověřeno na 25 115 řádcích uživatelovy knihovny — hranatá závorka
+        # uprostřed věty se tam nevyskytuje ANI JEDNOU (vždy je to zvuk nebo
+        # jmenovka mluvčího), kdežto kulatá ano 18× a je to běžný text.
+        _puv = t
+        t = _unescape(t)
+        t = _HRANATA.sub(" ", t)
+        t = _SIPKY.sub(" ", t)          # „>>" = střídání mluvčího, ne řeč
+        t = " ".join(t.split()).strip(" -–—")
+        if t != _puv:
+            # ⚠️ MUSÍ se počítat: `zmeneno` rozhoduje, jestli volající vyčištěný
+            # soubor vůbec použije. Bez tohohle se úklid udělal a zahodil.
+            upraveno += 1
+        if not t:
+            zahozeno += 1
             continue
         if _NOTICKA_CELA.match(t) or _KREDIT.match(t):
             zahozeno += 1
@@ -369,8 +400,9 @@ def _bez_noticek(src: str, dst: str) -> dict:
     with open(dst, "w", encoding="utf-8") as f:
         for i, c in enumerate(ven, 1):
             f.write(f"{i}\n{_ts(c['start'])} --> {_ts(c['end'])}\n{c['text']}\n\n")
-    return {"zmeneno": bool(zahozeno or ocisteno), "zahozeno": zahozeno,
-            "ocisteno": ocisteno, "replik": len(ven)}
+    return {"zmeneno": bool(zahozeno or ocisteno or upraveno),
+            "zahozeno": zahozeno, "ocisteno": ocisteno,
+            "upraveno": upraveno, "replik": len(ven)}
 
 
 # ── překlad ──────────────────────────────────────────────────────────────────
@@ -634,8 +666,13 @@ def preloz(config, pc_path=None, meta=None, progress=None) -> dict:
         _u = _bez_noticek(srt, _cist)
         if _u["zmeneno"]:
             srt = _cist
-            log.info("notičky pro neslyšící: %d replik zahozeno, %d očištěno",
-                     _u["zahozeno"], _u["ocisteno"])
+            # ⚠️ Vypsat i `upraveno` — bez něj hláška tvrdila „0 zahozeno,
+            # 0 očištěno", i když se upravilo 53 replik z 86, a vypadalo to,
+            # že čištění neběží.
+            log.info("notičky pro neslyšící: %d zahozeno, %d očištěno, "
+                     "%d upraveno (z %d replik)",
+                     _u["zahozeno"], _u["ocisteno"], _u.get("upraveno", 0),
+                     _u.get("replik", 0))
         prel = {}
         if zdroj["jazyk"] != "cs":
             say("překládám")
