@@ -108,6 +108,26 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
                 return (cmd_id, args)
         return None  # neznámý slash → ne-command
 
+    # HANS_BARE_ALIAS_V1 (28.8.) — HOLÝ NÁZEV PŘÍKAZU BEZ LOMÍTKA.
+    # Nález uživatele: „preloz" spustilo MALOVÁNÍ. Vzory pro /preloz čekaly za
+    # slovem ještě „to"/„ten", takže holý tvar propadl do volného hovoru a co
+    # se stalo místo toho, určil kontext vlákna (zbytek rozmluvy o Troskách).
+    # ⚠️ Audit 28.8. ukázal, že tuhle díru mělo 53 z 56 příkazů. Ruční vzor ke
+    # každému je ale ŠPATNÁ oprava: většina aliasů jsou buď anglické
+    # identifikátory, které česky nikdo nenapíše, nebo naopak běžná slova
+    # („film", „stop", „dnes", „nápad", „seznam") — a ta by pak unášela normální
+    # hovor, což je horší porucha než ta původní.
+    # Proto JEDNO pravidlo: zpráva, která je CELÁ jen názvem příkazu, je ten
+    # příkaz. Kotvy na začátek i konec drží riziko nízko — aby se to spustilo,
+    # musí uživatel napsat to slovo a nic jiného, což je fakticky povel.
+    # Nové příkazy tím dostanou totéž chování samy, bez dalšího vzoru.
+    holy = _fold_diacritics(msg.lower()).strip().rstrip("!?.,").strip()
+    if holy and " " not in holy:
+        for cmd_id, spec in _COMMANDS.items():
+            if holy in [_fold_diacritics(a) for a in spec["slash"]]:
+                _set_route_origin("bare")
+                return (cmd_id, "")
+
     # HANS_NL_ROUTE_HYPOTHETICAL_V1 (26.8.) — DLOUHÁ HYPOTETICKÁ VĚTA NENÍ POVEL.
     # Doloženo: „kdybys měl namalovat obraz, který by vystihoval dnešní den…"
     # spustilo SKUTEČNÉ malování; „kdyby ses měl rozhodnout, jestli pamatovat,
@@ -3290,6 +3310,15 @@ register(
     "preloz",
     slash_aliases=["preloz", "přelož", "preklad", "překlad", "translate"],
     nl_patterns=[
+        # HANS_PRELOZ_HOLY_TVAR_V1 (28.8.) — nález uživatele: na holé „preloz"
+        # se Hans pustil MALOVAT (vzory čekaly za slovem ještě „to"/„ten").
+        # Holý tvar dnes řeší obecné pravidlo HANS_BARE_ALIAS_V1 v
+        # `parse_command` — zvláštní vzor na něj tu ZÁMĚRNĚ NENÍ, ať totéž
+        # nedělají dva mechanismy, které se můžou rozejít.
+        # Zůstává jen infinitiv („zkus to přeložit", „můžeš to přeložit"). Vzor je široký
+        # a chytí i větu, kde překlad Kodi nemyslíš — nevadí: obsluha se napřed
+        # ptá Kodi, co běží, a bez přehrávání odpoví „nic neběží", nic nespustí.
+        r"p[řr]elo[žz]it\b",
         r"p[řr]elo[žz]\s+(to|ten|tenhle|tenhleten|mi|nam|n[áa]m)\b",
         r"p[řr]elo[žz]\s+(ten\s+)?(dokument|film|po[řr]ad|dokument[áa]rn)",
         r"(ud[ěe]l[aáeě]\w*|p[řr]iprav\w*)\s+(mi\s+)?[čc]esk[ou]\w*\s+(stopu|dabing|verzi)",
