@@ -2275,6 +2275,51 @@ class HansIdle:
         essay = essay.strip()
         out['words'] = len(essay.split())
         out['text'] = essay  # HANS_WORK_COMPLETION_V1 — esej pro reflexi díla
+        # HANS_WORK_FIXPOINT_GUARD_V1 (28.8.) — NEZAPISOVAT TOTÉŽ ZNOVU.
+        # Doloženo: ze 13 esejí o Designu je 5 různých těl a jedno se opakuje
+        # OSMKRÁT (14.7.–24.8.); mezi 24.7. a 24.8. se liší jediný řádek — datum.
+        # Příčina je fixní bod: materiál je RAG dotaz s pevným k=15 (proto pořád
+        # „z 15 útržků"), jako „dřívější úvaha" se přiloží Hansova VLASTNÍ minulá
+        # esej, a při shodném vstupu vyjde shodný výstup. Pokyn v promptu
+        # („NEopakuj ji, posuň myšlenku dál") to přebít nemůže.
+        # Škoda nebyla v té eseji, ale v EVIDENCI: deník hlásil 14 cílů
+        # „dokončen-s-dílem" při jednom skutečném přírůstku, a `reflect_on_work`
+        # tímtéž textem osmkrát krmil postoje.
+        # Tohle je jen POJISTKA proti nafukování deníku — příčinu (nehybný
+        # materiál) neřeší; ta patří k tomu, aby se RAG dotaz mezi koly posouval.
+        _slug = _re.sub(r'[^a-z0-9]+', '_', topic.lower()).strip('_')[:40] or 'dilo'
+        try:
+            import difflib as _dl
+            import glob as _gl
+
+            def _telo(txt):
+                # hlavička = '# Téma' + prázdný + '*Hansova esej · …*' + prázdný
+                for i, r in enumerate(txt.split(chr(10))):
+                    if r.startswith('*Hansova esej'):
+                        return ' '.join(chr(10).join(
+                            txt.split(chr(10))[i + 1:]).split())
+                return ' '.join(txt.split())
+
+            _drive = sorted(_gl.glob(_os.path.join(
+                'data/hans_works', '*_%s.md' % _slug)))
+            if _drive:
+                _stary = open(_drive[-1], encoding='utf-8').read()
+                _shoda = _dl.SequenceMatcher(
+                    None, _telo(_stary), ' '.join(essay.split())).ratio()
+                _prah = float((self.config.get('goals', {}) or {}).get(
+                    'fixpoint_ratio', 0.95))
+                if _shoda >= _prah:
+                    out['error'] = (
+                        'esej se neposunula (%.0f %% shoda s %s) — dílo '
+                        'nezapisuji' % (_shoda * 100,
+                                        _os.path.basename(_drive[-1])))
+                    _log.warning('work fixpoint: %s', out['error'])
+                    return out
+                _log.info('work fixpoint: shoda s předchozím %.0f %% (práh %.0f %%)',
+                          _shoda * 100, _prah * 100)
+        except Exception as _fe:
+            _log.debug('kontrola fixního bodu selhala, jedu dál: %s', _fe)
+
         # 3) Ulož soubor
         works_dir = 'data/hans_works'
         try:
