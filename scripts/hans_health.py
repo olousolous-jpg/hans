@@ -36,6 +36,9 @@ WEDGED = "wedged"      # server žije, ale visí → self-heal kandidát
 DOWN = "down"          # nedostupné (PC spí / služba neběží)
 UNKNOWN = "unknown"
 WARN = "warn"          # behaviorální varování (rozvrh zaostává) — NEspouští heal
+BUSY = "busy"          # HEALTH_OLLAMA_BUSY_V1 — server žije, inference čeká, ale
+                       # GPU reálně počítá (Hansova vlastní dlouhá práce).
+                       # NEspouští heal: restart by zabil běžící výpočet.
 
 
 def _cfg(config: dict) -> dict:
@@ -79,11 +82,42 @@ def probe_ollama(config: dict) -> dict:
         url = _resolve_url(None, config)
         r = requests.get(f"{url}/api/tags", timeout=6)
         if r.ok:
-            return {"status": WEDGED, "detail": "server žije, inference visí",
+            # HEALTH_OLLAMA_BUSY_V1 — nez to prohlasime za zasek, overit, jestli
+            # grafika neco NEPOCITA. 29.8. tudy propadl backfill: probe
+            # timeoutovala jen proto, ze Ollama delala Hansovu vlastni praci,
+            # a self-heal ji restartoval uprostred.
+            pocita, watt = _gpu_pocita(config)
+            if pocita:
+                _log.info("health: Ollama neodpovida, ale GPU pocita (%.0f W) "
+                          "→ NENI zasek, nerestartuji", watt)
+                return {"status": BUSY,
+                        "detail": "inference čeká, GPU počítá (%.0f W)" % watt,
+                        "latency_s": lat}
+            return {"status": WEDGED, "detail": "server žije, inference visí"
+                    + ("" if watt is None else " (GPU %.0f W)" % watt),
                     "latency_s": lat}
     except Exception as e:
         _log.debug("probe_ollama tags: %s", e)
     return {"status": DOWN, "detail": "Ollama nedostupná", "latency_s": lat}
+
+
+def _gpu_pocita(config: dict) -> tuple:
+    """HEALTH_OLLAMA_BUSY_V1 — pocita grafika doopravdy? → (verdikt, watty).
+
+    `verdikt` je None, kdyz se prikon nepodarilo zmerit — volajici pak MUSI
+    zachovat dosavadni chovani (WEDGED), at zaseknuta Ollama neuvizne bez pomoci.
+    """
+    prah = float(_cfg(config).get("ollama_busy_watt", 100.0))
+    try:
+        from scripts import pc_remote
+        tele = pc_remote.telemetry(config) or {}
+    except Exception as e:
+        _log.debug("_gpu_pocita: telemetrie nedostupna (%s)", e)
+        return None, None
+    w = tele.get("gpu_power_w")
+    if w is None:
+        return None, None
+    return (float(w) >= prah), float(w)
 
 
 # ── ComfyUI (malování/avatar) ────────────────────────────────────────────────

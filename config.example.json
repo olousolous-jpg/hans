@@ -1136,7 +1136,9 @@
     "comfyui_restart_cmd": "systemctl --user restart comfyui",
     "_self_heal_comfyui_note": "HANS_COMFY_WEDGE_V1 - ComfyUI je systemd USER sluzba, restart NEPOTREBUJE sudo (na rozdil od Ollamy). Spousti se JEN na status WEDGED.",
     "max_boots_24h": 4,
-    "_max_boots_note": "PC_REBOOT_WATCH_V1 (12.8.): kolik bootů PC za 24 h je ještě normální. Běžně 2 (buzení ve 3:00 na analytiku + ranní). Víc = něco stroj restartuje — hlídá se kvůli tomu, že hardwarový watchdog (sp5100_tco, zapnut 12.8. po nočním zamrznutí) umí na některých deskách resetovat bez příčiny. Status WARN, NEspouští heal."
+    "_max_boots_note": "PC_REBOOT_WATCH_V1 (12.8.): kolik bootů PC za 24 h je ještě normální. Běžně 2 (buzení ve 3:00 na analytiku + ranní). Víc = něco stroj restartuje — hlídá se kvůli tomu, že hardwarový watchdog (sp5100_tco, zapnut 12.8. po nočním zamrznutí) umí na některých deskách resetovat bez příčiny. Status WARN, NEspouští heal.",
+    "ollama_busy_watt": 100,
+    "_ollama_busy_note": "Nad timto prikonem GPU se neodpovidajici Ollama povazuje za VYTIZENOU, ne zaseknutou, a NErestartuje se. Rozhoduje prikon, ne procenta: zasek runlistu = 99 % pri 49 W, realna prace 74-219 W, rezidentni model v klidu 45-51 W. Doloženo 29.8.: self-heal restartoval Ollamu uprostred backfillu a zabil 30 minut prace. Kdyz se prikon nepodari zmerit, chova se to jako driv (restart)."
   },
   "toolscout": {
     "enabled": false,
