@@ -637,7 +637,13 @@
       "ipadapter_weight": 0.75
     },
     "comfy_probe_timeout": 8,
-    "_comfy_probe_note": "HANS_COMFY_WEDGE_V1 - rychla sonda PRED renderem. Kdyz ComfyUI neodpovi do teto doby, render se ODLOZI misto cekani cely render_timeout. Zatuhly ComfyUI (TCP zije, HTTP mlci) se timeoutem neresi - resi ho restart."
+    "_comfy_probe_note": "HANS_COMFY_WEDGE_V1 - rychla sonda PRED renderem. Kdyz ComfyUI neodpovi do teto doby, render se ODLOZI misto cekani cely render_timeout. Zatuhly ComfyUI (TCP zije, HTTP mlci) se timeoutem neresi - resi ho restart.",
+    "place_likeness": {
+      "enabled": true,
+      "denoise": 0.5,
+      "_note": "HANS_ART_PLACE_LIKENESS_V1 (29.8.): holy nazev MISTA ('Hrad Trosky') -> premaluj jeho skutecnou fotku z Wikipedie (img2img). Text sam nestacil: FLUX cetl 'two spires' jako spicate strechy a maloval pohadkovy zamek. Namet SE SCENOU ('Trosky v bouri') jde dal na text-grounded cestu.",
+      "_denoise_note": "ZMERENO 29.8. na Troskach, stejny prompt i seed: 0.40 = temer fotografie (nejvernejsi, ale uz to neni malba); 0.50 = obe veze i skaly sedi a je to malovane (ZVOLENO); 0.60 = model si skalni sloupy vymysli pryc, veze dostanou spicate strechy. ⛔ IP-Adapter zkousen a zamitnut (ztratil druhou vez)."
+    }
   },
   "unknown_tracker": {
     "enabled": false,

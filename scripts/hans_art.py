@@ -1199,6 +1199,112 @@ def _wiki_character_appearance(config: dict, name: str) -> str:
         return ""
 
 
+# HANS_ART_PLACE_APPEARANCE_V1 (29.8.) — PODOBA MÍSTA z Wiki článku.
+# Táž třída chyby jako u fiktivních postav (HANS_ART_CHAR_APPEARANCE_V1),
+# jen jiná větev: `gloss` je PRVNÍ VĚTA článku, tedy ZAŘAZENÍ, ne PODOBA.
+# Doloženo 27.8. (deník artwork id 132043): „Hrad Trosky" → gloss „zřícenina
+# hradu na vrcholu stejnojmenného vrchu" → prompt „Ruin of Trosky Castle
+# stands atop a hill" → obraz obecné zříceniny na kopci. Charakteristická
+# dvojice věží na sopouších (Panna a Baba) přitom V ČLÁNKU JE, jen o pár
+# odstavců níž — grounding se cestou neztrácel, on nikdy nevznikl.
+# Popisné sekce v pořadí PRIORITY (ne v pořadí výskytu v článku — u Trosek
+# stojí „Přírodní poměry" před „Stavební podobou", ale silueta je v druhé).
+_PLACE_SEC_PRIO = [
+    r"Stavebn[íi]\s+podoba", r"Fyzick[ýy]\s+popis", r"Popis", r"Architektura",
+    r"Podoba", r"Vzhled", r"P[řr][íi]rodn[íi]\s+pom[ěe]ry", r"Charakteristika",
+    r"Geografie", r"Poloha",
+]
+_PLACE_HEAD = re.compile(r"\n?(=+)\s*[^=\n]{2,60}\s*=+\n?")
+_PLACE_VIS = re.compile(
+    r"v[ěe][žz]|skal|[čc]edi[čc]|sopou|vulk[áa]n|nefelinit|vrchol|dominant"
+    r"|hradb|pal[áa]c|kupol|ark[áa]d|p[ůu]dorys|st[řr]ech|fas[áa]d|okn|klenb"
+    r"|n[áa]dvo|tyč[íi]|vyp[íi]n[áa]|kamen|cihl|z[ďd]|brán|most|jezer|vodop[áa]d"
+    r"|poho[řr]|[úu]dol|les|[řr]ek|tvo[řr][íi]\s|rozkl[áa]d|obklop|elips|kruh"
+    r"|patr|sloup|oblouk|mramor", re.I)
+# Věty o DĚJINÁCH se do obrazového promptu nehodí (majitelé, přestavby,
+# letopočty). Bez tohoto filtru vytáhl prototyp Bezdězu „přestavbu" místo
+# okrouhlé Čertovy věže.
+# HANS_ART_PLACE_NO_PEOPLE_V1 — popisná sekce nemusí popisovat PODOBU.
+# Doloženo při stavbě: česká sekce „Fyzický popis" u Kolosea je o kapacitě
+# a o tom, kde seděli senátoři → bez tohoto filtru by patch u Kolosea
+# ZHORŠIL dnešní stav (dnes tam jde aspoň jen holá glosa).
+_PLACE_LIDE = re.compile(
+    r"sen[áa]tor|ob[čc]an|[šs]lecht|div[áa]k|obyvatel|n[áa]v[šs]t[ěe]vn"
+    r"|jezdc|patricij|posazen|sedadl|sez(en|ení)|kapacit|pojmout", re.I)
+_PLACE_HIST = re.compile(
+    r"roku?\s+\d|\d{3,4}|stolet[íi]|p[řr]estav|zbo[řr]|majitel|rod[uů]\b"
+    r"|kr[áa]l|c[íi]sa[řr]", re.I)
+
+
+def _wiki_place_appearance(config: dict, name: str, max_chars: int = 700) -> str:
+    """Vytáhne z Wiki článku věty o PODOBĚ místa (silueta, hmota, materiál).
+
+    Tři věci, které se při stavbě ukázaly jako nutné (změřeno na 8 místech):
+    (1) `max_chars=40000` — výchozích 12 000 znaků článek uřízne JEŠTĚ PŘED
+        popisnou sekcí (ta stojí až za historií); u Kosti i Kolosea se do
+        výřezu nevešla vůbec.
+    (2) konec sekce = nadpis STEJNÉ nebo VYŠŠÍ úrovně. „Fyzický popis" má
+        hned pod sebou podsekci → naivní „do dalšího ==" vrátilo 2 znaky.
+    (3) ŽÁDNÝ fallback na klíčová slova mimo popisnou sekci. Vyzkoušeno
+        a zahozeno: tahal do obrazového promptu majitele hradu („Zajícové
+        z Hazmburka") a koloniální dějiny Zambie. Radši nic než historie —
+        beze změny se chová jako dosud.
+    """
+    try:
+        from scripts.web_reader import WebReader
+        a = WebReader(config).wikipedia_article(name, max_chars=40000)
+        txt = (a or {}).get("text") or ""
+        if not txt:
+            return ""
+        out = _place_appearance_from_text(txt, max_chars)
+        if out:
+            _log.info("art: podoba místa '%s' — %d zn.", name, len(out))
+        return out
+    except Exception as e:
+        _log.debug("art: _wiki_place_appearance: %s", e)
+        return ""
+
+
+def _place_appearance_from_text(txt: str, max_chars: int = 700) -> str:
+    """HANS_ART_PLACE_PURE_V1 — čistá půlka `_wiki_place_appearance` (bez sítě),
+    aby šla tvrdit v regresní sadě. Tři pravidla, která tu drží, se dají snadno
+    „zjednodušit" a rozbít TIŠE, proto mají každé svůj případ v regresi."""
+    if not txt:
+        return ""
+    try:
+        for pat in _PLACE_SEC_PRIO:
+            m = re.search(r"(=+)\s*(" + pat + r"[^=\n]{0,30}?)\s*=+", txt, re.I)
+            if not m:
+                continue
+            uroven = len(m.group(1))
+            konec = len(txt)
+            for h in _PLACE_HEAD.finditer(txt, m.end()):
+                if len(h.group(1)) <= uroven:
+                    konec = h.start()
+                    break
+            body = _PLACE_HEAD.sub(" ", txt[m.end():konec]).strip()
+            sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body) if s.strip()]
+            vis = [s for s in sents
+                   if _PLACE_VIS.search(s) and not _PLACE_HIST.search(s)
+                   and not _PLACE_LIDE.search(s)]   # HANS_ART_PLACE_NO_PEOPLE_V1
+            out, n = [], 0
+            for s in vis:
+                if n + len(s) > max_chars:
+                    break
+                out.append(s)
+                n += len(s) + 1
+                if len(out) >= 4:
+                    break
+            if out:
+                _log.info("art: podoba místa ze sekce '%s' (%d vět)",
+                          m.group(2).strip(), len(out))
+                return " ".join(out)
+        return ""
+    except Exception as e:
+        _log.debug("art: _place_appearance_from_text: %s", e)
+        return ""
+
+
 def _ground_subject(config: dict, db_path: str, subject: str) -> str:
     """HANS_ART_SUBJECT_GROUNDING_V1/V2 — zjisti, KOHO/CO malovat.
     Kaskáda: (1) C1 entity store (Hansovo čtení) → (2) Wikipedia fallback
@@ -1254,6 +1360,16 @@ def _ground_subject(config: dict, db_path: str, subject: str) -> str:
                     _log.info("art: postava '%s' — vzhled z Wiki (%d zn)",
                               s_clean, len(_app))
                     _base = ("Vzhled postavy %s (ZDŮRAZNI ho v obraze): %s\n%s"
+                             % (name, _app, _base))
+            # HANS_ART_PLACE_APPEARANCE_V1 — místo (hrad, zřícenina, jezero):
+            # gloss řekne, CO to je, ne JAK to vypadá. Brána je `etype` z entity
+            # storu, ne regex nad prózou — užší a nelže.
+            elif (ent.get("etype") or "") == "místo":
+                _app = _wiki_place_appearance(config, ent.get("name", s_clean))
+                if _app:
+                    _log.info("art: místo '%s' — podoba z Wiki (%d zn)",
+                              s_clean, len(_app))
+                    _base = ("Podoba místa %s (ZDŮRAZNI ji v obraze): %s\n%s"
                              % (name, _app, _base))
             return _base
         # C1 miss → Wikipedia fallback (dohledej + ulož do store)
@@ -1600,6 +1716,144 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
     return rel_path, caption
 
 
+def paint_place_from_photo(config: dict, diary_db_path: str, subject: str,
+                           ref_path: str, style: str = "",
+                           place_name: str = "",
+                           grounded: str = "") -> Optional[tuple]:
+    """HANS_ART_PLACE_LIKENESS_V1 (29.8.) — přemaluj REÁLNOU FOTKU místa do
+    Hansova stylu (img2img). Vrací (rel_path, caption) nebo None (→ volající
+    spadne na text-grounded malbu). Nikdy nehází.
+
+    PROČ VŮBEC: text sám nestačil. I když `HANS_ART_PLACE_APPEARANCE_V1` dostal
+    do promptu „the two spires and palaces", FLUX to přečetl jako ŠPIČATÉ
+    STŘECHY a namaloval pohádkový zámek (29.8., 299 s). Fotka tutéž informaci
+    nese jednoznačně.
+
+    ⛔ IP-ADAPTER JE VYZKOUŠENÝ A ZAMÍTNUTÝ (29.8., měřeno na Troskách):
+    weight 0.75 dal fotorealistický letecký pohled s JEDNOU věží — druhou
+    ztratil a přiopsal z fotky i nesouvisející chalupu. Je to přesně týž
+    kompromis, jaký má u osob PuLID (`HANS_ART_PORTRAIT_IMG2IMG_V1`): volná
+    kompozice, podoba jen „na první pohled". U holého názvu místa chceme
+    OPAK — věrnost. Proto img2img.
+
+    ⚠️ Cena, kterou to má: img2img zdědí ZÁBĚR fotky. Wikipedia má u Trosek
+    i u Kosti letecký snímek → Hans maluje z ptačí perspektivy. U osob je to
+    táž vlastnost a je přijatá.
+    """
+    try:
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            return None
+    except Exception:
+        pass
+    ckpt = _ckpt(config)
+    if not ckpt or not ref_path or not os.path.exists(ref_path):
+        return None
+    base = _comfy_url(config)
+    try:
+        urllib.request.urlopen(f"{base}/system_stats", timeout=10).read()
+    except Exception:
+        return None
+    img_name = _comfy_upload_image(base, ref_path)
+    try:
+        os.remove(ref_path)
+    except Exception:
+        pass
+    if not img_name:
+        return None
+
+    nm = place_name or subject
+    acfg = _acfg(config)
+    lcfg = (acfg.get("place_likeness", {}) or {})
+    # anglický název do promptu (HANS_ART_EN_TITLE_V1) — SDXL na český nereaguje
+    _wl = (config.get("curiosity", {}) or {}).get("wiki_lang", "cs")
+    nm_en = _en_name(nm, lang=_wl) or nm
+    style_kw = (", in the style of %s" % style) if style else ""
+    # HANS_ART_PLACE_PROMPT_V1 (29.8.) — ⚠️ U MÍSTA NESTAČÍ HOLÁ ŠABLONA.
+    # Doloženo živým během: prompt „expressive painterly view of Hrad Trosky"
+    # + fotka Trosek při denoise 0.60 dal VESNICI S KOSTELEM. Fotka strukturu
+    # NEUŘÍDÍ sama — prompt ji přebije. (U osob šablona stačí, protože portrét
+    # žádný obsah nepotřebuje: obličej je obličej. Místo potřebuje vědět, ŽE
+    # jsou to dvě věže na skalách — jinak si model dosadí, co je běžnější.)
+    # Proto se prompt staví z groundingu (`HANS_ART_PLACE_APPEARANCE_V1`) touž
+    # cestou jako u text-grounded malby.
+    prompt = ""
+    if grounded:
+        _intro = ("Place to depict (described in Czech):\n%s\n\n"
+                  "A real photograph of this place is supplied separately and "
+                  "will be repainted. Write ONE English SDXL prompt that names "
+                  "the place and describes its PHYSICAL FORM — rock, towers, "
+                  "ruins, materials, surroundings. Do not invent buildings that "
+                  "are not described.\n\n" % grounded)
+        try:
+            prompt = _scene_prompt(config, subject, grounded, diary_db_path,
+                                   system=_SUBJECT_SCENE_SYSTEM,
+                                   source_intro=_intro,
+                                   cs_subject=subject) or ""
+        except Exception as _spe:
+            _log.debug("art: scene prompt místa selhal: %s", _spe)
+    if not prompt:
+        prompt = ("expressive painterly view of %s%s, oil painting, artistic "
+                  "brushwork, rich detail, atmospheric lighting, masterful"
+                  % (nm_en, style_kw))
+    elif style_kw:
+        prompt += style_kw
+    dn = float(lcfg.get("denoise", 0.60))
+    steps = int(acfg.get("steps", 28)); cfg_s = float(acfg.get("cfg", 6.5))
+    seed = uuid.uuid4().int % (2**31)
+    client_id = uuid.uuid4().hex
+    os.makedirs(ART_DIR, exist_ok=True)
+    fname = "%d_%s_podoba.png" % (int(time.time()), _slug(subject))
+    dest = os.path.join(ART_DIR, fname)
+
+    if not _comfy_ready(config):
+        return None
+    _ollama_unload(config, _ollama_loaded(config))
+    rtimeout = int(acfg.get("render_timeout", 600))
+    ok = False
+    vision_desc = ""
+    try:
+        wf = _comfy_workflow_img2img(ckpt, prompt, seed, img_name, dn, steps,
+                                     cfg_s, negative=_NEG_BASE)
+        _log.info("art: podoba místa img2img start (%s, denoise %.2f) — %.90s",
+                  nm_en, dn, prompt)
+        pid = _comfy_submit(base, wf, client_id)
+        if pid:
+            hist = _comfy_wait(base, pid, timeout=rtimeout)
+            img = _first_image(hist) if hist else None
+            if img and _comfy_fetch_image(base, img, dest):
+                ok = True
+    except Exception as e:
+        _log.warning("art: podoba místa img2img selhala: %s", e)
+    finally:
+        _comfy_free(config)
+        if ok:
+            vision_desc = _describe_render(config, dest)
+        _ollama_warm(config,
+                     config.get("models", {}).get("dialog", "hans-czech:latest"))
+    if not ok:
+        return None
+    rel_path = os.path.join("data", "hans_art", fname)
+    title = subject[:80] if not style else ("%s (styl: %s)" % (subject, style))[:80]
+    caption = _evaluate_artwork(config, diary_db_path, title, subject, vision_desc,
+                                source_label="podle skutečné podoby místa")
+    _derive_art_lesson(config, diary_db_path, title, vision_desc, caption)
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        db.execute(
+            "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
+            (time.time(), "artwork", title, caption,
+             json.dumps({"path": rel_path, "prompt": prompt, "source": "place",
+                         "denoise": dn, "painted_ts": time.time()},
+                        ensure_ascii=False)))
+        db.commit()
+        db.close()
+    except Exception as e:
+        _log.warning("art: log place artwork failed: %s", e)
+    _log.info("art: Hans namaloval podobu místa '%s' → %s", nm, rel_path)
+    return rel_path, caption
+
+
 def paint_self(config: dict, diary_db_path: str, full_figure: bool = True,
                style: str = ""):
     """HANS_ART_SELF_V1 — Hans namaluje SÁM SEBE z vlastního avatar descriptoru
@@ -1885,6 +2139,39 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             _log.debug("art: person-likeness cesta selhala: %s", _pe)
     # HANS_ART_SUBJECT_GROUNDING_V1 — ukotvi námět (kdo/co to je) PŘED renderem
     grounded = _ground_subject(config, diary_db_path, subject)
+    # HANS_ART_PLACE_LIKENESS_V1 — je-li námět MÍSTO, přemaluj jeho skutečnou
+    # fotku (analogie person_likeness). Běží AŽ ZA groundingem schválně: ten
+    # entitu vyhledá a uloží, takže tady stačí LEVNÉ čtení ze storu bez sítě
+    # — a u obecného slova („kočku") se grounding přeskočí, takže se sem
+    # nedostane ani tahle cesta (HANS_ART_COMMON_NOUN_V1 platí i pro místa).
+    if (_acfg(config).get("place_likeness", {}) or {}).get("enabled", True):
+        try:
+            from scripts.hans_entities import EntityStore
+            _pent = EntityStore(config, diary_db_path).resolve(
+                subject, loose=True, etype="místo")
+            if _pent:
+                _pnm = _pent.get("name", subject)
+                # Holý název = chceme VĚRNOST → fotka. Námět se scénou
+                # („Trosky v bouři") by se překreslením fotky ztratil, proto
+                # jde dál na text-grounded cestu. Táž úvaha jako
+                # HANS_ART_PORTRAIT_IMG2IMG_V1 u osob, tatáž funkce.
+                if _subject_beyond_name(subject, _pnm):
+                    _log.info("art: místo '%s' nese scénu → text-grounded malba",
+                              _pnm)
+                else:
+                    _pref = _fetch_person_ref(config, _pent)   # funkce je generická
+                    if _pref:
+                        _r = paint_place_from_photo(
+                            config, diary_db_path, subject, _pref, style,
+                            place_name=_pnm, grounded=grounded)
+                        if _r:
+                            return _r
+                        _log.info("art: podoba místa nevyšla → text-grounded malba")
+                    else:
+                        _log.info("art: místo '%s' nemá na Wikipedii fotku "
+                                  "→ text-grounded malba", _pnm)
+        except Exception as _ple:
+            _log.debug("art: place-likeness cesta selhala: %s", _ple)
     # scene_intro musí NÉST námět — dřív bylo "" → LLM dostal prázdný prompt
     # a maloval naslepo (např. „pan Sorge" → generický stařec).
     if style:
