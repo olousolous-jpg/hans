@@ -341,6 +341,20 @@ def _unescape(t: str) -> str:
     return _h.unescape(t or "")
 
 
+def _ocisti_repliku(t: str) -> str:
+    """HANS_SUB_CLEAN_V3 (29.8.) — marker zvuku a střídání mluvčího ven.
+
+    Vytaženo ze `_bez_noticek`, protože totéž musí proběhnout i PO překladu:
+    model si `[hudba] >>` vyrobí sám i z čistého vstupu (změřeno 29.8. na
+    replikách s `[music]` — prosáklo 4 z 5, jedna doslova `>> [hudba] >>`).
+    Jedna funkce schválně: dvě kopie téhož pravidla by se časem rozešly.
+    """
+    t = _unescape(t or "")
+    t = _HRANATA.sub(" ", t)
+    t = _SIPKY.sub(" ", t)
+    return " ".join(t.split()).strip(" -–—")
+
+
 _NOTICKA_CELA = re.compile(r"^[\(\[][^\)\]]{0,40}[\)\]]$")
 _NOTICKA_ZACATEK = re.compile(r"^[\(\[][^\)\]]{0,40}[\)\]]\s*")
 _KREDIT = re.compile(r"^(titulky|p[řr]eklad|translated|subtitles|korekce|"
@@ -369,10 +383,7 @@ def _bez_noticek(src: str, dst: str) -> dict:
         # uprostřed věty se tam nevyskytuje ANI JEDNOU (vždy je to zvuk nebo
         # jmenovka mluvčího), kdežto kulatá ano 18× a je to běžný text.
         _puv = t
-        t = _unescape(t)
-        t = _HRANATA.sub(" ", t)
-        t = _SIPKY.sub(" ", t)          # „>>" = střídání mluvčího, ne řeč
-        t = " ".join(t.split()).strip(" -–—")
+        t = _ocisti_repliku(t)          # „>>" = střídání mluvčího, ne řeč
         if t != _puv:
             # ⚠️ MUSÍ se počítat: `zmeneno` rozhoduje, jestli volající vyčištěný
             # soubor vůbec použije. Bez tohohle se úklid udělal a zahodil.
@@ -432,11 +443,69 @@ def _ollama(config, cfg, prompt, npred=3000) -> str:
     return json.loads(r.read()).get("response", "")
 
 
+# HANS_TRANSLATE_CZ_CHECK_V1 — pozná repliku, která NEPROŠLA překladem.
+# ⚠️ Práh je schválně nesymetrický: diakritika NEBO české slovo stačí k „česky",
+# kdežto k „anglicky" jsou potřeba DVĚ anglická funkční slova. Krátká česká věta
+# („Absolutně ne.") diakritiku mít nemusí a nesmí spadnout do falešného poplachu;
+# anglická věta naproti tomu funkční slova skoro vždy má. Ověřeno na 172 reálných
+# přeložených replikách — ani jeden falešný poplach.
+# ⛔ ZÁMĚRNĚ TU NEJSOU „a", „to", „by", „v" ani „pro" — jsou to zároveň běžná
+# ANGLICKÁ slova, takže by anglickou větu prohlásila za českou. Změřeno: s nimi
+# detektor odhalil jen 10 z 86 anglických replik, bez nich 79.
+_CZ_SLOVA = re.compile(r"\b(ale|je|se|na|[žz]e|jsou|byl[ao]?|nen[íi]|kdy[žz]|"
+                       r"jako|tak|nebo|u[žz]|si|kter[áýé]|jeho|jej[íi]|tady|"
+                       r"velmi|mezi|proto[žz]e|v[šs]ak|jsem|jsi|jsme|jste|bude|"
+                       r"budou|mohl|toho|tom|tomu|jen|nic|kde|kdo|pak|tedy|moc)\b", re.I)
+# ⛔ ZÁMĚRNĚ TU NEJSOU „to", „on", „my", „i", „do", „ten" ani „a" — anglicky
+# běžná, ale zároveň to jsou ČESKÁ slova, takže by dělala falešné poplachy.
+_EN_SLOVA = re.compile(r"\b(the|and|that|with|this|which|there|about|would|they|"
+                       r"have|has|had|from|what|when|were|was|been|being|their|"
+                       r"could|should|because|it|its|is|are|you|your|we|our|us|"
+                       r"he|she|his|her|him|not|but|for|all|can|will|does|did|"
+                       r"who|why|how|very|just|only|also|then|than|more|into|"
+                       r"through|between)\b", re.I)
+
+
+def _zni_cesky(t: str) -> bool:
+    if not (t or "").strip():
+        return False
+    if _CZ.search(t) or _CZ_SLOVA.search(t):
+        return True
+    # Práh 1 (ne 2): změřeno na 172 českých + 86 anglických replikách — odhalí
+    # 86/86 anglických a NEshodí ani jednu českou. Falešný poplach navíc je
+    # levný (replika se jen dožádá znovu), propuštěná angličtina drahá (uslyší
+    # ji divák uprostřed pořadu).
+    return len(_EN_SLOVA.findall(t)) < 1
+
+
+_HEAD_JEDNA = ("You are a professional English (en) to Czech (cs) translator. "
+               "Produce only the Czech translation.\n\n\n")
+
+
+def _dozadej(config, cfg, veta: str, pokusu: int = 3) -> str | None:
+    """Jedna replika zvlášť. Vrací JEN text, o kterém je doloženo, že zní česky —
+    jinak None. ⚠️ Jediný pokus nestačil: 28.8. se volání zasekávala a replika
+    pak zůstala v ANGLICKÉM originále natrvalo, protože se kód po prvním pádu
+    vzdal."""
+    for k in range(max(1, pokusu)):
+        try:
+            t = _ollama(config, cfg, _HEAD_JEDNA + veta, 300).strip().split("\n")[0]
+        except Exception as e:
+            log.debug("dožádání %d/%d selhalo: %s", k + 1, pokusu, e)
+            time.sleep(1.5 * (k + 1))
+            continue
+        t = _ocisti_repliku(t)
+        if t and _zni_cesky(t):
+            return t
+        time.sleep(1.0)
+    return None
+
+
 def prelozit_srt(config, src_srt, dst_srt, progress=None) -> dict:
     cfg = _cfg(config)
     cues = st.load_cues(src_srt)
     chunk = int(cfg.get("chunk_cues", 40))
-    hotovo, dozadano, nepreloz = [None] * len(cues), 0, 0
+    hotovo, dozadano, nepreloz, neceskych = [None] * len(cues), 0, 0, 0
     for a in range(0, len(cues), chunk):
         blk = cues[a:a + chunk]
         body = "\n".join(f"{i+1}|{c['text']}" for i, c in enumerate(blk))
@@ -450,28 +519,53 @@ def prelozit_srt(config, src_srt, dst_srt, progress=None) -> dict:
             log.warning("překlad bloku selhal: %s", e)
         for i, c in enumerate(blk):
             t = got.get(i + 1)
-            if not t:   # zarovnání se rozešlo → dožádat samostatně
+            # HANS_TRANSLATE_CZ_CHECK_V1 — dva důvody k dožádání, ne jeden:
+            # (a) replika chybí (zarovnání se rozešlo) — to řešil kód i dřív;
+            # (b) replika JE, ale není česky — model vrátil originál. Tuhle
+            # možnost dřív nikdo neověřoval, takže angličtina prošla do dabingu
+            # a `nepreloz` u toho hlásilo nulu.
+            duvod = "" if t else "chybí"
+            if t and not _zni_cesky(t):
+                duvod = "anglicky"
+                neceskych += 1
+            if duvod:
                 dozadano += 1
-                try:
-                    t = _ollama(config, cfg, "You are a professional English (en) to Czech (cs) "
-                                "translator. Produce only the Czech translation.\n\n\n"
-                                + c["text"], 300).strip().split("\n")[0]
-                except Exception:
+                t2 = _dozadej(config, cfg, c["text"])
+                if t2:
+                    t = t2
+                elif not t:
                     # ⚠️ Původní ANGLICKÁ věta jde do české stopy a Vlasta ji
                     # přečte česky. Radši to než díra — ale MUSÍ se to spočítat
                     # a říct, jinak na to uživatel narazí až uprostřed sledování.
                     t = c["text"]
                     nepreloz += 1
+                else:
+                    # zůstává, co vrátil blok, ale česky to nevypadá → přiznat
+                    nepreloz += 1
             hotovo[a + i] = t
         if progress:
             progress(min(a + chunk, len(cues)), len(cues))
+    # HANS_SUB_CLEAN_V3 — pojistka na VÝSTUPU. Vyčištěný vstup nestačí: model
+    # marker přeloží („[music]" → „[hudba]") nebo si šipky doplní sám. Tady je
+    # to poslední místo před namlouváním, takže co projde, to je slyšet.
+    pocisteno = 0
+    for i, t in enumerate(hotovo):
+        t2 = _ocisti_repliku(t or "")
+        if t2 != (t or ""):
+            pocisteno += 1
+            hotovo[i] = t2
+    if pocisteno:
+        log.info("po překladu očištěno %d replik (marker zvuku / šipky)", pocisteno)
     with open(dst_srt, "w", encoding="utf-8") as f:
         for i, (c, t) in enumerate(zip(cues, hotovo), 1):
             f.write(f"{i}\n{_ts(c['start'])} --> {_ts(c['end'])}\n{t}\n\n")
+    if neceskych:
+        log.warning("model vrátil %d replik, které nezněly česky — dožádány", neceskych)
     if nepreloz:
         log.warning("nepřeloženo %d z %d replik — zůstaly v originále",
                     nepreloz, len(cues))
-    return {"replik": len(cues), "dozadano": dozadano, "nepreloz": nepreloz}
+    return {"replik": len(cues), "dozadano": dozadano, "nepreloz": nepreloz,
+            "pocisteno": pocisteno, "neceskych": neceskych}
 
 
 # ── sestavení výsledku ───────────────────────────────────────────────────────
@@ -516,7 +610,13 @@ def zamichat(config, pc_path, wav_local, out_name, rezim=None) -> str:
            f"-c:v copy -c:a aac -b:a 160k "
            f"-metadata:s:a:0 language=ces -metadata:s:a:0 title=\"Cesky (lektorske)\" "
            f"-metadata:s:a:1 language=eng -metadata:s:a:1 title=\"Original\" "
-           f"-disposition:a:0 default -avoid_negative_ts make_zero {_q(out)}")
+           # HANS_TRACK_DEFAULT_V1 (29.8.) — `-disposition:a:1 0` NENÍ zbytečné:
+           # ffmpeg kopíruje dispozici ze vstupu, takže originál si `default`
+           # přinesl s sebou a stopy byly default OBĚ. Přehrávač si pak vybíral
+           # sám — doloženo na hotových souborech (ffprobe: default=1 u obou),
+           # uživatel slyšel angličtinu místo lektora.
+           f"-disposition:a:0 default -disposition:a:1 0 "
+           f"-avoid_negative_ts make_zero {_q(out)}")
     _pc(cfg, cmd, 3600)
     velikost = int(_pc(cfg, f"stat -c%s {_q(out)}", 60).strip())
     if velikost < 1_000_000:      # zmetek z rozbitých časových značek
@@ -594,7 +694,9 @@ def zamichat_zpomalene(config, pc_path, wav_local, out_name, f: float) -> str:
            f"-c:v copy -c:a aac -b:a 160k "
            f"-metadata:s:a:0 language=ces -metadata:s:a:0 title=\"Cesky (lektorske)\" "
            f"-metadata:s:a:1 language=eng -metadata:s:a:1 title=\"Original\" "
-           f"-disposition:a:0 default {_q(out)}")
+           # HANS_TRACK_DEFAULT_V1 — viz `zamichat`: bez sundání příznaku
+           # z originálu jsou default obě stopy a přehrávač bere angličtinu.
+           f"-disposition:a:0 default -disposition:a:1 0 {_q(out)}")
     _pc(cfg, cmd, 3600)
     velikost = int(_pc(cfg, f"stat -c%s {_q(out)}", 60).strip())
     if velikost < 1_000_000:
@@ -676,8 +778,15 @@ def preloz(config, pc_path=None, meta=None, progress=None) -> dict:
         prel = {}
         if zdroj["jazyk"] != "cs":
             say("překládám")
+            _vstup = srt                      # ← drží se PŘED přepsáním na cíl
             srt = os.path.join(wd, "cz.srt")
-            prel = prelozit_srt(config, zdroj["srt"], srt,
+            # ⚠️ MUSÍ to být `_vstup`, ne `zdroj["srt"]`. Řádek nad tímhle
+            # přepsal `srt` na CÍLOVOU cestu, takže původní kód sáhl zpátky do
+            # `zdroj` — a tím zahodil právě vyčištěný soubor (HANS_SUB_CLEAN_V3,
+            # doloženo 29.8.: 53 z 86 replik neslo „[music]"/„&gt;&gt;", model
+            # z nich vyrobil „[hudba]" a to se ozývalo v dabingu). Česká větev
+            # čištění dostávala, překladová ne.
+            prel = prelozit_srt(config, _vstup, srt,
                                 lambda a, b: say(f"překládám {a}/{b}"))
 
         wav = os.path.join(wd, "cz.wav")
