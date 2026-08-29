@@ -160,7 +160,27 @@ def score_unscored(config: dict, db_path: str, model: str,
             keep_alive=keep_alive,  # MODEL_KEEPALIVE_TIERS_V1 / IMPORTANCE_NIGHTLY_CATCHUP_V1 (loop=warm)
             # num_predict: ~25 znaků/položku × limit → musí se vejít uzavřený JSON,
             # jinak se výstup uřízne a nejde parsovat (zjištěno při backfillu).
-            options={"temperature": 0.1, "num_predict": 40 * max(int(limit), 1)})
+            #
+            # IMPORTANCE_NUM_CTX_V1 (29.8.) — num_ctx NENI kosmetika. Bez nej
+            # plati vychozich 2048 tokenu, jenze davka 30 epizod da prompt
+            # ~6300 znaku (2100-3200 tokenu). Utne se ZACATEK, tedy systemovy
+            # prompt s instrukci, a model pak vstup KOMENTUJE misto skorovani
+            # (realna odpoved: "This is a fascinating collection of internal
+            # thoughts and reflections!"). Skorovani kvuli tomu stalo od
+            # 26.6.2026 do 29.8.2026 a naschromazdilo 18 017 epizod.
+            # Zmereno sondou: bez num_ctx 0/30 skore, s num_ctx 8192 30/30.
+            # ⚠️ Kdo zvedne `limit`, musi zvednout i tohle — prompt roste s nim.
+            # IMPORTANCE_NUM_GPU_V1 (29.8.) — bez tohohle si Ollama rozvrhne
+            # vrstvy na CPU, i kdyz se model do VRAM vejde. Zmereno tyz den:
+            # `ollama ps` hlasil PROCESSOR 88%/12% CPU/GPU, pritom VRAM mela
+            # volnych 15 GB z 16,4 a model ma 9,3 GB. Tempo 17 epizod/min
+            # = ~18 hodin na backlog. `hans_translate._ollama` ma num_gpu
+            # natvrdo z tehoz duvodu — viz [[ollama-num-gpu-cpu-fallback]].
+            options={"temperature": 0.1, "num_predict": 40 * max(int(limit), 1),
+                     "num_ctx": int((config.get("importance", {}) or {})
+                                    .get("num_ctx", 8192)),
+                     "num_gpu": int((config.get("importance", {}) or {})
+                                    .get("num_gpu", 99))})
     except Exception as _e:
         _log.warning("score_unscored: LLM selhal: %s", _e)
         conn.close()

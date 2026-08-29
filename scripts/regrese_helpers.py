@@ -424,3 +424,11 @@ def guard_zahodil(odpoved: str, podklad: str) -> int:
     from scripts.grounding_guard import check
     _, zahozene = check(odpoved, podklad)
     return len(zahozene)
+
+
+def vlastni_dilo(titul: str, dila: list) -> bool:
+    """BOOK_MENTIONS_OWN_WORKS_V1 — obálka: sada posílá seznam, funkce chce set.
+    Díla se ZÁMĚRNĚ předávají jako argument, ne čtou z DB — test nesmí být
+    závislý na tom, co má Hans zrovna rozepsané."""
+    from scripts.hans_book_mentions import _je_vlastni_dilo, _norm_title
+    return _je_vlastni_dilo(_norm_title(titul), {_norm_title(d) for d in dila})

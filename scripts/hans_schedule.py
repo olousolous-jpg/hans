@@ -60,6 +60,14 @@ _SEED = [
     ("creation_reflection", "daily", None, None, 14 * 24 * 3600,
      "Reflexe vlastní tvorby"),
 
+    # IMPORTANCE_SCHEDULE_V1 (29.8.) — skorovani dulezitosti. PRIDANO POZDE:
+    # rutina stala od 26.6. do 29.8.2026 (18 017 neoskorovanych epizod) a nikdo
+    # si toho nevsiml prave proto, ze tady nebyla — sebe-audit hlasil "v poradku".
+    # Zivi autobiografickou vrstvu (self-defining memories), takze jeji mlceni
+    # se navenek neprojevi nicim, co by slo videt.
+    ("importance_scoring", "daily", None, None, 30 * 3600,
+     "Skorovani dulezitosti epizod (autobiograficka vrstva)"),
+
     # Noční analytika (deepseek reasoning tier přes noc, 3:00).
     ("nightly_analytics", "daily", None, 3, 30 * 3600,
      "Noční analytika (deepseek reasoning tier): syntéza, sebekritika, stance"),

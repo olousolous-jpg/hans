@@ -493,11 +493,15 @@
     "typical_min_score": 0.35
   },
   "importance": {
-    "nightly_cap": 800
+    "nightly_cap": 800,
+    "num_ctx": 8192,
+    "_num_ctx_note": "Kontextove okno pro skorovani dulezitosti. NENI kosmetika: bez nej plati vychozich 2048 tokenu, davka 30 epizod ma ~6300 znaku a utne se ZACATEK promptu (instrukce) — model pak vstup komentuje misto skorovani. Skorovani kvuli tomu stalo 26.6.-29.8.2026 (18 017 neoskorovanych epizod). Kdo zvedne limit davky, musi zvednout i tohle."
   },
   "threads": {
     "window_hours": 26,
-    "max_open_per_person": 6
+    "max_open_per_person": 6,
+    "num_ctx": 8192,
+    "_num_ctx_note": "Okno pro extrakci nitek. Prompt nese az 20 replik jedne osoby: nejhorsi zmereny den 16 576 znaku (~5 500-8 300 tokenu) proti vychozim 2048. Kdo zvedne pocet replik, musi zvednout i tohle."
   },
   "person_interests": {
     "window_hours": 26,
@@ -795,7 +799,9 @@
       "cs",
       "en",
       "de"
-    ]
+    ],
+    "num_ctx": 16384,
+    "_num_ctx_note": "Okno pro zminky o knihach. Vyssi nez jinde SCHVALNE: prompt slucuje az 40 replik VSECH osob, nejhorsi zmereny den 28 126 znaku (~9 400-14 000 tokenu) — 8192 by nemuselo stacit."
   },
   "study": {
     "enabled": true,
@@ -1375,10 +1381,10 @@
       "_rate_note": "Prirozene tempo ceskeho hlasu ve znacich za sekundu. ZMERENO 27.8. na vzorku napric poradem (rozptyl replik 11,3-14,5). ⚠️ NEODHADOVAT: puvodni odhad 14,0 podhodnotil potrebu casu o 6 % a vedl ke spatnemu zaveru, ze staci zrychlit rec.",
       "max_video_stretch": 1.12,
       "_stretch_note": "Nejvic, o kolik smi Hans zpomalit obraz, aby se ceska stopa vesla (napad uzivatele 27.8.). 1.12 = -12 %, odsouhlaseno 27.8. pro mluvici hlavy s infografikou; u dynamickych zaberu by to bylo videt. Obraz se NEPREKODOVAVA (-itsscale + copy), zpomaluje se i puvodni zvuk (atempo) — ⚠️ obojim stejnym cislem, jinak zvuk utece obrazu.",
-      "speech_speedup_target": 1.10,
+      "speech_speedup_target": 1.1,
       "_target_note": "Kolik zrychleni reci se povazuje za pohodlne. Obraz se zpomali jen tolik, aby rec zustala u teto hodnoty.",
       "rec_ok": 1.18,
-      "rec_warn": 1.30,
+      "rec_warn": 1.3,
       "_meze_note": "Do rec_ok (+18 %, odpovida FLOOR 0.85) Hans dabuje mlcky; do rec_warn s upozornenim, ze to bude znit uspechane; nad rec_warn ODMITNE a rekne proc. ⚠️ Meze davaji smysl jen proto, ze potreba casu KOLISA PODLE PORADU: zmereno 27.8. na peti ruznych typech f_nutne 0,85-1,47 (prednaska ma 15 % casu navic, zpravodajstvi by potrebovalo rec o 39 % rychlejsi). Ladit na jednom videu = ladit na nahodnem bode.",
       "_merge_note": "Slepovani utrzku automatickych titulku do frazi. Zmereno 27.8.: mezery jsou dvouvrcholove (90 % ma 0,010 s, skutecnych pauz bylo v celem poradu jen 84), takze podle pauz se lamat neda a rozhoduje strop znaku. Prilis maly strop = preklad po utrzcich a rozbity slovosled."
     },
@@ -1394,7 +1400,9 @@
     "pc_key": "~/.ssh/hans_pc",
     "smb_prefix": "smb://192.168.1.10/",
     "mnt_prefix": "/mnt/",
-    "_path_note": "Prevod cesty z Kodi na cestu na PC: co Kodi hlasi jako smb://<NAS>/<SHARE>/... lezi na PC jako /mnt/<SHARE>/... Musi sedet s tim, jak mate NAS namountovany."
+    "_path_note": "Prevod cesty z Kodi na cestu na PC: co Kodi hlasi jako smb://<NAS>/<SHARE>/... lezi na PC jako /mnt/<SHARE>/... Musi sedet s tim, jak mate NAS namountovany.",
+    "wait_for_game_h": 6,
+    "_wait_for_game_note": "Jak dlouho preklad ceka, kdyz se hraje. Poradi je HRA > PREKLAD > RUTINY (pokyn uzivatele 29.8.): hra ma prednost pred prekladem, preklad pred Hansovymi nocnimi rutinami. Po vyprseni stropu preklad NEZACNE a rekne to — lepsi nez viset donekonecna."
   },
   "severka": {
     "num_ctx": 8192,

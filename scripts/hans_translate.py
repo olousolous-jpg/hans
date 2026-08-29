@@ -705,7 +705,78 @@ def zamichat_zpomalene(config, pc_path, wav_local, out_name, f: float) -> str:
 
 
 # ── celý běh ─────────────────────────────────────────────────────────────────
+def _pockej_na_konec_hry(cfg, say) -> bool:
+    """HRA MA PREDNOST (pokyn uzivatele 29.8.): dokud se hraje, preklad ceka.
+
+    Ceka se JEN na herni flag, ne na vlastni — jinak by preklad cekal sam na sebe.
+    Strop je v configu, at vlakno nevisi donekonecna."""
+    from scripts.ollama_client import game_pause_on
+    strop_h = float(cfg.get("wait_for_game_h", 6))
+    if not game_pause_on():
+        return True
+    say("hraje se — začnu, až hra skončí")
+    log.info("preklad ceka na konec hry (strop %.1f h)", strop_h)
+    konec = time.time() + strop_h * 3600
+    while game_pause_on():
+        if time.time() > konec:
+            log.warning("preklad se nedockal konce hry (%.1f h) — vzdavam", strop_h)
+            return False
+        time.sleep(60)
+    log.info("hra skoncila — pokracuji v prekladu")
+    return True
+
+
 def preloz(config, pc_path=None, meta=None, progress=None) -> dict:
+    """HANS_TRANSLATE_PRIORITY_V1 — poradi HRA > PREKLAD > RUTINY.
+
+    ⚠️ Preklad projde i pri VLASTNI pauze jen proto, ze vola Ollamu PRIMO
+    (`_ollama` pres urllib), mimo `ollama_client`, ktery pauzu gate-uje.
+    NEPRIDAVAT sem `game_mode_on()` guard na vlastni pauzu — zablokoval by
+    preklad sam sobe. (Guard na HERNI pauzu uz obstarava `_pockej_na_konec_hry`.)
+    """
+    from scripts.ollama_client import (set_translate_pause, translate_pause_on,
+                                       clear_stale_translate_pause)
+    cfg = _cfg(config)
+    say = progress or (lambda *_a, **_k: None)
+
+    if not _pockej_na_konec_hry(cfg, say):
+        return {"ok": False, "duvod": "Hra běžela příliš dlouho, pane — "
+                                      "překlad jsem nezačal. Zkuste to znovu."}
+
+    clear_stale_translate_pause()          # po spadlem prekladu muze flag zbyt
+    drzim = False
+    if not translate_pause_on():
+        set_translate_pause(True, config=config)
+        drzim = True
+        _zapis_odlozeni_rutin(config)
+    try:
+        return _preloz_jadro(config, pc_path=pc_path, meta=meta, progress=progress)
+    finally:
+        # ⚠️ Rusi se JEN vlastni pauza. Herni flag je cizi a saha na nej jen
+        # watcher hry — jinak by preklad hre zrusil herni mod.
+        if drzim:
+            set_translate_pause(False, config=config)
+
+
+def _zapis_odlozeni_rutin(config) -> None:
+    """Do deniku, ze rutiny dostaly prednostne stopku — at je to dohledatelne."""
+    try:
+        import sqlite3
+        db = (config.get("diary_db")
+              or (config.get("hans_idle", {}) or {}).get("diary_db")
+              or "data/hans_diary.db")
+        c = sqlite3.connect(db, timeout=5.0)
+        c.execute("INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
+                  (time.time(), "routines_deferred", "překlad má přednost",
+                   "Odložil jsem své noční kroky, abych uvolnil výpočetní výkon "
+                   "pro překlad. Naváži na ně, až bude hotovo."))
+        c.commit()
+        c.close()
+    except Exception as e:
+        log.debug("odlozeni rutin se nezapsalo: %s", e)
+
+
+def _preloz_jadro(config, pc_path=None, meta=None, progress=None) -> dict:
     cfg = _cfg(config)
     t0 = time.time()
     # ⚠️ `pc_path is None` NEZNAMENÁ „zeptej se Kodi". U YouTube je None správný

@@ -211,8 +211,25 @@ class HansEveningReflection:
                 _done += _n
             if _done:
                 _log.info("importance: oskórováno %d epizod (noční catchup)", _done)
+            # IMPORTANCE_SCHEDULE_V1 — ohlas se rozvrhu. Bez tohohle radku bylo
+            # dvoumesicni ticho skorovani neviditelne. `_done == 0` je legitimni
+            # stav (neni co skorovat), ale POKUS pobehl → mark(ok=True).
+            try:
+                from scripts import hans_schedule as _sch
+                _sch.mark("importance_scoring", ok=True,
+                          skip_reason="" if _done else "nic k ohodnoceni")
+            except Exception as _se:
+                _log.debug("importance: rozvrh se neoznacil: %s", _se)
         except Exception as _ie:
             _log.warning("importance scoring selhal (reflexe OK): %s", _ie)
+            # ⚠️ Selhani se MUSI ohlasit taky, jinak rozvrh vidi jen uspechy
+            # a tise selhavajici rutina zase zmizi z dohledu.
+            try:
+                from scripts import hans_schedule as _sch2
+                _sch2.mark("importance_scoring", ok=False,
+                           skip_reason=str(_ie)[:120])
+            except Exception:
+                pass
 
         # HANS_PROVENANCE_V1 — doplň provenience u nových deníkových řádků
         # (deterministicky z event_type, žádný LLM). WHERE provenance IS NULL

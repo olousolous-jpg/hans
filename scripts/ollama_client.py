@@ -7,6 +7,7 @@ Použití:
 from __future__ import annotations
 
 import logging
+import os          # HANS_TRANSLATE_PRIORITY_V1 — getpid/kill u osirele pauzy
 import time
 from pathlib import Path
 from typing import Optional
@@ -23,10 +24,81 @@ _log = logging.getLogger("ollama_client")
 _PAUSE_FLAG = Path(__file__).resolve().parent.parent / "data" / ".ollama_paused"
 
 
-def game_mode_on() -> bool:
-    """True = herní mód aktivní → veškerá volání Ollamy se přeskočí (return None)."""
+# HANS_TRANSLATE_PRIORITY_V1 (29.8.) — druhy vlastnik pauzy: PREKLAD.
+# Poradi je HRA > PREKLAD > RUTINY. Flagy jsou ZAMERNE dva: binarni flag
+# neunese dva vlastniky. S jednim by nastalo tohle — preklad zapne pauzu,
+# mezitim zacne hra, watcher zapne herni mod (flag uz existuje, nic se
+# nestane), preklad dojede a flag smaze → Hans si vleze do VRAM uprostred
+# hry. Takhle kazdy maze jen svuj a guard cte oba.
+_TRANSLATE_FLAG = Path(__file__).resolve().parent.parent / "data" / ".ollama_paused_translate"
+
+
+def translate_pause_on() -> bool:
+    """True = prave bezi preklad a Hansovy rutiny maji pockat."""
+    try:
+        return _TRANSLATE_FLAG.exists()
+    except Exception:
+        return False
+
+
+def game_pause_on() -> bool:
+    """True = HRA (ne preklad). Preklad podle toho pozna, ze ma cekat."""
     try:
         return _PAUSE_FLAG.exists()
+    except Exception:
+        return False
+
+
+def set_translate_pause(on: bool, ollama_url: str | None = None,
+                        config: dict | None = None) -> dict:
+    """Pauza drzena PREKLADEM. Nesaha na herni flag — viz komentar vyse."""
+    try:
+        if on:
+            _TRANSLATE_FLAG.parent.mkdir(parents=True, exist_ok=True)
+            # PID + cas: podle nich se pozna OSIRELY flag po spadlem prekladu.
+            # Bez toho by Hans zustal bez mozku natrvalo.
+            _TRANSLATE_FLAG.write_text("%d %f" % (os.getpid(), time.time()))
+            time.sleep(0.4)
+            freed = ollama_unload_all(ollama_url, config)
+            _log.info("PREKLAD MA PREDNOST — rutiny pockaji, uvolneno %d modelu", freed)
+            return {"translate_pause": True, "unloaded": freed}
+        try:
+            _TRANSLATE_FLAG.unlink()
+        except FileNotFoundError:
+            pass
+        _log.info("preklad dobehl — Hansovy rutiny mohou zase bezet")
+        return {"translate_pause": False}
+    except Exception as exc:
+        _log.error("set_translate_pause(%s) selhal: %s", on, exc)
+        return {"error": str(exc)}
+
+
+def clear_stale_translate_pause() -> bool:
+    """Uvolni pauzu po prekladu, ktery uz nebezi. Vraci True, kdyz uklidil."""
+    try:
+        if not _TRANSLATE_FLAG.exists():
+            return False
+        pid = int((_TRANSLATE_FLAG.read_text().split() or ["0"])[0])
+        if pid > 0:
+            try:
+                os.kill(pid, 0)      # jen test existence, signal se neposila
+                return False         # proces bezi → pauza je opravnena
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return False         # bezi pod jinym uzivatelem
+        _TRANSLATE_FLAG.unlink()
+        _log.warning("uklizena osirela pauza po prekladu (PID %s uz nebezi)", pid)
+        return True
+    except Exception as exc:
+        _log.debug("clear_stale_translate_pause: %s", exc)
+        return False
+
+
+def game_mode_on() -> bool:
+    """True = Ollama se nepouziva. Drzi ji bud HRA, nebo PREKLAD."""
+    try:
+        return _PAUSE_FLAG.exists() or _TRANSLATE_FLAG.exists()
     except Exception:
         return False
 

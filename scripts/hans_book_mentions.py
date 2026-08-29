@@ -55,6 +55,43 @@ def _known_titles(diary_db_path: str) -> set:
         return set()
 
 
+# BOOK_MENTIONS_OWN_WORKS_V1 — pod tim uz filtr nehlida. `writing_section.title`
+# nese casto jen TEMA („Design", „ledni hokej"), ne nazev dila; bez prahu by
+# filtr zablokoval legitimni knihu tehoz jmena. Radsi propustit kratke tema nez
+# zahodit skutecnou knihu — halucinovane nazvy byvaji dlouhe vety.
+_OWN_MIN_LEN = 15
+
+
+def _own_works(diary_db_path: str) -> set:
+    """Nazvy Hansovych VLASTNICH del — nemaji co delat mezi knihami k dohledani."""
+    out = set()
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % diary_db_path, uri=True, timeout=3.0)
+        rows = con.execute(
+            "SELECT DISTINCT title FROM diary WHERE event_type IN "
+            "('writing_section','work_created') AND title IS NOT NULL").fetchall()
+        con.close()
+        for (t,) in rows:
+            # „Nazev: podtitul — Kapitola" → zajima nas jen dilo pred pomlckou
+            n = _norm_title((t or "").split(" — ")[0])
+            if len(n) >= _OWN_MIN_LEN:
+                out.add(n)
+    except Exception as e:
+        _log.debug("_own_works: %s", e)
+    return out
+
+
+def _je_vlastni_dilo(tn: str, vlastni: set) -> bool:
+    """Shoda presna NEBO prefixova (model casto vrati jen zkraceny nazev).
+    ⛔ ZAMERNE NE podretezcova kdekoli — to by chytalo nahodna slova uvnitr vet."""
+    if len(tn) < _OWN_MIN_LEN:
+        return False
+    for v in vlastni:
+        if tn == v or v.startswith(tn) or tn.startswith(v):
+            return True
+    return False
+
+
 def _norm_title(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
@@ -101,7 +138,13 @@ def extract_book_mentions(config: dict, diary_db_path: str,
         raw = ollama_generate(model=model, prompt="PŘEPIS ROZHOVORŮ:\n" + transcript,
                               system=_SYSTEM, config=config, timeout=timeout,
                               keep_alive=0,  # MODEL_KEEPALIVE_TIERS_V1
-                              options={"temperature": 0.1})
+                              # THREADS_BOOKS_NUM_CTX_V1 (29.8.) — prompt slucuje
+                              # az 40 replik VSECH osob: nejhorsi den 28 126 znaku
+                              # ~ 9 400-14 000 tokenu proti vychozim 2048, tedy
+                              # pretece 5-7x. ⚠️ Proto 16384, ne 8192 jako jinde —
+                              # osm by nemuselo stacit.
+                              options={"temperature": 0.1,
+                                       "num_ctx": int(cfg.get("num_ctx", 16384))})
     except Exception as e:
         _log.warning("book_mentions: LLM failed: %s", e)
         return 0
@@ -114,6 +157,7 @@ def extract_book_mentions(config: dict, diary_db_path: str,
     from scripts.gutendex import resolve_book
     from scripts.hans_art import add_to_wishlist
     known = _known_titles(diary_db_path)
+    vlastni = _own_works(diary_db_path)   # BOOK_MENTIONS_OWN_WORKS_V1
     added = 0
     seen_norm = set()
     for it in items:
@@ -124,6 +168,11 @@ def extract_book_mentions(config: dict, diary_db_path: str,
             continue
         tn = _norm_title(title)
         if tn in known or tn in seen_norm:
+            continue
+        if _je_vlastni_dilo(tn, vlastni):
+            # Doloženo 29.8.: do Gutendexu sel nazev Hansova vlastniho eseje
+            # a zabral slot z denniho limitu 3 knih.
+            _log.info("book_mentions: '%s' je Hansovo vlastni dilo → preskakuji", title)
             continue
         seen_norm.add(tn)
         # Gutenberg lookup (síť) — najdi public-domain text

@@ -72,7 +72,7 @@ def main() -> int:
     pripady = data.get("pripady", [])
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-    padlo, skupina_teď = [], None
+    padlo, preskoceno, skupina_teď = [], [], None
     for p in pripady:
         sk = p.get("skupina", "")
         if sk != skupina_teď:
@@ -82,6 +82,12 @@ def main() -> int:
         popis = p.get("popis") or str(p.get("argumenty", [""])[0])[:60]
         if ok:
             print(f"   OK    {popis}")
+        elif p.get("llm") and got is None:
+            # REGRESE_LLM_SKIP_V1 — model nedostupny/vytizeny (typicky None).
+            # NENI to regrese: 29.8. dva behy po sobe daly ruzny pocet "chyb",
+            # protoze Ollamu zabral backfill. Spatna HODNOTA zustava chybou.
+            preskoceno.append(p)
+            print(f"   ~     {popis}  (přeskočeno — model neodpověděl)")
         else:
             padlo.append(p)
             ocek = p.get("rovna", p.get("obsahuje", p.get("neobsahuje")))
@@ -89,7 +95,12 @@ def main() -> int:
             print(f"         čekáno {ocek!r}, vráceno {got!r} {duvod}")
             if p.get("puvod"):
                 print(f"         původ: {p['puvod']}")
-    print(f"\n{len(pripady) - len(padlo)}/{len(pripady)} prošlo")
+    hotovo = len(pripady) - len(padlo) - len(preskoceno)
+    radek = f"\n{hotovo}/{len(pripady) - len(preskoceno)} prošlo"
+    if preskoceno:
+        radek += (f"  ·  {len(preskoceno)} přeskočeno (model nedostupný: "
+                  + ", ".join(sorted({p["funkce"].split(".")[-1] for p in preskoceno})) + ")")
+    print(radek)
     return 1 if padlo else 0
 
 

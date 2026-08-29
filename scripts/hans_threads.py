@@ -412,7 +412,14 @@ def extract_threads(config: dict, diary_db_path: str,
             raw = ollama_generate(model=model, prompt=prompt, system=_system,
                                   config=config, timeout=timeout,
                                   keep_alive=0,  # MODEL_KEEPALIVE_TIERS_V1
-                                  options={"temperature": 0.2})
+                                  # THREADS_BOOKS_NUM_CTX_V1 (29.8.) — prompt nese
+                                  # az 20 replik jedne osoby. Zmereno na nejhorsim
+                                  # dni (15.8.): 16 576 znaku ~ 5 500-8 300 tokenu
+                                  # proti vychozim 2048 → utne se ZACATEK i s
+                                  # instrukci a model vraci nesmysl. Kdo zvedne
+                                  # pocet replik, musi zvednout i tohle.
+                                  options={"temperature": 0.2,
+                                           "num_ctx": int(cfg.get("num_ctx", 8192))})
         except Exception as e:
             _log.warning("extract_threads: LLM call failed (%s): %s", person, e)
             continue
