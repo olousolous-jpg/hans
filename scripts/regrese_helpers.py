@@ -443,3 +443,13 @@ def thread_guard(cid: str, veta: str) -> str:
     from scripts.chat_commands import _thread_guard
     cfg = json.load(open("config.json", encoding="utf-8"))
     return _thread_guard(cid, veta, cfg, turns=[])
+
+
+def entita_v_textu(text: str) -> str:
+    """HANS_ENTITY_WORDBOUND_V1 — obálka: funkce vrací dvojici (jméno, URL)
+    a bere cestu k DB. Sada porovnává jen JMÉNO; prázdný řetězec = nenalezeno,
+    ať se v případech nemusí psát None. DB je reálná — entity store je vstup,
+    který tenhle test ověřuje (ne fixture)."""
+    from scripts.hans_recall import _find_entity_in_text
+    hit = _find_entity_in_text("data/hans_diary.db", text)
+    return hit[0] if hit else ""

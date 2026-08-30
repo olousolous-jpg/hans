@@ -766,6 +766,12 @@ def is_source_query(text: str) -> bool:
     return any(re.search(p, t) for p in pats)
 
 
+# HANS_ENTITY_WORDBOUND_V1 — číslovky nejsou zdroj tvrzení (viz níž).
+_CISLOVKY = {"sedm", "osm", "devet", "devět", "deset", "jedna", "dva", "tri",
+             "tři", "ctyri", "čtyři", "pet", "pět", "sest", "šest", "sto",
+             "tisic", "tisíc", "nula", "jeden", "dvacet", "třicet"}
+
+
 def _find_entity_in_text(db_path: str, text: str) -> Optional[tuple]:
     """Najdi entity.name, která je zmíněna v textu (case insensitive, whole word).
     Vrací (name, source_url) nebo None. Preferuje delší jméno (specifičtější)."""
@@ -784,11 +790,31 @@ def _find_entity_in_text(db_path: str, text: str) -> Optional[tuple]:
         if conn:
             conn.close()
 
+    # HANS_ENTITY_WORDBOUND_V1 (30.8.) — DOCSTRING LHAL: slibuje „whole word",
+    # ale porovnávalo se prostým `in`, tedy substringem kdekoli uvnitř slova.
+    # Doloženo dlouhým rozhovorem 30.8.: na „odkud to víš?" Hans odpověděl
+    # „O tématu 'Sedm' jsem se dočetl na Wikipedii" — entita „Sedm" se trefila
+    # do slova „v posledních SEDMI dnech" v jeho vlastní předchozí replice.
+    # Tvrzení o PROVENIENCI je přitom to poslední, co smí být vymyšlené.
+    #
+    # Hranice slova + nejvýš 3 znaky navíc: české skloňování přidá 1–3
+    # („gotika/gotiky", „vývoj/vývojem"), kdežto ODVOZENINA víc a je to jiné
+    # slovo („duch" → „duchovních"). ⚠️ Prahu 3 se nedotýkat bez měření —
+    # simulace na 400 reálných replikách: ze 122 nálezů se změnily 4 a všechny
+    # 4 byly falešné, žádná legitimní shoda („hrad Trosky", „Licence to Kill")
+    # nezmizela.
+    #
+    # Číslovky ven úplně: „Sedm" jako pojem sedne na kterékoli počítání dnů
+    # a jako zdroj tvrzení nedává smysl v žádném kontextu.
     t_lower = text.lower()
     best = None
     for r in rows:
         name = r["name"]
-        if name.lower() in t_lower:
+        nl = name.lower()
+        if nl in _CISLOVKY:
+            continue
+        if re.search(r"(?<![\w])" + re.escape(nl) + r"\w{0,3}(?![\w])",
+                     t_lower):
             if best is None or len(name) > len(best[0]):
                 best = (name, r["source"])
     return best
