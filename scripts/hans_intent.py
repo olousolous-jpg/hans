@@ -68,6 +68,44 @@ class IntentResult:
         return self.intent in FACTUAL_CLASSES
 
 
+# ── HANS_REFLECTIVE_ASK_V1 (30.8.) — ÚVAHOVÁ OTÁZKA NENÍ DOTAZ NA ZÁPISKY ────
+# Doloženo simulovaným rozhovorem 30.8.: „Kdybyste měl někomu vysvětlit, co je
+# na vaší situaci nejtěžší?" → intent `udalost` (faktický) → FTS našel JEDEN
+# zápisek → cesta `zapisky_pred_entitou` = tenká → `GROUNDING_GUARD_ACTIVE_V2`
+# vyhodil 2 věty bez opory a nahradil odpověď abstinencí. Na otázku po vlastním
+# prožitku tedy Hans odpověděl „Víc než tohle už o tom nemám".
+#
+# ⚠️ NEŘEŠÍ SE PŘEKLOPENÍM INTENTU. Zkoušel jsem to a je to horší: „co je pro
+# tebe nejtěžší" má best_score 1, ale delší varianta 2, takže podmínka podle
+# skóre nediskriminuje — a přepnutí na `volna` by zároveň VYPNULO retrieval,
+# tedy i tam, kde má co najít. Tenhle predikát proto NEMĚNÍ, co se dohledá;
+# používá ho jen guard, aby vlastní úvahu nevykuchal.
+#
+# ⚠️ ÚZKÉ SCHVÁLNĚ. Změřeno na 1337 reálných replikách: sedne na 2 (0,15 %),
+# obě skutečně úvahové. Faktické dotazy („co tě nejvíc zaujalo na práci
+# Heideggera?", „kolik hradů jsi navštívil?") NEsedají — a právě proto tu
+# NENÍ obecné „co tě nejvíc…": to by ukrojilo legitimní dotaz na studium.
+_REFLECTIVE_PAT = re.compile(
+    r"\b(kdyby(s|ste|chom)?\b[^?]{0,80}\b(by|bys|byste|byl|byla|mohl|m[ěe]l)\b"
+    r"|co\s+je\s+pro\s+(tebe|v[áa]s)\s+nej\w+"
+    r"|co\s+je\s+na\s+(tv[ée]|va[šs][ íi]|tvoj[ íi])\s+\w+\s+nej\w+)",
+    re.I)
+
+
+def is_reflective_ask(text: str) -> bool:
+    """Ptá se uživatel na Hansovu ÚVAHU či vlastní prožitek (ne na zápisky)?
+
+    Používá `grounding_guard` větev v `openwebui_direct_handler`: na takovou
+    otázku se odpovídá z osobnosti, takže „bez opory v zápiscích" je NORMÁLNÍ
+    stav, ne příznak konfabulace. Viz [[free-chat-may-confabulate]].
+    """
+    if not text:
+        return False
+    t = str(text)
+    return bool(_REFLECTIVE_PAT.search(t)
+                or _REFLECTIVE_PAT.search(_deaccent(t)))
+
+
 # ── Keyword/heuristické vzory ────────────────────────────────────────────────
 # VOLNÁ konverzace — pozdravy, emoce, "o tobě", společenské fráze.
 _VOLNA_PAT = re.compile(

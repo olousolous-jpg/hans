@@ -432,3 +432,14 @@ def vlastni_dilo(titul: str, dila: list) -> bool:
     závislý na tom, co má Hans zrovna rozepsané."""
     from scripts.hans_book_mentions import _je_vlastni_dilo, _norm_title
     return _je_vlastni_dilo(_norm_title(titul), {_norm_title(d) for d in dila})
+
+
+def thread_guard(cid: str, veta: str) -> str:
+    """HANS_THREAD_NO_LIST_V1 — obálka: `_thread_guard` je metoda modulu
+    a bere config + turns, které sada nemá. Config se načte, turns jsou
+    prázdné ZÁMĚRNĚ: guard, který tohle řeší, je deterministický a na
+    vlákně nestojí (jinak by test měřil něco jiného než rozhodnutí)."""
+    import json
+    from scripts.chat_commands import _thread_guard
+    cfg = json.load(open("config.json", encoding="utf-8"))
+    return _thread_guard(cid, veta, cfg, turns=[])

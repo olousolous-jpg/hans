@@ -4036,7 +4036,25 @@ class OpenWebUIDirectHandler:
                     # tamty poplachy vznikly.
                     _prah = int((self.config.get("grounding_guard", {}) or {})
                                 .get("min_dropped_thin", 2))
-                    if _dropped and _tenky and len(_dropped) >= _prah:
+                    # HANS_REFLECTIVE_ASK_V1 (30.8.) — na ÚVAHOVOU otázku
+                    # („kdybyste měl…", „co je pro vás nejtěžší") je odpověď
+                    # bez opory v zápiscích NORMÁLNÍ: Hans odpovídá z osobnosti,
+                    # ne z deníku. Guard ji vykuchal a nahradil abstinencí,
+                    # takže na dotaz po vlastním prožitku říkal „víc než tohle
+                    # už o tom nemám" (doloženo 30.8. 13:36).
+                    # Predikát je ÚZKÝ (2 shody z 1337 reálných replik) a sedí
+                    # jen na otázku; retrieval ani intent se tím NEMĚNÍ.
+                    _uvaha = False
+                    try:
+                        from scripts.hans_intent import is_reflective_ask
+                        _uvaha = is_reflective_ask(_raw_message)
+                    except Exception:
+                        pass
+                    if _dropped and _tenky and _uvaha:
+                        logging.getLogger(__name__).info(
+                            'HANS_REFLECTIVE_ASK_V1: guard NEZASAHUJE — '
+                            'úvahová otázka (%d vět bez opory)', len(_dropped))
+                    if _dropped and _tenky and not _uvaha and len(_dropped) >= _prah:
                         logging.getLogger(__name__).info(
                             'GROUNDING_GUARD_ACTIVE_V2: ZASAHUJI — %d vět bez '
                             'opory u tenkého podkladu (%s). První: %r',

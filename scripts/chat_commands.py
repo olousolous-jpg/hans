@@ -4187,6 +4187,54 @@ def _capability_wish_ask(msg: str) -> bool:
     return bool(_CAP_WISH_PAT.search(msg or ""))
 
 
+# ── HANS_THREAD_NO_LIST_V1 (30.8.) — VÝPIS NEPATŘÍ NA NAVAZUJÍCÍ OTÁZKU ─────
+# Doloženo simulovaným rozhovorem 30.8. (styl uživatele, krátké věty):
+#   „kolik jsi jich uz udelal"  (o překladech) → /seznam  = POZNÁMKY, „prázdný"
+#   „co ti na nem vadilo"                      → /kritika = 10 ponaučení
+#   „kolik ti to jeste zabere"                 → /rozvrh  = 14 rutin
+#
+# ⚠️ PŘÍČINA NENÍ TAM, KDE JSEM ji nejdřív hledal. Regexy (`parse_command`)
+# vracejí u všech tří None — rozhoduje LLM router. A rozřešení odkazu
+# (`HANS_THREAD_V1`) se na ně vůbec nespustí: `has_own_subject` bere za
+# předmět i sloveso („zabere"), takže věta „vlastní předmět má", a
+# `_ANAPHORA_RE` obsahuje jen KOREKČNÍ fráze („myslel jsem"), ne zájmena.
+#
+# Proto zásah DETERMINISTICKÝ a jen ODEBÍRAJÍCÍ, ve stejném místě a tvaru
+# jako `HANS_SOFT_MEMORY_V1` a `HANS_CAP_WISH_NOT_LIST_V1` výš — žádná nová
+# vrstva. Věta se zájmenem odkazujícím zpět nemá dostat VÝPIS; spadne do
+# volného hovoru, který historii má a odpoví v kontextu.
+#
+# ⚠️ POJISTKA: když věta sama zmiňuje téma příkazu („ukaž mi ten rozvrh",
+# „co mám v seznamu"), guard NEZASAHUJE — jinak by zabil legitimní dotaz.
+_ZPETNE_ZAJMENO = re.compile(
+    r"\b(to|tom|tim|toho|tomu|jich|jim|nem|nej|nim|ni|ho|ji|jej|jeho)\b")
+_VYPISOVE_CMDS = {"seznam", "nitky", "rozvrh", "kritika"}
+
+
+def _je_navazujici_dotaz(msg: str) -> bool:
+    """Krátká věta se zájmenem, které ukazuje na předchozí repliku."""
+    try:
+        from scripts.hans_thread import _fold
+        f = _fold(msg or "")
+    except Exception:
+        f = (msg or "").lower()
+    return len((msg or "").split()) <= 9 and bool(_ZPETNE_ZAJMENO.search(f))
+
+
+def _zminuje_vlastni_tema(cid: str, msg: str) -> bool:
+    """Nese věta slovo, kterým se ten příkaz volá? Pak ho míní doopravdy."""
+    try:
+        from scripts.hans_thread import _fold
+        f = _fold(msg or "")
+        aliasy = set()
+        spec = _COMMANDS.get(cid) or {}
+        for a in (spec.get("slash_aliases") or [cid]):
+            aliasy.add(_fold(a))
+        return any(a and a[:5] in f for a in aliasy)
+    except Exception:
+        return False
+
+
 def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     """HANS_CMD_LLM_ROUTE_V4 — oprav štítek podle DETERMINISTICKÝCH signálů.
 
@@ -4212,6 +4260,24 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     if cid == "schopnosti" and _capability_wish_ask(msg):
         _log.info("HANS_CAP_WISH_NOT_LIST_V1: '%.40s' → /schopnosti ZAMÍTNUTO "
                   "(ptá se, co NEumí nebo co by chtěl umět)", msg)
+        return ""
+    # HANS_THREAD_NO_LIST_V2 (30.8.) — výpis nedostane ani ÚVAHOVÁ otázka.
+    # Doloženo dlouhým ověřovacím rozhovorem, tah 19: „kdybys mohl neco zmenit
+    # na svem uspořádání, co by to bylo?" → /kritika, tedy výpis deseti
+    # ponaučení místo odpovědi. V1 to minula kvůli limitu 9 slov (věta má 10) —
+    # a zvedat ten limit by guard rozšířilo naslepo. Místo toho se použije
+    # HOTOVÝ predikát `is_reflective_ask`, který na tuhle třídu už existuje;
+    # dvě opravy z téhož dne se tím spojí místo aby si konkurovaly.
+    _uvaha_ask = False
+    try:
+        from scripts.hans_intent import is_reflective_ask as _ira
+        _uvaha_ask = _ira(msg)
+    except Exception:
+        pass
+    if (cid in _VYPISOVE_CMDS and (_je_navazujici_dotaz(msg) or _uvaha_ask)
+            and not _zminuje_vlastni_tema(cid, msg)):
+        _log.info("HANS_THREAD_NO_LIST_V1: '%.40s' → /%s ZAMÍTNUTO "
+                  "(navazující otázka, výpis nedává odpověď)", msg, cid)
         return ""
     if cid not in ("nitky", "rozhovory"):
         return cid
