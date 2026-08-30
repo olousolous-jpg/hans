@@ -453,3 +453,13 @@ def entita_v_textu(text: str) -> str:
     from scripts.hans_recall import _find_entity_in_text
     hit = _find_entity_in_text("data/hans_diary.db", text)
     return hit[0] if hit else ""
+
+
+def wiki_pokryti_ok(query: str, title: str) -> bool:
+    """HANS_WIKI_COVERAGE_V1 — projde titul prahem zpětného pokrytí?
+    Práh se čte z configu (default 0.4), ať test měří TOTÉŽ co běžící kód."""
+    import json
+    from scripts.web_reader import _title_coverage
+    cfg = json.load(open("config.json", encoding="utf-8"))
+    prah = float((cfg.get("curiosity", {}) or {}).get("wiki_title_min_coverage", 0.4))
+    return _title_coverage(query, title) >= prah

@@ -1020,7 +1020,9 @@
     "read_summary_sentences": 5,
     "_read_summary_sentences_note": "HANS_WEBREAD_DEEPER_V1: kolik vet max u hlubokeho cteni (wikipedia_read). 5 = identita + 2-3 konkretni zajimavosti. Lehke cteni (lead/fetch_url) zustava 2.",
     "read_summary_num_predict": 260,
-    "_read_summary_num_predict_note": "Token budget pro hluboke shrnuti (drive 100). ~260 = 3-5 vet s rezervou."
+    "_read_summary_num_predict_note": "Token budget pro hluboke shrnuti (drive 100). ~260 = 3-5 vet s rezervou.",
+    "wiki_title_min_coverage": 0.4,
+    "_wiki_coverage_note": "HANS_WIKI_COVERAGE_V1 (30.8.): kolik tokenu TITULU musi pokryt dotaz. Existujici wiki_title_min_score meri opacny smer (kolik tokenu DOTAZU je v titulu), takze jednoslovny dotaz dostal 1.00 i u ctyrslovneho ciziho clanku — 'Ceskem' -> 'Ceske mensiny ve svete'. Zavorkove upresneni titulu se ignoruje, jinak by 'Avengers (film, 2012)' propadlo. Prah 0.4 zmeren: 'Hrad Gutstejn' 0.50 a 'Hora Rip' 0.50 prochazeji, ze 200 entit nepropadla ani jedna."
   },
   "instant_lookup": {
     "enabled": true,

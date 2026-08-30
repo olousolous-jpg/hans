@@ -79,6 +79,38 @@ def _title_similarity(query: str, title: str) -> float:
                 break
     return matched / len(q)
 
+# ── HANS_WIKI_COVERAGE_V1 (30.8.) — SHODA MUSÍ PLATIT I OPAČNĚ ──────────────
+# `_title_similarity` počítá `matched / len(query_tokens)`, takže JEDNOSLOVNÝ
+# dotaz dostane 1.00, kdykoli se to slovo v titulu objeví — bez ohledu na to,
+# jak dlouhý a jiný ten titul je. Gate proti tomu nemá jak zasáhnout.
+#
+# Doloženo 30.8.: „jaké hrady jsou v Českém ráji?" → kotva vyšla jako jediné
+# slovo v lokativu „Českém" → similarity('Českém', 'České menšiny ve světě')
+# = 1.00 → Hans o hradech odpověděl statistikou českých menšin ve světě.
+# (Kotva sama je druhá vada — česká toponyma mají druhé slovo malé, takže
+# „Český ráj" se useklo. Zapsáno zvlášť; tohle je obrana na straně výběru.)
+#
+# Zpětné pokrytí = kolik tokenů TITULU pokrývá dotaz. Závorkové upřesnění se
+# odstraňuje, jinak by „Avengers" → „Avengers (film, 2012)" vyšlo 0.33 a
+# správný článek by se zahodil.
+#
+# ⚠️ Práh 0.4 změřen, ne odhadnut: kontrolní případy („Hrad Gutštejn" 0.50,
+# „Hora Říp" 0.50, „Válečné zločiny a zločiny proti lidskosti" 0.60) procházejí,
+# „České menšiny ve světě" (0.33) padá — a ze 200 entit se zdrojem z Wikipedie
+# by pod prahem nepropadla ANI JEDNA.
+_PAREN = re.compile(r"\s*\([^)]*\)")
+
+
+def _title_coverage(query: str, title: str) -> float:
+    """Kolik tokenů TITULU je pokryto dotazem (0.0–1.0). Opak `_title_similarity`."""
+    t = _PAREN.sub("", title or "")
+    qt, tt = _title_tokens(query), _title_tokens(t)
+    if not tt:
+        return 1.0
+    return sum(1 for x in tt
+               if any(_token_match(y, x) for y in qt)) / len(tt)
+
+
 # HANS_STUDY_DEEP_V1 — generické odkazy bez studijní hodnoty (vynech z pododkazů)
 _LINK_NOISE = {
     "zeměpisné souřadnice", "geografické souřadnice", "souřadnicový systém",
@@ -337,7 +369,10 @@ class WebReader:
                 _best = max((p.get("title", "") for p in pfx),
                             key=lambda t: _title_similarity(query, t),
                             default="")
-                if _best and _title_similarity(query, _best) >= _pmin:
+                if (_best and _title_similarity(query, _best) >= _pmin
+                        and _title_coverage(query, _best) >= float(
+                            (self.config.get("curiosity", {}) or {})
+                            .get("wiki_title_min_coverage", 0.4))):
                     return _best
                 _log.debug("Wikipedia prefixsearch %r pro %r pod prahem → "
                            "zkouším srsearch", _best, query)
@@ -370,8 +405,17 @@ class WebReader:
                 if s > best_score:
                     best_score = s
                     best_title = t
+            # HANS_WIKI_COVERAGE_V1 — shoda musí platit i opačně
+            _min_cov = float((self.config.get("curiosity", {}) or {})
+                             .get("wiki_title_min_coverage", 0.4))
             if best_title and best_score >= min_score:
-                return best_title
+                _cov = _title_coverage(query, best_title)
+                if _cov >= _min_cov:
+                    return best_title
+                _log.info("HANS_WIKI_COVERAGE_V1: %r → %r zamítnuto "
+                          "(pokrytí titulu %.2f < %.2f) — raději nic než "
+                          "cizí článek", query, best_title, _cov, _min_cov)
+                return None
             # HANS_STUDY_WIKI_RELAX_V1 — dobré parafráze („Románské stavebnictví"
             # → „Románská architektura") skórují 0.5 STEJNĚ jako garbage, ALE
             # garbage je DLOUHÝ tangenciální titul („Pozemské technologie ve

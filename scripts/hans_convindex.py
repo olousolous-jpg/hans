@@ -643,6 +643,10 @@ for _n, _tvary in {
         _DRUH[_t] = _n
 
 
+# HANS_ANCHOR_ADJ_V1 — české adjektivní koncovky (viz komentář v `kotva_tematu`).
+_ADJ_KONCOVKA = re.compile(r"(ý|á|é|ém|ých|ého|ému|ou|ým|í)$", re.IGNORECASE)
+
+
 def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
     """HANS_ANCHOR_LOOKUP_V1 — předmět dotazu jako téma k DOHLEDÁNÍ.
 
@@ -684,9 +688,37 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
         # Četl jsi…" slepilo na téma „Hansi Četl" (věta mezi tím skončila).
         while j in idx:
             jmeno.append(words[j]); j += 1
+        # HANS_ANCHOR_ADJ_V1 (30.8.) — PŘÍDAVNÉ JMÉNO SAMO TÉMA NENÍ.
+        # Kotva se skládá jen z velkých písmen, jenže česká sousloví mají
+        # druhé slovo malé („Český ráj", „Norimberský proces"). Zůstávalo
+        # tedy holé adjektivum a dohledávalo se podle něj:
+        # doloženo 30.8. — „jaké hrady jsou v Českém ráji?" → kotva „Českém"
+        # → Wikipedie vrátila „České menšiny ve světě" a Hans o hradech
+        # odpověděl statistikou menšin.
+        # Připojuje se JEDNO následující slovo a jen u JEDNOSLOVNÉ kotvy —
+        # víceslovná („Sherlock Holmes") je už úplná a nesmí se natahovat.
+        if len(jmeno) == 1 and _ADJ_KONCOVKA.search(jmeno[0]) and j < len(words):
+            jmeno.append(words[j])
+            j += 1
         preskoc_do = j
         if any(_je_vyloucene(x) for x in jmeno):
             continue
+        # HANS_ANCHOR_NOMINATIV_V1 (30.8.) — TÉMA PATŘÍ DO PRVNÍHO PÁDU.
+        # Kotva jde JEDINĚ do webového dohledání (`lookup_now`), a tam na
+        # skloňovaném tvaru záleží: změřeno 30.8. proti cs.wikipedia —
+        #   „Českém ráji"  → „Dovolená v Českém ráji" (film!), pokrytí 0.67
+        #   „Český ráj"    → „Český ráj",              pokrytí 1.00
+        # Bez toho Hans na dotaz po hradech odpověděl obsahem filmové komedie.
+        # Nestojí to dotaz navíc — tvar se opraví ještě před hledáním.
+        #
+        # ⚠️ ÚZCE: jen DVOJICE, kde první slovo je adjektivum v lokativu
+        # (-ém/-ých). Jména („Sherlocku Holmesovi") ani druh+jméno („hrad
+        # Kost") tou podmínkou neprojdou a zůstávají netknutá.
+        if (len(jmeno) == 2 and re.search(r"(ém|ých)$", jmeno[0], re.IGNORECASE)):
+            _adj = re.sub(r"(ém|ých)$", "ý", jmeno[0], flags=re.IGNORECASE)
+            _subst = re.sub(r"(i|u|e|ě)$", "", jmeno[1])
+            if _adj and _subst:
+                jmeno = [_adj, _subst]
         druh = _DRUH.get(_fold(words[i - 1]), "")
         return ((druh + " ") if druh else "") + " ".join(jmeno)
     return None
