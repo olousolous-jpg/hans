@@ -1374,6 +1374,74 @@ def films_watched_answer(db_path: str, question: str = "",
             conn.close()
 
 
+def artwork_answer(db_path: str, question: str = "", limit: int = 5) -> str:
+    """HANS_ARTWORK_RECALL_V1 (30.8.) — CO JSEM NAMALOVAL, z deníku, bez LLM.
+
+    PROČ: na „namaloval jsi neco novyho?" Hans odpověděl *„Vzhledem k mé roli
+    nemám možnost vytvářet obrazy samostatně, malování nastane pouze na základě
+    vašeho pokynu"* a na „ukaz mi to" dokonce *„jsem textový asistent"*.
+    Obojí je DOLOŽENĚ NEPRAVDA — `artwork` má 89 záznamů za 30 dní, poslední
+    „Sen" vznikl v noci bez jakéhokoli pokynu.
+
+    Táž třída jako „Proud krve" (14.7.): **zapírá, co ví**. Tehdy se to opravilo
+    pro filmy (`film_knowledge_answer`) a CLAUDE.md si nechala otevřené „další
+    zapíraná kategorie, až se najde reálný případ". Tohle je ten případ, takže
+    se PROTAHUJE hotový vzor (`films_watched_answer`), nestaví nový mechanismus.
+
+    ⚠️ Nestačilo by doručit `hans_capabilities`: „umím malovat" je odpověď na
+    JINOU otázku. Tady se ptá na PROVEDENOU PRÁCI → musí přijít z dat.
+    """
+    conn = None
+    try:
+        conn = _ro(db_path)
+        q = (question or "").lower()
+        dnes = "dnes" in q or "dneska" in q
+        if dnes:
+            midnight = datetime.now().replace(
+                hour=0, minute=0, second=0, microsecond=0).timestamp()
+            rows = conn.execute(
+                "SELECT ts, title, note FROM diary WHERE event_type='artwork' "
+                "AND ts >= ? ORDER BY ts DESC", (midnight,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT ts, title, note FROM diary WHERE event_type='artwork' "
+                "ORDER BY ts DESC LIMIT ?", (limit * 6,)).fetchall()
+        if not rows:
+            return ("Nemám záznam o žádném obrazu, který bych "
+                    + ("dnes " if dnes else "") +
+                    "namaloval, pane. Nebudu si nic vymýšlet.")
+        videno, dila = set(), []
+        for ts, title, note in rows:
+            t = (title or "").strip()
+            if t and t.lower() not in videno:
+                videno.add(t.lower())
+                dila.append((ts, t, (note or "").strip()))
+            if len(dila) >= limit:
+                break
+        if dnes:
+            return "Dnes jsem namaloval: %s." % "; ".join(
+                "„%s“" % t for _, t, _ in dila)
+        ts0, t0, note0 = dila[0]
+        out = "Naposledy jsem maloval „%s“ (%s)." % (t0, _cz_when(ts0))
+        if note0:
+            # vlastní poznámka k obrazu — Hansův komentář, ne domněnka
+            out += " Poznamenal jsem si k tomu: %s" % note0.rstrip(".") + "."
+        if len(dila) > 1:
+            out += " Předtím: %s." % "; ".join("„%s“" % t for _, t, _ in dila[1:])
+        # HANS_ARTWORK_WHERE_V1 (30.8.) — KDE je obraz k vidění. Bez tohohle
+        # Hans na navazující „ukaz mi to" odpověděl „nemám možnost zobrazovat
+        # obrazy jen tak ze záznamu", což je NEPRAVDA: obrazy leží v
+        # `data/hans_art/` a jsou na nástěnce web adminu. Věta se dostane do
+        # historie hovoru, takže na ni model může navázat.
+        out += " Obrazy mám na nástěnce (Co Hans namaloval)."
+        return out
+    except Exception:
+        return "K obrazům teď nemám přístup do deníku, pane."
+    finally:
+        if conn:
+            conn.close()
+
+
 def last_seen_answer(db_path: str, config: dict, question: str,
                      asker: Optional[str]) -> str:
     """Kdy jsem osobu naposledy viděl — přímo z person_seen. Žádný LLM."""

@@ -1501,6 +1501,38 @@ register(
 )
 
 
+def _cmd_obrazy(handler, name, args) -> str:  # HANS_ARTWORK_RECALL_V1
+    from scripts.hans_recall import artwork_answer
+    out = artwork_answer(_recall_db(handler), args or "")
+    return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+
+
+register(
+    "obrazy",
+    slash_aliases=["obrazy", "namaloval", "galerie"],
+    # HANS_ARTWORK_RECALL_V1 (30.8.) — DOTAZ NA HOTOVÉ DÍLO, ne pokyn malovat.
+    # Doloženo: „namaloval jsi neco novyho?" propadlo do volného hovoru a Hans
+    # odpověděl „nemám možnost vytvářet obrazy samostatně" — přitom má 89 obrazů
+    # za 30 dní. Vzory jsou v MINULÉM čase a schválně NEobsahují „namaluj",
+    # aby nekradly routing příkazu k malování (`\bnamaluj` na „namaloval"
+    # nesedne — liší se od šestého znaku, ověřeno).
+    nl_patterns=[
+        r"namaloval\s+(jsi|si)\b",
+        r"co\s+jsi\s+(dnes\w*\s+|v[čc]era\s+|naposledy\s+)?namaloval",
+        r"(posledn[íi]|nov[ýy])\s+obraz\b",
+        r"jak[ýy]\s+obraz\s+jsi",
+        r"kreslil\s+(jsi|si)\b",
+        # HANS_ARTWORK_SHOW_V1 (30.8.) — „ukaž mi ten obraz" je dotaz, ne pokyn
+        # malovat. Holé „ukaž mi to" tu ZÁMĚRNĚ není: bez předmětu může mířit
+        # na cokoli (rozvrh, deník, nález) a únos by byl horší než dnešní stav.
+        r"uka[žz]\w*\s+(mi\s+)?(ten\s+|ty\s+|sv[ůu]j\s+)?(obraz|obr[áa]zk|galerii)",
+        r"m[ůu][žz]u\s+(to\s+)?vid[ěe]t\s+(ten\s+)?obraz",
+    ],
+    handler=_cmd_obrazy,
+    help_text="Co jsem namaloval (přímo z deníku artwork): /obrazy [dnes]",
+)
+
+
 # ─── /schopnosti — co Hans reálně umí (HANS_CAPABILITY_AWARENESS_V1) ─────────
 # HANS_CAP_HOWTO_V1 (26.8.) — „kam/kde/jak to funguje" u KONKRÉTNÍ schopnosti.
 # Doloženo: „kam mi pošleš ten snímek?" → Hans nejdřív nabídl hlídání zapnout,
