@@ -510,8 +510,21 @@ def kotvy_ve_vete(veta: str) -> list:
         if i == 0 or not w[:1].isupper() or w.isupper():
             continue
         pred = text[:m.start()].rstrip()
-        if not pred or pred[-1] in _KONEC_VETY:
+        if not pred:
             continue
+        if pred[-1] in _KONEC_VETY:
+            # HANS_ANCHOR_COLON_V1 (30.8.) — DVOJTEČKA V NÁZVU NENÍ KONEC VĚTY.
+            # `_KONEC_VETY` obsahuje i „:" a „;", protože dvojtečka uvozuje
+            # výčet („Studuji: hrady…") a slovo za ní kotva být nemá. Jenže
+            # v názvech filmů a knih je dvojtečka běžná — „Avengers: Age of
+            # Ultron" se proto sekalo na „Avengers" (doloženo 30.8. na entitě
+            # ze store, spolu s „Avatar: The Way of Water").
+            # Rozlišuje se tím, co stojí PŘED dvojtečkou: je-li to samo kotva
+            # (velké písmeno uvnitř věty), je dvojtečka uvnitř názvu. Ve výčtu
+            # jí předchází sloveso na začátku věty, které kotva není.
+            _predchozi_je_kotva = bool(out) and out[-1][0] == i - 1
+            if not (pred[-1] in ":;" and _predchozi_je_kotva):
+                continue
         out.append((i, w))
     return out
 
@@ -662,8 +675,16 @@ _TOKEN_VSE = re.compile(r"[0-9a-zá-žA-ZÁ-Ž]+")
 
 
 def _mezi_slovy(veta: str, prvni: str, druhe: str) -> list:
-    """Slova (i jednopísmenná), která v textu stojí mezi dvěma výskyty."""
-    vse = _TOKEN_VSE.findall(veta or "")
+    """Slova (i jednopísmenná), která v textu stojí mezi dvěma výskyty.
+
+    HANS_ANCHOR_APOSTROF_V1 (30.8.) — koncovka za apostrofem se NEPOČÍTÁ jako
+    samostatné slovo. Bez toho se „Don't Go" rozpadlo: mezi „Don" a „Go" stálo
+    „t", což není spojka, takže se název usekl na „…And Don" (doloženo na
+    entitě „Ready, Set, And Don't Go").
+    """
+    text = veta or ""
+    vse = [m.group(0) for m in _TOKEN_VSE.finditer(text)
+           if not (m.start() > 0 and text[m.start() - 1] in "'’")]
     for k in range(len(vse) - 1):
         if vse[k] != prvni:
             continue
@@ -766,6 +787,15 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
             _subst = re.sub(r"(i|u|e|ě)$", "", jmeno[1])
             if _adj and _subst:
                 jmeno = [_adj, _subst]
+        # HANS_ANCHOR_CISLO_V1 (30.8.) — POŘADOVÉ ČÍSLO DÍLU PATŘÍ K NÁZVU.
+        # `_WORD` bere slova od dvou znaků, takže jednociferné „3" ze seznamu
+        # vypadne a kotva skončí na „…Galaxy Vol". To NENÍ neškodné zkrácení:
+        # změřeno proti cs.wikipedia — „Guardians of the Galaxy Vol" vrátilo
+        # **Vol. 2**, tedy JINÝ díl. Špatný díl je horší než žádný článek.
+        # Číslice se proto dobere z původní věty (i přes tečku: „Vol. 3").
+        _m_cis = re.search(re.escape(jmeno[-1]) + r"[.\s]+(\d{1,3})\b", veta or "")
+        if _m_cis:
+            jmeno.append(_m_cis.group(1))
         druh = _DRUH.get(_fold(words[i - 1]), "")
         return ((druh + " ") if druh else "") + " ".join(jmeno)
     return None
