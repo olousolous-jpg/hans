@@ -4208,7 +4208,22 @@ def _capability_wish_ask(msg: str) -> bool:
 # „co mám v seznamu"), guard NEZASAHUJE — jinak by zabil legitimní dotaz.
 _ZPETNE_ZAJMENO = re.compile(
     r"\b(to|tom|tim|toho|tomu|jich|jim|nem|nej|nim|ni|ho|ji|jej|jeho)\b")
-_VYPISOVE_CMDS = {"seznam", "nitky", "rozvrh", "kritika"}
+# HANS_THREAD_NO_LIST_V3 (30.8.) — dvě další formy téže chyby z dlouhého
+# rozhovoru, obě „otázka dostala výpis":
+#   „poznas sam, kdyz je neco spatne?"  → /anomalie (výpis odchylek)
+#   „a co studium, na cem jsi ted"      → /nitky    (výpis 18 nitek)
+# První je dotaz na SCHOPNOST (Hans má o sobě vrstvu, ze které umí odpovědět),
+# druhá nese TÁZACÍ zájmeno ukazující do kontextu („na čem"), které se do
+# `_ZPETNE_ZAJMENO` nehodí — to jsou zájmena odkazovací.
+_SCHOPNOST_DOTAZ = re.compile(
+    r"\b(pozn[áa][šs]|um[íi][šs]|dok[áa][žz]e[šs]|zvl[áa]dne[šs]|dovede[šs]|"
+    r"pozn[áa]te|um[íi]te|dok[áa][žz]ete|jsi\s+schopen)\b", re.IGNORECASE)
+_TAZACI_ZAJMENO = re.compile(
+    r"\b(na\s+[čc]em|o\s+[čc]em|s\s+[čc][íi]m|k\s+[čc]emu)\b", re.IGNORECASE)
+# `anomalie` přibylo až s V3: výpis odchylek je na dotaz „poznáš to sám?"
+# odpověď na jinou otázku. Legitimní „jaké máš anomálie?" chrání pojistka
+# `_zminuje_vlastni_tema`, která na slovo z aliasů příkazu guard vypne.
+_VYPISOVE_CMDS = {"seznam", "nitky", "rozvrh", "kritika", "anomalie"}
 
 
 def _je_navazujici_dotaz(msg: str) -> bool:
@@ -4218,6 +4233,8 @@ def _je_navazujici_dotaz(msg: str) -> bool:
         f = _fold(msg or "")
     except Exception:
         f = (msg or "").lower()
+    if _TAZACI_ZAJMENO.search(f) or _SCHOPNOST_DOTAZ.search(f):
+        return True          # HANS_THREAD_NO_LIST_V3 — bez délkového limitu
     return len((msg or "").split()) <= 9 and bool(_ZPETNE_ZAJMENO.search(f))
 
 
