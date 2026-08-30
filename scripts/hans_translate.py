@@ -334,6 +334,36 @@ def obstarej_titulky(config, pc_path, meta, workdir) -> dict:
 _HRANATA = re.compile(r"\[[^\]]{0,40}\]")     # [music], [Applause], [Officer] — vždy popis
 _SIPKY = re.compile(r"&gt;&gt;|>>")             # značka střídání mluvčího v CC
 
+# HANS_SUB_SPACE_V1 (30.8.) — nález uživatele: „na konci vety je tecka a nova
+# veta zacina hned za ni bez mezery. Pak to bere jako pokracovani vety a pri
+# prekladu rekne prvni slovo vety a pak je dlouha pauza na srovnani casovani."
+#
+# ⚠️ REPRODUKCE SE NEZDAŘILA (30.8., video „Steam Engines to Entropy"):
+# syrové VTT 0 výskytů · náš převod 0 · překlad vzorku 40 replik 0 · dva starší
+# české výstupy 0. Řetěz spojuje text správně (`srt_track.py:61`,
+# `hans_youtube.py:179,294` — všude `" ".join`), takže chybějící mezera může
+# přijít jedině ZE ZDROJE (vnořené titulky, cizí .srt) nebo od modelu.
+# Proto je to POJISTKA S POČÍTADLEM, ne oprava změřené vady: v logu se objeví,
+# kolik replik to opravilo, a teprve provoz ukáže, jestli jev existuje.
+#
+# ⚠️ DVĚ PODMÍNKY VE VZORU NEJSOU KOSMETIKA — každá vyřazuje jednu past:
+#   (a) za tečkou musí být VELKÉ písmeno → `youtube.com`, `bbc.co.uk`,
+#       `soubor.mkv` zůstanou celé (jinak by vzniklo „youtube. com");
+#   (b) před tečkou musí být MALÉ písmeno → `U.S.Army`, `J.R.R.` se nerozsypou
+#       na „U. S. Army"; `darkness.An` i `Dr.Onella` se opraví (obojí chceme).
+# Číslic se to nedotkne vůbec, takže `3.5`, `1.2.3` ani časy jsou mimo dosah.
+# ⚠️ Následující věta je LOOKAHEAD, ne obyčejná skupina, a je to nutné:
+# se zachycením („(...)([A-Z])") se první písmeno další věty zkonzumuje, takže
+# u řetězených vět se opraví jen každý druhý šev — „Ano.Ne.Možná." dalo
+# „Ano. Ne.Možná.". Odhalil to až test, ne čtení vzoru.
+_TECKA_BEZ_MEZERY = re.compile(
+    r"\w[a-záčďéěíňóřšťúůýž][.!?](?=[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])")
+
+
+def _mezera_po_tecce(t: str) -> str:
+    """Vrátí větu, kde za koncovou tečkou následuje mezera. Viz vzor výše."""
+    return _TECKA_BEZ_MEZERY.sub(r"\g<0> ", t or "")
+
 
 def _unescape(t: str) -> str:
     """HTML entity → znaky. Bez toho jde do namlouvání doslovné `&gt;&gt;`."""
@@ -352,6 +382,7 @@ def _ocisti_repliku(t: str) -> str:
     t = _unescape(t or "")
     t = _HRANATA.sub(" ", t)
     t = _SIPKY.sub(" ", t)
+    t = _mezera_po_tecce(t)   # HANS_SUB_SPACE_V1
     return " ".join(t.split()).strip(" -–—")
 
 
@@ -369,10 +400,13 @@ def _bez_noticek(src: str, dst: str) -> dict:
     if not cues:
         return {"zmeneno": False, "zahozeno": 0, "ocisteno": 0}
     ven, zahozeno, ocisteno, upraveno = [], 0, 0, 0
+    mezer = 0   # HANS_SUB_SPACE_V1 — kolik replik melo tecku bez mezery
     for c in cues:
         t = (c["text"] or "").strip()
         if not t:
             continue
+        if _TECKA_BEZ_MEZERY.search(t):
+            mezer += 1
         # HANS_SUB_CLEAN_V2 (28.8.) — nález uživatele po poslechu: „hudba" se
         # pořád ozývala. Důvod: `[music]` nesedí na vlastním řádku, ale UPROSTŘED
         # věty mezi značkami střídání mluvčích:
@@ -411,9 +445,16 @@ def _bez_noticek(src: str, dst: str) -> dict:
     with open(dst, "w", encoding="utf-8") as f:
         for i, c in enumerate(ven, 1):
             f.write(f"{i}\n{_ts(c['start'])} --> {_ts(c['end'])}\n{c['text']}\n\n")
+    if mezer:
+        # HANS_SUB_SPACE_V1 — poctivy zaznam: dokud tohle cislo chodi nulove,
+        # jev v nasich zdrojich neni a pojistka jen visi (reprodukce 30.8.
+        # se nezdarila). Az bude nenulove, mame doklad i cetnost.
+        log.info("v titulcich doplnena mezera za tecku u %d replik z %d",
+                 mezer, len(cues))
     return {"zmeneno": bool(zahozeno or ocisteno or upraveno),
             "zahozeno": zahozeno, "ocisteno": ocisteno,
-            "upraveno": upraveno, "replik": len(ven)}
+            "upraveno": upraveno, "replik": len(ven),
+            "mezer_doplneno": mezer}
 
 
 # ── překlad ──────────────────────────────────────────────────────────────────
@@ -548,12 +589,16 @@ def prelozit_srt(config, src_srt, dst_srt, progress=None) -> dict:
     # HANS_SUB_CLEAN_V3 — pojistka na VÝSTUPU. Vyčištěný vstup nestačí: model
     # marker přeloží („[music]" → „[hudba]") nebo si šipky doplní sám. Tady je
     # to poslední místo před namlouváním, takže co projde, to je slyšet.
-    pocisteno = 0
+    pocisteno, mezer_out = 0, 0
     for i, t in enumerate(hotovo):
+        if _TECKA_BEZ_MEZERY.search(t or ""):
+            mezer_out += 1          # HANS_SUB_SPACE_V1 — vyrobil to MODEL
         t2 = _ocisti_repliku(t or "")
         if t2 != (t or ""):
             pocisteno += 1
             hotovo[i] = t2
+    if mezer_out:
+        log.info("po prekladu doplnena mezera za tecku u %d replik", mezer_out)
     if pocisteno:
         log.info("po překladu očištěno %d replik (marker zvuku / šipky)", pocisteno)
     with open(dst_srt, "w", encoding="utf-8") as f:
