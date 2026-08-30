@@ -166,6 +166,15 @@ _STUDY_TAZACI = re.compile(
     r"|\?\s*$", re.IGNORECASE)
 
 
+def _je_meta_pamet(message: str) -> bool:
+    """HANS_AGENT_META_MEMORY_GUARD_V1 — deleguje na sdílený predikát."""
+    try:
+        from scripts.hans_recall import is_memory_meta_query
+        return is_memory_meta_query(message or "")
+    except Exception:
+        return False
+
+
 def _je_dotaz_ne_zadost(message: str) -> bool:
     """Tázací věta, která NEobsahuje pokyn ke studiu → odpověz, nenabízej."""
     m = message or ""
@@ -1556,6 +1565,18 @@ class AgentRouter:
         # V2: `report_kolac_status` patří do téže množiny („jak se máš?" →
         # „Koláč zrovna tiše přemítá po mém boku"). ⚠️ Rozhoduje TÝŽ klasifikátor
         # jako grounding, takže pokrývá i formulace, které nikdo nevypsal.
+        # HANS_AGENT_META_MEMORY_GUARD_V1 (30.8.) — otázka na SPOLEHLIVOST
+        # Hansovy paměti není dotaz na dění v domě. Doloženo: „na základě čeho
+        # tvrdíte, že si to pamatujete správně?" → *„Koláč zrovna tiše přemítá
+        # po mém boku"*. `SOCIAL_GUARD_V2` tuhle akci hlídá, ale jen u SMALL
+        # TALKU — složitá metaotázka jím neprojde, a `is_about_self` na ni
+        # (změřeno) taky nereaguje. Predikát je SDÍLENÝ s `is_source_query`,
+        # ať se dvě pravidla o téže třídě otázek nerozejdou.
+        dict(marker="HANS_AGENT_META_MEMORY_GUARD_V1",
+             akce=("report_home_status", "report_who_is_home",
+                   "report_now_playing", "report_kolac_status"),
+             podminka=lambda s, aid, msg, dec, h: _je_meta_pamet(msg),
+             verdikt=None, duvod="ptá se na mou paměť, ne na dění v domě"),
         dict(marker="HANS_AGENT_SOCIAL_GUARD_V2",
              akce=("report_home_status", "report_who_is_home",
                    "report_now_playing", "report_kolac_status"),

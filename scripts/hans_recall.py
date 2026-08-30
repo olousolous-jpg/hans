@@ -692,12 +692,47 @@ def is_recall_query(text: str) -> bool:
 
 # ── HANS_SOURCE_QUERY_V1 — dotaz na zdroj Hansova tvrzení ────────────────────
 
+# HANS_SOURCE_META_MEMORY_V1 (30.8.) — OTÁZKA NA SPOLEHLIVOST PAMĚTI NENÍ
+# DOTAZ NA ZDROJ. Doloženo simulovaným rozhovorem: „A na základě čeho tvrdíte,
+# že si to PAMATUJETE SPRÁVNĚ, když jste si to sám zapsal?" → deterministický
+# bypass odpověděl *„O tématu 'Design' jsem se dočetl na Wikipedii"* + odkaz,
+# tedy zcela mimo — entitu si vzal z repliky o dvě výměny zpět.
+#
+# Je to táž třída jako `HANS_SOURCE_IS_SENSOR_V1` („odkud víš, že tu je Jana?"
+# → zdrojem je KAMERA, ne článek): ne každé „na základě čeho" míří na četbu.
+# Tady je předmětem otázky Hansova vlastní PAMĚŤ, a na to se odpovídá úvahou —
+# což doloženě umí, když ho k ní pustíme (tahy 5 a 7 téhož rozhovoru).
+# Proto detektor vrátí False → dotaz jde běžnou cestou, žádná šablona.
+#
+# ⚠️ Změřeno na 1337 reálných replikách: z 29 historických zachytů dotazu na
+# zdroj by nově nevypadl ANI JEDEN.
+_META_PAMET = re.compile(
+    r"\b(že|ze)\s+(si\s+|se\s+)?(to\s+)?"
+    r"(pamatuj|vzpom[íi]n|neplet|nem[ýy]l)"
+    r"|\bpamatuje(te|š)\s+spr[áa]vn"
+    r"|\bjste\s+si\s+jist\w*\s+(t[íi]m\s+)?(co\s+)?(si\s+)?(pam|vzpom)",
+    re.IGNORECASE)
+
+
+def is_memory_meta_query(text: str) -> bool:
+    """HANS_SOURCE_META_MEMORY_V1 — ptá se věta na SPOLEHLIVOST Hansovy paměti?
+
+    Sdílený predikát: používá ho `is_source_query` (aby nespustil šablonu
+    o zdrojích) i agentní guard v `hans_agent` (aby metaotázku neunesl na
+    hlášení, co dělá Koláč). Jedna pravda místo dvou vzorů, které se rozejdou.
+    """
+    return bool(_META_PAMET.search(text or ""))
+
+
 def is_source_query(text: str) -> bool:
     """Ptá se uživatel „odkud to víš / kde jsi to četl / máš k tomu zdroj / odkaz"?
     Tolerantní k i/y a překlepům + bez diakritiky. NEsmí trefit obecnou zvědavost
     („co je zdroj X"). Rozšířeno o reálné formulace uživatele („mas odkaz na
     clanek, kde se o tom pisr?" — chat 17.7. 11:59)."""
     t = (text or "").lower()
+    # HANS_SOURCE_META_MEMORY_V1 — metaotázka o paměti jde běžnou cestou
+    if _META_PAMET.search(text or ""):
+        return False
     # Klasické + reálné formulace dotazu na provenienci Hansova tvrzení.
     pats = (
         # „odkud to (víš/máš)"

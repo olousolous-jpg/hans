@@ -4047,7 +4047,16 @@ class OpenWebUIDirectHandler:
                     _uvaha = False
                     try:
                         from scripts.hans_intent import is_reflective_ask
-                        _uvaha = is_reflective_ask(_raw_message)
+                        # HANS_SOURCE_META_MEMORY_V1 (30.8.) — metaotázka na
+                        # spolehlivost paměti je TAKÉ úvaha. Doloženo: po
+                        # potlačení špatné šablony spadla na abstinenci
+                        # („Víc než tohle už o tom nemám"), tedy z jedné vadné
+                        # odpovědi na druhou. Predikát je týž, který používá
+                        # `is_source_query` a agentní guard — třetí místo téže
+                        # pravdy, schválně sdílené.
+                        from scripts.hans_recall import is_memory_meta_query
+                        _uvaha = (is_reflective_ask(_raw_message)
+                                  or is_memory_meta_query(_raw_message))
                     except Exception:
                         pass
                     if _dropped and _tenky and _uvaha:
