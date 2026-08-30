@@ -293,6 +293,41 @@ def probe_schedule(config: dict) -> dict:
         return {"status": UNKNOWN, "detail": str(e)[:80], "stale": []}
 
 
+def probe_matrix(config: dict) -> dict:
+    """MATRIX_SYNC_HEARTBEAT_V1 (30.8.) — žije most na telefon?
+
+    PROČ: Matrix je JEDINÝ kanál ven (příkazy z mobilu, poplach z /hlidej)
+    a jako jediná závislost nebyl ve watchdogu. Když sync tiše umře, zbude
+    v logu jen hláška cizí knihovny — doloženo 30.8. 05:46 (31 chyb za 30 s
+    a pak ticho, ve kterém se nedalo poznat, jestli most žije).
+
+    Status WARN (ne DOWN → NEspouští heal), vzor `probe_schedule`:
+    restartovat kvůli tomu Hanse je horší než o výpadku vědět.
+    """
+    try:
+        mx = (config or {}).get("matrix", {}) or {}
+        if not mx.get("enabled"):
+            return {"status": OK, "detail": "vypnuto"}
+        from scripts import hans_matrix
+        if not hans_matrix.bridge_started():
+            # cizí proces (web_admin, skript) — nemáme co měřit, NE porucha
+            return {"status": UNKNOWN, "detail": "most v tomto procesu neběží"}
+        age = hans_matrix.last_sync_age_s()
+        limit = float(_cfg(config).get("matrix_sync_max_age_s", 300))
+        if age is None:
+            return {"status": WARN,
+                    "detail": "most se spustil, ale ani jednou nesyncoval"}
+        if age > limit:
+            return {"status": WARN,
+                    "detail": f"poslední sync před {age / 60:.0f} min "
+                              f"(limit {limit / 60:.0f} min)",
+                    "age_s": round(age)}
+        return {"status": OK, "detail": f"sync před {age:.0f} s",
+                "age_s": round(age)}
+    except Exception as e:
+        return {"status": UNKNOWN, "detail": str(e)[:80]}
+
+
 def probe_pc_reboots(config: dict) -> dict:
     """PC_REBOOT_WATCH_V1 — restartuje se PC častěji, než má?
 
@@ -391,6 +426,7 @@ def probe_all(config: dict) -> dict:
         "pc": probe_pc,
         "disk": probe_disk,
         "schedule": probe_schedule,  # HANS_SCHEDULE_V1 (behaviorální)
+        "matrix": probe_matrix,      # MATRIX_SYNC_HEARTBEAT_V1 (kanál ven)
         "pc_reboots": probe_pc_reboots,  # PC_REBOOT_WATCH_V1 (planý reset watchdogu)
     }
     only = _cfg(config).get("probes")  # volitelně podmnožina

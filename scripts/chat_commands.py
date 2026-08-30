@@ -3439,7 +3439,11 @@ def _cmd_zdravi(handler, name, args) -> str:  # HANS_HEALTH_V1
     _lbl = {"ollama": "Mozek (Ollama)", "comfyui": "Malování (ComfyUI)",
             "kodi": "Televize (Kodi)", "stt": "Sluch (přepis)",
             "pc": "Počítač", "disk": "Disk", "camera": "Kamera",
-            "schedule": "Rozvrh (autonomní rutiny)"}
+            "schedule": "Rozvrh (autonomní rutiny)",
+            # MATRIX_SYNC_HEARTBEAT_V1 — bez popisku by Hans hlásil holé
+            # „matrix"; výpis jde přes health.items(), takže klíč bez labelu
+            # projde, jen se nepřeloží.
+            "matrix": "Most na telefon (Matrix)"}
     _ico = {"ok": "✅", "paused": "⏸️", "wedged": "⚠️", "down": "❌",
             "unknown": "❔", "warn": "⚠️"}
     lines = ["Stav mých systémů, pane:"]

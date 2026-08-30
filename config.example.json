@@ -1144,7 +1144,9 @@
     "max_boots_24h": 4,
     "_max_boots_note": "PC_REBOOT_WATCH_V1 (12.8.): kolik bootů PC za 24 h je ještě normální. Běžně 2 (buzení ve 3:00 na analytiku + ranní). Víc = něco stroj restartuje — hlídá se kvůli tomu, že hardwarový watchdog (sp5100_tco, zapnut 12.8. po nočním zamrznutí) umí na některých deskách resetovat bez příčiny. Status WARN, NEspouští heal.",
     "ollama_busy_watt": 100,
-    "_ollama_busy_note": "Nad timto prikonem GPU se neodpovidajici Ollama povazuje za VYTIZENOU, ne zaseknutou, a NErestartuje se. Rozhoduje prikon, ne procenta: zasek runlistu = 99 % pri 49 W, realna prace 74-219 W, rezidentni model v klidu 45-51 W. Doloženo 29.8.: self-heal restartoval Ollamu uprostred backfillu a zabil 30 minut prace. Kdyz se prikon nepodari zmerit, chova se to jako driv (restart)."
+    "_ollama_busy_note": "Nad timto prikonem GPU se neodpovidajici Ollama povazuje za VYTIZENOU, ne zaseknutou, a NErestartuje se. Rozhoduje prikon, ne procenta: zasek runlistu = 99 % pri 49 W, realna prace 74-219 W, rezidentni model v klidu 45-51 W. Doloženo 29.8.: self-heal restartoval Ollamu uprostred backfillu a zabil 30 minut prace. Kdyz se prikon nepodari zmerit, chova se to jako driv (restart).",
+    "matrix_sync_max_age_s": 300,
+    "_note_matrix": "MATRIX_SYNC_HEARTBEAT_V1: kdyz posledni USPESNY Matrix sync je starsi nez tolik sekund, probe_matrix hlasi WARN. Sync ma timeout 30 s, takze 300 = 10 promeskanych cyklu. WARN NEspousti heal - Matrix se restartovat neda, jde o hlaseni tichého vypadku jedineho kanalu ven (prikazy z mobilu, poplach z /hlidej)."
   },
   "toolscout": {
     "enabled": false,

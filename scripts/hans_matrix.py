@@ -32,6 +32,34 @@ import time
 
 _log = logging.getLogger("hans.matrix")
 
+# ── MATRIX_SYNC_HEARTBEAT_V1 (30.8.) ────────────────────────────────────────
+# Cas POSLEDNIHO USPESNEHO syncu. Drzi se v pameti procesu zamerne: probe
+# bezi v temze procesu (hans_routine) a zapisovat kazdych 30 s na SD kartu
+# by byla zbytecna rezie. Razitkuje se AZ PO uspechu (`next_batch` v odpovedi),
+# aby si cidlo nedelalo vlastni dukaz.
+_LAST_SYNC_TS = 0.0
+_BRIDGE_STARTED = False
+
+
+def _mark_sync() -> None:
+    global _LAST_SYNC_TS
+    _LAST_SYNC_TS = time.time()
+
+
+def _mark_bridge_started() -> None:
+    global _BRIDGE_STARTED
+    _BRIDGE_STARTED = True
+
+
+def bridge_started() -> bool:
+    """True = most se v TOMTO procesu rozjel (jinak probe nema co merit)."""
+    return _BRIDGE_STARTED
+
+
+def last_sync_age_s():
+    """Stari posledniho uspesneho syncu v s; None = zadny jeste nebyl."""
+    return None if not _LAST_SYNC_TS else time.time() - _LAST_SYNC_TS
+
 # ── HANS_MATRIX_DEFERNÍ FRONTA ─────────────────────────────────────────────
 # HANS_MATRIX_DEFERRED_FILE_V1 (22.8.) — ODLOŽENÁ ZPRÁVA JE SOUBOR, NE PAMĚŤ.
 #
@@ -270,6 +298,7 @@ class MatrixBridge:
 
     def _run(self):
         """Vlastní asyncio smyčka ve vlákně."""
+        _mark_bridge_started()   # MATRIX_SYNC_HEARTBEAT_V1
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
@@ -328,6 +357,7 @@ class MatrixBridge:
 
         # úvodní sync — načte device listy + stav místností (nutné pro E2E send)
         await self._client.sync(timeout=30000, full_state=True)
+        _mark_sync()             # MATRIX_SYNC_HEARTBEAT_V1
         self._ready.set()
         _log.info("matrix: E2E připraveno, naslouchám")
 
@@ -336,6 +366,8 @@ class MatrixBridge:
                                self.room_id)
 
         # hlavní smyčka
+        fail_since = 0.0     # kdy zacala serie neuspechu (0 = sync bezi)
+        last_fail_log = 0.0
         while not self._stop.is_set():
             try:
                 self._flush_deferred()
@@ -346,7 +378,32 @@ class MatrixBridge:
                         None, self._proactive_tick)
                 except Exception:
                     pass
-                await self._client.sync(timeout=30000)
+                resp = await self._client.sync(timeout=30000)
+                # MATRIX_SYNC_BACKOFF_V1 (30.8.) — nio vraci chybu syncu
+                # NAVRATOVOU HODNOTOU (SyncError), ne vyjimkou → `except` niz
+                # se na ni NIKDY nechyti a smycka se tocila ~1x/s (doloženo
+                # 30.8. 05:46:54–05:47:24, 31 pokusu za 30 s). Uspech poznáme
+                # podle `next_batch` — prave ten v chybove odpovedi chybi
+                # (a je to tataz vec, na kterou si stezuje nio.responses).
+                if getattr(resp, "next_batch", None):
+                    _mark_sync()
+                    if fail_since:
+                        _log.warning("matrix: sync OBNOVEN po %.0f s",
+                                     time.time() - fail_since)
+                        fail_since = 0.0
+                        last_fail_log = 0.0
+                else:
+                    now = time.time()
+                    if not fail_since:
+                        fail_since = now
+                    # log jen pri prvnim selhani a pak a 5 min — jinak by
+                    # rozbity homeserver zaplavil system.log jako 30.8.
+                    if now - last_fail_log > 300:
+                        _log.warning("matrix: sync selhal (%s) — trvá %.0f s",
+                                     str(getattr(resp, "message", resp))[:80],
+                                     now - fail_since)
+                        last_fail_log = now
+                    await asyncio.sleep(5)
             except Exception as e:
                 _log.debug("matrix sync: %s", e)
                 await asyncio.sleep(5)
