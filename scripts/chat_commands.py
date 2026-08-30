@@ -4281,6 +4281,18 @@ _TAZACI_ZAJMENO = re.compile(
 _VYPISOVE_CMDS = {"seznam", "nitky", "rozvrh", "kritika", "anomalie"}
 
 
+_NALEZ_SLOVA = re.compile(
+    r"\b(na[šs]el|nalez|n[áa]lez|zkou[šs]|obst[áa]l|dopadl|vytkl|pochyb)",
+    re.IGNORECASE)
+_KOLAC_SLOVO = re.compile(r"\bkol[áa][čc]\w*\b", re.IGNORECASE)
+
+
+def _je_kolac_bez_nalezu(msg: str) -> bool:
+    """HANS_NALEZ_NOT_KOLAC_TALK_V1 — věta je o Koláčovi, ale ne o jeho nálezech."""
+    m = msg or ""
+    return bool(_KOLAC_SLOVO.search(m)) and not _NALEZ_SLOVA.search(m)
+
+
 def _je_navazujici_dotaz(msg: str) -> bool:
     """Krátká věta se zájmenem, které ukazuje na předchozí repliku."""
     try:
@@ -4332,6 +4344,26 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     if cid == "schopnosti" and _capability_wish_ask(msg):
         _log.info("HANS_CAP_WISH_NOT_LIST_V1: '%.40s' → /schopnosti ZAMÍTNUTO "
                   "(ptá se, co NEumí nebo co by chtěl umět)", msg)
+        return ""
+    # HANS_NALEZ_NOT_KOLAC_TALK_V1 (30.8.) — „CO ŘÍKAL KOLÁČ" NENÍ „CO NAŠEL".
+    # Doloženo simulovaným rozhovorem: „co rikal kolac" → `/nalez`, tedy výpis
+    # věcí, kde Koláč Hansovi našel CHYBU („vymýšlel si — Jeden svět nestačí").
+    # Změřeno na routeru: na `nalez` posílá i „co dela kolac?" a „jak se ma
+    # kolac" — všechny čtyři zkušební věty.
+    #
+    # ⚠️ `KOLAC_STATUS_GUARD_V1` v `hans_agent` tuhle třídu už řeší, ale jen
+    # mezi AGENTNÍMI akcemi; na chatový příkaz `/nalez` nedosáhne. Proto guard
+    # tady — jen ODEBERE štítek, takže dotaz spadne dál (agent má vlastní akci
+    # `report_kolac_status`, nebo odpoví hovor).
+    #
+    # Rozlišuje SLOVO O NÁLEZU: „našel / nález / zkoušel / obstál / vytkl" →
+    # výpis je správně. Bez něj je to dotaz na Koláče jako společníka.
+    # Změřeno: 45 reálných replik zmiňuje Koláče bez slova o nálezu
+    # („Co víš o Koláčovi?", „Kolik dní trvají Koláčovy případy?") — všem
+    # dosud hrozilo, že dostanou seznam Hansových pochybení.
+    if cid == "nalez" and _je_kolac_bez_nalezu(msg):
+        _log.info("HANS_NALEZ_NOT_KOLAC_TALK_V1: '%.40s' → /nalez ZAMÍTNUTO "
+                  "(ptá se na Koláče, ne na jeho nálezy)", msg)
         return ""
     # HANS_THREAD_NO_LIST_V2 (30.8.) — výpis nedostane ani ÚVAHOVÁ otázka.
     # Doloženo dlouhým ověřovacím rozhovorem, tah 19: „kdybys mohl neco zmenit
