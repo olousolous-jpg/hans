@@ -643,6 +643,36 @@ for _n, _tvary in {
         _DRUH[_t] = _n
 
 
+# ── HANS_ANCHOR_JOIN_V1 (30.8.) — CO SMÍ BÝT UVNITŘ JEDNOHO TÉMATU ──────────
+# `_WORD` bere slova od DVOU znaků, takže jednopísmenné spojky ze seznamu
+# vypadnou úplně — a sousedící jména se pak tváří jako jedno téma:
+# doloženo „bavili jsme se o Karlovi a Josefovi" → kotva „Karlovi Josefovi".
+# Naopak anglická sousloví se sekala, protože „of/the" nejsou velká:
+# „Icon of the Seas" → „Icon" (13 entit ve store má takový název).
+#
+# Řeší se pohledem do PŮVODNÍ věty na to, co mezi dvěma slovy stojí:
+#   • nic                      → spoj (dnešní chování, „Sherlock Holmes")
+#   • anglické funkční slovo   → spoj i s ním („Icon of the Seas")
+#   • cokoli jiného (i české „a"/„i") → NESPOJUJ, jsou to dvě témata
+# ⚠️ Česká „a" schválně NENÍ mezi spojovacími: „Karel a Josef" jsou dva lidé,
+# kdežto „of the" je součást jednoho názvu.
+_ANG_SPOJKA = {"of", "the", "and", "de", "van", "von", "du", "la", "le",
+               "el", "dos", "da", "di", "in", "on", "at", "for", "with", "to"}
+_TOKEN_VSE = re.compile(r"[0-9a-zá-žA-ZÁ-Ž]+")
+
+
+def _mezi_slovy(veta: str, prvni: str, druhe: str) -> list:
+    """Slova (i jednopísmenná), která v textu stojí mezi dvěma výskyty."""
+    vse = _TOKEN_VSE.findall(veta or "")
+    for k in range(len(vse) - 1):
+        if vse[k] != prvni:
+            continue
+        for m in range(k + 1, min(k + 4, len(vse))):
+            if vse[m] == druhe:
+                return vse[k + 1:m]
+    return []
+
+
 # HANS_ANCHOR_ADJ_V1 — české adjektivní koncovky (viz komentář v `kotva_tematu`).
 _ADJ_KONCOVKA = re.compile(r"(ý|á|é|ém|ých|ého|ému|ou|ým|í)$", re.IGNORECASE)
 
@@ -686,8 +716,25 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
         j = i + 1
         # Pokračování jména jen po dalších KOTVÁCH — jinak by se „…, Hansi.
         # Četl jsi…" slepilo na téma „Hansi Četl" (věta mezi tím skončila).
-        while j in idx:
-            jmeno.append(words[j]); j += 1
+        while j < len(words):
+            # HANS_ANCHOR_JOIN_V1 — rozhoduje, CO stojí mezi slovy.
+            # Dva různé případy, oba doložené:
+            #  (a) sousední kotva bez ničeho mezi  → „Sherlock Holmes"
+            #      (jednopísmenná spojka ve `words` NENÍ, proto pohled do věty:
+            #       „Karlovi A Josefovi" jsou dvě témata, ne jedno)
+            #  (b) kotva až za anglickými funkčními slovy → „Icon of the Seas"
+            if j in idx and not _mezi_slovy(veta, words[j - 1], words[j]):
+                jmeno.append(words[j]); j += 1
+                continue
+            k = j
+            while k < len(words) and _fold(words[k]) in _ANG_SPOJKA:
+                k += 1
+            if k > j and k < len(words) and k in idx:
+                jmeno.extend(words[j:k])     # „of the"
+                jmeno.append(words[k])       # „Seas"
+                j = k + 1
+                continue
+            break
         # HANS_ANCHOR_ADJ_V1 (30.8.) — PŘÍDAVNÉ JMÉNO SAMO TÉMA NENÍ.
         # Kotva se skládá jen z velkých písmen, jenže česká sousloví mají
         # druhé slovo malé („Český ráj", „Norimberský proces"). Zůstávalo
