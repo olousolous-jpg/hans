@@ -707,9 +707,30 @@ def is_source_query(text: str) -> bool:
         # „kde to najdu / kde se to dočtu / kde se o tom píše"
         r"\bkde\s+(to|se\s+(to|o\s+tom))\s+(?:najdu|na[čc]tu|do[čc]t[eě][šs]?|d[ao]ct[eěií]?|p[íi][šs]e)",
         # „na základě čeho / z čeho to víš/máš / podle čeho"
-        r"\bna\s+z[áa]klad[ěe]\s+[čc]eho",
+        # HANS_SOURCE_QUERY_V3 (30.8.) — ZÚŽENO. „na základě čeho" a „podle
+        # čeho" stály samy o sobě, takže chytaly i otázku na ROZHODOVACÍ
+        # KRITÉRIUM, ne na zdroj tvrzení. Doloženo simulovaným rozhovorem
+        # 30.8.: „…podle čeho poznáte, že je zrovna tohle téma důležitější…"
+        # → deterministický bypass odpověděl odkazem na Wikipedii k heslu
+        # „Zločin", tedy úplně mimo, za 0 s a bez LLM.
+        # ⚠️ Změřeno na 1337 reálných replikách: oba vzory nechytily NIKDY NIC
+        # (0 výskytů), takže zúžení nemůže vzít žádný doložený zásah — a všech
+        # 29 skutečných dotazů na zdroj prochází dál jinými vzory.
+        # Rozhoduje SLOVESO za tázacím obratem: „víš/tvrdíš/soudíš" = zdroj,
+        # „poznáš/vybíráš/rozhoduješ" = kritérium, na to se nesahá.
+        # HANS_SOURCE_QUERY_V3B (30.8.) — VYKÁNÍ. Zúžení V3 mělo slovesa jen
+        # v tykání, takže „na základě čeho to TVRDÍTE?" propadlo a Hans na
+        # dotaz po zdroji odpověděl volným povídáním (doloženo dlouhým
+        # ověřovacím rozhovorem, tah 15). Regresi jsem vyrobil sám tím
+        # zúžením — cizí člověk Hansovi vyká, takže to není okrajový tvar.
+        r"\bna\s+z[áa]klad[ěe]\s+[čc]eho\s+(to\s+)?"
+        r"(v[íi][šs]|v[íi]te|tvrd[íi]([šs]|te)|soud[íi]([šs]|te)|"
+        r"usuzuje([šs]|te)|mysl[íi]([šs]|te)|[řr][íi]k[áa]([šs]|te)|"
+        r"p[íi][šs]e([šs]|te)|jsi|jste)",
         r"\bz\s+[čc]eho\s+(to|tohle)?\s*(v[íi][šs]|m[áa][šs])",
-        r"\bpodle\s+[čc]eho",
+        r"\bpodle\s+[čc]eho\s+(to\s+)?"
+        r"(v[íi][šs]|v[íi]te|tvrd[íi]([šs]|te)|soud[íi]([šs]|te)|"
+        r"usuzuje([šs]|te)|mysl[íi]([šs]|te)|[řr][íi]k[áa]([šs]|te)|tak|to)",
         # „máš (k tomu) zdroj / odkaz / článek / důkaz"
         r"\bm[áa][šs]\s+(k\s+tomu\s+)?(zdroj|odkaz|[čc]l[áa]nek|d[ůu]kaz|citaci|pramen)",
         r"\bjak[ýy]\s+(m[áa][šs])?\s*(zdroj|odkaz|pramen)",
