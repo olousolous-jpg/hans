@@ -1366,7 +1366,7 @@
     "model": "translategemma:12b",
     "_model_note": "Prekladovy model. MUSI se posilat num_gpu:99, jinak si Ollama rozvrhne vrstvy na CPU a je to 6x pomalejsi.",
     "num_gpu": 99,
-    "chunk_cues": 40,
+    "chunk_cues": 30,
     "_chunk_note": "Kolik titulku na jedno volani modelu. Vic = rychlejsi, ale roste riziko rozjeti cislovani.",
     "orig_volume": 0.22,
     "_orig_volume_note": "Hlasitost originalu pod ceskou stopou (lektorske cteni). 0 = originalni zvuk uplne pryc. Uzivatelem odsouhlaseno 26.8.",
@@ -1412,7 +1412,10 @@
     "mnt_prefix": "/mnt/",
     "_path_note": "Prevod cesty z Kodi na cestu na PC: co Kodi hlasi jako smb://<NAS>/<SHARE>/... lezi na PC jako /mnt/<SHARE>/... Musi sedet s tim, jak mate NAS namountovany.",
     "wait_for_game_h": 6,
-    "_wait_for_game_note": "Jak dlouho preklad ceka, kdyz se hraje. Poradi je HRA > PREKLAD > RUTINY (pokyn uzivatele 29.8.): hra ma prednost pred prekladem, preklad pred Hansovymi nocnimi rutinami. Po vyprseni stropu preklad NEZACNE a rekne to — lepsi nez viset donekonecna."
+    "_wait_for_game_note": "Jak dlouho preklad ceka, kdyz se hraje. Poradi je HRA > PREKLAD > RUTINY (pokyn uzivatele 29.8.): hra ma prednost pred prekladem, preklad pred Hansovymi nocnimi rutinami. Po vyprseni stropu preklad NEZACNE a rekne to — lepsi nez viset donekonecna.",
+    "_chunk_cues_note": "HANS_YT_SENTENCE_SEAM_V1 (30.8.): snizeno ze 40 na 30. Repliky jsou po zmene delsi (median 237 -> 273 znaku), takze blok 40 replik tlacil odpoved modelu ke stropu num_predict 3000 -> useknuti a dozadani po jedne. To 28.8. protahlo preklad ze 14 na 62 minut.",
+    "merge_hard_chars": 400,
+    "_merge_hard_chars_note": "HANS_YT_SENTENCE_SEAM_V1: sev se odklada na konec vety, ale nad timto poctem znaku se lomi VZDY. Bez toho by jedina neukoncena veta (nebo prepis bez interpunkce, u auto-titulku bezny) spolkla cely porad do jedne repliky. merge_max_chars zustava mekky strop."
   },
   "severka": {
     "num_ctx": 8192,

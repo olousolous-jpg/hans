@@ -160,7 +160,33 @@ def _odval_rolovani(cues: list[dict]) -> list[dict]:
     return res
 
 
-def _slep(cues: list[dict], pauza=1.0, strop=220) -> list[dict]:
+# ── HANS_YT_SENTENCE_SEAM_V1 (30.8.) — ŠEV PATŘÍ NA KONEC VĚTY ──────────────
+# Nález uživatele (video „Steam Engines to Entropy", čas 13:22–13:38): lektor
+# domluví půlku věty, pak 16 s ticho a věta pokračuje. Doloženo v datech:
+# replika končila v 818,7 s slovy „…Events here would motivate one man's"
+# a další začínala „journey to uncover…". Lektorův kratší český text doběhl
+# ve 13:22 a čekalo se na slot další repliky — uprostřed větné vazby.
+#
+# ZMĚŘENO na tomtéž pořadu: dnešní dělení nechává 125 ze 147 replik (85 %)
+# končit uprostřed věty; s lomem na konci věty klesne na 5 ze 119 (4 %).
+# Cena: repliky jsou delší (medián 237 → 273 znaků, max 260 → 418).
+#
+# ⚠️ TOHLE MĚNÍ ZÁMĚRNÉ ROZHODNUTÍ, ne bug. Komentář níž tvrdil „šev uprostřed
+# věty tolik nevadí: překlad běží po blocích". Pro PŘEKLAD to platí dál —
+# vadí to až DABINGU, na který se tehdy nemyslelo. Proto se dělení nemění
+# v tom, KDE smí šev být, ale jen se ODKLÁDÁ na nejbližší konec věty.
+#
+# ⚠️ TVRDÝ STROP MUSÍ ZŮSTAT: jediná neukončená věta (nebo přepis bez
+# interpunkce, což je u auto-titulků běžné) by jinak spolkla celý pořad
+# do jedné repliky. Nad `tvrdy` se proto lomí bez ohledu na větu.
+_KONEC_VETY = re.compile(r"[.!?][\"\'\)\]]?$")
+
+
+def _konci_vetou(t: str) -> bool:
+    return bool(_KONEC_VETY.search((t or "").strip()))
+
+
+def _slep(cues: list[dict], pauza=1.0, strop=220, tvrdy=400) -> list[dict]:
     """Útržky do frází.
 
     Automatický přepis nemá interpunkci a je rozsekaný po pár slovech
@@ -175,11 +201,15 @@ def _slep(cues: list[dict], pauza=1.0, strop=220) -> list[dict]:
     """
     out = []
     for c in cues:
-        if out and c["start"] - out[-1]["end"] <= pauza and len(out[-1]["text"]) < strop:
-            out[-1]["text"] += " " + c["text"]
-            out[-1]["end"] = c["end"]
-        else:
-            out.append(dict(c))
+        if out:
+            t = out[-1]["text"]
+            chce_lom = (c["start"] - out[-1]["end"] > pauza) or len(t) >= strop
+            # HANS_YT_SENTENCE_SEAM_V1 — lom se odloží na konec věty
+            if not ((chce_lom and _konci_vetou(t)) or len(t) >= tvrdy):
+                out[-1]["text"] += " " + c["text"]
+                out[-1]["end"] = c["end"]
+                continue
+        out.append(dict(c))
     return out
 
 
@@ -220,7 +250,8 @@ def vtt_na_srt(vtt: str, srt: str, cfg=None, vnutit=None) -> tuple[int, bool]:
     if rol:
         c = _slep(_odval_rolovani(cues),
                   float((cfg or {}).get("merge_pause_s", 1.0)),
-                  int((cfg or {}).get("merge_max_chars", 220)))
+                  int((cfg or {}).get("merge_max_chars", 220)),
+                  int((cfg or {}).get("merge_hard_chars", 400)))
     else:
         c = [{"start": x["start"], "end": x["end"], "text": " ".join(x["lines"])}
              for x in cues]
@@ -271,7 +302,7 @@ def zjisti_ticho(cfg, pc_path: str, pc_fn, prah=-35, min_s=0.30) -> list[tuple]:
     return ti
 
 
-def _slep_s_tichem(cues, ticho, pauza=1.0, strop=220, min_pauza=0.35):
+def _slep_s_tichem(cues, ticho, pauza=1.0, strop=220, min_pauza=0.35, tvrdy=400):
     """Jako `_slep`, ale šev se dělá i tam, kde v AUDIU je pauza.
 
     Tím dostane skládání stopy body, ve kterých smí srovnat skluz. Na
@@ -287,10 +318,14 @@ def _slep_s_tichem(cues, ticho, pauza=1.0, strop=220, min_pauza=0.35):
     out = []
     for c in cues:
         if out:
-            lom = (c["start"] - out[-1]["end"] > pauza
-                   or len(out[-1]["text"]) >= strop
-                   or je_pauza(out[-1]["end"], c["start"]))
-            if not lom:
+            t = out[-1]["text"]
+            chce_lom = (c["start"] - out[-1]["end"] > pauza
+                        or len(t) >= strop
+                        or je_pauza(out[-1]["end"], c["start"]))
+            # HANS_YT_SENTENCE_SEAM_V1 — i pauza v audiu počká na konec věty;
+            # MUSÍ to být v OBOU slepovačkách, jinak se cesty rozejdou a jev
+            # se vrátí tou druhou (s detekcí ticha jede ostrý běh).
+            if not ((chce_lom and _konci_vetou(t)) or len(t) >= tvrdy):
                 out[-1]["text"] += " " + c["text"]
                 out[-1]["end"] = c["end"]
                 continue
@@ -322,7 +357,8 @@ def srt_s_tichem(vtt: str, srt: str, ticho: list, cfg=None) -> int:
     c = _slep_s_tichem(_odval_rolovani(cues), ticho,
                        float((cfg or {}).get("merge_pause_s", 1.0)),
                        int((cfg or {}).get("merge_max_chars", 220)),
-                       float((cfg or {}).get("min_pauza_s", 0.35)))
+                       float((cfg or {}).get("min_pauza_s", 0.35)),
+                       int((cfg or {}).get("merge_hard_chars", 400)))
     c = _posun_na_konec_ticha(c, ticho)
     with open(srt, "w", encoding="utf-8") as f:
         for i, x in enumerate(c, 1):
