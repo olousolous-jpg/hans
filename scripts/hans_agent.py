@@ -136,6 +136,42 @@ _RECALL_PAT = re.compile(
     r"zn[áa][šs]\b|pamatuje[šs]", re.IGNORECASE)
 
 
+# ── HANS_STUDY_QUESTION_GUARD_V1 (30.8.) — OTÁZKA NENÍ POKYN KE STUDIU ──────
+# Doloženo dlouhým ověřovacím rozhovorem 30.8.:
+#   „jaké hrady jsou v Českém ráji?"  → „Mám si »hrady v Českém ráji« zařadit
+#                                        ke studiu?" — místo ODPOVĚDI
+#   „kolik ti to jeste zabere" a „co te na tom nejvic zaujalo" → obě dostaly
+#   „Mám si »Slupka všeho zla« zařadit ke studiu?", tedy téma z JINÉ výměny
+#   (a dvakrát po sobě totéž).
+#
+# Navazuje na známou vadu z 26.8. („téma vzato z cizí výměny"), která zůstala
+# zapsaná jako neopravená. Rozlišovač je TVAR VĚTY — týž princip, jaký už
+# používá `HANS_AGENT_SLEEP_QUESTION_GUARD_V1`: rozkaz projde, otázka ne.
+#
+# ⚠️ Regexové guardy výš (`_RECALL_PAT`) mají nutně díry ve vzorech, protože
+# vyjmenovávají FORMULACE. Tenhle se ptá na tvar, takže pokryje i věty, které
+# nikdo nepředvídal.
+#
+# ⚠️ ŽÁDOST MUSÍ PROJÍT, i když je tázací („můžeš si nastudovat gotiku?").
+# Změřeno na 1337 reálných replikách: skutečné žádosti o studium jsou v celé
+# historii DVĚ („zjisti si o Českém ráji…", „nastuduj vice o Jára Cimrman")
+# a obě predikátem procházejí.
+_STUDY_ZADOST = re.compile(
+    r"\b(nastuduj|nau[čc]\s+se|prostuduj|zjisti\s+si|za[řr]a[ďd]|"
+    r"p[řr]idej\s+.{0,15}stud|"
+    r"m[ůu][žz]e[šs]\s+si\s+(nastudovat|prostudovat)|"
+    r"mohl\s+bys\s+si\s+(nastudovat|prostudovat))", re.IGNORECASE)
+_STUDY_TAZACI = re.compile(
+    r"^\s*(jak[ýáéíou]?\w*|kolik|kde|kdy|pro[čc]|co|kdo|[čc][íi]m|[čc]emu)\b"
+    r"|\?\s*$", re.IGNORECASE)
+
+
+def _je_dotaz_ne_zadost(message: str) -> bool:
+    """Tázací věta, která NEobsahuje pokyn ke studiu → odpověz, nenabízej."""
+    m = message or ""
+    return bool(_STUDY_TAZACI.search(m)) and not _STUDY_ZADOST.search(m)
+
+
 # HANS_FILM_RECOMMEND_V1 — žádá věta o DOPORUČENÍ (ne o spuštění)?
 def _asks_recommendation(message: str) -> bool:
     """True = „doporuč mi film", „co bys vybral", „máš tip" — konverzační
@@ -1502,6 +1538,10 @@ class AgentRouter:
         # něco, co UŽ máš odškrtnuté. Doloženo 5× po sobě. Regexový guard výše má
         # nutně díry ve vzorech; tohle se ptá DAT, takže je nezávislé na
         # formulaci. Chyba dotazu = pravidlo NEPLATÍ (jako dřív try/except).
+        # HANS_STUDY_QUESTION_GUARD_V1 (30.8.) — viz komentář u predikátu.
+        dict(marker="HANS_STUDY_QUESTION_GUARD_V1", akce=("add_study_topic",),
+             podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_zadost(msg),
+             verdikt=None, duvod="je to otázka, ne pokyn ke studiu"),
         dict(marker="HANS_STUDY_KNOWN_TOPIC_V1", akce=("add_study_topic",),
              podminka=lambda s, aid, msg, dec, h: s._uz_studovano(dec, h),
              verdikt=None, duvod="téma už je pokryté, odpovím z paměti"),
