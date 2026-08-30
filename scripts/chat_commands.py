@@ -2766,6 +2766,29 @@ register(
         r"co\s+si\s+pamatuje[šs]\s+(jako\s+|ze\s+všeho\s+)?(úplně\s+)?"
         r"(prvn[íi]|nejd[řr][íi]v)",
         r"nejstarš[íi]\s+z[áa]znam",
+        # HANS_MEMORY_SPAN_V1 (30.8.) — DOTAZ NA ROZSAH PAMĚTI je totéž jako
+        # dotaz na první vzpomínku: `first_memory_answer` vrací OBOJÍ (nejstarší
+        # záznam + „od té doby mám zapsáno N záznamů"), jen se k ní tyhle
+        # formulace nedostaly.
+        # Doloženo 30.8.: „kolik toho v deníku máte a za jak dlouhou dobu?" →
+        # Hans odpověděl, že deník *„začal při mém spuštění před několika dny…
+        # informace z posledních přibližně čtyř dnů"*. Skutečnost: 25. 4. 2026
+        # a 66 tisíc záznamů. Domýšlel si čísla o vlastní historii.
+        #
+        # ⚠️ ČÁST TĚCHTO VZORŮ NAVRHOVALA UŽ CLAUDE.md 8.7. („jak dávno si
+        # pamatuješ", „úplně první") — návrh ale zůstal NEPOSTAVENÝ a seděl
+        # v sekci nápadů. Změřeno 30.8.: pět formulací propadalo do LLM.
+        r"jak\s+d[áa]vno\s+si\s+pamatuje[šs]",
+        r"jak\s+dlouho\s+(u[žz]\s+)?(si\s+)?(vede[šs]|p[íi][šs]e[šs]|m[áa][šs])"
+        r"\s+(ten\s+)?den[íi]k",
+        r"od\s+kdy\s+(si\s+)?(vede[šs]|p[íi][šs]e[šs]|m[áa][šs]|existuje[šs])",
+        r"kolik\s+(toho\s+)?(m[áa][šs]|m[áa]te)\s+.{0,20}?(den[íi]k|zapsan|z[áa]znam)",
+        # ⚠️ Tolerance musí být ŠIROKÁ: doložená věta zněla „…k tomu deníku:
+        # kolik toho v něm vlastně máte a za jak dlouhou dobu…" — mezi „deníku"
+        # a „za jak dlouho" je 38 znaků. S tolerancí 15 propadla i po opravě.
+        r"(den[íi]k\w*|z[áa]znam\w*)[\s\S]{0,70}?za\s+jak\s+dlouh",
+        r"kolik\s+toho\s+.{0,25}?(m[áa][šs]|m[áa]te)\b",
+        r"jak\s+dlouho\s+(u[žz]\s+)?existuje[šs]",
     ],
     handler=_cmd_vzpominka,
     help_text="Má první/nejstarší vzpomínka (přímo z deníku, žádný odhad)",
