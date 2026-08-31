@@ -160,6 +160,12 @@ class HansEveningReflection:
         # ([[ab-test-prompt-changes]] — jedna série tady už jednou
         # schválila změnu, kterou druhá vyvrátila).
         self._stance_from_facts = bool(cfg.get("stance_from_facts", False))
+        # STANCE_TRANSLATE_GUARD_V1 — překladový krok volal model BEZ timeoutu,
+        # takže platilo `DEFAULT_TIMEOUT = 120 s` z `ollama_client`. Běží ale
+        # HNED ZA extrakcí postojů, která na CPU trvá 300–600 s a stroj u toho
+        # vytíží → 120 s je málo a překlad spadne. Zapsáno 28.8. jako
+        # pozorování („reálně se to stalo"), neopraveno až do 31.8.
+        self._stance_translate_timeout = int(cfg.get("stance_translate_timeout", 240))
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -998,6 +1004,9 @@ class HansEveningReflection:
                         weakened += 1
                         continue
             if not cz_claim:
+                # STANCE_TRANSLATE_GUARD_V1 — dřív tichý `continue`.
+                _log.warning("stance: NOVÝ postoj zahozen, chybí překlad: %.70s",
+                             claim_en)
                 continue
             if self._stances.add_or_reinforce(
                     cz_claim, float(it.get("confidence", 0.5) or 0.5),
@@ -1027,10 +1036,11 @@ class HansEveningReflection:
             raw = ollama_chat(vm, [{"role": "system", "content": system},
                                    {"role": "user", "content": numbered}],
                               config=self._config,
+                              timeout=self._stance_translate_timeout,
                               options={"temperature": 0.2, "num_ctx": 2048,
                                        "num_predict": 400})
         except Exception as _e:
-            _log.warning("stance translate: %s", _e)
+            _log.warning("stance translate: %s (%d claimů se NEZAPÍŠE)", _e, len(uniq))
             return {}
         raw = _strip_think(raw or "")
         out = {}
@@ -1040,6 +1050,17 @@ class HansEveningReflection:
                 idx = int(m.group(1)) - 1
                 if 0 <= idx < len(uniq):
                     out[uniq[idx]] = m.group(2).strip()
+        # STANCE_TRANSLATE_GUARD_V1 (31.8.) — parser čeká číslovaný seznam
+        # („1. text"). Když model odpoví jinak (odrážky, próza, jiný počet),
+        # `out` je prázdné nebo neúplné a VOLAJÍCÍ to zahodí bez hlásky
+        # (`if not cz_claim: continue`). Navenek se to projeví jen tím, že
+        # „nové postoje nevznikají" — což se 31.8. reálně zkoumalo jako záhada.
+        # ⚠️ `reinforces` překlad NEPOTŘEBUJE (bere přesné české znění ze
+        # seznamu), takže tichý výpadek postihne VÝHRADNĚ NOVÉ postoje.
+        if len(out) < len(uniq):
+            _log.warning("stance translate: přeloženo %d z %d — %d claimů "
+                         "se NEZAPÍŠE (model nevrátil číslovaný seznam?)",
+                         len(out), len(uniq), len(uniq) - len(out))
         return out
 
     @staticmethod

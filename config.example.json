@@ -12,7 +12,9 @@
     "stance_catchup_days": 3,
     "_stance_catchup_days_note": "STANCE_EXTRACT_CATCHUP_V1 — kolik dní zpět doextrahovat postoje z reflexí, kterým extrakce spadla (Ollama dole). 0 = vypnuto. ZÁMĚRNĚ KRÁTKÉ: doběh nastaví last_seen na teď, takže dohánění staré historie by falšovalo čerstvost postojů, kterou čte Severčin gate i výběr postojů do promptu.",
     "stance_from_facts": true,
-    "_stance_from_facts_note": "STANCE_FACTS_NOT_ECHO_V1 (31.8.) — z ceho se extrahuji postoje. true = ze syrovych FAKT dne BEZ typu, ktere pise model v Hansove hlase (teddy_dialog, chat_reflection, introspection, spontaneous); false = z hotoveho TEXTU reflexe (puvodni chovani, echo chamber). Zmereno A/B ve dvou seriich: pocet polozek srovnatelny (3,4 vs 3,6), ale posiluji se JINE postoje — o sobe 82 %% -> 38 %%, o svete 17 %% -> 61 %%."
+    "_stance_from_facts_note": "STANCE_FACTS_NOT_ECHO_V1 (31.8.) — z ceho se extrahuji postoje. true = ze syrovych FAKT dne BEZ typu, ktere pise model v Hansove hlase (teddy_dialog, chat_reflection, introspection, spontaneous); false = z hotoveho TEXTU reflexe (puvodni chovani, echo chamber). Zmereno A/B ve dvou seriich: pocet polozek srovnatelny (3,4 vs 3,6), ale posiluji se JINE postoje — o sobe 82 %% -> 38 %%, o svete 17 %% -> 61 %%.",
+    "stance_translate_timeout": 240,
+    "_stance_translate_timeout_note": "STANCE_TRANSLATE_GUARD_V1 (31.8.) — timeout prekladoveho kroku EN->CZ. Bez nej platil DEFAULT_TIMEOUT 120 s z ollama_client, jenze krok bezi HNED ZA extrakci postoju, ktera na CPU trva 300-600 s a stroj u toho vytizi. Pri padu se NOVE postoje tise nezapsaly (reinforces preklad nepotrebuje) — projevilo se to jen tim, ze 'nove postoje nevznikaji'."
   },
   "debug": false,
   "debug_verbose": false,
