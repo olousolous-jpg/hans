@@ -566,18 +566,44 @@ class HansEveningReflection:
                     body = (n or t or "").strip()
                     if body:
                         items.append("(" + label + ") " + body[:240])
+            # HANS_ART_INTENT_WORKS_REACH_V1 (31.8.) — popisek obrazu je
+            # v NOTE, ne v data["caption"]. `_log_artwork(db, title, caption,
+            # ...)` ho zapisuje do sloupce `note`; klíč "caption" v `data`
+            # NEEXISTUJE (ověřeno: 0 z 245 záznamů). Kurátor tedy tiše dostával
+            # jen HOLÝ NÁZEV („Sen", „Hrad Trosky") a z toho žádný tvůrčí záměr
+            # odvodit nešlo → záměry vznikaly z reflexe, protože nic jiného
+            # v promptu obsah nemělo. Vzorec [[silent-localhost-fallback]].
+            # ⛔ NEBRAT `data["prompt"]` — scénický prompt se GENERUJE
+            # z aktivních záměrů („art: scene prompt nese 3 trvalých záměrů"),
+            # takže destilovat záměry z něj by byla TĚSNĚJŠÍ smyčka než ta,
+            # kterou to má léčit. `note` je Hansův verdikt o řemesle, ukotvený
+            # v tom, co VLM na hotovém obrazu skutečně vidí.
+            # Pořadí je ZÁMĚRNÉ, od nejmíň zkreslujícího:
+            #  1. `data["vision"]` — co je na obraze SKUTEČNĚ vidět (VLM na
+            #     pixely). Persona-free, ukládá se od 31.8. dopředně.
+            #  2. `note` — Hansův verdikt. Nese obsah, ale je o ŘEMESLE, takže
+            #     táhne záměry k technickým radám (změřeno 31.8.: „narušit
+            #     klidnost kompozic kontrastními texturami" se objevilo ve 2 ze
+            #     3 běhů a pochází doslova z verdiktu). Proto jen jako záloha
+            #     pro 245 historických obrazů, které vizi nemají.
+            # ⛔ NIKDY `data["prompt"]` — generuje se z aktivních záměrů, byla
+            #    by to nejtěsnější možná smyčka.
             rows = con.execute(
-                "SELECT title, COALESCE(data,'') FROM diary WHERE event_type='artwork' "
-                "AND ts>? ORDER BY ts DESC LIMIT 6", (since,)).fetchall()
-            for t, d in rows:
-                cap = ""
+                "SELECT title, COALESCE(note,''), COALESCE(data,'') FROM diary "
+                "WHERE event_type='artwork' AND ts>? ORDER BY ts DESC LIMIT 6",
+                (since,)).fetchall()
+            for t, n, d in rows:
+                vize = ""
                 try:
-                    cap = (_json.loads(d).get("caption") or "").strip()
+                    vize = (_json.loads(d).get("vision") or "").strip()
                 except Exception:
-                    cap = ""
-                lab = (t or cap or "").strip()
-                if lab:
-                    items.append("(obraz) " + lab[:240])
+                    vize = ""
+                popis = vize or (n or "").strip()
+                lab = (t or "").strip()
+                if popis and lab:
+                    items.append("(obraz) %s — %s" % (lab, popis[:240]))
+                elif popis or lab:
+                    items.append("(obraz) " + (popis or lab)[:240])
             con.close()
         except Exception as _ge:
             _log.debug("creation reflection gather failed: %s", _ge)

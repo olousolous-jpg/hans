@@ -196,13 +196,24 @@ def origin_line(title: str, data) -> str:
     return f"Námět: {t}." if t else ""
 
 
-def _log_artwork(db_path: str, title: str, caption: str, rel_path: str, prompt: str) -> None:
+def _log_artwork(db_path: str, title: str, caption: str, rel_path: str,
+                 prompt: str, vision: str = "") -> None:
+    """HANS_ART_VISION_STORED_V1 (31.8.) — ukládej i `vision`: NEZÁVISLÝ popis
+    toho, co je na hotovém obrazu SKUTEČNĚ vidět (VLM se dívá na pixely).
+    Počítal se u každého obrazu a ZAHAZOVAL — použil se na verdikt a ponaučení
+    a dál nešel. Je to jediný persona-free záznam o díle:
+      • `prompt`  = co Hans CHTĚL — generuje se z aktivních záměrů → ECHO
+      • `note`    = jak si myslí, že se povedl — o řemesle, ne o díle
+      • `vision`  = co na obraze JE ← tohle chybělo
+    Čte to destilace tvůrčích záměrů (`HANS_ART_INTENT_WORKS_REACH_V1`).
+    ⚠️ Historických 245 obrazů `vision` nemá — nabírá se dopředně."""
     try:
         db = sqlite3.connect(db_path, timeout=5.0)
         db.execute(
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
-             json.dumps({"path": rel_path, "prompt": prompt}, ensure_ascii=False)))
+             json.dumps({"path": rel_path, "prompt": prompt, "vision": vision},
+                        ensure_ascii=False)))
         db.commit()
         db.close()
     except Exception as e:
@@ -1056,7 +1067,7 @@ def render_now(config: dict, diary_db_path: str, title: str = "") -> Optional[tu
     rel_path, prompt, vision_desc = res
     caption = _evaluate_artwork(config, diary_db_path, title, reflection, vision_desc)
     _derive_art_lesson(config, diary_db_path, title, vision_desc, caption)
-    _log_artwork(diary_db_path, title, caption, rel_path, prompt)
+    _log_artwork(diary_db_path, title, caption, rel_path, prompt, vision_desc)
     _log.info('art: ruční obraz pro „%s" → %s', title, rel_path)
     return rel_path, caption
 
@@ -1706,6 +1717,7 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
              json.dumps({"path": rel_path, "prompt": prompt, "source": "person",
+                         "vision": vision_desc,
                          "denoise": dn, "painted_ts": time.time()},
                         ensure_ascii=False)))
         db.commit()
@@ -1844,6 +1856,7 @@ def paint_place_from_photo(config: dict, diary_db_path: str, subject: str,
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
              json.dumps({"path": rel_path, "prompt": prompt, "source": "place",
+                         "vision": vision_desc,
                          "denoise": dn, "painted_ts": time.time()},
                         ensure_ascii=False)))
         db.commit()
@@ -2228,6 +2241,7 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
              json.dumps({"path": rel_path, "prompt": prompt, "source": "subject",
+                         "vision": vision_desc,
                          "painted_ts": time.time()}, ensure_ascii=False)))
         db.commit()
         db.close()
@@ -2337,6 +2351,7 @@ def paint_home(config: dict, diary_db_path: str) -> Optional[tuple]:
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
              json.dumps({"path": rel_path, "prompt": prompt, "source": "home",
+                         "vision": vision_desc,
                          "painted_ts": time.time()}, ensure_ascii=False)))
         db.commit()
         db.close()
@@ -2522,7 +2537,7 @@ def generate_pending_artwork(config: dict, diary_db_path: str) -> bool:
     rel_path, prompt, vision_desc = res
     caption = _evaluate_artwork(config, diary_db_path, title, reflection, vision_desc)
     _derive_art_lesson(config, diary_db_path, title, vision_desc, caption)
-    _log_artwork(diary_db_path, title, caption, rel_path, prompt)
+    _log_artwork(diary_db_path, title, caption, rel_path, prompt, vision_desc)
     _mark_done(diary_db_path, book["book_id"])
     _log.info('art: obraz hotov pro „%s" → %s', title, rel_path)
     return True
@@ -2616,6 +2631,7 @@ def paint_dream(config: dict, diary_db_path: str) -> bool:
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
              json.dumps({"path": rel_path, "prompt": prompt, "source": "dream",
+                         "vision": vision_desc,
                          "dream_ts": int(dream["ts"]), "painted_ts": time.time(),
                          "dream": text[:300]}, ensure_ascii=False)))
         db.commit()
@@ -2769,6 +2785,7 @@ def paint_day(config: dict, diary_db_path: str) -> bool:
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
              json.dumps({"path": rel_path, "prompt": prompt, "source": "day",
+                         "vision": vision_desc,
                          "mood": mood, "painted_ts": time.time()}, ensure_ascii=False)))
         db.commit()
         db.close()
