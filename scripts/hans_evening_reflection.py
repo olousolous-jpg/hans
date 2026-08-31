@@ -57,6 +57,35 @@ _RELEVANT_EVENTS = {
     "activity":         "Aktivita",
 }
 
+# ── STANCE_FACTS_NOT_ECHO_V1 ────────────────────────────────────────
+# Typy, které do deníku píše MODEL V HLASE PERSONY. Nejsou to Hansova
+# pozorování světa, ale jeho vlastní próza — a když se z ní extrahují
+# postoje, učí se Hans ze sebe sama:
+#
+#   stances → persona_stances → system prompt hans_dialog
+#          → repliky Koláčovi → deník teddy_dialog
+#          → 8 POLOŽEK do večerní reflexe → _extract_stances → stances
+#
+# Po HANS_PERSONA_STANCE_DURABLE_V1 se navíc injektují postoje s NEJVYŠŠÍ
+# evidencí → posiluje se to, co už je nejsilnější. Rohatka.
+# Změřeno 31.8.: 35–44 % vstupu reflexe pochází odsud a ABSOLUTNÍ objem
+# roste (24.8. 3160 zn → 30.8. 3432 zn), zatímco celkový vstup klesá.
+#
+# ⚠️ Seznam NENÍ nový úsudek — přebírá rozhodnutí, které už udělal
+# `hans_behaviour_evidence` („Vědomě NEOBSAHUJE spontaneous,
+# evening_reflection, introspection ani dialogy s Koláčem: všechno to
+# píše model v hlase persony"). Kdyby se měl měnit, měnit ho na OBOU
+# místech — jinak se dvě pravdy rozejdou.
+# ⛔ `human_chat` tu ZÁMĚRNĚ NENÍ: obsahuje slova UŽIVATELE, tedy odezvu
+# světa — to je podle téhož modulu ta nejcennější vrstva.
+_PERSONA_VOICED_EVENTS = frozenset({
+    "teddy_dialog",     # Hansovy repliky Koláčovi
+    "chat_reflection",  # „Mé dojmy z rozhovorů" — syntéza v jeho hlase
+    "introspection",    # vlastní úvahy
+    "spontaneous",      # šablonové i generované hlášky
+})
+
+
 # Limity — kolik událostí každého typu vzít do promptu (šetří tokeny)
 _LIMITS = {
     "human_chat":       6,
@@ -122,6 +151,15 @@ class HansEveningReflection:
         self._stance_reasoning_num_ctx = int(cfg.get("reasoning_num_ctx", 8192))
         self._stance_reasoning_num_predict = int(cfg.get("reasoning_num_predict", 3072))
         self._stance_reasoning_timeout = int(cfg.get("reasoning_timeout", 900))
+        # STANCE_FACTS_NOT_ECHO_V1 — z čeho se extrahují postoje.
+        # False (default) = z hotového TEXTU reflexe (dosavadní chování).
+        # True = ze syrových FAKT dne BEZ persona-generovaných typů.
+        # ⚠️ Default je schválně vypnuto: extraktor je laděný na uzrálou
+        # prózu a na holých faktech se musí napřed ZMĚŘIT, že vůbec něco
+        # vrací. Zapínat až po A/B ve DVOU sériích
+        # ([[ab-test-prompt-changes]] — jedna série tady už jednou
+        # schválila změnu, kterou druhá vyvrátila).
+        self._stance_from_facts = bool(cfg.get("stance_from_facts", False))
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -588,6 +626,32 @@ class HansEveningReflection:
                   len(text), len(items))
         return text
 
+    def _stance_input(self, text: str, date_str: str):
+        """STANCE_FACTS_NOT_ECHO_V1 — vrať (vstup_pro_extrakci, je_to_fakta).
+
+        JEDNO místo pro rozhodnutí, ať se hlavní běh a doběh nerozejdou —
+        doběh dostává jen `date_str` a text reflexe z deníku, takže by si
+        jinak fakta musel skládat sám.
+        Když je vypínač vypnutý NEBO se pro daný den nepodařilo poskládat
+        nic mimo personu, vrací se PŮVODNÍ text reflexe. Prázdný vstup by
+        znamenal ztracený den, a to je horší než echo.
+        """
+        if not self._stance_from_facts:
+            return text, False
+        try:
+            facts = self._collect_facts(date_str, bez_persony=True)
+            ft = self._format_facts(facts) if facts else ""
+        except Exception as _e:
+            _log.warning("stance_input: fakta se nepodařilo složit (%s), beru text", _e)
+            return text, False
+        if len(ft.strip()) < 200:
+            _log.info("stance_input %s: mimo personu jen %d zn → beru text reflexe",
+                      date_str, len(ft.strip()))
+            return text, False
+        _log.info("stance_input %s: fakta bez persony %d zn (text reflexe měl %d)",
+                  date_str, len(ft), len(text or ""))
+        return ft, True
+
     def _extract_stances(self, text: str, date_str: str, diary_id=None):
         """STANCE_EXTRACT_CATCHUP_V1 (27.8.) — OBAL nad vlastní extrakcí.
 
@@ -613,8 +677,11 @@ class HansEveningReflection:
         se musí opakovat, ne zahodit.
         """
         self._stance_last_result = "llm_down"
+        # STANCE_FACTS_NOT_ECHO_V1 — přepnutí vstupu tady, ať to platí
+        # pro hlavní běh i pro doběh (oba jdou tímhle obalem).
+        _vstup, _je_fakta = self._stance_input(text, date_str)
         try:
-            self._extract_stances_run(text, date_str)
+            self._extract_stances_run(_vstup, date_str, from_facts=_je_fakta)
         finally:
             if diary_id:
                 self._mark_stance_run(diary_id, date_str,
@@ -698,7 +765,7 @@ class HansEveningReflection:
                   out["kandidatu"], out["doextrahovano"], out["porad_dole"])
         return out
 
-    def _extract_stances_run(self, text: str, date_str: str):
+    def _extract_stances_run(self, text: str, date_str: str, from_facts: bool = False):
         """STANCE_EXTRACT_V1 — z reflexe vytahne Hansovy nazory (claim +
         confidence) do StanceStore (mimo RAG). LLM dotaz; offline/parse fail
         -> tichy skip. Anti-konfabulace: jen nazory, ktere text vyjadruje."""
@@ -709,7 +776,8 @@ class HansEveningReflection:
         # STANCE_REASONING_TIER_V1 (EN→CZ) — úsudek reasoning modelem anglicky
         # (čistší, bez CZ šumu), pak překlad claimů do nativní češtiny.
         if self._stance_reasoning_model:
-            return self._extract_stances_reasoning(text, date_str)
+            return self._extract_stances_reasoning(text, date_str,
+                                                   from_facts=from_facts)
         try:
             from scripts.ollama_client import ollama_generate
         except ImportError:
@@ -798,7 +866,8 @@ class HansEveningReflection:
                   date_str, written, weakened, len(items))
         self._stance_last_result = "ok"   # STANCE_EXTRACT_CATCHUP_V1
 
-    def _extract_stances_reasoning(self, text: str, date_str: str):
+    def _extract_stances_reasoning(self, text: str, date_str: str,
+                                   from_facts: bool = False):
         """STANCE_REASONING_TIER_V1 (EN→CZ) — reasoning model dělá úsudek ANGLICKY
         (známé postoje číslované → přesná shoda přes index), pak nové claimy
         přeloží do NATIVNÍ češtiny (hans-czech). Řeší CZ degradaci i šum úsudku
@@ -814,10 +883,17 @@ class HansEveningReflection:
             known = []
         known_claims = [s.claim for s in known]
         kb = "\n".join(f"[{i}] {c}" for i, c in enumerate(known_claims)) or "(none)"
+        # STANCE_FACTS_PROMPT_V1 — vstup je bud UZRALA PROZA reflexe, nebo
+        # SYROVY ZAZNAM DNE (STANCE_FACTS_NOT_ECHO_V1). Model musi vedet
+        # ktery, jinak by u vycty udalosti hledal souvisly nazor a vratil [].
+        # Uloha se NEMENI (durable stances), meni se popis vstupu.
+        _zdroj = ("a RECORD of Hans's day: a categorised list of what he read, "
+                  "watched, was told and did (raw events, not prose)"
+                  if from_facts else "his Czech evening reflection")
         system = (
-            "You extract Hans's DURABLE stances/values from his Czech evening "
-            "reflection. Think in English. The KNOWN STANCES are numbered below "
-            "(they are in Czech — read them).\n"
+            "You extract Hans's DURABLE stances/values from %s. "
+            "Think in English. The KNOWN STANCES are numbered below "
+            "(they are in Czech — read them).\n" % _zdroj +
             "STEP 1 REVISION: for a known stance that the reflection GENUINELY "
             "reverses or changes (explicit, e.g. 'used to like X, not anymore'), "
             "output {\"contradicts\": <number>, \"claim_en\": \"<the new opposing "
@@ -831,7 +907,8 @@ class HansEveningReflection:
             "himself voiced>\"}. Do NOT invent stances or caveats. If nothing "
             "durable, return []. Output ONLY a JSON array, nothing after it."
         )
-        user = (f"KNOWN STANCES:\n{kb}\n\nREFLECTION ({date_str}):\n"
+        _hl = "DAY RECORD" if from_facts else "REFLECTION"
+        user = (f"KNOWN STANCES:\n{kb}\n\n{_hl} ({date_str}):\n"
                 f"{text.strip()[:3000]}")
         try:
             raw = ollama_chat(
@@ -954,12 +1031,19 @@ class HansEveningReflection:
             return []
         return data if isinstance(data, list) else []
 
-    def _collect_facts(self, date_str: str) -> dict:
-        """Vrátí {event_type: [(title, note), ...]} pro daný den."""
+    def _collect_facts(self, date_str: str, bez_persony: bool = False) -> dict:
+        """Vrátí {event_type: [(title, note), ...]} pro daný den.
+
+        STANCE_FACTS_NOT_ECHO_V1 — `bez_persony=True` vynechá typy z
+        `_PERSONA_VOICED_EVENTS`. Používá to JEN extrakce postojů; text
+        reflexe se sbírá dál ze všeho (deník MÁ zmiňovat, co se ten den dělo).
+        """
         out: dict[str, list[tuple[str, str]]] = {}
         try:
             db = sqlite3.connect(self._diary_path)
             for evt, limit in _LIMITS.items():
+                if bez_persony and evt in _PERSONA_VOICED_EVENTS:
+                    continue
                 # HANS_SPONTANEOUS_TEMPLATE_MARK_V1/V2 (27.8.; V2 kotví na začátek
                 # pole — `%"template"%` kdekoli by tiše zahodilo článek,
                 # který o šablonách jen píše) — šablonové
