@@ -571,6 +571,55 @@ def _run_weather(handler, args) -> str:
         return "Aktuální počasí se mi teď nedaří zjistit, pane."
 
 
+def _run_climate(handler, args) -> str:
+    """HANS_CLIMATE_ACTION_V1 (31.8.) — teplota a vlhkost V MÍSTNOSTI z čidel.
+
+    ⚠️ Musí to být AKCE, ne vzpomínka. Na „kolik je v pokoji?" nesmí Hans
+    odpovědět z paměti — to je přesně doložený případ „Proud krve" a směr
+    „LLM jako tlumočník, ne databáze" ([[prompt-debt-tool-calling]]).
+
+    ⛔ ŽÁDNÉ DESETINY. DHT11 má ±2 °C, takže „22,3 °C" je vymyšlená přesnost.
+       Průměr přes čidla se počítá a zaokrouhluje na celé stupně.
+    ⚠️ Prázdná/stará data = přiznat, NE dopočítat. Mlčící uzel není 0 °C.
+    """
+    import sqlite3 as _sq
+    cesta = "data/surroundings.db"
+    max_age = 3600.0
+    try:
+        con = _sq.connect("file:%s?mode=ro" % cesta, uri=True, timeout=3.0)
+        try:
+            rows = con.execute(
+                "SELECT misto, cidlo, teplota, vlhkost, MAX(ts) FROM climate "
+                "WHERE ts > ? GROUP BY misto, cidlo",
+                (time.time() - max_age,)).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        return "O teplotě v místnosti zatím nemám žádné údaje."
+    if not rows:
+        return ("Čidla se mi delší dobu neozvala, takže aktuální teplotu "
+                "v místnosti říct nemohu.")
+    mista = {}
+    for misto, _cidlo, t, v, ts in rows:
+        m = mista.setdefault(misto, {"t": [], "v": [], "ts": 0})
+        if t is not None: m["t"].append(t)
+        if v is not None: m["v"].append(v)
+        m["ts"] = max(m["ts"], ts or 0)
+    kusy = []
+    for misto, m in mista.items():
+        cast = []
+        if m["t"]:
+            cast.append("%d °C" % round(sum(m["t"]) / len(m["t"])))
+        if m["v"]:
+            cast.append("vlhkost %d %%" % round(sum(m["v"]) / len(m["v"])))
+        if not cast:
+            continue
+        stari = time.time() - m["ts"]
+        kdy = "" if stari < 900 else " (měřeno před %.0f min)" % (stari / 60)
+        kusy.append("%s: %s%s" % (misto, ", ".join(cast), kdy))
+    return "; ".join(kusy) if kusy else "Čidla nevrátila použitelnou hodnotu."
+
+
 def _run_pc_health(handler, args) -> str:
     try:
         from scripts import pc_remote
@@ -969,6 +1018,17 @@ ACTIONS: dict[str, Action] = {
         hints=["počasí", "pocasi", "venku", "prší", "prsi", "sněží", "snezi",
                "teplo venku", "zima venku", "za oknem", "slunečno"],
         args=[], run=_run_weather, grounding=None,
+        needs_confirm=False, cooldown_s=10),
+    "report_climate": Action(
+        "report_climate",
+        "Odpovědět na dotaz o teplotě nebo vlhkosti V MÍSTNOSTI / v pokoji / "
+        "uvnitř (z vlastních čidel). ⚠️ NE počasí venku — to je report_weather. "
+        "⚠️ NE teplota počítače nebo procesoru — to je report_pc_health.",
+        hints=["kolik je v pokoji", "teplota v pokoji", "jak je tu teplo",
+               "je tu zima", "je tu horko", "vlhkost", "kolik je tu stupnu",
+               "kolik je tu stupňů", "teplota v mistnosti", "teplota v místnosti",
+               "jak je uvnitr", "jak je uvnitř", "dusno"],
+        args=[], run=_run_climate, grounding=None,
         needs_confirm=False, cooldown_s=10),
     "report_pc_health": Action(
         "report_pc_health",

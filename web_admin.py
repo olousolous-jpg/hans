@@ -146,6 +146,126 @@ def trigger_dialog():
     except Exception as e:
         raise HTTPException(500, f"Trigger failed: {e}")
 
+# ── HANS_CLIMATE_V1 (31.8.) — teplota a vlhkost z čidel ─────────────────────
+# NÁVRH Z BACKLOGU 10.8., postaveno na pokyn 31.8.
+# ⚠️ Uzel PUSHUJE sem, Hans si nechodí sám — přežije to restart Hanse i výpadek
+#    uzlu bez konfigurace adres na obou stranách.
+# ⚠️ UKLÁDÁ SE KAŽDÉ ČIDLO ZVLÁŠŤ, průměruje se AŽ PŘI ČTENÍ. Kdyby se
+#    průměrovalo u zdroje, umírající čidlo by průměr TIŠE posunulo a nikdo by
+#    si toho nevšiml — přesně ta třída chyb, co se řešila celý 31.8.
+# ⛔ ŽÁDNÉ DESETINY: DHT11 má ±2 °C, takže „22,3 °C" je vymyšlená přesnost.
+#    Ukládá se celé číslo a průměr se zaokrouhluje taky.
+CLIMATE_PATH = Path("data/surroundings.db")
+
+
+def _climate_init():
+    con = sqlite3.connect(str(CLIMATE_PATH), timeout=5.0)
+    try:
+        con.execute("""CREATE TABLE IF NOT EXISTS climate (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts       REAL NOT NULL,
+            misto    TEXT NOT NULL,
+            cidlo    TEXT NOT NULL,
+            teplota  INTEGER,
+            vlhkost  INTEGER)""")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_climate_ts ON climate(ts)")
+        con.commit()
+    finally:
+        con.close()
+
+
+class _ClimateBody(__import__('pydantic').BaseModel):
+    misto: str = "pokoj"
+    cidlo: str = "A"
+    teplota: int | None = None
+    vlhkost: int | None = None
+
+
+@app.post("/api/climate")
+def climate_push(body: _ClimateBody):
+    """Uzel s čidly sem posílá jedno měření. Prázdné čtení se NEUKLÁDÁ —
+    „nepřečteno" není hodnota a nesmí se tvářit jako 0 °C."""
+    if body.teplota is None and body.vlhkost is None:
+        raise HTTPException(400, "prazdne mereni se neuklada")
+    try:
+        _climate_init()
+        con = sqlite3.connect(str(CLIMATE_PATH), timeout=5.0)
+        try:
+            con.execute("INSERT INTO climate (ts, misto, cidlo, teplota, vlhkost) "
+                        "VALUES (?,?,?,?,?)",
+                        (time.time(), body.misto.strip()[:40],
+                         body.cidlo.strip()[:16], body.teplota, body.vlhkost))
+            con.commit()
+        finally:
+            con.close()
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"climate uloz selhalo: {e}")
+
+
+@app.get("/api/climate")
+def climate_read(max_age_s: int = 1800):
+    """Aktuální klima: průměr přes čidla v místě + hodnoty JEDNOTLIVÝCH čidel.
+    `rozdil` je rozdíl mezi krajními čidly — sám o sobě čidlo zdraví
+    (rozejde-li se, jedno z nich zlobí nebo ho někdo přendal)."""
+    try:
+        _climate_init()
+        con = sqlite3.connect(str(CLIMATE_PATH), timeout=5.0)
+        try:
+            rows = con.execute(
+                "SELECT misto, cidlo, teplota, vlhkost, MAX(ts) FROM climate "
+                "WHERE ts > ? GROUP BY misto, cidlo",
+                (time.time() - max_age_s,)).fetchall()
+        finally:
+            con.close()
+    except Exception as e:
+        raise HTTPException(500, f"climate cteni selhalo: {e}")
+
+    mista: dict = {}
+    for misto, cidlo, t, v, ts in rows:
+        m = mista.setdefault(misto, {"cidla": {}, "ts": 0})
+        m["cidla"][cidlo] = {"teplota": t, "vlhkost": v}
+        m["ts"] = max(m["ts"], ts or 0)
+    out = []
+    for misto, m in mista.items():
+        tp = [c["teplota"] for c in m["cidla"].values() if c["teplota"] is not None]
+        vl = [c["vlhkost"] for c in m["cidla"].values() if c["vlhkost"] is not None]
+        out.append({
+            "misto": misto,
+            # ⛔ zaokrouhleno na CELÉ — viz poznámka o vymyšlené přesnosti výše
+            "teplota": round(sum(tp) / len(tp)) if tp else None,
+            "vlhkost": round(sum(vl) / len(vl)) if vl else None,
+            "rozdil_teplot": (max(tp) - min(tp)) if len(tp) > 1 else 0,
+            "cidel": len(m["cidla"]),
+            "cidla": m["cidla"],
+            "stari_s": round(time.time() - m["ts"]),
+        })
+    return out
+
+
+@app.get("/api/climate/history")
+def climate_history(hours: int = 24):
+    """HANS_CLIMATE_V1 — průběh pro graf. Vrací body PER ČIDLO, ne průměr:
+    na grafu má být vidět, když se jedno čidlo utrhne (průměr by to schoval)."""
+    try:
+        _climate_init()
+        con = sqlite3.connect(str(CLIMATE_PATH), timeout=5.0)
+        try:
+            rows = con.execute(
+                "SELECT cidlo, ts, teplota, vlhkost FROM climate "
+                "WHERE ts > ? ORDER BY ts", (time.time() - hours * 3600,)).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        return {"cidla": []}
+    per: dict = {}
+    for cidlo, ts, t, v in rows:
+        per.setdefault(cidlo, []).append({"ts": ts, "t": t, "v": v})
+    return {"cidla": [{"cidlo": k, "body": b} for k, b in sorted(per.items())]}
+
+
 @app.get("/api/dialog/status")
 def dialog_status():
     """Vrátí stav trigger flagu (pending = čeká na zpracování)."""
@@ -952,7 +1072,9 @@ async def get_health():
     dočítá ŽIVĚ z heartbeatu (mění se rychle, periodický snapshot by lhal)."""
     _LBL = {"ollama": "Mozek (Ollama)", "camera": "Zrak (kamera)",
             "comfyui": "Malování (ComfyUI)", "kodi": "Televize (Kodi)",
-            "stt": "Sluch (přepis)", "pc": "Počítač", "disk": "Disk"}
+            "stt": "Sluch (přepis)", "pc": "Počítač", "disk": "Disk",
+            "climate": "Klima (čidla)", "matrix": "Matrix (most)",
+            "schedule": "Rutiny", "pc_reboots": "Restarty PC"}
     out = {"services": [], "degraded": [], "healed": [], "age_s": None}
     svc = {}
     try:

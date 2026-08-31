@@ -414,6 +414,60 @@ _reboot_cache = None
 
 
 # ── agregace ─────────────────────────────────────────────────────────────────
+def probe_climate(config: dict) -> dict:
+    """HANS_CLIMATE_HEALTH_V1 (31.8.) — hlásí uzel s čidly ještě něco?
+
+    PROČ: uzel s čidly PUSHUJE data sem; když umlkne (vypadne wifi, umře
+    napájení, spadne timer), Hans o tom sám od sebe NEVÍ a jen přestane mít
+    novou hodnotu. To je táž vada, jakou měl `hans_facts` — modul bez volajícího,
+    jehož ticho se navenek neprojeví ničím ([[robustness-silent-failure-audit]]).
+
+    Hlídá DVĚ různé věci:
+      1. STÁŘÍ posledního měření (uzel mlčí)
+      2. ROZDÍL mezi čidly — když se rozejde, jedno z nich zlobí nebo ho někdo
+         přendal. Průměr by to TIŠE schoval, proto se čidla ukládají zvlášť.
+
+    Status WARN, ne DOWN → NEspouští heal. Restartovat kvůli čidlu Hanse je
+    horší než o výpadku vědět (vzor `probe_schedule`, `probe_matrix`).
+    """
+    import sqlite3 as _sq
+    c = _cfg(config)
+    cesta = c.get("climate_db", "data/surroundings.db")
+    max_age = float(c.get("climate_max_age_s", 1800))      # 6× interval timeru
+    max_rozdil = float(c.get("climate_max_rozdil", 4))     # °C mezi čidly
+    try:
+        con = _sq.connect("file:%s?mode=ro" % cesta, uri=True, timeout=3.0)
+        try:
+            rows = con.execute(
+                "SELECT cidlo, teplota, MAX(ts) FROM climate GROUP BY cidlo"
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        # tabulka ještě nevznikla = čidla nikdy neposlala nic. NENÍ to porucha,
+        # jen se nedá měřit — jinak by to křičelo na každé instalaci bez čidel.
+        return {"status": UNKNOWN, "detail": "žádná data z čidel (zatím?)"}
+    if not rows:
+        return {"status": UNKNOWN, "detail": "žádná data z čidel (zatím?)"}
+
+    ted = time.time()
+    stari = ted - max(r[2] or 0 for r in rows)
+    if stari > max_age:
+        return {"status": WARN, "cidel": len(rows), "age_s": round(stari),
+                "detail": "uzel s čidly mlčí %.0f min (limit %.0f)"
+                          % (stari / 60, max_age / 60)}
+    teploty = [r[1] for r in rows if r[1] is not None]
+    rozdil = (max(teploty) - min(teploty)) if len(teploty) > 1 else 0
+    if rozdil > max_rozdil:
+        return {"status": WARN, "cidel": len(rows), "rozdil": rozdil,
+                "detail": "čidla se rozešla o %d °C (limit %.0f) — jedno zlobí "
+                          "nebo bylo přendáno" % (rozdil, max_rozdil)}
+    return {"status": OK, "cidel": len(rows), "rozdil": rozdil,
+            "age_s": round(stari),
+            "detail": "%d čidla, poslední před %.0f min, rozdíl %d °C"
+                      % (len(rows), stari / 60, rozdil)}
+
+
 def probe_all(config: dict) -> dict:
     """Proboduje všechny závislosti. Vrací {service: {status, detail, ...}}.
     Deferral-safe — každá probe je try/except, žádná neshodí celek."""
@@ -428,6 +482,7 @@ def probe_all(config: dict) -> dict:
         "schedule": probe_schedule,  # HANS_SCHEDULE_V1 (behaviorální)
         "matrix": probe_matrix,      # MATRIX_SYNC_HEARTBEAT_V1 (kanál ven)
         "pc_reboots": probe_pc_reboots,  # PC_REBOOT_WATCH_V1 (planý reset watchdogu)
+        "climate": probe_climate,    # HANS_CLIMATE_HEALTH_V1 (uzel s čidly)
     }
     only = _cfg(config).get("probes")  # volitelně podmnožina
     out = {}

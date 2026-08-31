@@ -234,6 +234,14 @@ button.btn:hover { opacity: 0.85; }
     <div id="health-age" style="font-size:0.72rem;color:var(--fg2);margin-top:8px"></div>
   </div>
 
+  <!-- HANS_CLIMATE_V1 — teplota a vlhkost v místnosti z čidel -->
+  <div class="card" id="climate-card" style="margin-bottom:16px;display:none">
+    <h2>🌡️ Klima v místnosti</h2>
+    <div id="climate-now" style="font-size:1.4rem;margin-bottom:6px"></div>
+    <div id="climate-chart"></div>
+    <div id="climate-note" style="font-size:0.72rem;color:var(--fg2);margin-top:6px"></div>
+  </div>
+
   <!-- STANCE_CHART_V1 — vývoj confidence postojů v čase -->
   <div class="card" id="stances-card" style="margin-bottom:16px;display:none">
     <h2>📈 Vývoj postojů</h2>
@@ -1295,8 +1303,8 @@ async function loadHealth() {
     if (!card) return;
     if (!h || !h.services || !h.services.length) { card.style.display = 'none'; return; }
     card.style.display = '';
-    const ICON = {ok:'✅', paused:'⏸️', wedged:'⚠️', down:'❌', unknown:'❔'};
-    const COL = {ok:'var(--bg3)', paused:'var(--bg3)', wedged:'#5a4a1e', down:'#5a2530', unknown:'var(--bg3)'};
+    const ICON = {ok:'✅', paused:'⏸️', wedged:'⚠️', warn:'⚠️', down:'❌', unknown:'❔'};
+    const COL = {ok:'var(--bg3)', paused:'var(--bg3)', wedged:'#5a4a1e', warn:'#5a4a1e', down:'#5a2530', unknown:'var(--bg3)'};
     const grid = document.getElementById('health-grid');
     grid.innerHTML = h.services.map(s =>
       `<div title="${(s.detail||'').replace(/"/g,'')}" style="display:flex;align-items:center;gap:6px;`
@@ -1311,6 +1319,64 @@ async function loadHealth() {
 }
 
 // STANCE_CHART_V1 — inline SVG graf vývoje confidence postojů
+// HANS_CLIMATE_V1 — graf teploty/vlhkosti. Inline SVG, zadna knihovna
+// (vzor loadStances). Kresli KAZDE CIDLO ZVLAST — kdyby se jedno utrhlo,
+// prumer by to schoval a na grafu by to nebylo videt.
+async function loadClimate() {
+  try {
+    const now = await (await fetch('/api/climate')).json();
+    const card = document.getElementById('climate-card');
+    if (!card) return;
+    if (!now || !now.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const m = now[0];
+    document.getElementById('climate-now').textContent =
+      `${m.teplota != null ? m.teplota + ' °C' : '—'}` +
+      `${m.vlhkost != null ? '  ·  ' + m.vlhkost + ' % vlhkost' : ''}`;
+
+    const d = await (await fetch('/api/climate/history?hours=24')).json();
+    const C = (d && d.cidla) || [];
+    let pts = []; C.forEach(c => c.body.forEach(p => pts.push(p)));
+    if (pts.length < 2) {
+      document.getElementById('climate-chart').innerHTML = '';
+      document.getElementById('climate-note').textContent =
+        `${m.cidel} čidla · zatím málo měření na graf`;
+      return;
+    }
+    let tmin = Math.min(...pts.map(p=>p.ts)), tmax = Math.max(...pts.map(p=>p.ts));
+    const temps = pts.map(p=>p.t).filter(x=>x!=null);
+    let ymin = Math.min(...temps) - 1, ymax = Math.max(...temps) + 1;
+    if (ymax - ymin < 4) { const c=(ymax+ymin)/2; ymin=c-2; ymax=c+2; }
+    if (tmax - tmin < 600) { tmin -= 1800; tmax += 1800; }
+    const W=640,H=200,L=32,R=10,T=10,Bm=22,pw=W-L-R,ph=H-T-Bm;
+    const X = ts => L + (ts-tmin)/(tmax-tmin)*pw;
+    const Y = t  => T + (1-(t-ymin)/(ymax-ymin))*ph;
+    const COLORS = ['#f38ba8','#89b4fa','#a6e3a1','#f9e2af'];
+    let g = '';
+    for (let i=0;i<=3;i++) {
+      const t = ymin + (ymax-ymin)*i/3, y = Y(t);
+      g += `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="#313145" stroke-width="1"/>`;
+      g += `<text x="${L-4}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#a6adc8">${t.toFixed(0)}°</text>`;
+    }
+    const fmt = t => { const dd=new Date(t*1000);
+      return dd.getHours()+':'+String(dd.getMinutes()).padStart(2,'0'); };
+    g += `<text x="${L}" y="${H-5}" font-size="9" fill="#a6adc8">${fmt(tmin)}</text>`;
+    g += `<text x="${W-R}" y="${H-5}" text-anchor="end" font-size="9" fill="#a6adc8">${fmt(tmax)}</text>`;
+    C.forEach((c,i) => {
+      const col = COLORS[i%COLORS.length];
+      const b = c.body.filter(p=>p.t!=null);
+      if (b.length > 1) g += `<polyline points="${b.map(p=>`${X(p.ts).toFixed(1)},${Y(p.t).toFixed(1)}`).join(' ')}" fill="none" stroke="${col}" stroke-width="2"/>`;
+      b.forEach(p => { g += `<circle cx="${X(p.ts).toFixed(1)}" cy="${Y(p.t).toFixed(1)}" r="2" fill="${col}"/>`; });
+    });
+    document.getElementById('climate-chart').innerHTML =
+      `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${g}</svg>`;
+    const leg = C.map((c,i)=>`<span style="color:${COLORS[i%COLORS.length]}">● čidlo ${c.cidlo}</span>`).join(' &nbsp; ');
+    const stari = m.stari_s < 900 ? 'právě teď' : 'před ' + Math.round(m.stari_s/60) + ' min';
+    document.getElementById('climate-note').innerHTML =
+      `${leg} &nbsp;·&nbsp; rozdíl ${m.rozdil_teplot} °C &nbsp;·&nbsp; měřeno ${stari}`;
+  } catch (e) {}
+}
+
 async function loadStances() {
   try {
     const d = await (await fetch('/api/stances/history')).json();
@@ -1557,7 +1623,7 @@ loadArt();
 setInterval(loadArt, 60000);
 loadHealth();
 setInterval(loadHealth, 30000);
-loadStances();                       // STANCE_CHART_V1
+loadStances(); loadClimate();                       // STANCE_CHART_V1
 setInterval(loadStances, 60000);
 loadTrends();                        // TRENDS_CHART_V1
 setInterval(loadTrends, 60000);

@@ -166,6 +166,10 @@ class HansEveningReflection:
         # vytíží → 120 s je málo a překlad spadne. Zapsáno 28.8. jako
         # pozorování („reálně se to stalo"), neopraveno až do 31.8.
         self._stance_translate_timeout = int(cfg.get("stance_translate_timeout", 240))
+        # STANCE_THREESTEP_V1 (31.8.) — rozdělit extrakci na tři otázky.
+        # Default VYPNUTO: mění vrstvu, která rozhoduje o identitě.
+        self._stance_threestep = bool(cfg.get("stance_threestep", False))
+        self._stance_known_batch = int(cfg.get("stance_known_batch", 10))
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -808,6 +812,8 @@ class HansEveningReflection:
         # STANCE_REASONING_TIER_V1 (EN→CZ) — úsudek reasoning modelem anglicky
         # (čistší, bez CZ šumu), pak překlad claimů do nativní češtiny.
         if self._stance_reasoning_model:
+            if self._stance_threestep:
+                return self._extract_stances_3step(text, date_str)
             return self._extract_stances_reasoning(text, date_str,
                                                    from_facts=from_facts)
         try:
@@ -897,6 +903,174 @@ class HansEveningReflection:
         _log.info("stance extract %s: zpracovano %d, oslabeno %d / %d nazoru",
                   date_str, written, weakened, len(items))
         self._stance_last_result = "ok"   # STANCE_EXTRACT_CATCHUP_V1
+
+    # ── STANCE_THREESTEP_V1 (31.8.) ─────────────────────────────────
+    # ZMĚŘENO 31.8. na 8 dnech, proto to takhle vypadá:
+    #  • SE seznamem známých postojů model NENAVRHL ANI JEDEN nový ve 12 bězích;
+    #    BEZ seznamu vrátil 13 návrhů v 8 bězích. Seznam ho přepne z navrhování
+    #    na párování. → krok (a) seznam NEDOSTANE.
+    #  • Krok (b) „je to týž jako známý?" model UMÍ: 10/12 shoda se slepým
+    #    lidským odhadem, a v OBOU neshodách měl pravdu ON.
+    #  • Krok (c) „nové × NOVÉ" je NUTNÝ: „luxus v designu" navržený 22. i 26.8.
+    #    prošel v (b) dvakrát jako nový, protože (b) porovnává jen proti známým.
+    #    Změřeno 3/3 sérií shodně.
+    # ⚠️ SEZNAM JE DRAHÝ I VÝPOČETNĚ: (c) běží 100 s, (b) 439–494 s — rozdíl
+    #    dělá 30 postojů v promptu, thinking pak vyčerpá num_predict a vrátí
+    #    prázdno (1 ze 2 běhů). Proto se známé posílají PO DÁVKÁCH
+    #    (`stance_known_batch`), ne zvedáním budgetu donekonečna.
+    # Plný rozbor: <!--STANCE_SHADOW_MERENI_31_08--> v data/BACKLOG.md
+    _A_SYS = (
+        "You extract Hans's DURABLE stances/values from a record of his day. "
+        "Think in English. Output stances he genuinely expresses — English, "
+        "1st person, GENERAL (no 'today', no single event). Do NOT invent. "
+        "Optionally add \"counterarg_en\" = a caveat Hans himself voiced.\n"
+        "Output ONLY a JSON array of {\"claim_en\": \"...\", \"confidence\": "
+        "0.0-1.0}. If nothing durable, output []."
+    )
+    _B_SYS = (
+        "For each NEW claim decide its relation to the KNOWN stances. Think in "
+        "English.\n"
+        "  same    — it is the same position, only worded differently\n"
+        "  opposes — it genuinely REVERSES a known stance (explicit change of mind)\n"
+        "  new     — neither\n"
+        "Same general topic is NOT enough for 'same'.\n"
+        "Output ONLY a JSON array, one object per claim: "
+        "{\"claim\": <number>, \"rel\": \"same\"|\"opposes\"|\"new\", "
+        "\"known\": <number or null>}."
+    )
+    _C_SYS = (
+        "Some candidate stances express THE SAME position in different words. "
+        "Think in English. Group them: output {\"same\": [<numbers>]} per group "
+        "of two or more. Do NOT output groups of one. Same topic is not enough.\n"
+        "Output ONLY a JSON array. If nothing matches, output []."
+    )
+
+    def _stance_llm(self, system: str, user: str, num_predict: int = 6144):
+        """Jedno volání reasoning tieru. Vrací (text, chyba)."""
+        try:
+            from scripts.ollama_client import ollama_chat
+        except ImportError:
+            return None, "ollama_client nedostupny"
+        try:
+            raw = ollama_chat(
+                self._stance_reasoning_model,
+                [{"role": "system", "content": system},
+                 {"role": "user", "content": user}],
+                config=self._config, keep_alive=0,
+                timeout=self._stance_reasoning_timeout,
+                options={"temperature": 0.3,
+                         "num_ctx": self._stance_reasoning_num_ctx,
+                         "num_predict": num_predict,
+                         "num_gpu": self._stance_reasoning_num_gpu})
+        except Exception as _e:
+            return None, str(_e)
+        raw = _strip_think(raw or "")
+        if not raw:
+            # ⚠️ NEzaměnit za „model nic nenašel" — thinking vyčerpal budget.
+            return None, "jen think / prazdno"
+        return raw, None
+
+    def _extract_stances_3step(self, text: str, date_str: str):
+        try:
+            known = [s.claim for s in self._stances.top_stances(limit=40)]
+        except Exception:
+            known = []
+
+        # ── (a) FORMULACE — BEZ seznamu známých ──────────────────────
+        raw, err = self._stance_llm(self._A_SYS, "DAY RECORD (%s):\n%s"
+                                    % (date_str, text.strip()[:3000]))
+        if err:
+            _log.warning("stance 3step (a): %s", err)
+            return
+        kand = [it for it in (self._parse_stances(raw) or [])
+                if isinstance(it, dict) and (it.get("claim_en") or "").strip()]
+        if not kand:
+            _log.info("stance 3step %s: (a) nic nenavrhl", date_str)
+            self._stance_last_result = "no_items"
+            return
+        _log.info("stance 3step %s: (a) %d návrhů", date_str, len(kand))
+
+        # ── (b) TOTOŽNOST proti známým — PO DÁVKÁCH ──────────────────
+        rel = {i: ("new", None) for i in range(len(kand))}
+        nb = "\n".join("[%d] %s" % (i, k["claim_en"]) for i, k in enumerate(kand))
+        krok = max(1, self._stance_known_batch)
+        for off in range(0, len(known), krok):
+            cast = known[off:off + krok]
+            kb = "\n".join("[%d] %s" % (off + j, c) for j, c in enumerate(cast))
+            raw, err = self._stance_llm(
+                self._B_SYS, "KNOWN STANCES:\n%s\n\nNEW CLAIMS:\n%s" % (kb, nb))
+            if err:
+                _log.warning("stance 3step (b) dávka %d: %s", off // krok, err)
+                continue
+            for it in (self._parse_stances(raw) or []):
+                if not isinstance(it, dict):
+                    continue
+                try: ci = int(it.get("claim"))
+                except Exception: continue
+                r = str(it.get("rel") or "").lower()
+                if ci not in rel or r not in ("same", "opposes"):
+                    continue
+                try: kn = int(it.get("known"))
+                except Exception: continue
+                if 0 <= kn < len(known) and rel[ci][0] == "new":
+                    rel[ci] = (r, kn)
+
+        # ── (c) NOVÉ × NOVÉ — jen mezi skutečně novými ───────────────
+        nove = [i for i in rel if rel[i][0] == "new"]
+        zahod = set()
+        if len(nove) > 1:
+            cb = "\n".join("[%d] %s" % (i, kand[i]["claim_en"]) for i in nove)
+            raw, err = self._stance_llm(self._C_SYS,
+                                        "CANDIDATE STANCES:\n" + cb, num_predict=8192)
+            if err:
+                _log.warning("stance 3step (c): %s — duplicity NEODFILTROVÁNY", err)
+            else:
+                for it in (self._parse_stances(raw) or []):
+                    g = it.get("same") if isinstance(it, dict) else it
+                    if not isinstance(g, list):
+                        continue
+                    idx = sorted({int(v) for v in g
+                                  if str(v).lstrip("-").isdigit()} & set(nove))
+                    zahod |= set(idx[1:])      # první ze skupiny zůstane
+                if zahod:
+                    _log.info("stance 3step %s: (c) zahozeno %d duplicit v dávce",
+                              date_str, len(zahod))
+
+        # ── ZÁPIS ────────────────────────────────────────────────────
+        k_prekladu = [kand[i]["claim_en"] for i in rel
+                      if rel[i][0] == "new" and i not in zahod]
+        k_prekladu += [kand[i]["claim_en"] for i in rel if rel[i][0] == "opposes"]
+        cz = self._translate_to_cz(k_prekladu) if k_prekladu else {}
+        written = weakened = 0
+        for i in list(rel)[: self._stance_max_per_run]:
+            r, kn = rel[i]
+            en = kand[i]["claim_en"]
+            if i in zahod:
+                continue
+            if r == "same" and kn is not None:
+                # přesné znění známého → PŘEKLAD NETŘEBA (levnější i bezpečnější)
+                if self._stances.add_or_reinforce(
+                        known[kn], float(kand[i].get("confidence", 0.6) or 0.6),
+                        "evening_reflection"):
+                    written += 1
+                continue
+            czt = (cz.get(en) or "").strip()
+            if not czt:
+                _log.warning("stance 3step: %s postoj zahozen, chybí překlad: %.60s",
+                             r, en)
+                continue
+            if r == "opposes" and kn is not None:
+                if self._stances.contradict(known[kn], counter_claim=czt,
+                                            source="evening_reflection"):
+                    weakened += 1
+                    continue
+            if self._stances.add_or_reinforce(
+                    czt, float(kand[i].get("confidence", 0.5) or 0.5),
+                    "evening_reflection"):
+                written += 1
+        _log.info("stance 3step %s: zpracovano %d, oslabeno %d / %d návrhů "
+                  "(%d duplicit)", date_str, written, weakened, len(kand), len(zahod))
+        self._stance_last_result = "ok" if (written or weakened) else "no_items"
 
     def _extract_stances_reasoning(self, text: str, date_str: str,
                                    from_facts: bool = False):
