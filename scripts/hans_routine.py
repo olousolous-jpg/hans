@@ -173,6 +173,7 @@ class HansRoutine:
         self._last_selfcritique_date = ""  # HANS_SELFCRITIQUE_V1 (sebekritika, kadence)
         self._last_immune_date = ""      # HANS_IMMUNE_A2_V1 (noční fact-check tvrzení)
         self._last_hygiene_date = ""     # HANS_MEMORY_HYGIENE_V1 (prořez firehose 1×/noc)
+        self._last_facts_date = ""       # HANS_FACTS_NIGHTLY_V1 (Wikidata 1×/noc)
         self._last_pc_shutdown_date = ""  # HANS_PC_NIGHT_SHUTDOWN (vypni PC po analytice 1×/noc)
         # HANS_HEALTH_NIGHT_AWARE_V1 — timestampy cyklu PC pro rozlišení
         # ZÁMĚRNÉHO výpadku (noční shutdown / ranní boot) od skutečné poruchy.
@@ -558,6 +559,7 @@ class HansRoutine:
             self._last_selfcritique_date = s.get("last_selfcritique_date", "")  # HANS_SELFCRITIQUE_V1
             self._last_immune_date = s.get("last_immune_date", "")  # HANS_IMMUNE_A2_V1
             self._last_hygiene_date = s.get("last_hygiene_date", "")  # HANS_MEMORY_HYGIENE_V1
+            self._last_facts_date = s.get("last_facts_date", "")      # HANS_FACTS_NIGHTLY_V1
             self._last_pc_shutdown_date = s.get("last_pc_shutdown_date", "")  # HANS_PC_NIGHT_SHUTDOWN
             self._last_analytics_wake_date = s.get("last_analytics_wake_date", "")  # HANS_PC_NIGHT_ANALYTICS_WAKE
             # HANS_SLEEP_TS_PERSIST_V1 — restart v noci nesmí zkrátit ranní scan
@@ -590,6 +592,7 @@ class HansRoutine:
                     "last_selfcritique_date": self._last_selfcritique_date,  # HANS_SELFCRITIQUE_V1
                     "last_immune_date": self._last_immune_date,  # HANS_IMMUNE_A2_V1
                     "last_hygiene_date": self._last_hygiene_date,  # HANS_MEMORY_HYGIENE_V1
+                    "last_facts_date": self._last_facts_date,      # HANS_FACTS_NIGHTLY_V1
                     "last_pc_shutdown_date": self._last_pc_shutdown_date,  # HANS_PC_NIGHT_SHUTDOWN
                     "last_analytics_wake_date": self._last_analytics_wake_date,  # HANS_PC_NIGHT_ANALYTICS_WAKE
                     # HANS_SLEEP_TS_PERSIST_V1 — okno noci musí přežít restart
@@ -2452,6 +2455,43 @@ class HansRoutine:
                                   sum(_pruned.values()))
                 except Exception as _hye:
                     _log.warning("memory_hygiene prořez selhal: %s", _hye)
+
+            # HANS_FACTS_NIGHTLY_V1 (31.8.) — DOPLNĚNÍ FAKT z Wikidat pro nové
+            # entity. `scripts/hans_facts.py` byl postaven 26.8., BACKFILL SE
+            # PUSTIL RUČNĚ A PAK UŽ NIKDY — `grep -rn hans_facts scripts/*.py`
+            # vracel NULA volajících. Za pět dní se nasbíralo 27 entit bez
+            # fakt; čte je `hans_maker` (HANS_MAKER_IMAGE_FACTS_V1), takže se
+            # nová entita maluje bez slohu, materiálu a datace.
+            # ⚠️ Přesně tentýž případ jako `IMPORTANCE_SCHEDULE_V1` (rutina
+            # stála 2 měsíce a sebe-audit hlásil „v pořádku", protože o ní
+            # nevěděl) → proto je krok ZÁROVEŇ v `hans_schedule`.
+            # ✅ NEPOTŘEBUJE MOZEK: Wikidata, 0 % LLM, žádná VRAM → smí běžet
+            # i když je PC vypnuté. Gate je jen noc+ticho kvůli síti a zámku DB.
+            # ⚠️ `limit` malý schválně — Wikidata vracely 429 už po ČTYŘECH
+            # entitách; `backfill` sám ustupuje a při rate limitu končí, aniž
+            # by entitu odškrtl ([[study-findability-guards]]).
+            if (self._last_facts_date != today
+                    and self._in_night_window()
+                    and self._chat_quiet_ok()):
+                self._last_facts_date = today
+                self._save_routine_state()
+                try:
+                    from scripts.hans_facts import backfill as _fb
+                    _fr = _fb(self._diary_path, limit=20)
+                    if _fr.get("zkouseno"):
+                        _log.info("facts: doplněno %d polí u %d entit "
+                                  "(ok %d, bez tvrzení %d, bez qid %d%s)",
+                                  _fr.get("poli", 0), _fr.get("zkouseno", 0),
+                                  _fr.get("ok", 0), _fr.get("bez_tvrzeni", 0),
+                                  _fr.get("bez_qid", 0),
+                                  ", RATE LIMIT" if _fr.get("rate_limit") else "")
+                    try:
+                        import scripts.hans_schedule as _hs
+                        _hs.mark("facts_backfill", ok=True)
+                    except Exception:
+                        pass
+                except Exception as _fe:
+                    _log.warning("facts backfill selhal: %s", _fe)
 
             # HANS_CREATION_REFLECTION_V1 (D) — týdně: reflexe vlastní tvorby
             # (sebepoznání, NE postoje). Samostatná kadence. Deferral-safe.

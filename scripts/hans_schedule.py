@@ -68,6 +68,14 @@ _SEED = [
     ("importance_scoring", "daily", None, None, 30 * 3600,
      "Skorovani dulezitosti epizod (autobiograficka vrstva)"),
 
+    # HANS_FACTS_NIGHTLY_V1 (31.8.) — doplnění fakt z Wikidat pro nové entity.
+    # PŘIDÁNO POZDĚ ze stejného důvodu jako `importance_scoring`: modul běžel
+    # jednou ručně 26.8. a pak stál, protože ho nikdo nevolal a rozvrh o něm
+    # nevěděl. Ticho se navenek projeví jen tím, že se obraz namaluje bez
+    # slohu a datace — tedy ničím, co by šlo vidět.
+    ("facts_backfill", "daily", None, None, 50 * 3600,
+     "Doplnění fakt z Wikidat pro nové entity (0 % LLM)"),
+
     # Noční analytika (deepseek reasoning tier přes noc, 3:00).
     ("nightly_analytics", "daily", None, 3, 30 * 3600,
      "Noční analytika (deepseek reasoning tier): syntéza, sebekritika, stance"),
