@@ -1305,18 +1305,17 @@ def _resolve_poster(title: str) -> str:
 
 def _clean_opinion(text: str, name: str = "Hans") -> str:
     """Odstraň degenerovaný úvodní self-identity prefix („Jmenuji se Hans.",
-    „Jsem Hans.", „Rozumím.") z názoru — skutečný text následuje až za ním."""
-    import re as _re
-    t = (text or "").strip()
-    pat = _re.compile(
-        r'^\s*(jmenuji se %s|jsem %s|rozum[ií]m)\s*[.!]*\s*' % (
-            _re.escape(name), _re.escape(name)), _re.IGNORECASE)
-    for _ in range(6):
-        new = pat.sub('', t, count=1).strip()
-        if new == t:
-            break
-        t = new
-    return t
+    „Jsem Hans.", „Rozumím.") z názoru — skutečný text následuje až za ním.
+
+    HANS_SELF_INTRO_STRIP_V1 — vlastní kopie vzoru ZRUŠENA, deleguje se na
+    sdílený predikát. Od 31.8. se totéž strhává už u ZDROJE (hans_synthesis),
+    takže tohle kryje jen historické záznamy; dvě kopie vzoru by se rozešly.
+    """
+    try:
+        from scripts.hans_synthesis import strip_self_intro
+    except Exception:
+        return (text or "").strip()
+    return strip_self_intro(text, name)
 
 
 @app.get("/api/movies_seen")

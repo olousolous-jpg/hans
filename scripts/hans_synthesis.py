@@ -25,6 +25,66 @@ class LLMOffline(Exception):
 _PENDING_DIR = "data/pending_thoughts"
 
 
+# ── HANS_SELF_INTRO_STRIP_V1 ────────────────────────────────────────
+# Model obcas uvede reflexi sebe-predstavou (Jsem Hans. / Jmenuji se
+# Hans.) nebo potvrzenim pokynu (Rozumim. / Zprava prijata.). Skutecny
+# text nasleduje az za tim. Bez tohoto uklidu se odrhovacka ulozi do
+# deniku a cte ji SEDM dalsich cest (hans_recall ji predcita uzivateli,
+# hans_synthesis, hans_importance, hans_self_insight,
+# hans_behaviour_evidence, hans_art, hans_memory) + RAG.
+#
+# ⚠️ STROP 32 ZNAKU NA VETU je podstatny, ne kosmeticky: v deniku existuji
+# zaznamy typu "Jsem Hans, a ponoril jsem se do studia hry Ceske nebe..."
+# (76 a 105 znaku), ktere NESOU OBSAH. Merenim na 364 zasazenych zaznamu:
+# vsechny odrhovacky maji <= 22 znaku, obsahove vety >= 76 → strop rozdeli
+# obe skupiny deterministicky.
+#
+# ⛔ NEROZSIROVAT na obecne kratke uvodni vety. "Zajimavy namet." (57x),
+# "Jeho uvahy jsou neobvykle." (19x) apod. jsou LEGITIMNI stylisticke
+# zacatky, ne odrhovacky. Vyhrazeno na tridu sebe-identita/potvrzeni.
+_SELF_INTRO_MAX_CHARS = 32
+
+
+def strip_self_intro(text: str, name: str = "Hans") -> str:
+    """Strhni uvodni sebe-predstavu / potvrzeni pokynu. Idempotentni.
+
+    Puvodne zil jen jako _clean_opinion ve web_admin.py, tedy jako zaplata
+    na strane ZOBRAZENI — data zustavala spinava. Ted je to jeden predikat
+    sdileny zdrojem i displejem.
+    """
+    t = (text or "").strip()
+    if not t:
+        return t
+    # HANS_SELF_INTRO_STRIP_V2 — přístavek smí NÁSLEDOVAT JEN ZA JMÉNEM a smí
+    # mít nejvýš dvě slova. V1 ho povoloval i za „rozumím" a tím zničil větu
+    # „Rozumím, pustím Zlaté oko. Chcete ještě něco?" → zbylo „Chcete ještě
+    # něco?". Odhaleno backfillem proti reálnému deníku, ne testem.
+    # HANS_SELF_INTRO_STRIP_V3 — model jméno OPISUJE, nejen uvádí:
+    # „Jméno mi je Hans." (3x), „Jméno je Hans." (2x), „Znalost mého jména
+    # je Hans." (1x) + servisní fráze „Jsem tu pro službu." (4x). Odhaleno
+    # až živým dotazem na /api/movies_seen, ne měřením nad DB.
+    # ⛔ „Je mi ctí sloužit." (11x) tu ZÁMĚRNĚ NENÍ — neobsahuje jméno a je
+    # sporné, jestli je to odrhovačka, nebo Hansův styl.
+    pat = re.compile(
+        r'^\s*(?:'
+        r'(?:jmenuji\s+se|(?:m[ée]\s+)?jm[ée]no(?:\s+mi)?\s+je'
+        r'|znalost\s+m[ée]ho\s+jm[ée]na\s+je|jsem)'
+        r'\s+%s(?:\s*,\s*\w+(?:\s+\w+)?)?'
+        r'|rozum[ií]m|zpr[áa]va\s+p[řr]ijata'
+        r'|jsem\s+tu\s+pro\s+slu[žz]bu|jsem\s+k\s+slu[žz]b[áa]m'
+        r')\s*[.!]+' % re.escape(name),
+        re.IGNORECASE)
+    for _ in range(6):
+        m = pat.match(t)
+        if not m or m.end() > _SELF_INTRO_MAX_CHARS:
+            break
+        rest = t[m.end():].strip()
+        if not rest:          # nikdy nevrat prazdno — radsi nech, jak bylo
+            break
+        t = rest
+    return t
+
+
 # Specifický pokyn pro každý "styl" syntézy.
 _STYLE_PROMPTS: dict[str, str] = {
     "encounter_summary": (
@@ -279,6 +339,17 @@ class HansSynthesis:
         for suffix in ('"', "'"):
             if text.endswith(suffix):
                 text = text[:-1].rstrip()
+        # HANS_SELF_INTRO_STRIP_V1 — az ZA strzenim labelu: model umi obojí
+        # naráz (napr. Hans: Jsem Hans. ...).
+        _pred = text
+        text = strip_self_intro(text, _nm)
+        if text != _pred:
+            # HANS_SELF_INTRO_LOG_V1 — ať je vidět, ŽE brzda sepnula a CO
+            # strhla. Dvakrát 31.8. se ukázalo, že model si vymyslí nový opis
+            # („Jméno mi je Hans.", „Znalost mého jména je Hans.") — bez téhle
+            # hlášky by to zase našel až náhodný pohled na dashboard.
+            _log.info("self_intro strip [%s]: %r",
+                      style, _pred[:len(_pred) - len(text)].strip()[:60])
         if len(text) > max_chars:
             text = text[:max_chars - 3] + "…"
         return text or None
