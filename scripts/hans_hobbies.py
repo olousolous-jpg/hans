@@ -42,6 +42,41 @@ def _norm(s: str) -> str:
     return _WS.sub(" ", (s or "").strip().lower())
 
 
+# ── HANS_HOBBY_NEAR_DUP_V1 (31.8.) ──────────────────────────────────
+# Názvy koníčků vymýšlí LLM (`distill_hobbies`) a dedup běžel na PŘESNOU
+# shodu `name_norm` (= jen lowercase + mezery). Model ale píše překlepy,
+# takže z JEDNOHO zájmu vznikly TŘI řádky:
+#   „historie a památky" (11) · „história a památky" (60) · „hřádění a památky" (2)
+# Škoda nebyla kosmetická: ~1330 zaujetí se rozdělilo na třetiny, správně
+# pojmenovaný řádek propadl filtrem `min_recent_days` a živil to překlep.
+# ⛔ Do promptu už věta „použij JEHO PŘESNÝ název" PATŘÍ a NEFUNGUJE →
+#    oprava musí být na ZÁPISOVÉ cestě, ne další věta ([[prompt-debt-tool-calling]]).
+#
+# ⚠️ PRÁH JE ZMĚŘENÝ, NE ODHADNUTÝ (všechny dvojice ze 17 koníčků):
+#     0.944  historie a památky × história a památky   ← duplicita
+#     0.686  hřádění a památky  × obojí výše           ← duplicita
+#     0.500  fotografie × fotbal                       ← LEGITIMNÍ, nesmí splynout
+#     0.490  hrady a historická architektura × historie a památky  ← LEGITIMNÍ
+# Auto-slučuje se jen od 0.85 (bezpečná rezerva 0.35 k nejbližší legitimní
+# dvojici). Pásmo 0.62–0.85 se NESLUČUJE, jen HLÁSÍ — ať se nová varianta
+# ukáže, místo aby tiše založila čtvrtý řádek. Diakritika se pro porovnání
+# odstraňuje („história" ~ „historia").
+_MERGE_AUTO = 0.85
+_MERGE_HLAS = 0.62
+
+
+def _bez_diakritiky(s: str) -> str:
+    import unicodedata as _u
+    return "".join(c for c in _u.normalize("NFKD", s or "")
+                   if not _u.combining(c))
+
+
+def _podobnost(a: str, b: str) -> float:
+    import difflib as _d
+    return _d.SequenceMatcher(None, _bez_diakritiky(a),
+                              _bez_diakritiky(b)).ratio()
+
+
 def _load_examples(raw) -> list:
     if not raw:
         return []
@@ -164,6 +199,25 @@ class HobbyStore:
                 row = conn.execute(
                     "SELECT id, examples FROM hobbies WHERE name_norm=? "
                     "AND status='active' ORDER BY id LIMIT 1", (norm,)).fetchone()
+                if row is None:
+                    # HANS_HOBBY_NEAR_DUP_V1 — přesná shoda selhala; než založíš
+                    # nový koníček, zkus BLÍZKÝ existující (překlep od LLM).
+                    blizky, skore = None, 0.0
+                    for r2 in conn.execute(
+                            "SELECT id, name, name_norm, examples FROM hobbies "
+                            "WHERE status='active'").fetchall():
+                        s = _podobnost(norm, r2["name_norm"])
+                        if s > skore:
+                            blizky, skore = r2, s
+                    if blizky is not None and skore >= _MERGE_AUTO:
+                        _log.info("hobby NEAR-DUP: %.40r ~ %.40r (%.2f) → posiluji "
+                                  "existující [%s]", name, blizky["name"], skore,
+                                  blizky["id"])
+                        row = blizky          # spadne do větve „posílit"
+                    elif blizky is not None and skore >= _MERGE_HLAS:
+                        _log.warning("hobby: %.40r je podezřele blízko %.40r "
+                                     "(%.2f) — zakládám NOVÝ, zkontroluj",
+                                     name, blizky["name"], skore)
                 if row is None:
                     conn.execute(
                         "INSERT INTO hobbies (name, name_norm, evidence_count, "
