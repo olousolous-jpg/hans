@@ -1155,7 +1155,10 @@
     "ollama_busy_watt": 100,
     "_ollama_busy_note": "Nad timto prikonem GPU se neodpovidajici Ollama povazuje za VYTIZENOU, ne zaseknutou, a NErestartuje se. Rozhoduje prikon, ne procenta: zasek runlistu = 99 % pri 49 W, realna prace 74-219 W, rezidentni model v klidu 45-51 W. Doloženo 29.8.: self-heal restartoval Ollamu uprostred backfillu a zabil 30 minut prace. Kdyz se prikon nepodari zmerit, chova se to jako driv (restart).",
     "matrix_sync_max_age_s": 300,
-    "_note_matrix": "MATRIX_SYNC_HEARTBEAT_V1: kdyz posledni USPESNY Matrix sync je starsi nez tolik sekund, probe_matrix hlasi WARN. Sync ma timeout 30 s, takze 300 = 10 promeskanych cyklu. WARN NEspousti heal - Matrix se restartovat neda, jde o hlaseni tichého vypadku jedineho kanalu ven (prikazy z mobilu, poplach z /hlidej)."
+    "_note_matrix": "MATRIX_SYNC_HEARTBEAT_V1: kdyz posledni USPESNY Matrix sync je starsi nez tolik sekund, probe_matrix hlasi WARN. Sync ma timeout 30 s, takze 300 = 10 promeskanych cyklu. WARN NEspousti heal - Matrix se restartovat neda, jde o hlaseni tichého vypadku jedineho kanalu ven (prikazy z mobilu, poplach z /hlidej).",
+    "climate_max_age_s": 5400,
+    "climate_max_rozdil": 4,
+    "_climate_note": "HANS_CLIMATE_HEALTH_V1 — po jake dobe mlceni uzlu s cidly hlasit WARN. Takt mereni ~31 min (OnUnitActiveSec 30 min + ~50 s beh). 5400 s = tolerance ~2 celych kol VCETNE jejich vnitrniho opakovani, tedy ctyri zmeskane pokusy za sebou = skutecna porucha, ne vykyv. Puvodne navrhovanych 60 min bylo malo: pri 31min taktu udela jedna ztracena hodnota 62min mezeru. To uz resi opakovani za 2 min na uzlu (napad uzivatele 31.8.), ale rezerva se hodi."
   },
   "toolscout": {
     "enabled": false,
