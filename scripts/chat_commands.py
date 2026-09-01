@@ -2778,6 +2778,22 @@ register(
         # ⚠️ ČÁST TĚCHTO VZORŮ NAVRHOVALA UŽ CLAUDE.md 8.7. („jak dávno si
         # pamatuješ", „úplně první") — návrh ale zůstal NEPOSTAVENÝ a seděl
         # v sekci nápadů. Změřeno 30.8.: pět formulací propadalo do LLM.
+        # HANS_MEMORY_SPAN_V2 (1.9.) — DOBA SLUŽBY je totéž co rozsah paměti.
+        # Doloženo dlouhým rozhovorem: „Jak dlouho už v tomto domě takto
+        # sloužíte?" → Hans si VYMYSLEL „první zaznamenaný incident 28. prosince
+        # 2019", a o dva tahy později na „vzpomínáte si na svůj první den?"
+        # odpověděl správně (25. 4. 2026, 67 608 záznamů). Odpověď tedy existuje
+        # a je deterministická — jen se k ní tahle formulace nedostala.
+        # ⚠️ Vzory V1 mířily na DENÍK („vedeš deník", „od kdy existuješ"), ne na
+        # SLUŽBU. A byly skoro celé v tykání — cizí člověk přitom vyká, takže
+        # sada níž má obě osoby. [[test-both-grammatical-persons]]
+        # ⚠️ Změřeno na 1547 reálných uživatelských replikách: **0 falešných
+        # poplachů**, všech 6 cílových formulací chyceno.
+        r"jak\s+dlouho\s+(u[žz]\s+)?.{0,30}?slou[žz][íi](te|[šs])",
+        r"jak\s+dlouho\s+(u[žz]\s+)?(tu|tady|zde)\s+(jsi|jste|slou|p[ůu]sob|fun)",
+        r"jak\s+dlouho\s+(u[žz]\s+)?existuj(e[šs]|ete)",
+        r"jak\s+dlouho\s+(u[žz]\s+)?(jsi|jste)\s+(tu|tady|zde|v\s+t)",
+        r"od\s+kdy\s+(tu|tady|zde)\s+(jsi|jste)",
         r"jak\s+d[áa]vno\s+si\s+pamatuje[šs]",
         r"jak\s+dlouho\s+(u[žz]\s+)?(si\s+)?(vede[šs]|p[íi][šs]e[šs]|m[áa][šs])"
         r"\s+(ten\s+)?den[íi]k",
@@ -4305,7 +4321,19 @@ _TAZACI_ZAJMENO = re.compile(
 # „jaké máš schopnosti?". Rozbilo by to hlavní způsob, jak se na to ptát.
 # Správná cesta je predikát na METAOTÁZKU O ZDROJI ÚDAJE (třída
 # `is_memory_meta_query`, jen pro čidla), ne rozšíření výpisového seznamu.
-_VYPISOVE_CMDS = {"seznam", "nitky", "rozvrh", "kritika", "anomalie"}
+# HANS_THREAD_NO_LIST_V4 (1.9.) — `vzpominka` přibyla.
+# Doloženo dlouhým rozhovorem: po výpisu sebekritiky přišlo „kdy sis to
+# uvedomil?" a Hans odpověděl NEJSTARŠÍM ZÁZNAMEM DENÍKU (25. 4. 2026) —
+# navazující otázka na konkrétní věc dostala výpis o úplně jiné.
+# ⚠️ Změřeno, že legitimní dotazy NEZMIZÍ: „jaká je tvoje nejstarší vzpomínka?",
+# „co si pamatuješ jako první?", „jak dlouho už tu jsi?" i dnešní
+# `HANS_MEMORY_SPAN_V2` („jak dlouho v tomto domě sloužíte?") mají
+# `_je_navazujici_dotaz` = False, takže projdou. Zamítne se jen věta se
+# zpětným zájmenem, která na něco navazuje.
+# ⛔ Pozor na rozdíl proti `schopnosti`, které se sem týž den zkusily přidat
+#    a VRÁTILY: tam „co umíš?" navazující JE, takže by se zamítlo. Tady ne.
+_VYPISOVE_CMDS = {"seznam", "nitky", "rozvrh", "kritika", "anomalie",
+                  "vzpominka"}
 
 
 _NALEZ_SLOVA = re.compile(
@@ -4554,12 +4582,34 @@ def resolve_command_llm(message: str, config: dict, turns=None):
                     _t2 = (_out2 or "").strip().lower().strip('".,!?').split()
                     _t2 = _t2[0] if _t2 else ""
                     _cid2 = _t2 if _t2 in valid else ""
-                    if _cid2 != cid:
-                        _log.info("HANS_CMD_LLM_ROUTE_TYPO_V1: '%.40s' → /%s, "
-                                  "ale po opravě '%.40s' → %s (platí oprava)",
-                                  msg, cid, _cista, ("/" + _cid2) if _cid2
-                                  else "žádný příkaz")
-                        cid = _cid2
+                    # HANS_CMD_LLM_ROUTE_TYPO_V2 (1.9.) — potvrzení smí štítek
+                    # už jen ODEBRAT, ne PŘEPSAT NA JINÝ.
+                    # Doloženo dlouhým rozhovorem: „kdy sis to uvedomil?"
+                    # → /vzpominka, jenže rewriter z toho udělal „Kdy jsi si
+                    # toho byl/a vědom/a?" a štítek se přepsal na /vhledy →
+                    # místo odpovědi přišel výpis vhledů. „uvedomil" přitom
+                    # NENÍ překlep.
+                    # ⚠️ Měřeno na 14 reálných replikách: rewriter mění 13 z nich
+                    # a většinou nejde o opravu překlepu, ale o PŘEFORMULOVÁNÍ —
+                    # „zkus to namalovat jeste jednou" → „Jak znovu vytvořit
+                    # obraz?" (podobnost 0,26), a „osoby, které byly SOUZENÉ"
+                    # → „byly ZASNOUBENÉ" je dokonce věcná chyba.
+                    # ⛔ Prahem podobnosti to oddělit NELZE — rozložení je
+                    # spojité (0,26–0,93) a pravý překlep „schipnost" (0,78)
+                    # leží mezi přeformulováními. Vyzkoušeno, zamítnuto.
+                    # ✅ Odebrání ale zůstává bezpečné a doložený případ z 20.8.
+                    # („ja vypadal normalitacni proces?" → /anomalie → po opravě
+                    # žádný příkaz) je právě odebrání, takže funguje dál.
+                    if _cid2 != cid and not _cid2:
+                        _log.info("HANS_CMD_LLM_ROUTE_TYPO_V2: '%.40s' → /%s "
+                                  "ODEBRÁNO (po opravě '%.40s' žádný příkaz)",
+                                  msg, cid, _cista)
+                        cid = ""
+                    elif _cid2 != cid and _cid2:
+                        _log.info("HANS_CMD_LLM_ROUTE_TYPO_V2: '%.40s' → /%s "
+                                  "PONECHÁN (oprava '%.40s' chtěla /%s — přepis "
+                                  "na jiný štítek se neprovádí)",
+                                  msg, cid, _cista, _cid2)
         except Exception as _te:
             _log.debug("route typo confirm: %s", _te)
     if cid and cid not in _COMMANDS:      # registr je pravda, ne můj výčet
