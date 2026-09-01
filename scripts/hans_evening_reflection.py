@@ -16,6 +16,7 @@ Filozofie:
 from __future__ import annotations
 
 import logging
+import pathlib
 import sqlite3
 import time
 from datetime import datetime
@@ -35,12 +36,20 @@ def _strip_think(text: str) -> str:
 
 
 # Které event_types brát do reflexe a jak se v promptu označí
+# HANS_CLIMATE_DIARY_V1 — kolik dní historie čidel je potřeba, než se smí říct
+# „obvykle tu bývá". Sedm = týden, aby se do průměru dostal i víkend.
+_KLIMA_MIN_DNU = 7
+
 _RELEVANT_EVENTS = {
     # HUMAN_CHAT_EVENING
     "human_chat":       "Rozhovory s lidmi",
     "fact_correction":  "Opravy faktů (ověřeno proti Wikipedii)",  # G5D_VERIFY_BEFORE_DIARY_V1
     "chat_reflection":  "Mé dojmy z rozhovorů",
     "teddy_dialog":     "Dialogy s Koláčem",
+    # HANS_CLIMATE_DIARY_V1 (1.9.) — klima NENÍ deníková událost, skládá se
+    # dopočtem ze `surroundings.db`. Label je tu, aby mělo v promptu
+    # stejný tvar jako ostatní fakta dne.
+    "klima":            "Jak bylo v místnosti",
     "web_read":         "Co jsem četl",
     "kodi_playing":     "Co se hrálo na TV",
     "introspection":    "Vlastní úvahy",
@@ -1281,9 +1290,67 @@ class HansEveningReflection:
                 if rows:
                     out[evt] = [(r[0] or "", r[1] or "") for r in rows]
             db.close()
+            # HANS_CLIMATE_DIARY_V1 — teplota a vlhkost jako FAKT DNE. Bez tohohle
+            # Hans o klimatu psát nemohl, i když ho měří: čidla byla napojená
+            # jen na dotaz, dashboard a health probe (audit 1. 9.).
+            # ⚠️ Když data nejsou, řádek se NEPŘIDÁ — prázdná rubrika v bloku
+            # fakt je pozvánka k vymýšlení ([[prompt-category-invites-confabulation]]).
+            try:
+                _kl = self._climate_fact(date_str)
+                if _kl:
+                    out["klima"] = _kl
+            except Exception as _ke:
+                _log.debug("klima do fakt dne: %s", _ke)
         except Exception as e:
             _log.error("Sběr faktů selhal: %s", e)
         return out
+
+    def _climate_fact(self, date_str: str) -> list:
+        """HANS_CLIMATE_DIARY_V1 — jedna věta o klimatu dne, nebo [] když není z čeho.
+
+        ⛔ ŽÁDNÉ DESETINY — DHT11 má ±2 °C, takže „24,7 °C" je vymyšlená
+        přesnost. Stejné pravidlo drží `hans_agent._run_climate`.
+        ⚠️ Srovnání s OBVYKLÝM se přidá až od `_KLIMA_MIN_DNU` dní historie.
+        Dřív ne: na dvou dnech by „obvykle bývá" byla domněnka, a přesně tu
+        Hans 1. 9. vyslovil („teplota je vyšší než obvykle"), když neměl
+        žádná data. Do té doby prostě mlčí — chybějící věta neškodí,
+        vymyšlená ano.
+        """
+        import sqlite3 as _sq
+        cesta = "data/surroundings.db"
+        if not pathlib.Path(cesta).exists():
+            return []
+        con = _sq.connect("file:%s?mode=ro" % cesta, uri=True, timeout=3.0)
+        try:
+            row = con.execute(
+                "SELECT MIN(teplota), MAX(teplota), AVG(teplota), "
+                "MIN(vlhkost), MAX(vlhkost), COUNT(*) FROM climate "
+                "WHERE date(ts,'unixepoch','localtime')=?", (date_str,)
+            ).fetchone()
+            if not row or not row[5] or row[0] is None:
+                return []
+            tmin, tmax, tavg, hmin, hmax, n = row
+            # obvyklý stav z PŘEDCHOZÍCH dní (dnešek se do průměru nepočítá,
+            # jinak by se srovnával sám se sebou)
+            hist = con.execute(
+                "SELECT AVG(teplota), COUNT(DISTINCT date(ts,'unixepoch','localtime')) "
+                "FROM climate WHERE date(ts,'unixepoch','localtime')<?", (date_str,)
+            ).fetchone()
+        finally:
+            con.close()
+        veta = "teplota %d–%d °C (průměr %d), vlhkost %d–%d %%" % (
+            int(tmin), int(tmax), round(tavg), int(hmin), int(hmax))
+        try:
+            havg, dnu = hist
+            if havg is not None and int(dnu or 0) >= _KLIMA_MIN_DNU:
+                rozdil = round(tavg) - round(havg)
+                if abs(rozdil) >= 2:      # pod ±2 °C je to šum čidla
+                    veta += "; obvykle tu bývá %d °C (dnes o %d %s)" % (
+                        round(havg), abs(rozdil),
+                        "víc" if rozdil > 0 else "míň")
+        except Exception:
+            pass
+        return [("V pokoji", veta)]
 
     def _format_facts(self, facts: dict) -> str:
         """Zformátuje fakta pro LLM prompt — čistý seznam událostí
