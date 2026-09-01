@@ -1017,6 +1017,33 @@ class HansIdle:
             except Exception as _e:
                 _log.error("event_unknown_person.mood: %s", _e)
 
+    def _climate_now(self):
+        """HANS_MOOD_CLIMATE_V1 — poslední teplota z čidel, nebo None.
+
+        ⚠️ Stará hodnota se NEPOUŽIJE: mlčící uzel neznamená, že teplota drží.
+        Okno je 1 h, stejné jako u agentní akce `_run_climate`.
+        Průměr přes čidla (jsou dvě) a zaokrouhlení na celé stupně — DHT11 má
+        ±2 °C, desetiny by byly vymyšlená přesnost. Hodnoty už jsou kalibrované
+        (`HANS_CLIMATE_OFFSET_V1` se aplikuje při zápisu).
+        """
+        import sqlite3 as _sq
+        cesta = "data/surroundings.db"
+        if not os.path.exists(cesta):
+            return None
+        try:
+            con = _sq.connect("file:%s?mode=ro" % cesta, uri=True, timeout=3.0)
+            try:
+                row = con.execute(
+                    "SELECT AVG(teplota) FROM climate WHERE ts > ? "
+                    "AND teplota IS NOT NULL", (time.time() - 3600.0,)).fetchone()
+            finally:
+                con.close()
+        except Exception:
+            return None
+        if not row or row[0] is None:
+            return None
+        return int(round(row[0]))
+
     def event_weather_changed(self, code):
         """Update počasí — code je int podle wmo conv (viz HansMood.update_weather)."""
         if hasattr(self, '_mood') and self._mood is not None:
@@ -1169,6 +1196,24 @@ class HansIdle:
                         pass
             except Exception as _pde:
                 _log.debug('pc defer tick: %s', _pde)
+
+        # HANS_MOOD_CLIMATE_V1 — teplota do nálady. Vlastní kadence (60 s): tick()
+        # běží každých pár sekund a SELECT při každém by byl zbytečný, ale delší
+        # rozestup než `MOOD_WINDOW_S` by znamenal, že hlas mezi voláními vyprší
+        # a klima by náladu neovlivnilo nikdy.
+        try:
+            _kn = time.time()
+            if _kn - getattr(self, "_last_climate_mood", 0.0) >= 60.0:
+                self._last_climate_mood = _kn
+                if hasattr(self, "_mood") and self._mood is not None:
+                    _t = self._climate_now()
+                    if _t is not None:
+                        _cc = (self.config.get("climate", {}) or {})
+                        self._mood.update_climate(
+                            _t, int(_cc.get("mood_hot_c", 27)),
+                            int(_cc.get("mood_cold_c", 17)))
+        except Exception as _cme:
+            _log.debug("climate mood: %s", _cme)
 
         # Mood — periodický recompute (klouzavý průměr + hystereze)
         if hasattr(self, '_mood'):

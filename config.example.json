@@ -1441,6 +1441,9 @@
   },
   "climate": {
     "offset_c": -2,
-    "_note_offset_c": "HANS_CLIMATE_OFFSET_V1 — kalibrace čidel: kolik stupňů se PŘIČTE k surovému čtení při zápisu. DHT11 čte systematicky výš než pocitová teplota (uživatel změřil 1.9.: -2 °C). Aplikuje se v /api/climate, takže všech pět čtenářů dostane týž údaj. Vlhkost se nekalibruje."
+    "_note_offset_c": "HANS_CLIMATE_OFFSET_V1 — kalibrace čidel: kolik stupňů se PŘIČTE k surovému čtení při zápisu. DHT11 čte systematicky výš než pocitová teplota (uživatel změřil 1.9.: -2 °C). Aplikuje se v /api/climate, takže všech pět čtenářů dostane týž údaj. Vlhkost se nekalibruje.",
+    "mood_hot_c": 27,
+    "mood_cold_c": 17,
+    "_note_mood": "HANS_MOOD_CLIMATE_V1 — od kolika °C teplota hlasuje do nálady (melancholic, slabá intenzita 0.35). Mezi prahy nehlasuje vůbec. Hodnoty jsou po kalibraci offset_c."
   }
 }

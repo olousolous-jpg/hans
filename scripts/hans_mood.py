@@ -337,6 +337,33 @@ class HansMood:
         if code in (61, 63, 65, 80, 81, 95) and self._state.mood == "content":
             self._shift("melancholic", 0.4, "prší")
 
+    def update_climate(self, teplota, hot_c: int = 27, cold_c: int = 17):
+        """HANS_MOOD_CLIMATE_V1 (1.9.) — teplota v místnosti hlasuje do nálady.
+        VOLEJ PERIODICKY (vzor `nobody_home`), ne jednorázově: hlasy starší než
+        `MOOD_WINDOW_S` (60 s) vypadnou z okna, takže jeden hlas by se ztratil.
+
+        ⚠️ Záměrně JEN v extrémech a se SLABOU intenzitou (0.35 — míň než déšť
+        0.4, míň než samota 0.6–0.9). Teplota je trvalý stav, ne událost: kdyby
+        hlasovala silně, přebila by na celé hodiny sociální podněty a Hans by
+        byl v horkém dni trvale posmutnělý. Mírná teplota nehlasuje VŮBEC —
+        „je akorát" není nálada.
+
+        ⚠️ NEDĚLÁ se to podmínkou `mood == "content"` jako u počasí: ta je
+        v `update_weather` od začátku a za celou historii logu nezpůsobila
+        ANI JEDNU změnu nálady (grep „prší" = 0). Slabý hlas do společného
+        skóre je poctivější — projeví se, když nic silnějšího neběží.
+        """
+        if teplota is None:
+            return
+        try:
+            t = int(teplota)
+        except Exception:
+            return
+        if t >= int(hot_c):
+            self._shift("melancholic", 0.35, "je tu horko (%d °C)" % t)
+        elif t <= int(cold_c):
+            self._shift("melancholic", 0.35, "je tu chladno (%d °C)" % t)
+
     def tick(self):
         """Periodický recompute — volá hans_idle._tick každých pár sekund.
         Zaručí, že se mood ‚uklidní' i bez nových eventů."""
