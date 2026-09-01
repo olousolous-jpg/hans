@@ -158,6 +158,15 @@ def trigger_dialog():
 CLIMATE_PATH = Path("data/surroundings.db")
 
 
+def _cfg_climate() -> dict:
+    """HANS_CLIMATE_OFFSET_V1 — sekce `climate` z configu (kalibrace čidel)."""
+    try:
+        with open("config.json", encoding="utf-8") as fh:
+            return json.load(fh).get("climate", {}) or {}
+    except Exception:
+        return {}
+
+
 def _climate_init():
     con = sqlite3.connect(str(CLIMATE_PATH), timeout=5.0)
     try:
@@ -187,6 +196,21 @@ def climate_push(body: _ClimateBody):
     „nepřečteno" není hodnota a nesmí se tvářit jako 0 °C."""
     if body.teplota is None and body.vlhkost is None:
         raise HTTPException(400, "prazdne mereni se neuklada")
+    # HANS_CLIMATE_OFFSET_V1 (1.9., měření uživatele) — DHT11 čte systematicky VÝŠ,
+    # než jaká je pocitová teplota v místnosti. Kalibrace se dělá TADY, při
+    # zápisu, ne při čtení: čtenářů je pět (agentní akce, fakta dne do reflexe,
+    # dashboard, graf, health probe) a offset na jednom z nich zapomenutý by
+    # znamenal dvě různé stupnice ve stejném domě.
+    # ⚠️ Vlhkost se NEKALIBRUJE — uživatel měřil teplotu, o vlhkosti nic neřekl
+    #    a vymýšlet si druhou korekci by bylo hádání.
+    _off = 0
+    try:
+        _off = int((_cfg_climate() or {}).get("offset_c", 0) or 0)
+    except Exception:
+        pass
+    _teplota = body.teplota
+    if _teplota is not None and _off:
+        _teplota = int(_teplota) + _off
     try:
         _climate_init()
         con = sqlite3.connect(str(CLIMATE_PATH), timeout=5.0)
@@ -194,7 +218,7 @@ def climate_push(body: _ClimateBody):
             con.execute("INSERT INTO climate (ts, misto, cidlo, teplota, vlhkost) "
                         "VALUES (?,?,?,?,?)",
                         (time.time(), body.misto.strip()[:40],
-                         body.cidlo.strip()[:16], body.teplota, body.vlhkost))
+                         body.cidlo.strip()[:16], _teplota, body.vlhkost))
             con.commit()
         finally:
             con.close()

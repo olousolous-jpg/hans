@@ -1438,5 +1438,9 @@
     "voice_model": "hans-czech:latest",
     "voice_timeout": 180,
     "_voice_model_note": "SEVERKA_CZ_OUTPUT_V1 — base model vrací analysis/rationale anglicky (v EN je úsudek čistší); CZ-facing text projde hlasovým krokem. PŘEKLAD ANO, KOREKTURA NE: korektura překlopila „Jsi Hans\" na „Jsem Hans\" a chybu neopravila — na text, který se zapisuje do config.persona.core, se 8B modelem nesahá."
+  },
+  "climate": {
+    "offset_c": -2,
+    "_note_offset_c": "HANS_CLIMATE_OFFSET_V1 — kalibrace čidel: kolik stupňů se PŘIČTE k surovému čtení při zápisu. DHT11 čte systematicky výš než pocitová teplota (uživatel změřil 1.9.: -2 °C). Aplikuje se v /api/climate, takže všech pět čtenářů dostane týž údaj. Vlhkost se nekalibruje."
   }
 }
