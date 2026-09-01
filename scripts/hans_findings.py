@@ -208,12 +208,36 @@ def mark_announced(db_path: str, ids: list) -> None:
         conn.close()
 
 
-def correction_text(row: dict, asker: Optional[str] = None) -> str:
+def _oslov(asker, config=None) -> str:
+    """HANS_FINDINGS_TEST_PERSON_OSLOV_V1 — jak Hansa osloví protějšek v šablonách nálezů.
+
+    ⚠️ Testovací identita NENÍ osoba. `kolac_exam.identita()` vrací technické
+    jméno (dnes „zkouška"), které MUSÍ být v `config.test_persons`, aby se
+    sebetest nezapsal do deníku ani RAG. Bez tohohle helperu z něj
+    `cz_names.address` udělal vokativ a Hans Koláčovi odpovídal
+    „…, Zkouško" (10 z 23 zkoušek, doloženo 1. 9.).
+
+    Protahuje se predikát z `HANS_TEST_PERSON_V1`; sdílený helper proto, že
+    šablony jsou DVĚ (provizorní odpověď + ranní oprava) a druhá by se na
+    kopii kontroly dřív nebo později rozešla ([[test-the-fix-not-the-symptom]]).
+    """
+    try:
+        _tp = [str(x).strip().lower()
+               for x in ((config or {}).get("test_persons") or [])]
+        if (asker or "").strip().lower() in _tp:
+            return "pane"          # neutrální — zkouška má měřit odpověď, ne oslovení
+    except Exception:
+        pass
     try:
         from scripts.cz_names import address as _addr
-        oslov = _addr(asker) if asker else "pane"
+        return _addr(asker) if asker else "pane"
     except Exception:
-        oslov = (asker or "pane")
+        return (asker or "pane")
+
+
+def correction_text(row: dict, asker: Optional[str] = None,
+                    config: Optional[dict] = None) -> str:
+    oslov = _oslov(asker, config)
     return _CORRECTION_TMPL % {
         "oslov": oslov,
         "topic": row.get("topic") or "to téma",
@@ -284,15 +308,12 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
         return None
     _log.info("instant_lookup: '%s' → '%s' (provizorně, čeká na ověření)",
               topic, row["resolved_title"])
-    return _render_provisional(row, asker)
+    return _render_provisional(row, asker, config)
 
 
-def _render_provisional(row: dict, asker: Optional[str]) -> str:
-    try:
-        from scripts.cz_names import address as _addr
-        oslov = _addr(asker) if asker else "pane"
-    except Exception:
-        oslov = (asker or "pane")
+def _render_provisional(row: dict, asker: Optional[str],
+                        config: Optional[dict] = None) -> str:
+    oslov = _oslov(asker, config)
     src = row.get("resolved_title") or "Wikipedie"
     summary = (row.get("summary") or "").strip()
     # Heslo se nejmenuje jako dotaz → řekni to ROVNOU, ať to uživatel pozná sám

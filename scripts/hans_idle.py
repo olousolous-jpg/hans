@@ -606,7 +606,7 @@ class HansIdle:
             return  # oprava patří někomu, kdo tu není → počká na něj
         row = mine[0]                      # po jedné, ať to není litanie
         asker = str(row.get('asker') or '')
-        msg = correction_text(row, asker)
+        msg = correction_text(row, asker, self.config)
         delivered = False
         try:
             tg = (getattr(self.chat, 'telegram', None)
