@@ -229,10 +229,16 @@ def nalezy(db_path: str, limit: int = 10) -> list:
         _init_db(db_path)
         with _conn(db_path) as db:
             rows = db.execute(
+                # KOLAC_EXAM_NOTIFY_RECALL_MISS_V1 — placeholdery podle DÉLKY seznamu.
+                # Dřív tu bylo natvrdo `IN (?,?)` + `[0]`/`[1]`, takže rozšíření
+                # `_HLASIT_VYCHOZI` by se sem NEPROMÍTLO: nový verdikt by přišel
+                # na Matrix, ale ve výpisu `/nalez` by chyběl — a zpráva přitom
+                # na `/nalez` odkazuje.
                 "SELECT id, ts, zdroj, tema, otazka, verdikt, bez_opory "
                 "FROM kolac_exam WHERE potvrzeno IS NULL AND verdikt IN "
-                "(?,?) ORDER BY id DESC LIMIT ?",
-                (_HLASIT_VYCHOZI[0], _HLASIT_VYCHOZI[1], int(limit))).fetchall()
+                "(%s) ORDER BY id DESC LIMIT ?"
+                % ",".join("?" * len(_HLASIT_VYCHOZI)),
+                tuple(_HLASIT_VYCHOZI) + (int(limit),)).fetchall()
         return [dict(r) for r in rows]
     except Exception as e:
         _log.warning("čtení nálezů selhalo: %s", e)
@@ -569,7 +575,13 @@ _POPIS = {"ok": "obstál", "castecne": "částečně", "vymyslel": "vymýšlel s
 # takže v tichém okně počká do rána (a fronta přežije restart).
 # Hlásí se JEN špatné verdikty — dvě zkoušky denně znamenají nanejvýš dvě
 # zprávy, spíš míň; kdyby chodilo i „ok", přestane se to číst.
-_HLASIT_VYCHOZI = ("vymyslel", "zapiral")
+# KOLAC_EXAM_NOTIFY_RECALL_MISS_V1 (1.9.) — přidán `nenasel_v_pameti`. Bez toho se dnešní
+# rozlišení (dohledání je úspěch jen u zdroje `wiki`) nikdy neozvalo a leželo
+# by jen ve `/zdravi`, o které si člověk musí říct.
+# ⚠️ Frekvence změřena, ne odhadnuta: 3 případy za 10 dní (0,3/den) a dva z nich
+# způsobil useknutý název kotvy, opravený týž den → reálně ještě míň. Strop drží
+# `max_denne` 2, takže víc než dvě zprávy denně z celého zkoušení nepřijdou.
+_HLASIT_VYCHOZI = ("vymyslel", "zapiral", "nenasel_v_pameti")
 
 
 def ma_se_hlasit(config: dict, verdikt: str) -> bool:

@@ -1325,7 +1325,8 @@
     "_note_hlasit": "KOLAC_EXAM_NOTIFY_V1 — nález, u kterého Hans neobstál, se ohlásí sám (Matrix, tiché okno respektuje).",
     "hlasit_verdikty": [
       "vymyslel",
-      "zapiral"
+      "zapiral",
+      "nenasel_v_pameti"
     ],
     "identita": "zkouška",
     "_note_identita": "Jméno, pod kterým se odpovídá. MUSÍ být v test_persons, jinak se zkoušení zapíše do deníku i RAG.",
