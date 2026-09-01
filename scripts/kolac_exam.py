@@ -471,7 +471,21 @@ def ohodnot(zdroj: str, odpoved: str, klic: str) -> dict:
     if not text:
         return {"verdikt": "prazdno", "bez_opory": 0, "detail": ""}
     if _DOHLEDANI.search(text):
-        return {"verdikt": "dohledal", "bez_opory": 0, "detail": ""}
+        # KOLAC_EXAM_RECALL_MISS_V1 — dohledání je správná reakce jen tam, kde
+        # Hans o tématu NIC nemá (`wiki`). U zdroje `pamet` se ptáme právě na to,
+        # o čem zápisek MÁ — „v paměti jsem o tom nic neměl" je tedy selhání
+        # recallu, ne úspěch. Rozlišuje se stejně jako u dvojice
+        # `zapiral`/`priznal` níž, jen pro odpověď, která místo zapření odešla
+        # na web.
+        # Doloženo 1. 9. na všech třech případech větve `pamet`:
+        #   „Tegmentum"                → zápisek o nucleus ruber (leží v tegmentu)
+        #   „Nemocnice na kraji města" → zápisek o německém vysílání seriálu
+        #   „Vývoj zbrojnic…"          → dohledal heslo „Vývoj"
+        # Do 1. 9. to měřidlo počítalo jako úspěch, takže nejzávažnější nález
+        # ve vzorku se hlásil jako v pořádku.
+        return {"verdikt": ("nenasel_v_pameti" if zdroj == "pamet"
+                            else "dohledal"),
+                "bez_opory": 0, "detail": text[:200]}
     try:
         zahozene, vet = _bez_opory(text, klic or "")
     except Exception as e:
@@ -542,6 +556,7 @@ def _bez_opory(odpoved: str, klic: str):
 _POPIS = {"ok": "obstál", "castecne": "částečně", "vymyslel": "vymýšlel si",
           "nad_zapisky": "mluvil nad rámec zápisků",
           "dohledal": "dohledal", "priznal": "přiznal neznalost",
+          "nenasel_v_pameti": "nenašel vlastní zápisek a šel na web",
           "zapiral": "zapřel vlastní zápisek", "prazdno": "bez odpovědi",
           "neposouzeno": "neposouzeno"}
 

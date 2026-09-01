@@ -41,6 +41,7 @@ Vzor: [[anticonfabulation-guiding-principle]], [[ollama-deferred-processing]],
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import time
 from typing import Optional
@@ -208,6 +209,42 @@ def mark_announced(db_path: str, ids: list) -> None:
         conn.close()
 
 
+_PREDMET = re.compile(r"\bo\s+(.{2,80}?)\s*[?!.]*\s*$",
+                      re.IGNORECASE | re.DOTALL)
+
+
+def _delsi_nazev(topic, query):
+    """HANS_ANCHOR_TRUNCATED_NAME_V1 — vrátí delší tvar tématu, když kotva
+    usekla víceslovný NÁZEV na první slovo. Jinak None.
+
+    `kotva_tematu` skládá téma z velkých písmen, jenže české názvy mají další
+    slova malá. Změřeno 1. 9. na reálných zkouškách:
+        „Nemocnice na kraji města" → „Nemocnice"  (dohledal definici špitálu)
+        „Jeden svět nestačí"       → „Jeden"
+        „Bolek a Lolek"            → „Bolek"
+        „Heineken Open 2012"       → „Heineken Open"  (ztratil ročník)
+    ⛔ Kotvu samotnou měnit NELZE — sdílí ji `relax_attempts` a umí věci, které
+    tenhle predikát ne: nominativ („hradu Trosky" → „hrad Trosky"), závorky
+    a věty bez předložky („kdy vzniklo Divadlo Járy Cimrmana?"), kde předmět
+    vyjde prázdný. Proto se delší tvar jen ZKUSÍ a rozhodne o něm wiki gate.
+
+    Sahá se sem jen při doloženém useknutí = kotva je PREFIX předmětu na
+    hranici slova. „hrad Trosky" × „hradu Trosky" prefix není → beze změny.
+    """
+    if not topic or not query:
+        return None
+    m = _PREDMET.search((query or "").strip())
+    if not m:
+        return None
+    pred = m.group(1).strip().rstrip("?!.,;:").strip()
+    if not pred or len(pred) <= len(topic):
+        return None
+    a, b = pred.lower(), topic.strip().lower()
+    if a.startswith(b) and a[len(b):len(b) + 1] in (" ", "-"):
+        return pred
+    return None
+
+
 def _oslov(asker, config=None) -> str:
     """HANS_FINDINGS_TEST_PERSON_OSLOV_V1 — jak Hansa osloví protějšek v šablonách nálezů.
 
@@ -276,14 +313,32 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
     except Exception:
         prev = None
     if prev and (prev.get("summary") or "").strip():
-        return _render_provisional(prev, asker)
+        return _render_provisional(prev, asker, config)
 
     try:
         from scripts.web_reader import WebReader
         wr = WebReader(config)
-        art = wr.wikipedia_article(
-            topic, lang=str(config.get("curiosity", {}).get("wiki_lang", "cs")),
-            max_chars=int(c.get("max_chars", 3000)))
+        _lang = str(config.get("curiosity", {}).get("wiki_lang", "cs"))
+        _max = int(c.get("max_chars", 3000))
+        # HANS_ANCHOR_TRUNCATED_NAME_V1 — kotva mohla useknout víceslovný název.
+        # O delším tvaru rozhoduje EXISTUJÍCÍ wiki gate, ne nová heuristika:
+        # změřeno 1. 9., že název najde („Nemocnice na kraji města", „Bolek
+        # a Lolek", „Heineken Open 2012") a popisnou frázi zamítne („Vývoj
+        # zbrojnic a jejich dopad…" → None).
+        _alt = _delsi_nazev(topic, query)
+        if _alt:
+            art = wr.wikipedia_article(_alt, lang=_lang, max_chars=_max)
+            if not art:
+                # Delší tvar článek nemá → dotaz je popisná fráze, ne název.
+                # Dohledat podle USEKNUTÉ kotvy je horší než nedohledat nic:
+                # doloženo „Vývoj zbrojnic…" → heslo „Vývoj" (definice slova).
+                _log.info("HANS_ANCHOR_TRUNCATED_NAME_V1: %r neexistuje a %r je "
+                          "useknuté → nedohledávám (raději nic než cizí heslo)",
+                          _alt, topic)
+                return None
+            topic = _alt
+        else:
+            art = wr.wikipedia_article(topic, lang=_lang, max_chars=_max)
     except Exception as e:
         _log.debug("instant_lookup: fetch selhal: %s", e)
         return None
