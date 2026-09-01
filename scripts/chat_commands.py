@@ -4171,8 +4171,19 @@ _LLM_ROUTE_MAX_WORDS = 14      # delší věta = vyprávění, ne žádost o vý
 # ⛔ `rozvrh` sem ZÁMĚRNĚ NEPŘIDÁVÁM: na doložené větě („čemu jste se dnes
 # věnoval nejvíce?") vrací brána True, takže by ho to nespravilo — ten nález
 # potřebuje jinou opravu a nemá se schovat pod tuhle.
+# HANS_ROUTE_RISKY_ANOMALIE_V1 (1.9.) — `anomalie` PATŘÍ do rizikových.
+# Doloženo rozhovorem: „Zaznamenal jste dnes něco neobvyklého V MÍSTNOSTI?"
+# → `/anomalie`, jenže ten výpis je o HANSOVĚ VLASTNÍM provozu („počet
+# rozhovorů se snížil", „výpadky mozku"), ne o dění v pokoji. Předmět nesedí.
+# Je to učebnicový případ, na který je druhá brána stavěná: štítek o vnitřním
+# životě, jehož otázka má TOTOŽNÝ TVAR jako otázka na okolí — „všiml sis něčeho
+# divného?" u sebe × v místnosti.
+# ⚠️ `HANS_THREAD_NO_LIST_V1` to nechytí a chytit nemá: změřeno, že „zaznamenal
+# jste…", „všiml sis něčeho divného?" i „stalo se dnes něco neobvyklého?" mají
+# `_je_navazujici_dotaz` = False — nejsou to navazující věty, ale samostatné
+# otázky. Rozšiřovat kvůli tomu predikát navazování by byl špatný nástroj.
 _LLM_ROUTE_RISKY = frozenset({"napad", "kritika", "vhledy", "smer", "cetl",
-                              "rozhovory"})
+                              "rozhovory", "anomalie"})
 
 _OWN_RECORDS_SYSTEM = (
     "Uživatel se ptá domácího asistenta. Rozhodni, jestli se ptá na "
@@ -4286,6 +4297,14 @@ _TAZACI_ZAJMENO = re.compile(
 # `anomalie` přibylo až s V3: výpis odchylek je na dotaz „poznáš to sám?"
 # odpověď na jinou otázku. Legitimní „jaké máš anomálie?" chrání pojistka
 # `_zminuje_vlastni_tema`, která na slovo z aliasů příkazu guard vypne.
+# ⛔ `schopnosti` sem NEPATŘÍ — vyzkoušeno a VRÁCENO 1.9.
+# Nález z rozhovoru („měříš to sám, nebo to odhaduješ?" → celý souhrn „co umím")
+# je pravý, ale tudy se opravit nedá: guard zamítá větu bez slova, kterým se
+# příkaz volá — a **„co umíš?" ani „co všechno dokážeš?" ho neobsahují**, takže
+# by se zamítly taky. Změřeno: pojistka `_zminuje_vlastni_tema` chytí jen
+# „jaké máš schopnosti?". Rozbilo by to hlavní způsob, jak se na to ptát.
+# Správná cesta je predikát na METAOTÁZKU O ZDROJI ÚDAJE (třída
+# `is_memory_meta_query`, jen pro čidla), ne rozšíření výpisového seznamu.
 _VYPISOVE_CMDS = {"seznam", "nitky", "rozvrh", "kritika", "anomalie"}
 
 
@@ -4549,7 +4568,32 @@ def resolve_command_llm(message: str, config: dict, turns=None):
     cid = _thread_guard(cid, msg, config, turns)
     if len(_llm_route_cache) < 256:
         _llm_route_cache[_ckey] = cid
-    if cid and cid in _LLM_ROUTE_RISKY and not _asks_own_records(msg, config):
+    # HANS_ROUTE_TP_OWN_RECORDS_V1 (1.9.) — dialog s TŘETÍ STRANOU je z definice
+    # Hansův vlastní záznam, takže se druhá brána nemá co ptát.
+    # Doloženo rozhovorem 1. 9.: „Mohl byste mi říci, o čem jste dnes rozmlouval
+    # s Koláčem?" → správná odpověď; navazující „A co jste mu na to odpověděl?"
+    # → `/rozhovory` ZAMÍTNUTO („ptá se na svět") → Hans odpověděl abstinencí,
+    # ačkoli ten dialog v deníku MÁ. Klasifikátor větu čte jako dotaz na TÉMA
+    # (Norimberský proces = svět), ne na to, co Hans sám řekl.
+    # ⛔ Neřeší se dalším příkladem v promptu — to je [[prompt-debt-tool-calling]]
+    #    a stejná past, jakou popisuje komentář V3 výš („negativní příklady
+    #    v promptu nepomohly"). Rozhoduje STRUKTURA: ví-li vlákno o třetí straně,
+    #    je předmět jasný.
+    # ⚠️ Doložený případ z 20.8., kvůli kterému je `rozhovory` rizikový („ty
+    #    Strážce Galaxie, o kterých jste mluvil"), tím NETRPÍ: tam žádná třetí
+    #    strana ve vlákně není, scope vyjde prázdný a brána běží dál.
+    _tp_scope = ""
+    if cid and cid in _LLM_ROUTE_RISKY:
+        try:
+            from scripts.hans_thread import third_party_scope
+            _tp_scope = third_party_scope(msg, config, turns=turns) or ""
+        except Exception:
+            _tp_scope = ""
+        if _tp_scope:
+            _log.info("HANS_ROUTE_TP_OWN_RECORDS_V1: '%.40s' → /%s PROCHÁZÍ "
+                      "(vlákno nese třetí stranu: %s)", msg, cid, _tp_scope)
+    if (cid and cid in _LLM_ROUTE_RISKY and not _tp_scope
+            and not _asks_own_records(msg, config)):
         _log.info("HANS_CMD_LLM_ROUTE_V3: '%.40s' → /%s ZAMÍTNUTO "
                   "(ptá se na svět, ne na Hansovy záznamy)", msg, cid)
         _llm_route_cache[_ckey] = ""
