@@ -1022,12 +1022,28 @@ ACTIONS: dict[str, Action] = {
     "report_climate": Action(
         "report_climate",
         "Odpovědět na dotaz o teplotě nebo vlhkosti V MÍSTNOSTI / v pokoji / "
-        "uvnitř (z vlastních čidel). ⚠️ NE počasí venku — to je report_weather. "
-        "⚠️ NE teplota počítače nebo procesoru — to je report_pc_health.",
+        "uvnitř (z vlastních čidel). "
+        # HANS_CLIMATE_AWARE_V1 (1.9.) — patří sem i dotaz na POCIT tepla či chladu.
+        # Změřeno na routeru: „je tu nejak dusno, ne?" a „kolik je tady stupnu?"
+        # akci vybraly, ale „neni ti zima?" a „neni tu na tebe moc horko?"
+        # vrátily None — LLM je četl jako konverzační zdvořilost, ne jako dotaz
+        # na měřitelný údaj, a Hans si pak teplotu DOMYSLEL („teplota je vyšší
+        # než obvykle") místo aby se zeptal čidla.
+        "Patří sem i dotaz na POCIT tepla nebo chladu („není ti zima?“, „není "
+        "tu na tebe moc horko?“, „nemrzneš?“) — na ten se odpovídá z ČIDEL, "
+        "ne dojmem. "
+        "⚠️ NE počasí venku — to je report_weather. "
+        "⚠️ NE teplota počítače nebo procesoru — to je report_pc_health. "
+        "⚠️ NE obecný dotaz na náladu nebo rozpoložení („je ti smutno?“, „jak "
+        "se cítíš?“) — to není teplota.",
         hints=["kolik je v pokoji", "teplota v pokoji", "jak je tu teplo",
                "je tu zima", "je tu horko", "vlhkost", "kolik je tu stupnu",
                "kolik je tu stupňů", "teplota v mistnosti", "teplota v místnosti",
-               "jak je uvnitr", "jak je uvnitř", "dusno"],
+               "jak je uvnitr", "jak je uvnitř", "dusno",
+               # HANS_CLIMATE_AWARE_V1 — bránu otevírá i otazník (`_looks_like_request`),
+               # tyhle jsou pro věty BEZ něj („neni ti zima.“ jako konstatování).
+               "neni ti zima", "není ti zima", "neni ti horko", "není ti horko",
+               "kolik je tady stupnu", "kolik je tady stupňů"],
         args=[], run=_run_climate, grounding=None,
         needs_confirm=False, cooldown_s=10),
     "report_pc_health": Action(

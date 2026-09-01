@@ -46,6 +46,11 @@ _CAPABILITIES = [
      "na TV, kdo je právě přítomen, jak je venku, stav PC — z ŽIVÝCH dat, ne z "
      "paměti (když to nevím, přiznám to místo dohadu)",
      "děje se něco doma?; kdo je doma?; co dělá <jméno>?"),
+    # HANS_CLIMATE_AWARE_V1 (1.9.) — čidla v pokoji tu CHYBĚLA. Doloženo živě: na
+    # „co všechno dokážeš vnímat ve svém okolí?" Hans vyjmenoval tvorbu, studium
+    # a kameru, ale teplotu ne — takže ji sám od sebe nenabídl, ač ji měří.
+    ("climate", "Měřím TEPLOTU a VLHKOST v místnosti vlastními čidly — vím, "
+     "jak je tu doopravdy, neodhaduji to", "kolik je tu stupňů?"),
     ("pc_health", "Vidím reálný STAV svého PC — teplotu GPU/CPU, paměť — přes SSH",
      "/stav"),
     ("game_mode", "Umím uvolnit grafiku pro HRU (herní mód) a ukázat telemetrii "
@@ -164,8 +169,12 @@ def capabilities_summary() -> str:
         "Poznávám — celé týdny do hloubky studuji témata, která mě zajímají, "
         "vedu si deník i dlouhodobou paměť a přes kameru poznávám, kdo je v "
         "místnosti.\n\n"
+        # HANS_CLIMATE_AWARE_V1 — do KRÁTKÉHO souhrnu patří taky: tenhle text
+        # je odpověď na „co umíš / co dokážeš vnímat", a bez zmínky o čidlech
+        # Hans teplotu sám od sebe nenabídl (doloženo živě 1. 9.).
         "Starám se o dům — řeknu vám z živých dat (ne z hlavy), co běží na "
-        "televizi, kdo je doma, jaké je počasí i jak se má počítač; pustím film "
+        "televizi, kdo je doma, jaká je tu teplota a vlhkost (měřím ji "
+        "vlastními čidly), jaké je počasí i jak se má počítač; pustím film "
         "a když nejste doma, pohlídám místnost.\n\n"
         "Nemusíte si pamatovat žádné příkazy — stačí se přirozeně zeptat nebo "
         "mě o něco poprosit.")
