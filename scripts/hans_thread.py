@@ -396,6 +396,25 @@ def third_party_scope(text: str, config: Optional[dict] = None,
             if stem and stem in prev:
                 return kn
         return "?"
+    # HANS_THREAD_TP_FOLLOWUP_V1 — NAVAZUJÍCÍ věta zdědí třetí stranu z vlákna.
+    # Doloženo živě 1. 9.: tah „bavis se s kolacem?" → Hans odpověděl o Koláčovi,
+    # a hned další „o cem naposledy" spadlo na rozhovory s TAZATELEM. Vzor
+    # „jste se bavili" nesepnul (věta ho nemá) a jméno v ní taky není, takže
+    # scope vyšel prázdný, ač kontext byl jednoznačný.
+    # Protahuje se pohled do vlákna, který tahle funkce UŽ POUŽÍVÁ o pár řádků
+    # výš — jen byl dostupný jedině uvnitř větve „jste se bavili".
+    # ⚠️ „jsme/náš/my" MUSÍ zůstat u tazatele: „o cem jsme se bavili?" je taky
+    # navazující věta a bez tohohle vyloučení by ji vlákno přepsalo na Koláče
+    # (změřeno — je to jediná regrese, kterou zásah hrozil; kryje ji i test
+    # „náš rozhovor → ne" v tests/test_hans_thread.py).
+    if turns and stem and not re.search(r"\b(jsme|nas|nase|nasi|nasem|my)\b", f):
+        try:
+            from scripts.chat_commands import _je_navazujici_dotaz as _nav
+        except Exception:
+            _nav = None
+        if _nav is not None and _nav(text or ""):
+            if stem in _fold(last_assistant_text(turns)):
+                return kn
     return ""
 
 

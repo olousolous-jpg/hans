@@ -80,6 +80,22 @@ t("s Koláčem (diakritika)",
   third_party_scope("o cem jste se bavili s Koláčem?", {}), "Koláč")
 t("náš rozhovor → ne", third_party_scope("o cem jsme se bavili?", {}), "")
 
+# HANS_THREAD_TP_FOLLOWUP_V1 — navazující věta zdědí třetí stranu z vlákna
+_TP_KOLAC = [("assistant", "Koláč a já jsme se bavili o Norimberský proces.")]
+_TP_JINY = [("assistant", "Dnes jsem maloval obraz Sen a četl o hradech.")]
+t("navazující + Koláč ve vlákně",
+  third_party_scope("o cem naposledy", {}, turns=_TP_KOLAC), "Koláč")
+t("navazující bez předmětu + vlákno",
+  third_party_scope("o cem to bylo?", {}, turns=_TP_KOLAC), "Koláč")
+t("„jsme\" zůstává u tazatele i s vláknem",
+  third_party_scope("o cem jsme se bavili?", {}, turns=_TP_KOLAC), "")
+t("„jsme\" bez otazníku taky",
+  third_party_scope("o cem jsme mluvili vcera", {}, turns=_TP_KOLAC), "")
+t("vlákno bez Koláče → nedoplňuj",
+  third_party_scope("o cem naposledy", {}, turns=_TP_JINY), "")
+t("nenavazující věta → nedoplňuj",
+  third_party_scope("co je noveho", {}, turns=_TP_KOLAC), "")
+
 # ── A2: anti-repeat brzda ───────────────────────────────────────────────
 reset()
 note_outcome("uzivatel", "web", "rozhovory", "v jakem kontextu jste se bavili")

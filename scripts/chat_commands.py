@@ -4261,8 +4261,16 @@ def _capability_wish_ask(msg: str) -> bool:
 #
 # ⚠️ POJISTKA: když věta sama zmiňuje téma příkazu („ukaž mi ten rozvrh",
 # „co mám v seznamu"), guard NEZASAHUJE — jinak by zabil legitimní dotaz.
+# HANS_THREAD_PRONOUN_MU_V1 (1.9.) — chybějící dativ „mu". Doloženo 30.8.:
+# „co jsi mu rikal" po replice o Koláčovi se nepoznalo jako navazující, takže
+# se k vláknu vůbec nedostalo. ⚠️ Přidáno JEN „mu": změřeno na 1547 reálných
+# uživatelských replikách — 1 výskyt, který už navazující je → 0 změn, tedy
+# nulové riziko. Ostatní kandidáti MĚŘENÍM PROPADLI a nepřidávají se:
+#   „ne" (53 výskytů) je záporka, ne zájmeno · „te" (26) míří na TAZATELE
+#   („vylepšil jsem tě"), ne na předchozí téma · „nich" (8) by udělalo
+#   5 změn bez jediného doloženého případu.
 _ZPETNE_ZAJMENO = re.compile(
-    r"\b(to|tom|tim|toho|tomu|jich|jim|nem|nej|nim|ni|ho|ji|jej|jeho)\b")
+    r"\b(to|tom|tim|toho|tomu|jich|jim|mu|nem|nej|nim|ni|ho|ji|jej|jeho)\b")
 # HANS_THREAD_NO_LIST_V3 (30.8.) — dvě další formy téže chyby z dlouhého
 # rozhovoru, obě „otázka dostala výpis":
 #   „poznas sam, kdyz je neco spatne?"  → /anomalie (výpis odchylek)
