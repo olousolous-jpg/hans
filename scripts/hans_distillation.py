@@ -225,8 +225,31 @@ class HansDistillation:
                 last_ts_per_title[title] = ts
                 by_title[title].append((row_id, ts))
 
+            # HANS_GOAL_NO_REPEAT_V1 (2.9.) — téma, které bylo cílem NEDÁVNO,
+            # se znovu nenabízí. Bez toho se cíl „Design" otevíral pořád dokola:
+            # 18 z 19 cílů za 86 dní, rozestup vždy 4–6 dní. Filtr `[goal]`
+            # z 28.8. řeší jen DŮKAZ (čtení objednané cílem), ne NÁVRAT tématu
+            # — a doložilo se to tím, že cíl č. 19 vznikl 31.8., tři dny PO něm.
+            # ⚠️ Práh 30 dní je změřen, ne odhadnut: pozorovaný rozestup
+            # opakování je 4–6 dní, a jediné jiné téma v historii se
+            # neopakovalo vůbec, takže se nic legitimního neblokuje. Návrat
+            # k tématu po měsíci a víc projde.
+            nedavne = set()
+            try:
+                if self._goals is not None:
+                    _mez = time.time() - 30 * 86400
+                    for g in self._goals.all_goals(limit=50):
+                        if getattr(g, "opened_at", 0) >= _mez:
+                            nedavne.add((getattr(g, "topic", "") or "").strip().lower())
+            except Exception as _ge:
+                _log.debug("HANS_GOAL_NO_REPEAT_V1: historie cílů nedostupná: %s", _ge)
+
             candidates = []
             for title, entries in by_title.items():
+                if (title or "").strip().lower() in nedavne:
+                    _log.info("HANS_GOAL_NO_REPEAT_V1: '%s' byl cílem v posledních "
+                              "30 dnech → nenabízím znovu", title)
+                    continue
                 count = len(entries)
                 if count < self._min_count:
                     continue

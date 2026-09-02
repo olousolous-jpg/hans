@@ -331,10 +331,23 @@ def gather_topics(diary_db_path: str, window_days: int = 30,
                 "AND ts > ?", (since,)).fetchall():
             _bump(_topic_from_teddy_note(note), 1)
         # web/filmy/kodi: titulky
+        # HANS_HOBBY_NO_GOAL_READS_V1 (2.9.) — čtení, které si OBJEDNAL aktIVNÍ
+        # CÍL (`[goal]` v note), se do koníčků nepočítá. Jinak si cíl vyrobí
+        # vlastní koníček a ten pak teče do Severky jako „podpis osobnosti".
+        # Doloženo: cíl „Design" objednal 20 čtení TÉHOŽ článku za týden
+        # (a 18 z 19 cílů za tři měsíce byl Design), takže koníček „Design"
+        # má jako jediný `examples = ["Design"]` — obecné slovo místo
+        # vlastních jmen, protože vznikl z jednoho pořád dokola čteného
+        # článku, který se tak jmenuje.
+        # ⚠️ Retroaktivně to NIC nespraví (starší čtení značku nemá, měřeno:
+        # 111 → 91 v okně 30 dní, práh `min_count` 3 to nepřekročí ani tak).
+        # Je to pojistka DOPŘEDU, aby si příští cíl koníček nevyrobil.
+        # Týž filtr má od 28.8. `hans_distillation._select_candidates`.
         for evt in ("web_read", "movie_browsed", "kodi_playing"):
-            for title, in conn.execute(
-                    "SELECT title FROM diary WHERE event_type=? AND ts > ?",
-                    (evt, since)).fetchall():
+            _kde = "SELECT title FROM diary WHERE event_type=? AND ts > ?"
+            if evt == "web_read":
+                _kde += " AND COALESCE(note,'') NOT LIKE '[goal]%'"
+            for title, in conn.execute(_kde, (evt, since)).fetchall():
                 _bump(title, 1)
     except Exception as e:
         _log.warning("gather_topics failed: %s", e)
