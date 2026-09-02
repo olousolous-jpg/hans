@@ -1322,6 +1322,30 @@ async function loadHealth() {
 // HANS_CLIMATE_V1 — graf teploty/vlhkosti. Inline SVG, zadna knihovna
 // (vzor loadStances). Kresli KAZDE CIDLO ZVLAST — kdyby se jedno utrhlo,
 // prumer by to schoval a na grafu by to nebylo videt.
+// HANS_CLIMATE_MULTIPLACE_V1 — paleta po MISTECH: kazde misto ma dva odstiny
+// (tmavsi + svetlejsi), aby bylo na prvni pohled videt, ktere dve krivky patri
+// k sobe. Poradi mist je abecedni → stabilni pri prejmenovani.
+const PLACE_PAIRS = [
+  ['#89b4fa', '#b8d0fd'],   // modra + svetle modra
+  ['#f38ba8', '#f9c2d1'],   // cervena + svetle cervena
+  ['#a6e3a1', '#cdf0ca'],
+  ['#f9e2af', '#fcf0d5'],
+];
+let _MISTA = [];
+function PLACE_COL(misto, odstin) {
+  // ⚠️ `_MISTA` se plni z AKTUALNICH mist (hodinove okno), kdezto graf kresli
+  // 24 h historie — muze v ni byt i misto, ktere uz neexistuje (2.9. zustal
+  // po prejmenovani „pokoj"). Takove dostane SEDOU, ne barvu ziveho mista:
+  // jinak by se tvarilo jako ono a paleta by se posunula.
+  const i = _MISTA.indexOf(misto);
+  if (i < 0) return odstin ? '#6c7086' : '#585b70';
+  return PLACE_PAIRS[i % PLACE_PAIRS.length][odstin ? 1 : 0];
+}
+function CIDLO_COL(c, vsechna) {
+  const vMiste = vsechna.filter(x => x.misto === c.misto).map(x => x.cidlo).sort();
+  return PLACE_COL(c.misto, vMiste.indexOf(c.cidlo) > 0);
+}
+
 async function loadClimate() {
   try {
     const now = await (await fetch('/api/climate')).json();
@@ -1329,10 +1353,19 @@ async function loadClimate() {
     if (!card) return;
     if (!now || !now.length) { card.style.display = 'none'; return; }
     card.style.display = '';
-    const m = now[0];
-    document.getElementById('climate-now').textContent =
-      `${m.teplota != null ? m.teplota + ' °C' : '—'}` +
-      `${m.vlhkost != null ? '  ·  ' + m.vlhkost + ' % vlhkost' : ''}`;
+    // HANS_CLIMATE_MULTIPLACE_V1 (2.9.) — mist muze byt vic. Drive `now[0]`,
+    // takze po pridani cidel u televize dashboard druhe misto TISE zahazoval.
+    const places = [...now].sort((a,b) => a.misto.localeCompare(b.misto, 'cs'));
+    // ⚠️ PORADI: `_MISTA` se musi naplnit DRIV, nez se poprve zavola PLACE_COL.
+    // Prvni verze ho prirazovala az u grafu, takze horni radek dostal barvy
+    // z prazdneho pole. A `const` uvnitr funkce by vnejsi promennou zastinil.
+    _MISTA = places.map(p => p.misto);
+    document.getElementById('climate-now').innerHTML = places.map(p =>
+      `<span style="white-space:nowrap"><span style="color:${PLACE_COL(p.misto,0)}">●</span> `
+      + `${p.misto} <b>${p.teplota != null ? p.teplota + ' °C' : '—'}</b>`
+      + `${p.vlhkost != null ? ' · ' + p.vlhkost + ' %' : ''}</span>`
+    ).join(' &nbsp;&nbsp; ');
+    const m = places[0];
 
     const d = await (await fetch('/api/climate/history?hours=24')).json();
     const C = (d && d.cidla) || [];
@@ -1363,17 +1396,21 @@ async function loadClimate() {
     g += `<text x="${L}" y="${H-5}" font-size="9" fill="#a6adc8">${fmt(tmin)}</text>`;
     g += `<text x="${W-R}" y="${H-5}" text-anchor="end" font-size="9" fill="#a6adc8">${fmt(tmax)}</text>`;
     C.forEach((c,i) => {
-      const col = COLORS[i%COLORS.length];
+      const col = CIDLO_COL(c, C);
       const b = c.body.filter(p=>p.t!=null);
       if (b.length > 1) g += `<polyline points="${b.map(p=>`${X(p.ts).toFixed(1)},${Y(p.t).toFixed(1)}`).join(' ')}" fill="none" stroke="${col}" stroke-width="2"/>`;
       b.forEach(p => { g += `<circle cx="${X(p.ts).toFixed(1)}" cy="${Y(p.t).toFixed(1)}" r="2" fill="${col}"/>`; });
     });
     document.getElementById('climate-chart').innerHTML =
       `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${g}</svg>`;
-    const leg = C.map((c,i)=>`<span style="color:${COLORS[i%COLORS.length]}">● čidlo ${c.cidlo}</span>`).join(' &nbsp; ');
-    const stari = m.stari_s < 900 ? 'právě teď' : 'před ' + Math.round(m.stari_s/60) + ' min';
-    document.getElementById('climate-note').innerHTML =
-      `${leg} &nbsp;·&nbsp; rozdíl ${m.rozdil_teplot} °C &nbsp;·&nbsp; měřeno ${stari}`;
+    const leg = C.map(c=>`<span style="color:${CIDLO_COL(c, C)}">● ${c.misto||'?'}/${c.cidlo}</span>`).join(' &nbsp; ');
+    // rozdil i stari jsou PER MISTO — drive se ukazovala hodnota prvniho
+    // mista jako by platila pro cely graf.
+    const det = places.map(p => {
+      const st = p.stari_s < 900 ? 'právě teď' : 'před ' + Math.round(p.stari_s/60) + ' min';
+      return `${p.misto}: rozdíl ${p.rozdil_teplot} °C, ${st}`;
+    }).join(' &nbsp;·&nbsp; ');
+    document.getElementById('climate-note').innerHTML = `${leg}<br>${det}`;
   } catch (e) {}
 }
 

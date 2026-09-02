@@ -278,16 +278,21 @@ def climate_history(hours: int = 24):
         con = sqlite3.connect(str(CLIMATE_PATH), timeout=5.0)
         try:
             rows = con.execute(
-                "SELECT cidlo, ts, teplota, vlhkost FROM climate "
+                "SELECT misto, cidlo, ts, teplota, vlhkost FROM climate "
                 "WHERE ts > ? ORDER BY ts", (time.time() - hours * 3600,)).fetchall()
         finally:
             con.close()
     except Exception:
         return {"cidla": []}
+    # HANS_CLIMATE_MULTIPLACE_V1 (2.9.) — klic je (MISTO, cidlo), ne jen cidlo.
+    # Dokud bylo misto jedno, staci lo cidlo; po pridani druheho (`tv`) uz graf
+    # kreslil ctyri krivky, u kterych neslo poznat, ktere patri k oknu a ktere
+    # k televizi. `misto` se proto vraci v kazde polozce.
     per: dict = {}
-    for cidlo, ts, t, v in rows:
-        per.setdefault(cidlo, []).append({"ts": ts, "t": t, "v": v})
-    return {"cidla": [{"cidlo": k, "body": b} for k, b in sorted(per.items())]}
+    for misto, cidlo, ts, t, v in rows:
+        per.setdefault((misto, cidlo), []).append({"ts": ts, "t": t, "v": v})
+    return {"cidla": [{"misto": m, "cidlo": c, "body": b}
+                      for (m, c), b in sorted(per.items())]}
 
 
 @app.get("/api/dialog/status")
