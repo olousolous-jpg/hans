@@ -457,7 +457,14 @@ def _reject_kodi_play(handler, args) -> str:
     filmech čte, tak ať to není němá zeď. Zdroj = Wikipedia (grounded, žádný
     výmysl); když ani ta nic nemá, přizná se to.
     Backlog „Film mimo knihovnu — web search" (14.7.), bod 1 a 3."""
-    title = (args.get("titul") or "").strip() or "ten film"
+    # HANS_KODI_NO_TITLE_V1 (2.9.) — ROUTER ŽÁDNÝ NÁZEV NEVYTÁHL. Dřív se sem
+    # dosadila zástupka „ten film" a ta se poslala do Wikipedie, takže na
+    # „můžeš pustit na Kodi nějaký film?" přišlo *„Film „ten film" v knihovně
+    # nemám… Fotografický film je plastový pás z polyesteru…"*. Uživatel žádný
+    # název neřekl — nemá se tedy co dohledávat ani co přiznávat.
+    if not (args.get("titul") or "").strip():
+        return "Který film mám pustit, pane? V knihovně se podívám."
+    title = (args.get("titul") or "").strip()
     gloss = ""
     try:
         from scripts.web_reader import WebReader
@@ -474,6 +481,27 @@ def _reject_kodi_play(handler, args) -> str:
             import re as _re
             if g and not _re.search(r"m[uů][žz]e b[ýy]t|rozcestn[íi]k", g, _re.I):
                 gloss = g.strip()
+            # HANS_KODI_GLOSS_IS_FILM_V1 (2.9.) — a JE to vůbec film? Hledání
+            # Wikipedie je fuzzy, takže vrátí i článek o úplně jiné věci
+            # („nahodny" → „Náhoda", „nejaky" → „Filmová pohádka"). Typ entity
+            # ve Wikidatech (P31) to rozhodne deterministicky; přípona „(film)"
+            # ani práh `_title_coverage` NE (obojí změřeno a zamítnuto).
+            # ⚠️ Ptáme se na SKUTEČNÝ název nalezeného článku, ne na dotaz —
+            # jinak by se gate ptal na řetězec, který ve Wikidatech není.
+            if gloss:
+                _nazev = (art.get("title") or "").strip() or title
+                try:
+                    from scripts.hans_facts import je_film_stav
+                    # HANS_KODI_GLOSS_IS_FILM_V2 — zahoď JEN při doložené
+                    # neshodě (`is False`). „Nevím" (None) si glosu nechá:
+                    # jinak by každý film s typem mimo náš seznam přišel
+                    # o popis, což regresní kontrola 2.9. hned doložila.
+                    if je_film_stav(_nazev) is False:
+                        log.info("HANS_KODI_GLOSS_IS_FILM_V2: %r → %r není film "
+                                 "→ glosu vynechávám", title, _nazev)
+                        gloss = ""
+                except Exception as _fe:
+                    log.debug("gloss film check: %s", _fe)
     except Exception as e:
         log.debug("reject_kodi_play wiki: %s", e)
     base = ("Film „%s\" v knihovně nemám, pane — a nechci předstírat, "

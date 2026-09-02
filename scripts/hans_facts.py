@@ -124,6 +124,89 @@ def qid_for(source_title: str, lang: str = "cs") -> tuple:
     return (pg.get("pageprops") or {}).get("wikibase_item"), pg.get("title")
 
 
+# HANS_FACTS_P31_V1 (2.9.) — QID → jakého je to typu (P31, „instance of“).
+# Vzniklo z reálné vady: Hans na „pusť nějaký film" odpovídal glosou
+# *„Fotografický film je plastový pás z polyesteru…"*. Vyhledávání Wikipedie
+# je fuzzy, takže i dotaz „ten film (film)" vrátí článek o fotografickém
+# materiálu — a ⛔ ani přípona „(film)", ani práh `_title_coverage` to
+# nerozliší (obojí změřeno 2. 9. a zamítnuto: coverage dá „nahodny"→„Náhoda"
+# 1.00, ale legitimnímu „Pulp Fiction" jen 0.50).
+# Rozliší to až TYP entity ve Wikidatech, a ten je deterministický.
+FILMOVE_QID = {
+    "Q11424",      # film
+    "Q24869",      # celovečerní film
+    "Q202866",     # animovaný film
+    "Q506240",     # televizní film
+    "Q93204",      # dokumentární film
+    "Q226730",     # němý film
+    "Q24856",      # filmová série
+    "Q5398426",    # televizní seriál
+    "Q1259759",    # minisérie
+    "Q21191270",   # díl televizního seriálu
+    "Q1261214",    # televizní speciál
+    "Q15416",      # televizní pořad   ┐ Kodi přehrává i pořady a díly
+    "Q662197",     # Večerníček        ┘ (akce umí `find_episode`), takže
+                   # obrazová díla mimo „film" sem patří taky. Doloženo:
+                   # „Znovu u Spejbla a Hurvínka" má P31 = Večerníček.
+    "Q24862",      # krátký film  ← doplněno po regresní kontrole 2.9.:
+                   # „Násilník" → „Broken (film)" je krátký film a gate ho
+                   # zamítal. Seznam typů se NEDÁ uhodnout dopředu; proto je
+                   # níž `je_film_stav` tříhodnotový a chybějící typ už
+                   # NEZNAMENÁ zahozenou glosu, jen „nevím".
+}
+
+
+def typy_qid(qid: str) -> set:
+    """HANS_FACTS_P31_V1 — množina QID hodnot P31 („je instancí"). Prázdno =
+    nevíme (síť, neznámá entita) — volající to NESMÍ číst jako „není film"."""
+    if not qid:
+        return set()
+    u = ("https://www.wikidata.org/w/api.php?action=wbgetentities&ids=%s"
+         "&props=claims&format=json" % qid)
+    try:
+        ent = (_get(u).get("entities") or {}).get(qid) or {}
+    except RateLimit:
+        raise
+    except Exception as e:
+        _log.debug("typy_qid(%r): %s", qid, e)
+        return set()
+    out = set()
+    for c in (ent.get("claims") or {}).get("P31", []):
+        dv = (c.get("mainsnak") or {}).get("datavalue") or {}
+        v = (dv.get("value") or {})
+        if isinstance(v, dict) and v.get("id"):
+            out.add(v["id"])
+    return out
+
+
+def je_film_stav(source_title: str, lang: str = "cs"):
+    """TŘI hodnoty: True = film · False = prokazatelně NENÍ film · None = nevím.
+
+    ⚠️ Rozdíl mezi False a None je tu ten podstatný. První verze (V1) vracela
+    jen True/False a „nevím" se chovalo jako „není film" — regresní kontrola
+    hned ukázala, co to dělá: `Q24862` (krátký film) v seznamu chyběl, takže
+    Hans přišel o glosu ke skutečnému filmu. Seznam typů nejde uhodnout
+    dopředu, takže se zahazuje JEN při doložené neshodě.
+    """
+    try:
+        q, _ = qid_for(source_title, lang)
+        if not q:
+            return None
+        typy = typy_qid(q)
+        if not typy:
+            return None
+        return bool(typy & FILMOVE_QID)
+    except Exception as e:
+        _log.debug("je_film_stav(%r): %s", source_title, e)
+        return None
+
+
+def je_film(source_title: str, lang: str = "cs") -> bool:
+    """Zpětně kompatibilní obal: „nevím" → False. Na rozhodnutí, které něco
+    ZAHAZUJE, použij `je_film_stav` a testuj `is False`."""
+    return je_film_stav(source_title, lang) is True
+
+
 def _popisky(qids: set, lang: str = "cs") -> dict:
     """QID → (český název, ANGLICKÝ název). Jedním dávkovým dotazem.
 
