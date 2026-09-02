@@ -2487,9 +2487,20 @@ class HansIdle:
                     _goal_topic = (_g.topic or '').strip() or None
         except Exception:
             _goal_topic = None
+        # HANS_GOAL_CURRICULUM_V1 (2.9.) — cil cte DALSI POLOZKU sveho kurikula,
+        # ne porad dokola svuj nazev. Kdyz je kurikulum vycerpane, `_goal_next`
+        # vrati None a cil uz 50 % cetby NEBERE — pusti ji do bezne zvidavosti.
+        # Doloha, proc: 20x tyz clanek „Design" za tyden, spontanni cetba je
+        # pritom pestra (91 ruznych clanku tydne).
+        _goal_item, _goal_id = self._goal_next(_goal_topic)
         _roll = random.random()
-        if _goal_topic and _roll < 0.50:
-            self._curiosity.trigger_topic(_goal_topic)
+        if _goal_item and _roll < 0.50:
+            self._curiosity.trigger_topic(_goal_item)
+            if _goal_id is not None:
+                try:
+                    self._goals.advance_curriculum(_goal_id)
+                except Exception as _ae:
+                    _log.debug("advance_curriculum: %s", _ae)
         elif _roll < 0.60:
             self._curiosity.trigger_interest()
         elif _roll < 0.85:
@@ -2498,6 +2509,72 @@ class HansIdle:
             self._curiosity.trigger_random_wiki()
         from scripts.hans_persona import persona_name as _pn  # PERSONA_NAME_CONFIGURABLE_V1
         self._log_entry("activity", note=f"{_pn(self.config)} si čte na internetu")
+
+    def _goal_next(self, goal_topic):
+        """HANS_GOAL_CURRICULUM_V1 — dalsi polozka kurikula aktivniho cile.
+
+        Vraci (polozka, goal_id). (None, None) = cil neni, kurikulum je
+        vycerpane, nebo se ho nepodarilo vyrobit — volajici pak necha cetbu
+        bezne zvidavosti.
+
+        ⚠️ Kurikulum se generuje LINE, az tady: `_generate_curriculum` bezi
+        103-123 s a `open_goal` je v nocni destilaci, kterou nechci blokovat.
+        ⚠️ KOTVA JE POVINNA. Zmereno 2.9.: bez ni generator tema mine —
+        „Kde domov muj?" (ceska hymna z Tylovy hry) dalo kurikulum
+        o ORNITOLOGII. S kotvou z Hansova vlastniho zapisu uz sedi
+        (Tyl, Karel Strakaty, puvod pisne). [[prompt-category-invites-confabulation]]
+        """
+        if not goal_topic or getattr(self, "_goals", None) is None:
+            return None, None
+        try:
+            g = self._goals.get_active_goal()
+            if g is None:
+                return None, None
+            polozky, idx = self._goals.curriculum(g.id)
+            if not polozky:
+                polozky = self._vyrob_kurikulum(goal_topic)
+                if not polozky:
+                    return goal_topic, None      # pad na dnesni chovani
+                self._goals.set_curriculum(g.id, polozky)
+                idx = 0
+            if idx >= len(polozky):
+                return None, None                # vycerpano → bezna zvidavost
+            return polozky[idx], g.id
+        except Exception as e:
+            _log.debug("_goal_next: %s", e)
+            return goal_topic, None
+
+    def _vyrob_kurikulum(self, tema: str) -> list:
+        """Kurikulum pro cil, ukotvene tim, co Hans o tematu SAM precetl."""
+        import re as _re
+        import sqlite3 as _sq
+        kotva = []
+        try:
+            _db = self.config.get("diary_db", "data/hans_diary.db")
+            con = _sq.connect("file:%s?mode=ro" % _db, uri=True, timeout=4.0)
+            try:
+                r = con.execute(
+                    "SELECT COALESCE(NULLIF(data,''),note) FROM diary "
+                    "WHERE event_type='web_read' AND title=? "
+                    "ORDER BY ts DESC LIMIT 1", (tema,)).fetchone()
+            finally:
+                con.close()
+            txt = _re.sub(r"^\[\w+\]\s*", "", (r[0] if r else "") or "")
+            kotva = [v.strip() for v in _re.split(r"(?<=[.!?])\s+", txt)
+                     if len(v.strip()) > 20][:3]
+        except Exception as _ke:
+            _log.debug("_vyrob_kurikulum kotva: %s", _ke)
+        if not kotva:
+            _log.info("HANS_GOAL_CURRICULUM_V1: '%s' nema kotvu v deniku "
+                      "→ kurikulum negeneruji (bez ni generator tema mine)", tema)
+            return []
+        try:
+            from scripts.hans_study import _generate_curriculum
+            return _generate_curriculum(self.config, tema, kotva) or []
+        except Exception as e:
+            _log.warning("HANS_GOAL_CURRICULUM_V1: generovani selhalo (%s) "
+                         "→ cil cte dal sve tema", e)
+            return []
         # Synthesis a RAG upload zařídí HansSynthesisHooks asynchronně
         # (curiosity sama zapíše web_read → hooks zachytí)
 

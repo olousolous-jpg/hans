@@ -94,7 +94,60 @@ class HansGoals:
                 db.execute("ALTER TABLE hans_goals ADD COLUMN expected TEXT")
             except sqlite3.OperationalError:
                 pass  # sloupec uz existuje
+            # HANS_GOAL_CURRICULUM_V1 (2.9.) — cil ma vlastni postup cetby.
+            # Bez nej cetl porad TYZ clanek: 20x „Design" za tyden, 18 z 19 cilu
+            # za tri mesice bylo totez tema, zadne pod-tema. A protoze cil bere
+            # 50 % veskere spontanni cetby (GOAL_FOCUS_2C_V1), byla tim pulka
+            # Hansova cteni tri mesice jeden text.
+            for _sl, _typ in (("curriculum", "TEXT"), ("curr_index", "INTEGER")):
+                try:
+                    db.execute("ALTER TABLE hans_goals ADD COLUMN %s %s" % (_sl, _typ))
+                except sqlite3.OperationalError:
+                    pass  # sloupec uz existuje
             db.commit()
+
+    # ── HANS_GOAL_CURRICULUM_V1 ───────────────────────────────────────
+    def curriculum(self, goal_id: int):
+        """Vrati (seznam_polozek, index). Prazdny seznam = jeste se negeneroval."""
+        import json as _json
+        try:
+            with sqlite3.connect(self._diary_path) as db:
+                r = db.execute("SELECT curriculum, curr_index FROM hans_goals "
+                               "WHERE id=?", (goal_id,)).fetchone()
+            if not r or not r[0]:
+                return [], 0
+            return _json.loads(r[0]) or [], int(r[1] or 0)
+        except Exception as e:
+            _log.debug("curriculum(%s): %s", goal_id, e)
+            return [], 0
+
+    def set_curriculum(self, goal_id: int, polozky: list) -> bool:
+        import json as _json
+        try:
+            with sqlite3.connect(self._diary_path) as db:
+                db.execute("UPDATE hans_goals SET curriculum=?, curr_index=0 "
+                           "WHERE id=?",
+                           (_json.dumps(polozky, ensure_ascii=False), goal_id))
+                db.commit()
+            _log.info("HANS_GOAL_CURRICULUM_V1: cil %s dostal kurikulum o %d polozkach",
+                      goal_id, len(polozky))
+            return True
+        except Exception as e:
+            _log.warning("set_curriculum(%s) selhalo: %s", goal_id, e)
+            return False
+
+    def advance_curriculum(self, goal_id: int) -> bool:
+        """Posun na dalsi polozku. ⚠️ Posouva se AZ PO cteni, ne pred nim —
+        jinak by vypadek site polozku prseskocil a nikdo by si toho nevsiml."""
+        try:
+            with sqlite3.connect(self._diary_path) as db:
+                db.execute("UPDATE hans_goals SET curr_index=COALESCE(curr_index,0)+1 "
+                           "WHERE id=?", (goal_id,))
+                db.commit()
+            return True
+        except Exception as e:
+            _log.debug("advance_curriculum(%s): %s", goal_id, e)
+            return False
 
     def _row_to_goal(self, row) -> Goal:
         return Goal(
