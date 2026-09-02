@@ -1004,7 +1004,35 @@ def _openalex_research(config: dict, query: str, n: int = 3,
 def _topic_engagement(diary_db_path: str, examples) -> int:
     """OBJEM zájmu o koníček = počet zmínek jeho konkrétních instancí (examples)
     napříč čtenými/dialogovými/studijními eventy. Na rozdíl od evidence_count
-    (= jen délka trvání) zachytí, jak moc Hanse téma reálně zaměstnává."""
+    (= jen délka trvání) zachytí, jak moc Hanse téma reálně zaměstnává.
+
+    HANS_ENGAGEMENT_DEDUP_V1 (2.9.) — ČTENÍ SE DEDUPLIKUJE NA (titul, den).
+    Měřeno 2.9.: koníček 'Design' měl zaujetí 2037, z toho 678 řádků web_read
+    + 481 reading_takeaway byl JEDEN A TÝŽ článek Wikipedie, přečtený znovu
+    a znovu na objednávku aktivního cíle (113 různých dnů, duben-září).
+    Metrika tedy neměřila zaujetí, ale kolikrát si ho cíl objednal - a přesně
+    tahle čísla vybírají koníčky Severce (SEVERKA_HOBBY_ENGAGEMENT_V1)
+    a odemykají výzkumnou úroveň studia (_is_strong_topic, min_engagement).
+    Souvisí s GOAL_FOCUS_2C_V1 / HANS_GOAL_SELF_EVIDENCE_V1, kde je táž smyčka
+    popsaná pro detektor cílů - tam ji uzavřel štítek [goal], sem ale
+    nedosáhl, protože se tu počítají řádky bez ohledu na štítek.
+
+    ⛔ Dialogy a studijní poznámky se NEDEDUPLIKUJÍ: teddy_dialog má konstantní
+    titul 'Dialog s Kolačem' (2857 řádků), takže by dedup na titul smazal
+    celou kategorii. Dedup míří jen na opakované čtení téhož článku.
+
+    Dopad změřený na živé DB: Design 2037 -> 986, hrady 762 -> 512,
+    historie a památky 537 -> 219, lední hokej 246 -> 26. Pořadí na špici
+    se nemění (Design > hrady > historie), jen poměr klesl z 2,7x na 1,9x.
+    ⚠️ Práh min_engagement (500) se ZÁMĚRNĚ neposouval - posunout ho zpět
+    by vrátilo přesně to, co tahle oprava odstraňuje.
+    ⚠️ Na _is_strong_topic ta změna ALE NEDOPADÁ VŮBEC (změřeno po patchi,
+    ne odhadnuto): ten má dvě cesty spojené OR a první je
+    evidence_count >= min_evidence (20). Všech 12 trvalých koníčků má 63-75,
+    takže projdou dřív, než se na zaujetí vůbec dojde - gate dle OBJEMU je
+    pro ně mrtvá větev. Reálný dopad má tahle oprava jen na POŘADÍ
+    (hans_severka:286 a výběr studijního programu), ne na deep tier.
+    """
     exs = [str(e).strip() for e in (examples or []) if len(str(e).strip()) >= 4][:8]
     if not exs:
         return 0
@@ -1013,12 +1041,24 @@ def _topic_engagement(diary_db_path: str, examples) -> int:
         import sqlite3 as _s
         conn = _s.connect("file:%s?mode=ro" % diary_db_path, uri=True, timeout=5.0)
         try:
+            # HANS_ENGAGEMENT_DEDUP_V1 — čtení dedup na (titul, den), dialogy
+            # a studijní poznámky po řádcích. Důvod v docstringu funkce.
+            _blob = ("(coalesce(title,'')||coalesce(note,'')||coalesce(data,''))")
+            _sql = (
+                "SELECT ("
+                "  SELECT COUNT(DISTINCT coalesce(title,'')||'|'||"
+                "         date(ts,'unixepoch','localtime'))"
+                "  FROM diary WHERE event_type IN ('web_read','reading_takeaway')"
+                "  AND " + _blob + " LIKE ?"
+                ") + ("
+                "  SELECT COUNT(*)"
+                "  FROM diary WHERE event_type IN ('study_note','teddy_dialog')"
+                "  AND " + _blob + " LIKE ?"
+                ")"
+            )
             for ex in exs:
-                n = conn.execute(
-                    "SELECT COUNT(*) FROM diary WHERE event_type IN "
-                    "('web_read','reading_takeaway','study_note','teddy_dialog') "
-                    "AND (coalesce(title,'')||coalesce(note,'')||coalesce(data,'')) "
-                    "LIKE ?", ('%' + ex + '%',)).fetchone()
+                _like = '%' + ex + '%'
+                n = conn.execute(_sql, (_like, _like)).fetchone()
                 total += int(n[0]) if n else 0
         finally:
             conn.close()
