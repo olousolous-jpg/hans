@@ -3169,7 +3169,17 @@ register(
     slash_aliases=["film", "filmy"],
     nl_patterns=[
         r"posledn[ií].{0,10}film",
-        r"jak[ýy].{0,10}film",
+        # HANS_FILM_QUERY_BOUNDARY_V1 (2.9.) — `\b` je tu NUTNA, ne kosmetika:
+        # bez ni „jak[ýy]" matchne uvnitr slova „NEjaky", takze dotazovy vzor
+        # spolknul ZADOST O SPUSTENI. Doloženo rozhovorem: „pust mi nejaky
+        # film" → vypis, co se naposledy hralo. Tim se navic nikdy nedostane
+        # ke slovu agentni `kodi_play_film` (a jeho HANS_KODI_NO_TITLE_V1).
+        # Zmereno na 1028 realnych vetach: 7 zasahu → 1, a tou jedinou
+        # zbylou je „jaky film jsi videl naposled?" (spravne). Sest, ktere
+        # odpadly, jsou zadosti o spusteni („muzes pustit na kodi nejaky
+        # film?"), dotazy na bezici prehravani („je pusteny nejaky film?")
+        # a vypraveni — ani jedna neni dotaz na to, co Hans videl.
+        r"\bjak[ýy].{0,10}film",
         r"co\s+(jsi|sis)\s+(dnes\w*\s+|včera\s+|naposledy\s+)?"
         r"(vid[ěe]l|koukal|sledoval|d[íi]val)",
         r"co\s+jsem?\s+(dnes\w*\s+)?(vid[ěe]l|koukal|sledoval)",

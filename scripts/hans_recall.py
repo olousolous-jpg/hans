@@ -1071,6 +1071,14 @@ _STOPWORDS = {"něco", "neco", "dnes", "dneska", "včera", "vcera", "naposledy",
               "zajímavého", "zajimaveho", "zajímavé", "zajimave", "zajímavou",
               "zajimavou", "zajímavý", "zajimavy", "hezkého", "hezkeho",
               "pěkného", "pekneho", "dobrého", "dobreho", "nového", "noveho",
+              # HANS_READING_COLLOQUIAL_STOP_V1 (2.9.) — HOVOROVÉ „-ýho/-yho".
+              # Spisovné tvary tu byly (i bez diakritiky), hovorové ne — a tak
+              # uživatel píše. Doloženo: „cetl jsi dneska neco novyho?" →
+              # „o ‚novyho' žádný záznam nemám", ačkoliv data Hans MĚL:
+              # o tah později je na „o cem to bylo?" vypsal správně.
+              # Změřeno na 1028 reálných větách: ani jedné se tím téma nerozbije.
+              "novýho", "novyho", "dobrýho", "dobryho", "hezkýho", "hezkyho",
+              "zajímavýho", "zajimavyho", "pěknýho", "peknyho",
               "víc", "vic", "více", "vice", "rád", "rada", "bych", "dozvěděl",
               "dozvedel",
               # zájmena — nejsou téma; „četl jsi JI?" nesmí dát bogus topic „ji“
