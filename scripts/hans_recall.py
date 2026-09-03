@@ -62,11 +62,20 @@ def _kodi_tituly(conn) -> set:
         # `LIKE` prefiltr drzi json parsovani mimo vetsinu z 63k radku;
         # `json_valid` je NUTNY — starsi `web_read` maji `data` prazdne
         # a `json_extract` na nich shodi cely dotaz na „malformed JSON".
+        # HANS_KODI_FILTR_NOTE_V1 (3.9.) — značka `topic` má DVĚ podoby podle
+        # toho, kterou cestou zápis šel (`hans_curiosity`):
+        #   ř. 841 (odložený zápis, „mozek byl mimo") → data = JSON s topic
+        #   ř. 726 (běžná cesta)                      → note = "[kodi] …"
+        # Filtr uměl jen tu první, takže viděl 155 titulů místo 656 a čtení
+        # k filmům propadalo do výpisu četby. Doloženo testem 3.9.: na
+        # „cetl jsi neco zajimaveho?" Hans vypsal Smrtonosnou past a Tělesnou
+        # stráž jako ČETBU a pak o filmu mluvil, jako by ho četl.
         rows = conn.execute(
             "SELECT DISTINCT title FROM diary "
-            "WHERE event_type='web_read' AND data LIKE '%\"kodi\"%' "
-            "AND json_valid(data) "
-            "AND json_extract(data,'$.topic')='kodi'").fetchall()
+            "WHERE event_type='web_read' AND ("
+            "  note LIKE '[kodi]%'"
+            "  OR (data LIKE '%\"kodi\"%' AND json_valid(data) "
+            "      AND json_extract(data,'$.topic')='kodi'))").fetchall()
     except Exception as e:          # rozbity dotaz nesmi shodit cely /cetl
         _log.debug("_kodi_tituly selhal: %s", e)
         return set()

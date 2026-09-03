@@ -587,12 +587,36 @@ def _ground_book(handler, args):
 
 # ── Info dotazy (instant, bez potvrzení — jen odpoví z živých dat) ───────────
 
+_ZITRA_PAT = re.compile(
+    r"\b(z[íi]tra|z[íi]tra?ej[šs][íi]|na\s+z[íi]t[řr]ek|z[íi]t[řr]ek)\b", re.I)
+
+
 def _run_weather(handler, args) -> str:
+    """HANS_WEATHER_TOMORROW_V1 — aktuální stav NEBO předpověď na zítřek.
+
+    Rozhoduje argument `kdy` z routeru; když ho nevyplní, rozhodne regex nad
+    původní větou (LLM nemá být jediná pojistka). Předpověď dál nesahá —
+    `get_tomorrow_string` umí jen zítřek, a slibovat víc by znamenalo
+    konfabulovat."""
     try:
         from scripts.weather_chmu import WeatherCHMU
         _w = (getattr(handler, "config", {}) or {}).get("weather", {}) or {}
-        s = WeatherCHMU(lat=float(_w.get("lat", 50.08)),
-                        lon=float(_w.get("lon", 14.42))).get_context_string()
+        wx = WeatherCHMU(lat=float(_w.get("lat", 50.08)),
+                         lon=float(_w.get("lon", 14.42)))
+        kdy = str((args or {}).get("kdy") or "").strip().lower()
+        veta = str((args or {}).get("_veta")
+                   or getattr(handler, "_raw_message", "") or "")
+        chce_zitra = kdy.startswith("zit") or kdy.startswith("zít") \
+            or bool(_ZITRA_PAT.search(veta))
+        if chce_zitra:
+            t = (wx.get_tomorrow_string() or "").strip()
+            if t:
+                log.info("HANS_WEATHER_TOMORROW_V1: dotaz na zítřek "
+                         "(kdy=%r) → předpověď", kdy or "z věty")
+                return t
+            # předpověď nedostupná → PŘIZNAT, ne podstrčit dnešek
+            return ("Předpověď na zítřek se mi teď nedaří zjistit, pane.")
+        s = wx.get_context_string()
         return s.replace("Počasí:", "Za oknem:").strip() if s else \
             "Aktuální počasí se mi teď nedaří zjistit, pane."
     except Exception:
@@ -1042,10 +1066,17 @@ ACTIONS: dict[str, Action] = {
     # ── Info dotazy (instant, bez potvrzení) ────────────────────────────────
     "report_weather": Action(
         "report_weather",
-        "Odpovědět na dotaz o AKTUÁLNÍM počasí / jak je venku.",
+        "Odpovědět na dotaz o počasí venku — aktuálním i na ZÍTŘEK. "
+        # HANS_WEATHER_TOMORROW_V1 (3.9.) — argument místo druhé akce:
+        # přesnost routeru klesá s počtem nástrojů (změřeno 1.9.), takže
+        # `report_weather_tomorrow` by zhoršil výběr u všech dotazů.
+        "Argument `kdy`: „dnes“ (výchozí) nebo „zitra“, když se ptá na "
+        "předpověď („jaké bude zítra počasí?“, „bude zítra pršet?“). "
+        "⚠️ Dál než na zítřek předpověď nesahá.",
         hints=["počasí", "pocasi", "venku", "prší", "prsi", "sněží", "snezi",
-               "teplo venku", "zima venku", "za oknem", "slunečno"],
-        args=[], run=_run_weather, grounding=None,
+               "teplo venku", "zima venku", "za oknem", "slunečno",
+               "zítra", "zitra", "předpověď", "predpoved"],
+        args=["kdy"], run=_run_weather, grounding=None,
         needs_confirm=False, cooldown_s=10),
     "report_climate": Action(
         "report_climate",
