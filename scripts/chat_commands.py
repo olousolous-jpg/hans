@@ -4342,8 +4342,16 @@ _TAZACI_ZAJMENO = re.compile(
 # zpětným zájmenem, která na něco navazuje.
 # ⛔ Pozor na rozdíl proti `schopnosti`, které se sem týž den zkusily přidat
 #    a VRÁTILY: tam „co umíš?" navazující JE, takže by se zamítlo. Tady ne.
+# HANS_SMER_NO_LIST_V1 (3.9.) — `smer` je výpis (emoji, odrážky, tvůrčí
+# záměry), a na úvahovou otázku typu „co bys chtěl dělat, kdybys mohl cokoli?"
+# je to špatná odpověď. `is_reflective_ask` takovou větu UŽ pozná, jen ji
+# guard nemohl zamítnout, protože příkaz tady chyběl. Legitimní dotaz chrání
+# `_zminuje_vlastni_tema` — změřeno na 6 tvarech („jaký máš směr?",
+# „kam směřuješ?", „/smer" …), všechny projdou.
+# ⛔ Precedent `schopnosti` (zkoušeno a vráceno) sem nesedí: tam guard rozbil
+# hlavní cestu, protože „co umíš?" slovo příkazu neobsahuje.
 _VYPISOVE_CMDS = {"seznam", "nitky", "rozvrh", "kritika", "anomalie",
-                  "vzpominka"}
+                  "vzpominka", "smer"}
 
 
 _NALEZ_SLOVA = re.compile(

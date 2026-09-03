@@ -88,7 +88,21 @@ class IntentResult:
 _REFLECTIVE_PAT = re.compile(
     r"\b(kdyby(s|ste|chom)?\b[^?]{0,80}\b(by|bys|byste|byl|byla|mohl|m[ěe]l)\b"
     r"|co\s+je\s+pro\s+(tebe|v[áa]s)\s+nej\w+"
-    r"|co\s+je\s+na\s+(tv[ée]|va[šs][ íi]|tvoj[ íi])\s+\w+\s+nej\w+)",
+    r"|co\s+je\s+na\s+(tv[ée]|va[šs][ íi]|tvoj[ íi])\s+\w+\s+nej\w+"
+    # HANS_REFLECTIVE_SELFCHANGE_V1 (3.9.) — otázka na VLASTNÍ ZMĚNU je
+    # úvahová, ne žádost o statistiku. Bez těchhle vzorů unesl „zmenil ses
+    # nejak posledni dobou?" příkaz /anomalie a Hans místo odpovědi vypsal
+    # počty rozhovorů za týden — a to zrovna v den, kdy se mu opravdu
+    # změnila identita. Změřeno na 1327 reálných větách: 0 nových záběrů,
+    # tedy žádná regrese.
+    r"|zm[ěe]nil\s+(ses|jsi\s+se)"
+    r"|m[ěe]n[íi][šs]\s+se|se\s+m[ěe]n[íi][šs]|se\s+\w{0,12}\s?m[ěe]n[íi]te"
+    r"|m[áa](?:[šs]|te)\s+pocit,?\s+[žz]e\s+se\s+"
+    r"|(?:mi\s+)?(?:p[řr]ijde[šs]|p[řr]ijdete)\s+\w{0,6}\s?jin"
+    r"|jsi\s+jin[ýy]|jste\s+jin[ýy]"
+    # „co je podle vás na X nejtěžší" — táž třída jako „co je pro tebe nej…",
+    # jen jiná vazba; bez ní spadla úvahová otázka do abstinence.
+    r"|co\s+je\s+podle\s+(tebe|v[áa]s)\b[^?]{0,60}\bnej\w+)",
     re.I)
 
 

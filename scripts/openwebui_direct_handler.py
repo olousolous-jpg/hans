@@ -1361,6 +1361,27 @@ class OpenWebUIDirectHandler:
                 if _kb:
                     self._vysledek_groundingu('grounded', 'zapisky_fts')
                     return _kb
+                # HANS_REFLECTIVE_ASK_V2 (3.9.) — ÚVAHOVÁ otázka se sem nesmí
+                # propadnout. `ANTIKONFAB_NOFACTS` říká modelu „nemáš fakta,
+                # přiznej to", jenže dotaz na vlastní názor žádná fakta
+                # nepotřebuje — odpovídá se z osobnosti. Doloženo testem 3.9.:
+                # „co je podle vás na dokumentování světa to nejtěžší?" →
+                # „K tomuhle nemám spolehlivý záznam a nerad bych si domýšlel."
+                # V1 (30.8.) hlídal jen větev `_tenky`; sem, na
+                # `zapisky_fts_prazdno`, nedosáhl — log to ukázal hned
+                # (`GROUNDING: factual_nofacts ← zapisky_fts_prazdno`).
+                # Týž predikát, žádný nový — a je ÚZKÝ: 0 shod z 1327 reálných
+                # uživatelských replik, takže anti-konfabulaci nerozvolňuje.
+                try:
+                    from scripts.hans_intent import is_reflective_ask as _ira2
+                    if _ira2(str(_text)):
+                        logging.getLogger(__name__).info(
+                            'HANS_REFLECTIVE_ASK_V2: %r je úvahová otázka → '
+                            'osobnost místo abstinence', str(_text)[:50])
+                        self._vysledek_groundingu('nonfactual', 'uvahova_otazka')
+                        return ''
+                except Exception:
+                    pass
                 logging.getLogger(__name__).info(
                     'G3B: žádná shoda pod prahem pro [%s] %r → anti-konfab bez fakt (G3C)',
                     res.intent, str(_text)[:40])
