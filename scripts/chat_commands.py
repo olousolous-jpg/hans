@@ -4378,6 +4378,38 @@ def _je_navazujici_dotaz(msg: str) -> bool:
     return len((msg or "").split()) <= 9 and bool(_ZPETNE_ZAJMENO.search(f))
 
 
+# HANS_READING_IMPRESSION_V1 (3.9.) — dotaz na DOJEM z četby, ne na výpis.
+# Doloženo testem: „Když jste o tom četl, dozvěděl jste se něco, co vás
+# překvapilo?" → /cetl vypsal čtyři tituly místo odpovědi.
+# ⚠️ Proč to NEJDE přes `_thread_guard`: (a) věta má 12 slov, takže ji
+# `_je_navazujici_dotaz` odmítne (limit 9), (b) `is_reflective_ask` ji nezná,
+# (c) — a to je důvod, který backlog neznal — `_zminuje_vlastni_tema` vrací
+# True, protože věta slovo „četl" OBSAHUJE, takže by ji guard propustil
+# i kdyby `cetl` do `_VYPISOVE_CMDS` přibyl. Tudy cesta nevede vůbec.
+_DOJEM_PAT = re.compile(
+    r"(dozv[ěe]d[ěe]l[ao]?\s+(ses|jsi\s+se|jste\s+se)"
+    r"|co\s+(t[ěe]|v[áa]s)\b[^?]{0,14}\b(p[řr]ekvapilo|zaujalo|oslovilo|bavilo)"
+    r"|(p[řr]ekvapilo|zaujalo|oslovilo)\s+(t[ěe]|v[áa]s)"
+    r"|co\s+sis\s+z\s+(toho|n[ěe][hj]o)\s+odnesl)", re.I)
+
+
+def _je_dotaz_na_dojem(msg: str) -> bool:
+    """Ptá se na PROŽITEK z četby/sledování (co tě překvapilo, zaujalo)?
+
+    Změřeno na 1327 reálných uživatelských replikách: 1 shoda („co tě nejvíce
+    zaujalo na práci Heideggera?") — a ta je správná. Šest tvarů legitimní
+    žádosti o výpis („co jsi četl?", „četl jsi tu knihu?") predikát nebere.
+    """
+    m = msg or ""
+    if _DOJEM_PAT.search(m):
+        return True
+    try:
+        from scripts.hans_thread import _fold
+        return bool(_DOJEM_PAT.search(_fold(m)))
+    except Exception:
+        return False
+
+
 def _zminuje_vlastni_tema(cid: str, msg: str) -> bool:
     """Nese věta slovo, kterým se ten příkaz volá? Pak ho míní doopravdy."""
     try:
@@ -4451,6 +4483,15 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
         _uvaha_ask = _ira(msg)
     except Exception:
         pass
+    # HANS_READING_IMPRESSION_V1 (3.9.) — dotaz na DOJEM z četby/sledování
+    # dostane odpověď, ne výpis. Musí to být VLASTNÍ větev před podmínkou níž:
+    # `_zminuje_vlastni_tema` by ji propustilo, protože věta slovo „četl"
+    # obsahuje — jenže tam je jako KONTEXT („když jste o tom četl…"), ne jako
+    # předmět žádosti.
+    if cid in ("cetl", "videl") and _je_dotaz_na_dojem(msg):
+        _log.info("HANS_READING_IMPRESSION_V1: '%.40s' → /%s ZAMÍTNUTO "
+                  "(ptá se na dojem, ne na výpis)", msg, cid)
+        return ""
     if (cid in _VYPISOVE_CMDS and (_je_navazujici_dotaz(msg) or _uvaha_ask)
             and not _zminuje_vlastni_tema(cid, msg)):
         _log.info("HANS_THREAD_NO_LIST_V1: '%.40s' → /%s ZAMÍTNUTO "

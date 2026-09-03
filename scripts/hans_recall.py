@@ -1225,6 +1225,11 @@ def _vsechna_slova_sedi(text: str, topic: str) -> bool:
     return True
 
 
+# HANS_READING_CHAPTERS_V1 — sufix „— kap. 41" na konci názvu knihy.
+# Kotví se na KONEC, ať to nesebere číslo z názvu samotného díla.
+_KAP_PAT = re.compile(r"\s*[—–-]?\s*kap\.?\s*(\d+)\s*$", re.I)
+
+
 def _dedup_cteni(rows, delsi_vyhrava: bool = False):
     """HANS_READING_DEDUP_V1 — jeden titul = jeden řádek výpisu.
 
@@ -1236,22 +1241,43 @@ def _dedup_cteni(rows, delsi_vyhrava: bool = False):
     """
     nej = {}
     poradi = []
+    kapitoly = {}          # HANS_READING_CHAPTERS_V1 — čísla kapitol na klíč
     for r in rows:
         t = (r[2] or "").strip().lower()
         if not t:
             poradi.append(r)          # bez názvu nelze slučovat
             continue
-        stav = nej.get(t)
+        # HANS_READING_CHAPTERS_V1 (3.9.) — kniha čtená po kapitolách zabrala
+        # celý výpis: „Já robot — kap. 41 / 40 / 39 / 38" jsou čtyři různé
+        # tituly, takže je dedup na titulu neslučoval. Klíč je proto kniha BEZ
+        # kapitoly; rozsah se vrátí do názvu níž, ať se neztratí, kolik toho
+        # přečetl.
+        m = _KAP_PAT.search(t)
+        klic = t[:m.start()].strip(" -—–") if m else t
+        if m:
+            try:
+                kapitoly.setdefault(klic, []).append(int(m.group(1)))
+            except ValueError:
+                pass
+        stav = nej.get(klic)
         if stav is None:
-            nej[t] = r
-            poradi.append(("__klic__", t))
+            nej[klic] = r
+            poradi.append(("__klic__", klic))
         elif delsi_vyhrava and len(str(r[3] or "")) > len(str(stav[3] or "")):
             # ponech novější datum, ale obsažnější úryvek
-            nej[t] = (stav[0], stav[1], stav[2], r[3])
+            nej[klic] = (stav[0], stav[1], stav[2], r[3])
     out = []
     for x in poradi:
-        out.append(nej[x[1]] if (isinstance(x, tuple) and len(x) == 2
-                                 and x[0] == "__klic__") else x)
+        if isinstance(x, tuple) and len(x) == 2 and x[0] == "__klic__":
+            r = nej[x[1]]
+            ks = sorted(set(kapitoly.get(x[1], [])))
+            if len(ks) > 1:            # sloučeno víc kapitol → ukaž rozsah
+                titul = _KAP_PAT.sub("", str(r[2] or "")).strip(" -—–")
+                r = (r[0], r[1], "%s — kap. %d–%d" % (titul, ks[0], ks[-1]),
+                     r[3])
+            out.append(r)
+        else:
+            out.append(x)
     return out
 
 
