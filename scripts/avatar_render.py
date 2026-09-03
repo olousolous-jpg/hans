@@ -176,6 +176,77 @@ _STYLE = ("full color, stylized 3d character render, semi-realistic, smooth "
           "volumetric shading, soft studio lighting, plain grey background")
 
 
+def _resize_to_temp(path: str, max_side: int = 1024) -> Optional[str]:
+    """Zmenši obrázek na ~max_side (SDXL nativní) a ulož do /tmp PNG pro upload.
+
+    AVATAR_IDENTITY_REF_V1 — přesunuto sem z hans_art: potřebují ji OBA (art
+    i render avatara), a hans_art z tohohle modulu už importuje comfy helpery,
+    takže opačný směr by byl kruhový import."""
+    try:
+        import cv2
+        img = cv2.imread(path)
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        s = max_side / float(max(h, w))
+        if s < 1.0:
+            img = cv2.resize(img, (int(w * s), int(h * s)),
+                             interpolation=cv2.INTER_AREA)
+        out = os.path.join("/tmp", "hans_ref_%d.png" % (int(time.time())))
+        cv2.imwrite(out, img)
+        return out
+    except Exception as e:
+        _log.warning("avatar: resize reference selhal: %s", e)
+        return None
+
+
+def identity_reference(config: dict, version: int) -> str:
+    """AVATAR_IDENTITY_REF_V1 — tvář, ze které se má nová verze odvodit.
+
+    Pořadí: explicitní `hans_avatar.identity_reference` → nejnovější
+    vyrenderované `data/avatar/vN/idle.png` STARŠÍ než `version`. Hledá se
+    starší schválně: verze, kterou právě renderujeme, může mít z dřívějšího
+    (nepovedeného) běhu vlastní idle.png a ta by se sama sobě stala kotvou."""
+    ref = str((config.get("hans_avatar", {}) or {}).get("identity_reference", "")).strip()
+    if ref and os.path.exists(ref):
+        return ref
+    for v in range(int(version) - 1, 0, -1):
+        p = os.path.join("data", "avatar", "v%d" % v, "idle.png")
+        if os.path.exists(p):
+            return p
+    return ""
+
+
+def _wait_for_comfy(base: str, limit_s: float = 180.0) -> bool:
+    """AVATAR_RENDER_RETRY_V1 — počkej, až ComfyUI po pádu zase odpovídá."""
+    t0 = time.time()
+    while time.time() - t0 < limit_s:
+        try:
+            urllib.request.urlopen(f"{base}/system_stats", timeout=6).read()
+            return True
+        except Exception:
+            time.sleep(5)
+    return False
+
+
+def _upload_reference(base: str, ref_path: str) -> Optional[str]:
+    """AVATAR_IDENTITY_REF_V1 — zmenši referenční tvář a nahraj do ComfyUI.
+    Vrací jméno, pod kterým ji zná ComfyUI (pro LoadImage), nebo None.
+    Po restartu ComfyUI se volá znovu (AVATAR_RENDER_RETRY_V1)."""
+    if not ref_path:
+        return None
+    tmp = _resize_to_temp(ref_path)
+    if not tmp:
+        return None
+    try:
+        return _comfy_upload_image(base, tmp)
+    finally:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+
+
 def build_prompt(descriptor: dict, modifier: str,
                  framing: str = "character portrait, head and shoulders") -> str:
     parts = [str(descriptor.get(f, "")).strip() for f in _APPEARANCE]
@@ -749,6 +820,28 @@ def render_descriptor(config: dict, descriptor: dict, diary_db_path: str) -> boo
     cache_dir = os.path.join("data", "avatar", f"v{ver}")
     client_id = uuid.uuid4().hex
 
+    # AVATAR_IDENTITY_REF_V1 — podoba z PŘEDCHOZÍ tváře. Bez toho si plain
+    # txt2img u každé verze vymyslí jiného člověka (doloženo v3: z šedovlasého
+    # padesátníka mladík), protože `identity_anchor` je jen slovo v promptu.
+    _ref_path = identity_reference(config, ver)
+    _ref_name = None
+    _ipa_w = float(acfg.get("identity_weight", 0.6))
+    _ipa_model = acfg.get("identity_ipadapter_file",
+                          "ip-adapter-plus_sdxl_vit-h.safetensors")
+    _ipa_clip = acfg.get("identity_clip_vision",
+                         "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors")
+    _retries = max(1, int(acfg.get("render_retries", 3)))
+    if _ref_path and _ipa_w > 0:
+        _ref_name = _upload_reference(base, _ref_path)
+        if _ref_name:
+            _log.info("avatar: podoba z reference %s (IP-Adapter w=%.2f)",
+                      _ref_path, _ipa_w)
+        else:
+            _log.warning("avatar: referenci %s se nepodařilo nahrát — "
+                         "renderuji bez ní (tvář se může změnit)", _ref_path)
+    else:
+        _log.info("avatar: bez referenční tváře (v%d je první nebo vypnuto)", ver)
+
     # VRAM: uvolni LLM před renderem
     loaded = _ollama_loaded(config)
     _ollama_unload(config, loaded)
@@ -764,20 +857,44 @@ def render_descriptor(config: dict, descriptor: dict, diary_db_path: str) -> boo
                                   ACTIVITY_FRAMING if _is_act
                                   else "character portrait, head and shoulders")
             _seed = seed + ACTIVITY_SEED_OFFSET if _is_act else seed
-            wf = _comfy_workflow(ckpt, prompt, _seed, w, h, steps, cfg_s)
-            try:
-                pid = _comfy_submit(base, wf, client_id)
-                hist = _comfy_wait(base, pid) if pid else None
-                img = _first_image(hist) if hist else None
-                if img and _comfy_fetch_image(base, img,
-                                              os.path.join(cache_dir, fname)):
-                    n_ok += 1
-                    _log.info("avatar: vyrenderován %s (%d/%d, v%d)",
-                              fname, n_ok, len(targets), ver)
-                else:
-                    _log.warning("avatar: %s se nevyrenderoval", fname)
-            except Exception as _e:
-                _log.warning("avatar: render %s selhal: %s", fname, _e)
+            # AVATAR_IDENTITY_REF_V1 — s referencí drž podobu, bez ní postaru
+            if _ref_name:
+                wf = _comfy_workflow_ipadapter(ckpt, prompt, _seed, w, h, steps,
+                                               cfg_s, _ref_name, _ipa_model,
+                                               _ipa_clip, _ipa_w)
+            else:
+                wf = _comfy_workflow(ckpt, prompt, _seed, w, h, steps, cfg_s)
+            # AVATAR_RENDER_RETRY_V1 — ComfyUI padá na ROCm memory fault a bere
+            # s sebou rozpracovanou úlohu; po jeho návratu týž obrázek projde.
+            for _pokus in range(1, _retries + 1):
+                if _pokus > 1:
+                    if not _wait_for_comfy(base):
+                        _log.warning("avatar: ComfyUI nenaběhl — %s vzdávám", fname)
+                        break
+                    # referenci je po restartu nutné nahrát znovu
+                    if _ref_path and _ipa_w > 0:
+                        _new_ref = _upload_reference(base, _ref_path)
+                        if _new_ref:
+                            _ref_name = _new_ref
+                            wf = _comfy_workflow_ipadapter(
+                                ckpt, prompt, _seed, w, h, steps, cfg_s,
+                                _ref_name, _ipa_model, _ipa_clip, _ipa_w)
+                    _log.info("avatar: %s — pokus %d/%d", fname, _pokus, _retries)
+                try:
+                    pid = _comfy_submit(base, wf, client_id)
+                    hist = _comfy_wait(base, pid) if pid else None
+                    img = _first_image(hist) if hist else None
+                    if img and _comfy_fetch_image(base, img,
+                                                  os.path.join(cache_dir, fname)):
+                        n_ok += 1
+                        _log.info("avatar: vyrenderován %s (%d/%d, v%d)",
+                                  fname, n_ok, len(targets), ver)
+                        break
+                    _log.warning("avatar: %s se nevyrenderoval (pokus %d/%d)",
+                                 fname, _pokus, _retries)
+                except Exception as _e:
+                    _log.warning("avatar: render %s selhal (pokus %d/%d): %s",
+                                 fname, _pokus, _retries, _e)
     finally:
         # VRAM: nejdřív uvolni ComfyUI (SDXL drží ~7GB), JINAK se hans-czech nenahraje
         # → chat timeout (AVATAR_RENDER_COMFY_FREE_V1). Pak teprve vrať hans-czech.

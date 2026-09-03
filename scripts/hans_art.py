@@ -32,6 +32,7 @@ from scripts.avatar_render import (
     _ollama_loaded, _ollama_unload, _comfy_free, _ollama_warm,
     _comfy_upload_image, _comfy_workflow_img2img, _comfy_workflow_ipadapter,
     _NEG_BASE,
+    _resize_to_temp,   # AVATAR_IDENTITY_REF_V1 — přesunuto do avatar_render
 )
 
 _log = logging.getLogger("hans_art")
@@ -2390,23 +2391,8 @@ def _pick_home_photo(config: dict) -> str:
     return os.path.join(pd, files[0]) if files else ""
 
 
-def _resize_to_temp(path: str, max_side: int = 1024) -> Optional[str]:
-    """Zmenši fotku na ~max_side (SDXL nativní) a ulož do /tmp PNG pro upload."""
-    try:
-        import cv2
-        img = cv2.imread(path)
-        if img is None:
-            return None
-        h, w = img.shape[:2]
-        s = max_side / float(max(h, w))
-        if s < 1.0:
-            img = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
-        out = os.path.join("/tmp", "hans_home_%d.png" % (int(time.time())))
-        cv2.imwrite(out, img)
-        return out
-    except Exception as e:
-        _log.warning("art: resize fotky selhal: %s", e)
-        return None
+# AVATAR_IDENTITY_REF_V1 — `_resize_to_temp` se přesunula do avatar_render
+# (potřebují ji oba) a importuje se nahoře. Zde záměrně už není.
 
 
 def paint_home_from_photo(config: dict, diary_db_path: str,
