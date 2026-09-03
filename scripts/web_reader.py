@@ -618,8 +618,9 @@ class WebReader:
         numbered = "\n".join(f"{i+1}. {it['title']}" for i, it in enumerate(items))
         pick = self._summarize(
             text = numbered, query = "výběr zprávy", num_predict = 5,
-            style = ("Vyber JEDNU zprávu, která by tě jako vzdělaného majordoma "
-                     "nejvíc zaujala. Odpověz POUZE jejím číslem."))
+            # PERSONA_REFACTOR_11 — _summarize persona_core předřazuje sám
+            style = ("Vyber JEDNU zprávu, která by tě nejvíc zaujala. "
+                     "Odpověz POUZE jejím číslem."))
         if pick:
             m = re.search(r"\d+", pick)
             if m:

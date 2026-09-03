@@ -165,15 +165,16 @@ class KolacMind:
 
     # ── System prompt pro Koláčovu repliku (oddělená generace) ──────────────
     def build_system(self, topic: str = "", context: str = "") -> str:
-        from scripts.hans_persona import persona_name
+        from scripts.hans_persona import persona_name, persona_brief  # PERSONA_REFACTOR_11
         name = persona_name(self.config)
+        _brief = persona_brief(self.config) or "tichý anglický majordomus"
         kname = kolac_name(self.config)  # KOLAC_NAME_CONFIGURABLE_V1
         parts = [self.doctrine()]
         mb = self.memory_block(topic)
         if mb:
             parts.append(mb)
         parts.append(
-            f"\n\nMluvíš s postavou jménem {name} (tichý anglický majordomus). "
+            f"\n\nMluvíš s postavou jménem {name} ({_brief}). "
             "Teď je řada na TOBĚ. Řekni JEDNU repliku (1-2 krátké věty), kterou "
             "REAGUJEŠ na jeho poslední větu — z pozice svého světonázoru, s humorem.\n"
             "JAK MLUVIT (ať je to živý rozhovor, ne formulka):\n"

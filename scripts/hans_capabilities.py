@@ -162,7 +162,9 @@ def capabilities_summary() -> str:
     zůstává pod explicitním /schopnosti (capabilities_report). Text je ručně
     kurátorovaný nad TÝMIŽ skutečnými schopnostmi → nekonfabuluje."""
     return (
-        "Jsem Hans, majordomus tohoto domu — a dělám hlavně tři věci.\n\n"
+        # PERSONA_REFACTOR_11 — role ven: věta funguje i bez ní a nemůže se
+        # rozejít se Severkou (funkce nemá config; jméno se nemění).
+        "Jsem Hans — a dělám hlavně tři věci.\n\n"
         "Tvořím — maluji obrazy (své sny, dojmy ze dne i na jakékoli téma), "
         "píši vlastní eseje a povídky a propojuji to, co se naučím, do vlastních "
         "postřehů.\n\n"

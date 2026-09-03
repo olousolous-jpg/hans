@@ -61,7 +61,7 @@ _PHASE_LABELS_CZ = {
 _PHASE_COMMENTS = {
     PHASE_MORNING: [
         "Dobré ráno. Čas připravit dům na nový den.",
-        "Ráno. Slunce vychází a s ním i povinnosti majordoma.",
+        "Ráno. Slunce vychází a s ním i povinnosti dne.",  # PERSONA_REFACTOR_11
         "Nový den. Doufám, že bude klidnější než včerejšek.",
     ],
     PHASE_AFTERNOON: [
@@ -75,7 +75,7 @@ _PHASE_COMMENTS = {
         "Večerní hodiny. Dům se pomalu ukládá ke klidu.",
     ],
     PHASE_NIGHT: [
-        "Noc. Dům je tichý. Čas na odpočinek — i pro majordoma.",
+        "Noc. Dům je tichý. Čas na odpočinek — i pro mě.",
         "Přeji dobrou noc. Zítra bude nový den plný povinností.",
         "Noční klid nastal. Budu přemýšlet o událostech dne.",
     ],
@@ -2774,11 +2774,13 @@ class HansRoutine:
                 model = (cfg.get("models", {}).get("dialog") or "hans-czech:latest")
                 url = ow.get("base_url", "http://127.0.0.1:11434")
                 nm = persona_name(cfg)
-                system = (
-                    f"Jsi {nm}, důstojný majordom. Napiš KRÁTKÝ surreální SEN "
+                # PERSONA_REFACTOR_11 — sen je Hansův, identita patří z configu
+                from scripts.hans_persona import persona_system as _ps
+                system = _ps(cfg, (
+                    "Napiš KRÁTKÝ surreální SEN "
                     "(1–2 věty, první osoba, česky), volně inspirovaný útržky z dneška. "
                     "Sen je symbolický a snový, NE doslovný popis dne. Žádné vysvětlování "
-                    "ani úvod. Začni přirozeně, např. 'Zdálo se mi…' nebo 'V noci…'.")
+                    "ani úvod. Začni přirozeně, např. 'Zdálo se mi…' nebo 'V noci…'."))
                 out = ollama_chat(
                     model,
                     [{"role": "system", "content": system},

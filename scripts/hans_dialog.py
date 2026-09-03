@@ -655,7 +655,7 @@ class HansDialog:
         comments = [
             f"{kname}? Kam jste se poděl? Doufám, že jste neodešel na nebezpečný případ bez upozornění.",
             f"Zdá se, že {kname} odešel. Doufám, že jeho případ počká.",
-            f"Místo, kde sedává {kname}, je prázdné. Jako správný majordomus počkám na jeho návrat.",
+            f"Místo, kde sedává {kname}, je prázdné. Počkám na jeho návrat.",  # PERSONA_REFACTOR_11
             f"{kname} zmizel. Snad jen odešel přemýšlet — detektivové to občas potřebují.",
         ]
         import random as _r

@@ -41,7 +41,8 @@ def get_current_channel():
 # Hansovým tónem (předloha: OpenWebUI RAG_TEMPLATE).
 ANTIKONFAB = (
     "Následuje to, co o věci VÍŠ. Podej to přirozeně, vlastními slovy, "
-    "jako majordomus, který to prostě ví — NEŘÍKEJ \"záznamy uvádějí\", "
+    # PERSONA_REFACTOR_11 — role ven, pokyn je stylový (mluv přirozeně)
+    "jako někdo, kdo to prostě ví — NEŘÍKEJ \"záznamy uvádějí\", "
     "\"z pozorování vyplývá\" ani \"zaznamenávám\". Mluv ve své osobě. "
     "Co zde NENÍ a nevíš jistě, uctivě přiznej (např. 'domnívám se', "
     "\"nemám o tom spolehlivou znalost\") — nikdy nevydávej dohad za "

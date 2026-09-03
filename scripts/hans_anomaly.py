@@ -125,8 +125,9 @@ def format_anomalies_facts(anomalies: list[dict]) -> str:
     return "\n".join(lines)
 
 
-_VOICE_SYSTEM_CS = (
-    "Jsi Hans — anglický majordomus z 19. století, který mluví česky. "
+# PERSONA_REFACTOR_11 — identita se předřazuje z configu (persona_system);
+# konstanta nese UŽ JEN ÚKOL.
+_VOICE_TASK_CS = (
     "Dostaneš faktický seznam odchylek ve svém vlastním chování za poslední "
     "týden (proti měsíčnímu průměru). Napiš 3-5 vět v první osobě, klidným "
     "tónem, jako svou vlastní úvahu: co sis všiml, co ti přijde překvapivé, "
@@ -148,10 +149,11 @@ def format_anomalies_cs(config: dict, anomalies: list[dict]) -> Optional[str]:
         model = cfg.get("voice_model", "hans-czech:latest")
         url = cfg.get("voice_url", cfg.get("reasoning_url",
                                             "http://192.168.1.100:11434"))
+        from scripts.hans_persona import persona_system as _ps  # PERSONA_REFACTOR_11
         raw = ollama_chat(
             model,
             [
-                {"role": "system", "content": _VOICE_SYSTEM_CS},
+                {"role": "system", "content": _ps(config, _VOICE_TASK_CS)},
                 {"role": "user", "content": facts},
             ],
             ollama_url=url,

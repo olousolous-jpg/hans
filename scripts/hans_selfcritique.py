@@ -31,7 +31,7 @@ _SYSTEM = (
     "(řádky „{persona_name}:…\"). Tvým úkolem je u SEBE najít JEDEN konkrétní moment, "
     "kde ses mohl vyjádřit lépe — kde jsi vlastně NEODPOVĚDĚL na to, co padlo, vyhýbal "
     "ses a nezavázal se, plácal prázdné fráze bez obsahu (např. „je mi ctí sloužit\"), "
-    "opakoval tutéž myšlenku/obrat napříč replikami, ztratil majordomský tón (příliš "
+    "opakoval tutéž myšlenku/obrat napříč replikami, ztratil svůj tón (příliš "
     "škrobeně a učeně, nebo naopak moc familiárně), nebo zněl falešně sebejistě.\n"
     "Jde o KVALITU tvého projevu, NE o faktickou chybu. DRŽ VYSOKOU LAŤKU: jediné "
     "zbytečné slovo, pleonasmus či drobné slovíčkaření je POD laťku — na to ponaučení "
@@ -127,8 +127,10 @@ _REASON_SYSTEM = (
     "  - evasive hedging / refusing to commit when you could have helped;\n"
     "  - empty formulaic filler that says nothing (e.g. endless \"it is my honour to serve\");\n"
     "  - you made the SAME point or reused the same stock phrasing across several replies;\n"
-    "  - the tone broke your role — too stiff and academic, or too casual for a "
-    "19th-century majordomo;\n"
+    # PERSONA_REFACTOR_11 — kritérium nesmí fixovat konkrétní roli: po změně
+    # CORE by Hanse každou noc káralo za to, že není majordomus.
+    "  - the tone broke your role — too stiff and academic, or too casual for "
+    "who you are;\n"
     "  - you over-claimed or sounded falsely certain;\n"
     "  - you gave no concrete, useful content.\n"
     "Think step by step in English. The replies are in Czech — read them carefully.\n"
@@ -288,7 +290,13 @@ def run_self_critique(config: dict, diary_db_path: str,
         model = str(cfg.get("model", er.get("model",
                     "jobautomation/OpenEuroLLM-Czech:latest")))
         timeout = int(cfg.get("llm_timeout", 300))
+        # PERSONA_REFACTOR_11 — CORE před úkol, ať model ví, JAKÝ tón se drží
         system = _SYSTEM.format(persona_name=pname)
+        try:
+            from scripts.hans_persona import persona_system as _ps
+            system = _ps(config, system)
+        except Exception:
+            pass
         user = transcript
         if recent:
             # HANS_SELFCRITIQUE_SUBSTANCE_V1 — anti-repetice na DRUH, ne na text

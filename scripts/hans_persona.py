@@ -87,6 +87,39 @@ def persona_core(config: dict, diary=None, with_address: bool = True) -> str:
     return apply_name(" ".join(s.strip() for s in parts if s and s.strip()), config)
 
 
+def persona_system(config: dict, task: str) -> str:
+    """PERSONA_REFACTOR_11 — CORE identita z configu + ÚKOL jako modulace.
+
+    Přesně vzor PERSONA_REFACTOR_9_B z hans_synthesis: prompt, ve kterém Hans
+    mluví sám za sebe, NESMÍ redeklarovat, kým je — jinak Severkou změněný CORE
+    na to místo nedosáhne a Hans se rozejde sám se sebou."""
+    base = persona_core(config, with_address=False)
+    return ("%s\n\n%s" % (base, task)) if base else task
+
+
+def persona_brief(config: dict, max_chars: int = 140) -> str:
+    """PERSONA_REFACTOR_11 — KRÁTKÁ charakteristika do CIZÍHO promptu.
+
+    Pro místa, kde Hanse popisuje někdo jiný (Koláčův system prompt) a celý
+    CORE by se nevešel. Vrací první větu CORE bez úvodního představení
+    (v cizím promptu jméno už zaznělo). Prázdno = volající má vlastní fallback."""
+    import re as _re
+    core = (config.get("persona", {}) or {}).get("core", "") or ""
+    core = apply_name(core, config).strip()
+    if not core:
+        return ""
+    nm = _re.escape(persona_name(config))
+    core = _re.sub(r"^\s*(Jmenuješ se %s[^.]*\.|Jsi %s\.)\s*" % (nm, nm),
+                   "", core).strip()
+    # popis pro TŘETÍ stranu — shodit i oslovovací „Jsi ", ať věta sedí
+    # do závorky („Mluvíš s postavou jménem Hans (tichý pozorovatel…)").
+    core = _re.sub(r"^Jsi\s+", "", core).strip()
+    veta = core.split(". ")[0].strip().rstrip(".")
+    if len(veta) > max_chars:
+        veta = veta[:max_chars].rsplit(" ", 1)[0] + "…"
+    return veta
+
+
 def recent_interests(db_path: str, limit: int = 5) -> str:
     """READ-ONLY: posledních `limit` interest_update not z deníku jako text.
 

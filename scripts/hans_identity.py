@@ -189,10 +189,31 @@ class IdentityStore:
             return None
 
     # ── Zápis / workflow ───────────────────────────────────────────────────
+    def _tokenize_name(self, core: str) -> str:
+        """SEVERKA_NAME_TOKEN_V1 — vrátí jméno do podoby tokenu {name}.
+
+        Model dostane pokyn „ZACHOVEJ jméno", takže ho napíše natvrdo a tím
+        zruší PERSONA_NAME_CONFIGURABLE_V1 (config i seed v1 token měly).
+        Deterministicky, ne promptem — model tokenu nerozumí spolehlivě.
+        Jen 1. pád na hranici slova: CORE oslovuje ve 2. osobě, skloňované
+        tvary se v něm prakticky nevyskytují a nechceme komolit běžný text."""
+        import re as _re
+        try:
+            from scripts.hans_persona import persona_name
+            nm = persona_name(self._config)
+        except Exception:
+            return core
+        if not nm or not core or "{name}" in core:
+            return core
+        out = _re.sub(r"\b%s\b" % _re.escape(nm), "{name}", core)
+        if out != core:
+            _log.info("identity: jméno %r nahrazeno tokenem {name}", nm)
+        return out
+
     def propose(self, new_core: str, rationale: str = "",
                 source: str = "severka") -> Optional[int]:
         """Vloží návrh nového CORE jako 'pending'. NIC neaplikuje."""
-        new_core = (new_core or "").strip()
+        new_core = self._tokenize_name((new_core or "").strip())
         if not new_core:
             return None
         try:

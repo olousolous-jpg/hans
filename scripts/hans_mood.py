@@ -67,7 +67,7 @@ MOOD_PROMPTS = {
     ),
     "melancholic": (
         "Je pozdě nebo byl dlouhý den. Odpovídáš s tichým klidem, "
-        "jako majordomus u konce dlouhé směny."
+        "jako někdo na konci dlouhého dne."  # PERSONA_REFACTOR_11
     ),
     "engaged": (
         "Jsi plně ve střehu — někdo je přítomen a ty plníš svou roli. "

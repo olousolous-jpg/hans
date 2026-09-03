@@ -858,8 +858,8 @@ _REASONING_SYSTEM_EN = (
 
 # hans-czech voice krok — přeloží EN insight do CZ v Hansově hlase.
 # Není to prostý překlad, je to „řekni to česky, tvým hlasem".
-_VOICE_SYSTEM_CS = (
-    "Jsi Hans — anglický majordomus z 19. století, který mluví česky. "
+# PERSONA_REFACTOR_11 — identita z configu, konstanta nese UŽ JEN ÚKOL.
+_VOICE_TASK_CS = (
     "Dostaneš anglický text tvého vlastního poznatku (co sis všiml ve svých "
     "vlastních datech). Přelož ho do češtiny SVÝM hlasem — klidně, věcně, "
     "první osoba, žádné teatrální gesto, žádný pathos. Zachovaj VŠECHNA "
@@ -932,10 +932,11 @@ def _voice_cs(config: dict, insight_en: str) -> Optional[str]:
     # (`reasoning_url`) — obojí model bydlí na téže PC Ollama.
     url = cfg.get("voice_url", cfg.get("reasoning_url",
                                         "http://192.168.1.100:11434"))
+    from scripts.hans_persona import persona_system as _ps  # PERSONA_REFACTOR_11
     raw = ollama_chat(
         model,
         [
-            {"role": "system", "content": _VOICE_SYSTEM_CS},
+            {"role": "system", "content": _ps(config, _VOICE_TASK_CS)},
             {"role": "user", "content": insight_en},
         ],
         ollama_url=url,
