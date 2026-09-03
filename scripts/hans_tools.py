@@ -81,6 +81,32 @@ def _arg_names(action) -> list:
     return out
 
 
+# HANS_TOOLS_UPRESNENI_V1 (3.9.) — popis PRO NÁSTROJ, ne pro starý router.
+#
+# `ACTIONS[*].desc` psal člověk pro LLM router, který dostává větu i kontext;
+# tool-calling model dostává HOLOU větu a schéma, takže mu chybí to, co router
+# doplní odjinud. Upřesnění sedí TADY, ne v `hans_agent.ACTIONS`, protože ty
+# jsou živé a slouží produkčnímu routeru — tool-calling je zatím nenapojený
+# experiment a nesmí do něj sahat.
+#
+# Změřeno 3.9. na mezeře `kodi_play_film` (21 vět z retro běhu, z toho 5
+# skutečných žádostí o přehrání):
+#     A dnešní schéma                 0/5 trefeno
+#     B jen `required` uvolněné       1/5
+#     C uvolněné + popis              4/5      ← žádná falešná trefa z 6 kontrolních
+# Rozhoduje tedy POPIS, ne volitelnost sama. Bez něj se model u věty bez titulu
+# ptá zpátky („Chcete si zahájit náhodný film?") místo aby nástroj zavolal.
+_UPRESNENI = {
+    "kodi_play_film": {
+        "desc": ("Pustit film nebo porad na televizi (Kodi). Kdyz uzivatel "
+                 "nejmenuje konkretni titul (napr. 'pust neco', 'pust nahodny "
+                 "film'), zavolej to s prazdnym titulem - vybere se nahodne."),
+        "volitelne": ["titul"],
+        "args": {"titul": "Nazev filmu; PRAZDNY retezec = vyber nahodne."},
+    },
+}
+
+
 def tools_schema(action_ids) -> list:
     """ACTIONS → seznam nástrojů ve tvaru, kterému rozumí Ollama /api/chat."""
     from scripts.hans_agent import ACTIONS
@@ -89,13 +115,19 @@ def tools_schema(action_ids) -> list:
         a = ACTIONS.get(aid)
         if a is None:
             continue
+        up = _UPRESNENI.get(aid) or {}
+        volitelne = set(up.get("volitelne") or ())
+        popisy = up.get("args") or {}
         props, req = {}, []
         for nm in _arg_names(a):
-            props[nm] = {"type": "string", "description": nm}
-            req.append(nm)
+            props[nm] = {"type": "string",
+                         "description": popisy.get(nm, nm)}
+            if nm not in volitelne:
+                req.append(nm)
         out.append({"type": "function", "function": {
             "name": aid,
-            "description": (getattr(a, "desc", "") or "")[:400],
+            "description": (up.get("desc")
+                            or getattr(a, "desc", "") or "")[:400],
             "parameters": {"type": "object", "properties": props,
                            "required": req}}})
     return out
