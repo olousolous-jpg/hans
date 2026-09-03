@@ -1093,16 +1093,28 @@ ACTIONS: dict[str, Action] = {
     # ── Info dotazy (instant, bez potvrzení) ────────────────────────────────
     "report_weather": Action(
         "report_weather",
-        "Odpovědět na dotaz o počasí venku — aktuálním i na ZÍTŘEK. "
-        # HANS_WEATHER_TOMORROW_V1 (3.9.) — argument místo druhé akce:
-        # přesnost routeru klesá s počtem nástrojů (změřeno 1.9.), takže
-        # `report_weather_tomorrow` by zhoršil výběr u všech dotazů.
-        "Argument `kdy`: „dnes“ (výchozí) nebo „zitra“, když se ptá na "
-        "předpověď („jaké bude zítra počasí?“, „bude zítra pršet?“). "
-        "⚠️ Dál než na zítřek předpověď nesahá.",
-        hints=["počasí", "pocasi", "venku", "prší", "prsi", "sněží", "snezi",
-               "teplo venku", "zima venku", "za oknem", "slunečno",
-               "zítra", "zitra", "předpověď", "predpoved"],
+        # HANS_WEATHER_HINT_FIX_V1 (3.9.) — popis je ZÁMĚRNĚ zpět u „aktuálního
+        # počasí“, ačkoli akce umí i zítřek. Rozšíření o slovo ZÍTŘEK bylo
+        # REGRESE: router pak posílal na počasí i „máš něco v kalendáři na
+        # zítra?" a „kdy se zitra hraje MS v hokeji?" (2. 9. obojí správně None).
+        # ⛔ Negativní příklad („NE kalendář, NE sport") se sem NEPŘIDÁVÁ —
+        # u `HANS_CMD_LLM_ROUTE_V3` je změřeno, že nepomohly, a byl by to
+        # [[prompt-debt-tool-calling]]. Oprava patří do STRUKTURY: o zítřek se
+        # stará `_ZITRA_PAT` uvnitř `_run_weather`, tedy až za rozhodnutím.
+        "Odpovědět na dotaz o AKTUÁLNÍM počasí / jak je venku. "
+        "Argument `kdy` = „zitra“, ptá-li se výslovně na předpověď.",
+        # ⚠️ HANS_WEATHER_HINT_FIX_V1 (3.9.) — „zítra"/„zitra" tu bylo pár hodin
+        # a bylo to REGRESE, kterou odhalilo až přeměření: samotné „zítra" nemá
+        # s počasím nic společného, takže pre-gate pustil dál věty, které pak
+        # router poslal na počasí.
+        #     „kdy se zitra hraje MS v hokeji?"   None → report_weather  ✗
+        #     „máš něco v kalendáři na zítra?"    None → report_weather  ✗
+        # Dotaz na předpověď projde i bez toho: „jaké bude zítra počasí?" přes
+        # „počasí", „jaká je předpověď na zítra?" přes „predpoved". Doplněn jen
+        # chybějící tvar slovesa pršet.
+        hints=["počasí", "pocasi", "venku", "prší", "prsi", "pršet", "prset",
+               "sněží", "snezi", "teplo venku", "zima venku", "za oknem",
+               "slunečno", "předpověď", "predpoved"],
         args=["kdy"], run=_run_weather, grounding=None,
         needs_confirm=False, cooldown_s=10),
     "report_climate": Action(
