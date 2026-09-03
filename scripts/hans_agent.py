@@ -47,6 +47,33 @@ _YES = {"ano", "jo", "jasně", "jasan", "pusť", "pust", "spusť", "spust",
 # skutečné povely, ani jeden běžný hovor. Většinu z nich stejně odchytí dřív
 # `parse_command` (běží PŘED agentem), takže reálný dopad je malý a bezpečný —
 # jde hlavně o povely, na které chatový příkaz není (připomeň, probuď, běž).
+# HANS_AGENT_ASK_NOT_ADD_V1 (3.9.) — rozliší DOTAZ od POKYNU u akcí, které
+# něco zakládají. Pokyn má přednost, aby „nastuduj X" prošlo i s otazníkem.
+_ASK_INFO_PAT = re.compile(
+    r"\b(rekni|reknes|povez|popis|popises|vysvetli|vysvetlis|ukaz|ukazes|"
+    r"co vis|vis o|zajima me|odkud)\b")
+_ASK_ORDER_PAT = re.compile(
+    r"\b(nastuduj|prostuduj|nauc se|zapis|poznamenej|pripomen|pridej|zarad|"
+    r"chci precist|chci si precist)\b")
+
+
+def _je_dotaz_ne_pokyn(msg: str) -> bool:
+    """Ptá se věta na informaci, místo aby zakládala úkol?
+
+    Změřeno na 27 reálných volbách zakládajících akcí: potlačí 5 (všechny
+    chybné), 22 ostatních projde včetně legitimních pokynů.
+    """
+    import unicodedata as _u
+    m = (msg or "").strip()
+    if not m:
+        return False
+    t = "".join(c for c in _u.normalize("NFD", m.lower())
+                if not _u.combining(c))
+    if _ASK_ORDER_PAT.search(t):
+        return False          # skutečný pokyn — pravidlo neplatí
+    return bool(_ASK_INFO_PAT.search(t)) or m.endswith("?")
+
+
 _ACTION_VERBS = {
     "vypni", "zapni", "namaluj", "nakresli", "probud", "probuď",
     "pripomen", "připomeň", "zkus", "pust", "pusť", "spust", "spusť",
@@ -1738,6 +1765,24 @@ class AgentRouter:
                    "kodi_play_film", "kodi_resume"),
              podminka=lambda s, aid, msg, dec, h: s._how_question(msg),
              verdikt=None, duvod="věta se ptá JAK/KAM to funguje, nežádá spuštění"),
+        # HANS_AGENT_ASK_NOT_ADD_V1 (3.9.) — DOTAZ nezakládá úkol.
+        # Nalezeno rozborem všech 140 rozdílových vět retro měření: starý
+        # router zakládal studijní téma nebo knižní přání z pouhé OTÁZKY.
+        #   „rekni mi, jak se vyvijely zbrojnice"      → add_study_topic
+        #   „popis mi podrobne historii amfor"         → add_study_topic
+        #   „ukaz mi zdroj o Icon of the Seas"         → add_study_topic
+        #   „jakou knihu mas na mysli?"                → add_book_wishlist
+        #   „Slupka vseho zla, je to epizoda nebo knizka?" → add_book_wishlist
+        # Tyhle akce něco ZALOŽÍ (zapíšou do DB, čekají na potvrzení), takže
+        # jsou dražší než chybný výpis — z otázky vzniknout nemají.
+        # ⚠️ Pokyn má PŘEDNOST: „nastuduj X", „připomeň mi Y" projdou i s „?".
+        # Změřeno na 27 reálných volbách těchto akcí: potlačí 5, všechny
+        # chybné (nový router u nich mlčí taky), a nechá projít všech
+        # 22 ostatních včetně legitimních pokynů.
+        dict(marker="HANS_AGENT_ASK_NOT_ADD_V1",
+             akce=("add_study_topic", "add_book_wishlist", "add_note"),
+             podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_pokyn(msg),
+             verdikt=None, duvod="věta se ptá, nezakládá úkol"),
     )
 
     def _uz_studovano(self, decision: dict, handler) -> bool:
