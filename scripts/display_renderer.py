@@ -134,6 +134,40 @@ class DisplayRenderer:
             cdir = "data/avatar/clips"
             now = time.time()
 
+            def _clip_fresh(p):
+                """AVATAR_CLIP_FRESHNESS_V1 — klip smí hrát jen když NENÍ starší
+                než aktuální tvář. Jinak displej střídá dva různé lidi (3.9.:
+                statický v3 badatel × klipy z v2 majordoma). Raději bez animace
+                než cizí obličej; zahojí se samo, až klipy doženou."""
+                if not p:
+                    return False
+                try:
+                    if now - getattr(self, "_av_face_mt_ts", 0.0) > 60.0:
+                        import glob as _gg
+                        vs = []
+                        for _d in _gg.glob("data/avatar/v*"):
+                            try:
+                                vs.append((int(os.path.basename(_d)[1:]), _d))
+                            except ValueError:
+                                pass
+                        _f = os.path.join(max(vs)[1], "idle.png") if vs else None
+                        self._av_face_mt = (os.path.getmtime(_f)
+                                            if _f and os.path.exists(_f) else 0.0)
+                        self._av_face_mt_ts = now
+                    if not getattr(self, "_av_face_mt", 0.0):
+                        return True          # tvář neznámá → neblokuj
+                    if os.path.getmtime(p) >= self._av_face_mt:
+                        return True
+                    if not getattr(self, "_av_stale_logged", False):
+                        self._av_stale_logged = True
+                        import logging
+                        logging.getLogger("display_renderer").warning(
+                            "avatar: klipy jsou starší než tvář — hraju statický "
+                            "obrázek. Regeneruj (hans_avatar.animate).")
+                    return False
+                except Exception:
+                    return True
+
             # AVATAR_TALK_SPEAKER_V1 — kdo mluví (sdílený TTS): Koláč má pitch +40Hz,
             # Hans +0Hz/None. Talk video JEN když mluví Hans; Koláč mluví → statický idle.
             speaking = False
@@ -151,8 +185,10 @@ class DisplayRenderer:
             #  mluví → talk loop; idle = statický PNG + krátká idle anim á 4s
             #  + náhodný „vytvořený" klip á ~10 min (variace). One-shoty → zpět na static.
             cur = getattr(self, "_av_cur", None)        # (kind, path, start, end) nebo None
+            _talk_clip = os.path.join(cdir, "hlp_d13_00001.mp4")
             if hans_talking:
-                desired = ("talk", os.path.join(cdir, "hlp_d13_00001.mp4"), 0.5)
+                desired = (("talk", _talk_clip, 0.5) if _clip_fresh(_talk_clip)
+                           else ("static", None, 0.0))   # AVATAR_CLIP_FRESHNESS_V1
             elif kolac_talking:
                 desired = ("static", None, 0.0)         # Koláč mluví → Hans statický idle
             elif cur and cur[0] in ("idleanim", "extra"):
@@ -166,11 +202,14 @@ class DisplayRenderer:
                     self._av_next_extra = now + var_s
                 if now >= self._av_next_extra:          # ~10 min: náhodný vytvořený klip
                     import glob as _g
-                    pool = sorted(_g.glob(os.path.join(cdir, "*.mp4")))
+                    pool = [p for p in sorted(_g.glob(os.path.join(cdir, "*.mp4")))
+                            if _clip_fresh(p)]      # AVATAR_CLIP_FRESHNESS_V1
                     desired = ("extra", random.choice(pool), 0.0) if pool else ("static", None, 0.0)
                     self._av_next_extra = now + var_s
                 elif now >= self._av_next_idle:         # á 4s: krátká idle animace (hlp_d9)
-                    desired = ("idleanim", os.path.join(cdir, "hlp_d9_00001.mp4"), 0.0)
+                    _idle_clip = os.path.join(cdir, "hlp_d9_00001.mp4")
+                    desired = (("idleanim", _idle_clip, 0.0)     # AVATAR_CLIP_FRESHNESS_V1
+                               if _clip_fresh(_idle_clip) else ("static", None, 0.0))
                     self._av_next_idle = now + idle_s
                 else:
                     desired = ("static", None, 0.0)     # statický PNG
