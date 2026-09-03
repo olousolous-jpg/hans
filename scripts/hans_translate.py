@@ -614,7 +614,37 @@ def prelozit_srt(config, src_srt, dst_srt, progress=None) -> dict:
 
 
 # ── sestavení výsledku ───────────────────────────────────────────────────────
-def zamichat(config, pc_path, wav_local, out_name, rezim=None) -> str:
+def _pripoj_titulky(cfg, srt_local, vstup_idx: int) -> tuple[str, str]:
+    """HANS_SUB_TRACK_V1 (2.9., pokyn uzivatele) — cesky SRT jako STOPA v MKV.
+
+    Vraci dvojici kusu prikazu: co pridat mezi vstupy a co mezi vystupni volby.
+    Prazdne retezce = titulky se nepripojuji (vypnuto v configu, nebo soubor
+    neni na disku).
+
+    ⚠️ CASOVANI UZ SEDI, nic se neprepocitava: volajici posila `srt` z konce
+    retezce, tedy verzi PO preskalovani (`cz_zpomaleno.srt`), kdyz se obraz
+    zpomaloval. Poslat sem puvodni prekladovy SRT by titulky rozesla s obrazem
+    o cely faktor `f_video`.
+
+    ⚠️ `-disposition:s:0 0` NENI zbytecne — je to tataz past jako
+    HANS_TRACK_DEFAULT_V1 u zvuku: bez sundani priznaku by se titulky zapnuly
+    samy nad ceskym dabingem. Kdo je chce, zapne si je v prehravaci.
+    """
+    if not srt_local or not cfg.get("subs_track", True):
+        return "", ""
+    if not os.path.exists(srt_local):
+        log.warning("titulky k pripojeni nejsou na disku: %s", srt_local)
+        return "", ""
+    remote = "/tmp/hans_cz_titulky.srt"
+    _pc_put(cfg, srt_local, remote)
+    vstup = f"-i {_q(remote)} "
+    konec = (f"-map {vstup_idx}:0 -c:s srt "
+             f"-metadata:s:s:0 language=ces -metadata:s:s:0 title=\"Cesky\" "
+             f"-disposition:s:0 0 ")
+    return vstup, konec
+
+
+def zamichat(config, pc_path, wav_local, out_name, rezim=None, srt_local=None) -> str:
     """Video se jen KOPÍRUJE. Výsledek má DVĚ stopy: české lektorské čtení
     (originál ztlumený pod ní) a originál.
 
@@ -648,7 +678,9 @@ def zamichat(config, pc_path, wav_local, out_name, rezim=None) -> str:
     # ⚠️ -fflags +genpts: AVI nenese časové značky použitelné pro MKV a mux
     #    by spadl na „Can't write packet with unknown timestamp" — a vyrobil
     #    přitom 14kB zmetek, na kterém ffprobe vypíše všechny stopy správně.
+    sub_in, sub_out = _pripoj_titulky(cfg, srt_local, 2)
     cmd = (f"ffmpeg -v error -y -fflags +genpts -i {_q(pc_path)} -i /tmp/hans_cz_track.wav "
+           f"{sub_in}"
            f"-filter_complex \"[0:a]aresample=48000,volume={vol}[o];"
            f"[1:a]aresample=48000[c];[o][c]amix=inputs=2:duration=longest:normalize=0[lekt]\" "
            f"-map 0:v:0 -map \"[lekt]\" -map 0:a:0 "
@@ -661,6 +693,7 @@ def zamichat(config, pc_path, wav_local, out_name, rezim=None) -> str:
            # sám — doloženo na hotových souborech (ffprobe: default=1 u obou),
            # uživatel slyšel angličtinu místo lektora.
            f"-disposition:a:0 default -disposition:a:1 0 "
+           f"{sub_out}"
            f"-avoid_negative_ts make_zero {_q(out)}")
     _pc(cfg, cmd, 3600)
     velikost = int(_pc(cfg, f"stat -c%s {_q(out)}", 60).strip())
@@ -700,7 +733,8 @@ def _delka_videa(cfg, pc_path: str) -> float:
                           f"-of csv=p=0 {_q(pc_path)}", 180).strip())
 
 
-def zamichat_zpomalene(config, pc_path, wav_local, out_name, f: float) -> str:
+def zamichat_zpomalene(config, pc_path, wav_local, out_name, f: float,
+                       srt_local=None) -> str:
     """Jako `zamichat`, ale obraz I originální zvuk se ZPOMALÍ faktorem `f`.
 
     Nápad uživatele 27.8. Důvod je početní: český text potřeboval o 18 % víc
@@ -729,8 +763,11 @@ def zamichat_zpomalene(config, pc_path, wav_local, out_name, f: float) -> str:
             timeout=int((cfg.get("youtube") or {}).get("upload_timeout_s", 1800)))
     vol = float(cfg.get("orig_volume", 0.22))
     inv = 1.0 / f
+    # ⚠️ `-itsscale` plati JEN na nasledujici vstup (obraz). Titulky uz sve
+    #    preskalovani nesou v sobe, takze se na ne nesmi pouzit podruhe.
+    sub_in, sub_out = _pripoj_titulky(cfg, srt_local, 3)
     cmd = (f"ffmpeg -v error -y -itsscale {f:.6f} -i {_q(pc_path)} -i {_q(pc_path)} "
-           f"-i /tmp/hans_cz_track.wav -filter_complex "
+           f"-i /tmp/hans_cz_track.wav {sub_in}-filter_complex "
            f"\"[1:a:0]atempo={inv:.6f},aresample=48000[orig];"
            f"[orig]asplit=2[o1][o2];[o1]volume={vol}[oq];"
            f"[2:a]aresample=48000[cz];"
@@ -741,7 +778,7 @@ def zamichat_zpomalene(config, pc_path, wav_local, out_name, f: float) -> str:
            f"-metadata:s:a:1 language=eng -metadata:s:a:1 title=\"Original\" "
            # HANS_TRACK_DEFAULT_V1 — viz `zamichat`: bez sundání příznaku
            # z originálu jsou default obě stopy a přehrávač bere angličtinu.
-           f"-disposition:a:0 default -disposition:a:1 0 {_q(out)}")
+           f"-disposition:a:0 default -disposition:a:1 0 {sub_out}{_q(out)}")
     _pc(cfg, cmd, 3600)
     velikost = int(_pc(cfg, f"stat -c%s {_q(out)}", 60).strip())
     if velikost < 1_000_000:
@@ -930,12 +967,14 @@ def _preloz_jadro(config, pc_path=None, meta=None, progress=None) -> dict:
         say("skládám soubor")
         if yt:
             jmeno = hy.nazev_souboru(yt["titul"], yt_id)
-            out = (zamichat_zpomalene(config, pc_path, wav, jmeno, rp["f_video"])
+            out = (zamichat_zpomalene(config, pc_path, wav, jmeno, rp["f_video"],
+                                      srt_local=srt)
                    if rp["f_video"] > 1.001
-                   else zamichat(config, pc_path, wav, jmeno, rezim="stranou"))
+                   else zamichat(config, pc_path, wav, jmeno, rezim="stranou",
+                                 srt_local=srt))
         else:
             jmeno = os.path.splitext(os.path.basename(pc_path))[0] + " [CZ].mkv"
-            out = zamichat(config, pc_path, wav, jmeno)
+            out = zamichat(config, pc_path, wav, jmeno, srt_local=srt)
 
     if yt:
         _uklid_zdroje(cfg, pc_path)
@@ -947,7 +986,8 @@ def _preloz_jadro(config, pc_path=None, meta=None, progress=None) -> dict:
                       "rec_pct": (rp or {}).get("zaklad_pct"),
                       "dozadano": prel.get("dozadano"),
                       "nepreloz": prel.get("nepreloz"),
-                      "posun_s": (hlas.get("stats") or {}).get("max_opozdeni_s")},
+                      "posun_s": (hlas.get("stats") or {}).get("max_opozdeni_s"),
+                      "titulky": bool(cfg.get("subs_track", True))},
                      popis=(yt or {}).get("titul"))
     return {"ok": True, "soubor": out, "zdroj": zdroj["zdroj"], "motor": hlas["engine"],
             "posun_s": (hlas.get("stats") or {}).get("max_opozdeni_s"),

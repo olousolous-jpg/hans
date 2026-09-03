@@ -45,6 +45,8 @@ import logging
 import os
 import re
 import subprocess
+import time
+import urllib.request
 
 log = logging.getLogger(__name__)
 
@@ -90,8 +92,70 @@ def _bin(cfg) -> str:
     return os.path.expanduser(cfg.get("ytdlp_bin", "~/.local/bin/yt-dlp"))
 
 
+# HANS_YT_VISITOR_DATA_V1 (2.9.) — proc to tu je:
+# yt-dlp si watch stranku stahuje sam a na tomhle spojeni na ni dostava HTTP 429.
+# Bez ni nema `visitorData`, bez nej nedostane PO token a YouTube odpovi hlaskou
+# "Sign in to confirm you are not a bot". Vypada to na blokaci IP, ale neni:
+# TITULNI strana youtube.com se z tehoz Pi nacte v poradku a visitorData v ni je.
+# Staci ho tedy vytahnout vlastni zadosti a podstrcit yt-dlp.
+# ZMERENO 2.9.: bez nej chyba na kazdem pokusu, s nim projde produkcni selektor
+# i nabidka az do 2160p. Doslo na to po trech spadlych /preloz behem 20 minut.
+# NEDELAT z toho retry smycku a nesahat po cookies uctu (rozhodnuti 31.8.
+# v backlogu) — visitorData resi touz vec bez prihlaseni a bez rizika pro ucet.
+_UA = ("Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
+_VD_RE = re.compile(r'"visitorData":"([^"]+)"')
+_VD = {"hodnota": None, "ts": 0.0}
+
+
+def _visitor_data(cfg) -> str | None:
+    """visitorData z titulni strany YouTube, cachovane. None = jede se bez nej."""
+    yt = (cfg.get("youtube", {}) or {})
+    ttl = float(yt.get("visitor_data_ttl_s", 21600))
+    ted = time.time()
+    if _VD["hodnota"] and (ted - _VD["ts"]) < ttl:
+        return _VD["hodnota"]
+    try:
+        req = urllib.request.Request("https://www.youtube.com/",
+                                     headers={"User-Agent": _UA})
+        html = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "replace")
+        m = _VD_RE.search(html)
+        if not m:
+            log.warning("visitorData: na titulni strane YouTube nebylo")
+            return None
+        _VD["hodnota"], _VD["ts"] = m.group(1), ted
+        log.info("visitorData obnoveno (%d znaku)", len(m.group(1)))
+        return _VD["hodnota"]
+    except Exception as e:
+        log.warning("visitorData se nepodarilo ziskat: %s", e)
+        return None
+
+
+def _extra_args(cfg) -> list[str]:
+    """Co si yt-dlp na tomhle stroji vyzaduje navic, nez dostane vlastni argumenty."""
+    out: list[str] = []
+    vd = _visitor_data(cfg)
+    if vd:
+        out += ["--extractor-args", "youtube:visitor_data=%s" % vd]
+    # JS runtime: bez nej je extrakce na deprecated ceste a cast formatu chybi
+    # (varovani bylo v backlogu uz od 26.8.). Cestu je nutne predat VYSLOVNE —
+    # PATH systemd sluzby `hans` konci na ~/.local/bin a ~/.deno/bin v nem NENI,
+    # takze pres PATH by se runtime zivemu Hansovi tise nenasel.
+    js = os.path.expanduser(str(cfg.get("js_runtime", "~/.deno/bin/deno") or ""))
+    if js and os.path.exists(js):
+        out += ["--js-runtimes", "%s:%s" % (os.path.basename(js), js)]
+    # Cookies jsou ZAMERNE necinne: klic je prazdny a naplni se jen rucne, kdyby
+    # visitorData nekdy prestalo stacit. Prihlaseny ucet u YouTube tim riskuje
+    # ban, proto to neni vychozi cesta.
+    ck = os.path.expanduser(str((cfg.get("youtube", {}) or {}).get("cookies", "") or ""))
+    if ck and os.path.exists(ck):
+        out += ["--cookies", ck]
+    return out
+
+
 def _yt(cfg, args: list[str], timeout: int) -> str:
-    r = subprocess.run([_bin(cfg)] + args, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run([_bin(cfg)] + _extra_args(cfg) + args,
+                       capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(f"yt-dlp selhal: {(r.stderr or r.stdout)[-400:]}")
     return r.stdout
