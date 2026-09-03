@@ -16,7 +16,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from scripts.web_admin_questions import router as questions_router, init as questions_init
@@ -1189,15 +1189,37 @@ def avatar_state():
 
 
 @app.get("/api/avatar/clip")
-def avatar_clip(name: str):
+def avatar_clip(name: str, request: Request = None):
     """Servíruje konkrétní klip dle stavu (jen basename .mp4 z clips/)."""
     safe = Path(name).name
     if not safe.endswith(".mp4"):
         raise HTTPException(status_code=400, detail="invalid clip")
+    # AVATAR_CLIP_ETAG_V1 — JS sahá na src při každém pollu; bez podmíněné
+    # obsluhy by no-cache znamenalo stahovat celý klip stále dokola
+    # (FileResponse last-modified posílá, ale If-None-Match neřeší).
+    _p = Path("data/avatar/clips") / safe
+    if _p.exists():
+        try:
+            _st = _p.stat()
+            _tag = 'W/"%d-%d"' % (int(_st.st_mtime), _st.st_size)
+            if request is not None and \
+                    request.headers.get("if-none-match") == _tag:
+                return Response(status_code=304, headers={
+                    "ETag": _tag, "Cache-Control": "no-cache"})
+            return FileResponse(str(_p), media_type="video/mp4",
+                                headers={"Cache-Control": "no-cache",
+                                         "ETag": _tag})
+        except OSError:
+            pass
     p = Path("data/avatar/clips") / safe
     if p.exists():
+        # AVATAR_CLIP_NOCACHE_V1 — max-age=3600 znamenalo, ze se prohlizec
+        # hodinu NEZEPTA, takze regenerovany klip (stejne jmeno, jiny obsah)
+        # k nemu nedorazil: staticky avatar uz byl v3, mrkani porad v2.
+        # no-cache = revaliduj vzdy; FileResponse posila last-modified + etag,
+        # takze nezmeneny klip stoji jen 304, ne cely soubor.
         return FileResponse(str(p), media_type="video/mp4",
-                            headers={"Cache-Control": "max-age=3600"})
+                            headers={"Cache-Control": "no-cache"})
     raise HTTPException(status_code=404, detail="no clip")
 
 

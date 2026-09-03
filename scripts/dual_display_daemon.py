@@ -78,9 +78,15 @@ class FaceSource:
         return np.zeros((H, W, 3), np.uint8)
 
     def _clip_frames(self, name):
-        if name in self._clip_cache:
-            return self._clip_cache[name]
+        # AVATAR_CLIP_NOCACHE_V1 — klic (jmeno, mtime): regenerace meni OBSAH,
+        # ne jmeno, takze cache podle jmena drzela snimky stare tvare.
         path = os.path.join(AV_DIR, "clips", name)
+        try:
+            key = (name, os.path.getmtime(path))
+        except OSError:
+            key = (name, 0)
+        if key in self._clip_cache:
+            return self._clip_cache[key]
         out = []
         if os.path.exists(path):
             cap = cv2.VideoCapture(path)
@@ -90,7 +96,7 @@ class FaceSource:
                     break
                 out.append(cv2.resize(cv2.cvtColor(fr, cv2.COLOR_BGR2RGB), (W, H)))
             cap.release()
-        self._clip_cache[name] = out
+        self._clip_cache = {key: out}   # jen aktualni verze, stare snimky ven
         return out
 
     def frame(self):
