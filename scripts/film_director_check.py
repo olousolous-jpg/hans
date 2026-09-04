@@ -37,6 +37,13 @@ _ATRIBUCE = re.compile(
 # titul: nejbližší „…" / *…* / "…" PŘED atribucí
 _TITUL = re.compile(r"[„\"*]([^„\"*\n]{2,70})[\"“*]")
 
+# HANS_DIRECTOR_ONLY_FILM_V1 — rozlišení spouštěče a filmového kontextu.
+_JEN_OD = re.compile(r"^od\b", re.IGNORECASE)
+_FILMOVE_SLOVO = re.compile(
+    r"\b(film\w*|sn[íi]m\w*|dokument\w*|seri[áa]l\w*|epizod\w*|d[íi]l\b|"
+    r"kinematograf\w*|nato[čc]en\w*|re[žz][ií]\w*|promít\w*|kino\w*)\b",
+    re.IGNORECASE)
+
 
 def _fold(s: str) -> str:
     s = unicodedata.normalize("NFKD", (s or "").lower())
@@ -111,6 +118,20 @@ def zkontroluj_rezii(odpoved: str, kodi=None, config=None) -> str:
     if not tituly:
         return odpoved              # bez titulu nemáme co ověřit
     titul = tituly[-1].strip()
+    # HANS_DIRECTOR_ONLY_FILM_V1 (4.9.) — HOLÉ „od" NENÍ TVRZENÍ O REŽII.
+    # Doloženo 3× ve třech testovacích rozhovorech: věta „Režiséra si ale
+    # zpaměti raději neurčím." se lepila za pozdrav, za doporučení KNIH
+    # („kniha „Fotografie" od Susan Sontagové" → autorka čtena jako režisérka)
+    # a za tip na večer. Atribuce se přitom SMAZALA, takže odpověď zůstala
+    # useknutá a doplněná nesouvisející omluvou.
+    # Explicitní spouštěče (`režie`, `režisér`, `natočil`) jsou samy o sobě
+    # filmové a platí dál beze změny. Jen u holého „od" se navíc žádá, aby
+    # kolem titulu bylo FILMOVÉ slovo — přesně tak, jak vypadají zamýšlené
+    # případy v komentáři výš (film *Sedmikrásky* od…, snímek Vlaky od…).
+    if _JEN_OD.match(m.group("cele").strip()) and not _FILMOVE_SLOVO.search(pred):
+        _log.info("HANS_DIRECTOR_ONLY_FILM_V1: %r — spoustec od bez "
+                  "filmoveho kontextu, atribuci nechavam byt", titul)
+        return odpoved
     prij = _prijmeni(tvrzeny)
 
     rezie = _z_kodi(kodi, titul)
@@ -135,4 +156,6 @@ def zkontroluj_rezii(odpoved: str, kodi=None, config=None) -> str:
     _log.info("HANS_FILM_DIRECTOR_CHECK_V1: %r u %r nesedí (v článku není) "
               "→ atribuce odstraněna", tvrzeny, titul)
     upravena = odpoved.replace(m.group("cele"), "", 1)
-    return upravena.rstrip() + " Režiséra si ale zpaměti raději neurčím, pane."
+    # HANS_DIRECTOR_ONLY_FILM_V1 — bez „pane": tahle funkce adresáta NEZNÁ
+    # a doloženě se ta věta lepila i do odpovědí ženám.
+    return upravena.rstrip() + " Režiséra si ale zpaměti raději neurčím."

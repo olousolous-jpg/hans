@@ -462,6 +462,28 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
             # mezeru za čárkou vrátit zpět (jinak vznikne „Ano,Stando")
             text, cnt2 = pat2.subn(lambda m: m.group(1) + target, text)
             n += cnt2
+    # HANS_ADDRESSEE_ZENA_PANE_V1 (4.9.) — ZENE NERIKAT „pane".
+    # Dolozeno testovacimi rozhovory u DVOU ruznych zen, obou ZNAMYCH osob
+    # s vyplnenym `gender` v configu: „…Zalezi na Vasem vkusu. Regisera si ale
+    # zpameti radeji neurcim, PANE." Backlog to vedl jako drobnost „u NEZNAMYCH
+    # osob" — je to ale i u znamych, takze horsi, nez se myslelo.
+    # Proc tady a ne v sablonach: natvrdo psanych „, pane" je v kodu ~100.
+    # Prepisovat je po jedne je drahe, krehke a stejne by to nepokrylo texty
+    # z modelu. Tahle funkce bezi po KAZDE odpovedi a vokativy uz opravuje —
+    # je to jedno misto pro celou tridu.
+    # ⚠️ JEN V OSLOVOVACI POZICI (za carkou nebo na zacatku, pred interpunkci
+    # nebo koncem) — stejne prisne jako `pat2` vys. „pan Novak je doma" je
+    # 3. osoba a zustava; tentyz slib docstringu.
+    try:
+        _g = str((known.get(partner) or known.get(str(partner).lower()) or {})
+                 .get("gender", "")).strip().lower()
+    except Exception:
+        _g = ""
+    if _g in ("zena", "\u017eena", "z", "f", "female"):
+        _pane = re.compile(r"(?:(?<=^)|(?<=,))(\s*)pane\b(?=\s*(?:[.,;:!?]|$))",
+                           re.IGNORECASE | re.MULTILINE)
+        text, cnt3 = _pane.subn(lambda m: m.group(1) + target, text)
+        n += cnt3
     return text, n
 
 
