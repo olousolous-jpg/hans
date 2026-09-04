@@ -1855,11 +1855,59 @@ class AgentRouter:
         # Změřeno na 27 reálných volbách těchto akcí: potlačí 5, všechny
         # chybné (nový router u nich mlčí taky), a nechá projít všech
         # 22 ostatních včetně legitimních pokynů.
+        # HANS_SPEAKER_FACT_V1 (4.9.) — OSOBNI FAKT O MLUVCIM NENI HANSUV
+        # STUDIJNI ZAMER. Doloženo 3/3 a reprodukovano v BEZICIM Hansovi:
+        #   „zapamatuj si ze mam rada mangu"     -> add_study_topic / manga
+        #   „zapamatuj si ze mam rad detektivky" -> add_study_topic / detektivky
+        #   „pamatuj si ze me bavi priroda"      -> add_study_topic / priroda
+        # Router TEMA vytahne spravne (3/3) — spatny je CIL. `HANS_AGENT_ASK_
+        # NOT_ADD_V1` to neblokuje a blokovat nema: je to ROZKAZ, ne otazka.
+        # ⚠️ Pravidlo stoji PRED `ASK_NOT_ADD`, aby se zajem zapsal i u tazaci
+        # formy („zapamatujes si, ze mam rada mangu?") — jinak by ji ASK_NOT_ADD
+        # spolkl driv a zajem by se ztratil.
+        # Spravne uloziste UZ EXISTUJE (`hans_person_interests`), takze se
+        # nezaklada 24. nastroj: 1.9. je ZMERENO, ze presnost routeru klesa
+        # s poctem akci (21/22 se sesti -> 19/22 s 23). Zapis dela `dopad`
+        # pravidla, verdikt je None = akce se potlaci a veta spadne do hovoru.
+        # ⛔ NESTAVET DRUHE MISTO ZAPISU. Zivy test 4.9. ukazal, ze tataz veta
+        # jde jednou pres agenta (`add_study_topic`) a podruhe pres chatovy
+        # prikaz (`zajmy`) — a agent se v druhem pripade vubec nespusti
+        # (`openwebui_direct_handler`: prikazy maji prednost PRED agentem).
+        # Druha cesta uz ale POKRYTA JE: nocni `extract_person_interests` cte
+        # `human_chat` za 26 h nezavisle na routovani, a je to tataz tabulka.
+        # Zapis tady je jen ZRYCHLENI, aby „zapamatovano" bylo pravda hned —
+        # ne jediny zdroj. Tema se bere z ROUTERU, takze druhy extraktor
+        # tematu k nemu stejne neexistuje.
+        dict(marker="HANS_SPEAKER_FACT_V1", akce=("add_study_topic",),
+             podminka=lambda s, aid, msg, dec, h: __import__(
+                 "scripts.hans_intent", fromlist=["x"]).je_fakt_o_mluvcim(msg),
+             dopad=lambda s, aid, msg, dec, h: s._zapis_zajem_mluvciho(dec, h, msg),
+             verdikt=None, duvod="je to zájem MLUVČÍHO, ne téma ke studiu"),
         dict(marker="HANS_AGENT_ASK_NOT_ADD_V1",
              akce=("add_study_topic", "add_book_wishlist", "add_note"),
              podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_pokyn(msg),
              verdikt=None, duvod="věta se ptá, nezakládá úkol"),
     )
+
+    def _zapis_zajem_mluvciho(self, decision: dict, handler, message: str):
+        """HANS_SPEAKER_FACT_V1 — uloz to, co uzivatel rekl o SOBE, do
+        `person_interests` (tabulka, kterou cte `/zajmy` i greeting kontext).
+
+        Tema bere z ROUTERU (`args.tema`) — 4.9. zmereno 3/3 spravne, takze
+        se nestavi druhy extraktor vedle nej. Bez jmena mluvciho nebo bez
+        tematu se nezapisuje nic: radsi nic nez zajem prisouzeny nespravne
+        osobe. Nikdy nevyhodi vyjimku — je to vedlejsi ucinek, ne rozhodnuti.
+        """
+        osoba = (getattr(self, "_speaker", "") or "").strip()
+        tema = ((decision.get("args") or {}).get("tema") or "").strip()
+        if not osoba or not tema:
+            log.info("HANS_SPEAKER_FACT_V1: nezapisuji (osoba=%r, tema=%r)",
+                     osoba, tema)
+            return
+        from scripts.hans_person_interests import PersonInterestStore
+        store = PersonInterestStore(self.config, _diary_path(handler))
+        rid = store.add_or_reinforce(osoba, tema, examples=[(message or "")[:200]])
+        log.info("HANS_SPEAKER_FACT_V1: zájem [%s] %s ← %r", rid, osoba, tema)
 
     def _uz_studovano(self, decision: dict, handler) -> bool:
         """HANS_STUDY_KNOWN_TOPIC_V1 — je téma už odškrtnuté? (dotaz do DB)"""
@@ -1904,6 +1952,15 @@ class AgentRouter:
             log.info("%s: %s %s — %s: %.50s", pr["marker"], aid,
                      "potlačen" if verdikt is None else ("→ " + verdikt),
                      pr["duvod"], message)
+            # HANS_SPEAKER_FACT_V1 — nepovinny DOPAD pravidla. Podminka
+            # musi zustat CISTA (vola se u kazde akce), takze vedlejsi ucinek
+            # bezi az tady, kdyz uz je jiste, ze pravidlo sepnulo.
+            dopad = pr.get("dopad")
+            if dopad is not None:
+                try:
+                    dopad(self, aid, message, decision, handler)
+                except Exception as e:
+                    log.warning("dopad pravidla %s selhal: %s", pr["marker"], e)
             if verdikt is None:
                 return None
             aid = verdikt
@@ -1917,6 +1974,10 @@ class AgentRouter:
         # (19.8.: přiřazení bylo omylem NAD docstringem, takže docstring
         # přestal být docstringem — vráceno na správné pořadí.)
         self._raw_message = message or ""
+        # HANS_SPEAKER_FACT_V1 — kdo mluvi. Pravidla dostavaji jen
+        # (aid, msg, decision, handler), takze jmeno musi na instanci —
+        # tentyz vzor jako `_raw_message` o radek vyse.
+        self._speaker = (name or "").strip()
         # HANS_HOUSEHOLD_PRIVACY_V1 — runnery potřebují vědět, KDO se ptá
         # (karty o domácnosti se cizímu člověku nevydávají).
         self._raw_name = name or ""

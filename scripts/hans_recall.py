@@ -1148,15 +1148,32 @@ def _extract_topic(question: str) -> str:
         # slash tvar: „/cetl o hradech" → args = „o hradech"
         m = re.match(r"^o\s+(.{2,60}?)\s*\??$", q, re.IGNORECASE)
     if not m:
-        return ""
+        return _vytcene_tema(q)
     words = [w for w in re.findall(r"[\wěščřžýáíéúůďťňó-]+", m.group(1))
              if w.lower() not in _STOPWORDS]
     # HANS_READING_TOPIC_SENTENCE_BOUND_V1 — reálné čtenářské téma je krátké
     # (1-4 slova: „hradech", „Sherlock Holmes"). Delší = pahýl z ukecané věty,
     # ne téma → radši prázdno = obecný výpis „co jsem četl", ne bogus „o ‚…'".
     if len(words) > 4:
+        return _vytcene_tema(q)
+    return " ".join(words).strip() or _vytcene_tema(q)
+
+
+# HANS_READING_FRONTED_TOPIC_V1 (4.9.) — VYTCENE TEMA JAKO ZALOHA.
+# Doloženo 4.9. v BEZICIM Hansovi: „a rukodelna prace, cetl jsi o tom neco?"
+# -> `_extract_topic` vrati '' (tema stoji PRED carkou, ve vete uz je jen
+# anaforicke „o tom", a „tom"/„neco" jsou stopwordy) -> `/cetl` vysypal ctyri
+# posledni cetby, ani jednu o remesle.
+# Predikat je SDILENY (`hans_intent.vytcene_tema`) s branou na `/zajmy`
+# v `chat_commands._thread_guard` — je to tataz trida vety, tak at se
+# nerozejdou. Cisla mereni jsou u predikatu.
+# ⚠️ Jen ZALOHA: kdyz tema najde puvodni cesta, vytceni se neptame.
+def _vytcene_tema(question: str) -> str:
+    try:
+        from scripts.hans_intent import vytcene_tema
+        return vytcene_tema(question)
+    except Exception:
         return ""
-    return " ".join(words).strip()
 
 
 def _topic_stems(topic: str) -> list[str]:

@@ -4522,6 +4522,34 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
         _log.info("HANS_READING_IMPRESSION_V1: '%.40s' → /%s ZAMÍTNUTO "
                   "(ptá se na dojem, ne na výpis)", msg, cid)
         return ""
+    # HANS_ZAJMY_NOT_TOPIC_V1 (4.9.) — VYPIS ZAJMU NEUMI FILTROVAT PODLE TEMATU.
+    # Doloženo 4.9. v BEZICIM Hansovi (2 vety, obe reprodukovany):
+    #   „a co detektivky, ty ctes?"             -> vypis zajmu tazatelky
+    #   „co detektivky, mas nejakou oblibenou?" -> tentyz vypis
+    # a treti tvar je OZNAMENI, ne otazka:
+    #   „Me samotnou hodne bavi priroda…"       -> tentyz vypis
+    # `/zajmy` je klicovany OSOBOU (SELECT ... WHERE person=?), takze na dotaz
+    # POJMENOVANEM TEMATEM odpovedet neumi — a na oznameni uz vubec.
+    # Guard proto sedi AZ ZA volbou stitku (tady, vedle HANS_CMD_LLM_ROUTE_V4),
+    # ne pred ni: rozlisovac neni vlastnost vety, ale dvojice (veta, stitek).
+    # ⛔ NEZKOUSET ZNOVU dva kandidaty zmerene 4.9. a ZAMITNUTE:
+    #   (a) `hans_intent.is_about_self` — myli se v 5 z 8 dolozenych vet,
+    #   (b) „ano/ne sonda za carkou" — na 1231 realnych replikach se tyka 56
+    #       a vetsina je LEGITIMNI (uvodni pozdrav vyrobi carku).
+    # Oba predikaty niz jsou SDILENE (`hans_intent`) a zmerene na realnych
+    # zpravach: `vytcene_tema` 6 shod z 1298, `je_fakt_o_mluvcim` 4 z 1294.
+    if cid == "zajmy":
+        try:
+            from scripts.hans_intent import vytcene_tema, je_fakt_o_mluvcim
+            _tema = vytcene_tema(msg)
+            if _tema or je_fakt_o_mluvcim(msg):
+                _log.info("HANS_ZAJMY_NOT_TOPIC_V1: '%.40s' → /zajmy ZAMÍTNUTO "
+                          "(%s — výpis zájmů to nefiltruje)", msg,
+                          ("téma '%s'" % _tema) if _tema
+                          else "fakt o mluvčím")
+                return ""
+        except Exception as _zne:
+            _log.debug("zajmy topic gate: %s", _zne)
     if (cid in _VYPISOVE_CMDS and (_je_navazujici_dotaz(msg) or _uvaha_ask)
             and not _zminuje_vlastni_tema(cid, msg)):
         _log.info("HANS_THREAD_NO_LIST_V1: '%.40s' → /%s ZAMÍTNUTO "

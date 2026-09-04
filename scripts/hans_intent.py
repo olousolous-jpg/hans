@@ -596,6 +596,105 @@ _OBSAZENI_PAT = __import__("re").compile(
     __import__("re").IGNORECASE)
 
 
+# ── HANS_SPEAKER_FACT_V1 / HANS_FRONTED_TOPIC_V1 (4.9.) ────────────────────
+# Dva predikaty pro tutez tridu chyby: uzivatel rekne TEMA nebo FAKT O SOBE
+# a Hans na to odpovi VYPISEM, ktery s tim nesouvisi. Bydli tady, protoze je
+# potrebuji DVE ruzne vrstvy (agent + chatovy router) a dve kopie by se
+# rozesly — stejny duvod jako u `pta_se_na_obsazeni` vyse.
+
+# HANS_SPEAKER_FACT_V1 — veta rika, co ma rad MLUVCI (ne co ma Hans nastudovat).
+# Doloženo 4.9. 3/3: „zapamatuj si ze mam rada mangu" -> agentni akce
+# `add_study_topic` -> „Mam si manga zaradit ke studiu?". Router tema vytahne
+# spravne, spatny je CIL: patri to do `person_interests`, ne do studia.
+# ⚠️ ZAMERNE UZKE. Zmereno na 1294 realnych uzivatelskych replikach:
+#   • siroka verze (i „zajima me", „miluju", „nesnasim") -> 10 shod a mezi nimi
+#     „to mne zajima, zjisi vice." = SKUTECNA zadost o dohledani; veto by byla
+#     regrese. „zajima me X" je dvojznacne (mam to rad x zjisti mi to), proto
+#     se sem NEBERE — a rozsirovat to zpet bez noveho mereni NENI bezpecne.
+#   • tahle verze -> 4 shody z 1294, vsechny jsou skutecne preference mluvciho
+#     a ani jedna zadost o nastudovani.
+# ⚠️ ZAPOR se zachytne schvalne NE: „nemam rad horory" je take fakt o mluvcim,
+# ale zapsat ho jako ZAJEM by bylo obracene. (`\b` pred `mam` uz „nemam"
+# vylucuje — je to vlastnost vzoru, ne nahoda, tak at se nezmeni omylem.)
+_FAKT_O_MLUVCIM = re.compile(
+    r"\bm[aá]m\s+(?:hodn[eě]\s+|moc\s+|nejv[ií]c\s+|opravdu\s+)?"
+    r"(?:r[aá]d[aoy]?|nejrad[sš]i)\b"
+    r"|\b(?:m[eě]|mn[eě])\b[^.?!]{0,24}\bbav[ií]\b"
+    r"|\bbav[ií]\b[^.?!]{0,24}\b(?:m[eě]|mn[eě])\b",
+    re.IGNORECASE)
+
+
+def je_fakt_o_mluvcim(text: str) -> bool:
+    """Rika veta, co ma rad / co bavi MLUVCIHO? (ne pokyn Hansovi)"""
+    return bool(_FAKT_O_MLUVCIM.search(text or ""))
+
+
+# HANS_FRONTED_TOPIC_V1 — VYTCENE TEMA (topikalizace): „a co detektivky, ty
+# ctes?", „a rukodelna prace, cetl jsi o tom neco?". Tema stoji PRED carkou,
+# zbytek vety uz je jen otazka — takze zadny extraktor tematu ho nenajde
+# a vypisove prikazy vysypou vsechno bez ohledu na to, nac se ptal.
+# ⛔ NEDELAT z toho obecne pravidlo „cokoliv pred carkou": ZMERENO na 1294
+# realnych replikach -> 139 shod, drtiva vetsina UVODNI POZDRAV („Ahoj, koho
+# jsi dneska videl?"). To je tataz past, na ktere 4.9. zkrachovala „ano/ne
+# sonda za carkou" (viz HANDOFF_04_09). Proto jen DVA uzke tvary:
+#   A) „[a] co TEMA," — otevrene vytceni
+#   B) „TEMA, ... o tom/o ni/o nem" — vytceni s anaforou zpet na tema;
+#      anafora musi byt JEDINY predmet „o ..." ve zbytku, jinak se odkazuje
+#      jinam („ahoj, o knizce o designu jsme mluvili. co mi o ni reknes?").
+# Plus filtry vynucene merenim: pozdrav/citoslovce, funkcni slova a slovesny
+# tvar 2. osoby/rozkazu („vice nezjistuj,", „no vidis,").
+# Vysledek: 6 shod z 1298 a vsech 6 je skutecna topikalizace.
+_VYTK_CO = re.compile(
+    r"^(?:a\s+|no\s+|tak\s+)?co\s+"
+    r"((?:[\w\u00c0-\u017f]+\s*){1,3}?)\s*,\s*(.+)$", re.IGNORECASE)
+_VYTK_HOLE = re.compile(
+    r"^(?:a\s+|no\s+|tak\s+)?"
+    r"((?:[\w\u00c0-\u017f]+\s*){1,3}?)\s*,\s*(.+)$", re.IGNORECASE)
+_VYTK_ANAFORA = re.compile(
+    r"\bo\s+(tom|t[eé]|n[eě][mj]|n[ií]|nich|t[eě]ch)\b", re.IGNORECASE)
+_VYTK_POZDRAV = re.compile(
+    r"^(ahoj|[cč]au|zdar|nazdar|zdrav[ií]m|dobr[yý]\s+(den|ve[cč]er)|"
+    r"dobr[eé]\s+(r[aá]no|odpoledne)|hel[eé]|posly[sš]|hej|no|"
+    r"dobr[yý]|dobr[eé]|zaj[ií]mav[eé]|d[ií]ky|d[eě]kuji|po[cč]kej)"
+    r"(\s+\w+)?$", re.IGNORECASE)
+_VYTK_SLOVESNY = re.compile(r"(?:[sš]|te|[uůaeií]j|li)$", re.IGNORECASE)
+_VYTK_FUNKCE = re.compile(
+    r"\b(se|si|jsi|jsem|jste|jsme|to|u[zž]|ne|ano|jen|m[eě]|mne)\b",
+    re.IGNORECASE)
+
+
+def _vytk_prijatelne(t: str) -> bool:
+    sl = t.split()
+    if not (1 <= len(sl) <= 3) or not any(len(w) >= 4 for w in sl):
+        return False
+    if _VYTK_POZDRAV.match(t) or _VYTK_FUNKCE.search(t):
+        return False
+    return not any(_VYTK_SLOVESNY.search(w) for w in sl)
+
+
+def vytcene_tema(text: str) -> str:
+    """Tema vytcene pred carkou („a co detektivky, ty ctes?" -> „detektivky").
+    '' kdyz veta topikalizaci nema. Nikdy nevyhodi vyjimku."""
+    s = (text or "").strip()
+    if not s:
+        return ""
+    try:
+        m = _VYTK_CO.match(s)
+        if m and _vytk_prijatelne(m.group(1).strip()):
+            return m.group(1).strip()
+        m = _VYTK_HOLE.match(s)
+        if not m:
+            return ""
+        t, zbytek = m.group(1).strip(), m.group(2).strip()
+        if not _vytk_prijatelne(t) or not _VYTK_ANAFORA.search(zbytek):
+            return ""
+        if len(re.findall(r"\bo\s+\w+", zbytek)) != 1:
+            return ""
+        return t
+    except Exception:
+        return ""
+
+
 def pta_se_na_obsazeni(text: str) -> bool:
     """Ptá se věta, KDO ve filmu hraje / kdo ho režíroval?"""
     return bool(_OBSAZENI_PAT.search(text or ""))
