@@ -752,6 +752,15 @@ def _cmd_work(handler, name, args) -> str:  # WORK_CMD_V1 + WORK_REFACTOR_SHARED
             % (topic, r.get('words', 0), r.get('path', '?'), r.get('rag', '?')))
 
 
+# HANS_ZAJMY_JEN_TAZATEL_V1 — kdy se výpis zájmů smí týkat CELÉ domácnosti.
+# Musí to být řečeno výslovně; jinak dostane tazatel svoje. Vzor je úzký
+# schválně — širší by spolkl i „co detektivky, čteš je?" a únik by se vrátil.
+_PTA_SE_NA_VSECHNY = re.compile(
+    r"\b(v[šs]ichni|v[šs]ech|kdo\s+v[šs]echno|lid[ií]\s+(doma|v\s+dom\w*)|"
+    r"cel[áa]\s+dom[áa]cnost|kdo\s+co\s+m[áa]\s+r[áa]d|u\s+n[áa]s\s+doma|"
+    r"ka[žz]d[ýy]\b)", re.IGNORECASE)
+
+
 def _cmd_interest(handler, name, args) -> str:  # INTEREST_CMD_C2 / INTEREST_DEL
     """/interest                -> výpis naučených zájmů
     /interest <téma>       -> zapíše nový zájem
@@ -1795,6 +1804,18 @@ def _cmd_zajmy(handler, name, args) -> str:
                     who = str(_p).strip().lower()
             except Exception:
                 pass
+        # HANS_ZAJMY_JEN_TAZATEL_V1 (4.9.) — VÝCHOZÍ JE TAZATEL, NE VŠICHNI.
+        # Doloženo testovacím rozhovorem: členka domácnosti se zeptala
+        # „a co detektivky, ty čteš?" a dostala profily VŠECH ostatních
+        # členů i fantomové osoby „uživatel". Ptala se přitom o SOBĚ.
+        # Mezi členy domácnosti to je únik:
+        # `HANS_HOUSEHOLD_PRIVACY_V1` hlídá jen CIZÍ tazatele, sem nedosáhne.
+        # ⚠️ NEREVERTUJE `HANS_LLM_ROUTE_ARGS_V2` výše: ten chtěl, aby „jaké
+        # zájmy mají lidi doma?" vypsalo všechny — a to dál platí. Mění se jen
+        # případ, kdy věta NEURČUJE NIKOHO; tam je tazatel jediný, o kom je
+        # jisté, že se na sebe ptát smí.
+        if not who and not _PTA_SE_NA_VSECHNY.search(_q or ""):
+            who = str(name or "").strip().lower()
     try:
         conn = _s.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
         conn.row_factory = _s.Row

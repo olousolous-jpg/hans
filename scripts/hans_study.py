@@ -231,6 +231,30 @@ _OTAZKA_RE = re.compile(
 
 _FB_MAX_SLOV = 10
 
+# HANS_DEEPEN_ZAVER_NENI_SOUHLAS_V1 (4.9.) — ZAVŘENÍ HOVORU NENÍ VERDIKT.
+# Doloženo testovacím rozhovorem: „dobre, diky" (2 slova, bez otazníku, pod
+# limitem) prošlo bránou, klasifikátor z něj udělal SCHVALUJE a Hans odpověděl
+# „Schváleno, pane. Prohloubím studium Norimberský proces." — a SKUTEČNĚ TO
+# PROVEDL: program se z `completed` vrátil na `active`, kurikulum 8 → 12 témat,
+# deepen_round 0 → 1 (log 15:16:20). Poděkování na konci hovoru je přitom
+# nejběžnější věta vůbec.
+# Rozlišovač: „dobře" je v závěrečné frázi VÝPLŇ, ne souhlas. Když věta nese
+# rozloučení nebo poděkování a ŽÁDNÝ silný verdikt, není to reakce na návrh.
+# ⚠️ „ano, díky" / „souhlasím, díky" projdou dál — poděkování samo o sobě
+# souhlas neruší, ruší ho jen NEPŘÍTOMNOST výslovného verdiktu.
+# Změřeno na 1231 reálných replikách: neubere ANI JEDEN dosavadní záchyt
+# (28 → 28), a 12/12 kontrolních případů sedí.
+_ZAVER_RE = re.compile(
+    r"\b(d[íi]ky|d[ěe]kuj\w*|dik|na\s+shledanou|nashle|m[ěe]j\s+se|"
+    r"dobrou\s+noc|hezk[ýy]\s+(den|ve[čc]er)|zat[íi]m\s+ahoj|tak\s+zat[íi]m)\b",
+    re.I)
+# Výslovný verdikt — tenhle poděkování přebije. („dobře“ a „jo“ tu ZÁMĚRNĚ
+# nejsou: samy o sobě verdikt nesou, ale v rozloučení jsou jen výplň.)
+_SILNY_VERDIKT_RE = re.compile(
+    r"\b(ano|souhlas\w*|schval(?!n)\w*|prohlub|prohloub|ne\b|nechci|"
+    r"nesouhlas\w*|zru[šs]|nech\s+to|špatn\w*|slab\w*|m[ěe]l\s+bys|"
+    r"douč|dodělej)\b", re.I)
+
 
 def je_reakce_na_navrh(zprava: str) -> bool:
     """HANS_DEEPEN_FEEDBACK_GATE_V1 — smí tahle věta k LLM klasifikátoru?
@@ -258,6 +282,10 @@ def je_reakce_na_navrh(zprava: str) -> bool:
         return False
     if "?" in m or _OTAZKA_RE.match(m):
         return False        # věta s vlastním dotazem není odpověď na návrh
+    # HANS_DEEPEN_ZAVER_NENI_SOUHLAS_V1 — rozloučení/poděkování bez výslovného
+    # verdiktu je konec hovoru, ne schválení. Viz komentář u `_ZAVER_RE`.
+    if _ZAVER_RE.search(m) and not _SILNY_VERDIKT_RE.search(m):
+        return False
     return len(m.split()) <= _FB_MAX_SLOV
 
 
