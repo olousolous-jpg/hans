@@ -4932,7 +4932,7 @@ def _cmd_hledani(handler, name, args) -> str:   # HANS_WEBSHARE_CMD_V1
                     "webshare.preskoc_bez_jmena na false — nebo zkuste "
                     "přesnější název." % (dotaz, _psk0))
         return "Na „%s“ jsem na Webshare nic nenašel, pane." % dotaz
-    _WS_STAV[name or ""] = {"nalezy": nalezy, "dotaz": dotaz, "ts": time.time()}
+    zapamatuj_nalezy(name, dotaz, nalezy)
     # HANS_WEBSHARE_PRESKOCENO_HLASI_V1 (4.9.) — přeskočené nálezy se PŘIZNÁVAJÍ.
     # Filtr na nesmyslné názvy je užitečný, ale kdyby mazal tiše, uživatel by
     # nikdy nezjistil, že mu něco chybí — a u hledání je to zrovna ten druh
@@ -4949,6 +4949,17 @@ def _cmd_hledani(handler, name, args) -> str:   # HANS_WEBSHARE_CMD_V1
              "vypnout jde klíčem webshare.preskoc_bez_jmena.)" % _psk) if _psk else ""
     return "%s\n%s%s\n\nStáhnu který? Stačí /hledani stahni <číslo>." % (
         hlava, ws.vypis(nalezy, _ws_kolik(cfg)), _pozn)
+
+
+def zapamatuj_nalezy(jmeno: str, dotaz: str, nalezy: list) -> None:
+    """HANS_WEBSHARE_STAV_SDILENY_V1 — ulož výpis, ze kterého se pak vybírá číslem.
+
+    ⚠️ Volá to i AGENTNÍ odmítací větev (`hans_agent._reject_kodi_play`), když
+    film není v knihovně a Hans nabídne Webshare. Bez sdílení by po té nabídce
+    „/hledani stahni 2“ nemělo z čeho vybírat — a dva samostatné stavy by se
+    dřív nebo později rozešly. Jedna pravda, dva zapisovatelé.
+    """
+    _WS_STAV[jmeno or ""] = {"nalezy": nalezy, "dotaz": dotaz, "ts": time.time()}
 
 
 def _ws_kolik(cfg) -> int:

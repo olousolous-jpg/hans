@@ -1491,6 +1491,8 @@
     "rezerva_gb": 5,
     "_note_rezerva_gb": "Kolik GB na Pi nechat volných. Když by se soubor s touhle rezervou nevešel, stahování se ODMÍTNE. Zaplnit Pi systémový disk by shodilo celého Hanse, ne jen stahování.",
     "presun_timeout_s": 3600,
-    "_note_presun_timeout_s": "Strop pro scp přesun Pi→PC. Při 103 MB/s je hodina i na 12 GB velká rezerva."
+    "_note_presun_timeout_s": "Strop pro scp přesun Pi→PC. Při 103 MB/s je hodina i na 12 GB velká rezerva.",
+    "nabidnout_pri_odmitnuti": true,
+    "_note_nabidnout_pri_odmitnuti": "HANS_KODI_WEBSHARE_NABIDKA_V1 (4.9.) — když film NENÍ v Kodi knihovně, nabídnout, co je k němu na Webshare. Sedí to v odmítací větvi akce kodi_play_film, takže to pokrývá i „najdi mi film X\", „sežeň mi film X\" i „pusť film X\" — všechny tyhle věty už dnes na tu akci míří (změřeno 3/3). ⛔ Zvláštní agentní akce se pro ně ZÁMĚRNĚ nestaví: 24. nástroj zhoršuje výběr všem ostatním. false = jen přiznat, že film v knihovně není."
   }
 }

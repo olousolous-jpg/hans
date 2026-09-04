@@ -534,9 +534,46 @@ def _reject_kodi_play(handler, args) -> str:
     base = ("Film „%s\" v knihovně nemám, pane — a nechci předstírat, "
             "že ho pouštím." % title)
     if gloss:
-        return base + (" Vím o něm aspoň tolik: %s" % gloss[:300])
-    return base + (" Kodi ho možná vede pod jiným názvem; zkuste mi ho říct "
-                   "tak, jak je uložený.")
+        base += " Vím o něm aspoň tolik: %s" % gloss[:300]
+    else:
+        base += (" Kodi ho možná vede pod jiným názvem; zkuste mi ho říct "
+                 "tak, jak je uložený.")
+    # HANS_KODI_WEBSHARE_NABIDKA_V1 (4.9.) — TEPRVE TEĎ MÁ SMYSL WEBSHARE.
+    # Tohle je přesně ta chvíle z backlogu „film mimo knihovnu“: víme, že
+    # v Kodi není, a máme název, který už router vytáhl.
+    # ⛔ Nová agentní akce se pro „najdi mi film X“ ZÁMĚRNĚ NESTAVĚLA — změřeno
+    # 4.9., že tyhle věty už dnes míří sem 3/3 i s názvem; 24. nástroj by zhoršil
+    # výběr všem (1.9.: 21/22 → 19/22 při 6 → 23 nástrojích).
+    # ⚠️ Nesmí to shodit odmítnutí samotné: celé v try/except, a když Webshare
+    # není nastavený nebo se nedovolá, vrátí se původní věta beze změny.
+    try:
+        cfg = getattr(handler, "config", {}) or {}
+        wc = (cfg.get("webshare", {}) or {})
+        if wc.get("enabled", True) and wc.get("nabidnout_pri_odmitnuti", True):
+            from scripts import hans_webshare as _ws
+            if _ws.nastaveno(cfg):
+                nalezy = _ws.hledej(cfg, title, limit=int(wc.get("limit", 25)))
+                if nalezy:
+                    _ar = (getattr(handler, "_agent_inst", None)
+                           or getattr(handler, "_agent", None))
+                    kdo = getattr(_ar, "_raw_name", "") or ""
+                    # sdílený stav → hned pak funguje „/hledani stahni 2“
+                    from scripts.chat_commands import zapamatuj_nalezy
+                    zapamatuj_nalezy(kdo, title, nalezy)
+                    kolik = int(wc.get("vypis_kolik", 8))
+                    log.info("HANS_KODI_WEBSHARE_NABIDKA_V1: '%s' není v knihovně "
+                             "→ %d nálezů na Webshare", title, len(nalezy))
+                    return (base + "\n\nNa Webshare jsem ale našel tohle "
+                            "(kvalitu odhaduji z názvu souboru):\n%s"
+                            "\n\nStáhnu který? Stačí /hledani stahni <číslo>."
+                            % _ws.vypis(nalezy, kolik))
+                psk = _ws.preskoceno()
+                if psk:
+                    return (base + " Na Webshare je %d souborů, ale u všech je "
+                            "název nesmyslný, takže je nenabízím." % psk)
+    except Exception as _we:
+        log.debug("webshare nabídka při odmítnutí: %s", _we)
+    return base
 
 
 def _ground_kodi_play(handler, args):
