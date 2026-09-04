@@ -108,6 +108,43 @@ class ConversationStore:
         self._max_turns = int(conv_cfg.get("max_turns", 20))
         self._dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _sbal_monolog(msgs: list) -> list:
+        """HANS_CONV_GREETING_ECHO_V1 (4.9.) — z nepreruseneho behu Hansovych
+        replik nech jen POSLEDNI.
+
+        PROC: pozdrav pri rozpoznani tvare se uklada sem jako `assistant`
+        zprava BEZ uzivatelske repliky. Kdyz clovek neodpovi (obvykle
+        neodpovi), hromadi se monolog — a `get_history` ho cely podava
+        chatovemu modelu jako few-shot. Ten pak jejich TVAR kopiruje do
+        odpovedi na uplne jine otazky.
+        **Doloženo živě 4.9.**: ve 3 z 5 tahu zacala odpoved „Henko, dobry
+        den." a mela vlepenou doslovnou predpoved „Zitra (05.09.): slaby
+        dest 16-23°C." — vcetne odpovedi na dotaz o Star Treku. Predpoved
+        do POZDRAVU patri (uzivatelsky opt-in `greeting.special_greetings`),
+        do odpovedi o Star Treku ne.
+        Zmereno: v poslednich 40 zpravach jedne osoby bylo 30 nezodpovezenych
+        Hansovych replik.
+
+        Posledni z behu se NECHAVA schvalne: pokud clovek odpovi, odpovida
+        prave na ni (na tom stoji HANS_QUESTION_CONTINUITY_V1).
+        Starsi uz nikoho nezajimaly — nejsou to repliky dialogu, je to log.
+
+        ⚠️ Meni JEN pohled do promptu, v ulozisti zustava vse (zobrazeni
+        i `/rozhovory` ctou odjinud).
+        Zmereno na vsech ulozenych konverzacich: kde probehl skutecny dialog
+        (4 z 9 souboru) je zmena **0 %**; ubyva jen tam, kde se hromadil
+        monolog (-65 az -99 %).
+        """
+        out = []
+        for m in msgs or []:
+            if (m.get("role") == "assistant" and out
+                    and out[-1].get("role") == "assistant"):
+                out[-1] = m
+                continue
+            out.append(m)
+        return out
+
     def get_history(self, name: str, channel: str = None) -> list:
         """HANS_CHAT_CHANNEL_AWARE_V1 — channel=None vrací vše (zpětná
         kompatibilita, default). channel='web'/'telegram'/'voice'/'popup' vrací
@@ -118,6 +155,7 @@ class ConversationStore:
         msgs = data.get("messages", [])
         if channel is not None:
             msgs = [m for m in msgs if m.get("ch") in (None, channel)]
+        msgs = self._sbal_monolog(msgs)   # HANS_CONV_GREETING_ECHO_V1
         return [{"role": m["role"],
                  "content": (dedup_address_g4d(m["content"], name, self.config)
                              if m["role"] == "assistant" else m["content"])}
