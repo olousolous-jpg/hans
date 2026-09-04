@@ -513,7 +513,13 @@
   "person_interests": {
     "window_hours": 26,
     "max_per_person": 8,
-    "probe_questions": true
+    "probe_questions": true,
+    "merge_ratio": 0.75,
+    "_merge_ratio_note": "PERSON_INTEREST_CONSOLIDATE_V1: lexikální PRESCREEN pro slučování duplicitních zájmů. Sám nerozhoduje — vybírá jen kandidáty, o shodě rozhoduje merge_model. Níž = víc dotazů na model, ne víc sloučení.",
+    "merge_model": "qwen2.5:7b",
+    "_merge_model_note": "Sémantický rozhodčí „je to totéž?“. Změřeno 4.9.: 14/14 správně a 3/3 stabilně, včetně pastí astronomie×gastronomie a historie×hysterie. Malý (4,7 GB) → vejde se vedle rezidentního chatu.",
+    "max_merges_per_night": 5,
+    "_max_merges_per_night_note": "Strop sloučení za noc — pojistka proti hromadnému zásahu do dat. Nic se nemaže, prohraný řádek jde na status='merged' a vrací se jedním UPDATE."
   },
   "gemini": {
     "api_key": "",

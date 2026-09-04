@@ -45,6 +45,47 @@ def _norm(s: str) -> str:
     return _WS.sub(" ", (s or "").strip().lower())
 
 
+# PERSON_INTEREST_NORM_V2 (4.9.) — klic zajmu snasi DIAKRITIKU A VELKA PISMENA.
+# Doloženo v datech: jedna osoba mela `historie` (4) i `Historie` (1) jako dva
+# ruzne radky, protoze `_norm` delal jen lower(). Rozpad nejsilnejsiho zajmu
+# do vic radku neni kosmetika — `evidence_count` ridi poradi ve vypisu
+# i v bloku UZ ZNAME ZAJMY, kterym se krmi nocni extrakce.
+# ⚠️ VLASTNI funkce, `_norm` se NESMI zmenit: normalizuje i sloupec `person`,
+# takze slozeni diakritiky by prepsalo klice osob.
+# ⛔ DAL UZ SE NESLUCUJE: fuzzy dedup je ZMERENY A ZAMITNUTY (4.9.).
+# `historie`↔`hustoria` (chceme slouceni, preklep) a `historie`↔`hysterie`
+# (slouceni by bylo chybne) maji STEJNE ratio 0.750, stejne prvni pismeno,
+# stejnou delku i editacni vzdalenost 2 — lexikalne je NIC nerozlisi.
+# Adversarialni sada dava dalsi pasti: `astronomie`↔`gastronomie` 0.952,
+# `chemie`↔`chemik` 0.833, `biologie`↔`geologie` 0.750. Na zivych datech
+# vypada prah 0.75 cistě jen proto, ze slovnik ma 28 slov.
+def _norm_interest(s: str) -> str:
+    """Klic zajmu: bez diakritiky, mala pismena, jedna mezera."""
+    import unicodedata as _ud
+    t = _ud.normalize("NFKD", (s or "").strip().lower())
+    t = "".join(c for c in t if not _ud.combining(c))
+    return _WS.sub(" ", t).strip()
+
+
+# PERSON_INTEREST_NO_PLACEHOLDER_V1 (4.9.) — ZASTUPNY NAZEV NENI OSOBA.
+# Doloženo: v tabulce sedela osoba `uzivatel` se dvema zajmy. Nevznikla
+# z hosta — vyrobil ji NAS VLASTNI KOD: `openwebui_direct_handler._handle_web_chat`
+# dosadi `"Uživatel"`, kdyz request jmeno nenese, to se zapise jako `title`
+# denikoveho `human_chat` a nocni `extract_person_interests` z toho udela
+# osobu. Fantom pak spotrebovava misto ve vypisu a v prompt blocich.
+# ⚠️ Skutecni HOSTE se NEBLOKUJI — clovek, ktery si s Hansem opravdu psal,
+# zajmy mit ma, i kdyz neni v `known_persons` (tam jsou jen lide s profilem
+# tvare). Blokuje se JEN zastupny nazev a testovaci ucet.
+_NEOSOBY = {"uzivatel", "user", "unknown", "neznamy", "nekdo", "host", "anonym",
+            "hans", "assistant", "system"}
+
+
+def je_zastupne_jmeno(person: str) -> bool:
+    """Je to zastupny nazev / testovaci ucet misto skutecne osoby?"""
+    p = _norm_interest(person)
+    return (not p) or p in _NEOSOBY or p.startswith("test_") or p.startswith("test-")
+
+
 def _load_examples(raw) -> list:
     if not raw:
         return []
@@ -114,8 +155,13 @@ class PersonInterestStore:
     def add_or_reinforce(self, person: str, interest: str,
                          examples: list = None) -> Optional[int]:
         pnorm = _norm(person)
-        inorm = _norm(interest)
+        inorm = _norm_interest(interest)
         if not pnorm or not inorm:
+            return None
+        # PERSON_INTEREST_NO_PLACEHOLDER_V1 — fantomovou osobu nezakladame
+        if je_zastupne_jmeno(person):
+            _log.info("interest SKIP: '%s' není osoba (zástupný název) — %.40s",
+                      person, interest)
             return None
         now = time.time()
         examples = [str(e).strip() for e in (examples or []) if str(e).strip()]
@@ -136,6 +182,7 @@ class PersonInterestStore:
                     conn.commit()
                     rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                     _log.info("interest NEW [%s] %s: %.40s", rid, pnorm, interest)
+                    self._varuj_na_duplicitu(conn, pnorm, inorm, interest)
                     return rid
                 rid = row["id"]
                 merged = _load_examples(row["examples"])
@@ -156,6 +203,31 @@ class PersonInterestStore:
         except Exception as e:
             _log.warning("PersonInterestStore.add_or_reinforce failed: %s", e)
             return None
+
+    def _varuj_na_duplicitu(self, conn, pnorm: str, inorm: str, interest: str):
+        """PERSON_INTEREST_DUP_WARN_V1 (4.9.) — novy zajem pripomina existujici?
+        Napis to do logu.
+
+        NESLUCUJE — slouceni je zmerene a zamitnute (viz `_norm_interest`).
+        Smysl je, aby duplicita VYPLAVALA hned, misto aby se ctyri mesice
+        tise hromadila: `historie`/`história`/`hustoria` u jedne osoby si
+        nikdo nevsiml, dokud vypis nedostal cizi clovek.
+        """
+        try:
+            import difflib
+            rows = conn.execute(
+                "SELECT interest, interest_norm FROM person_interests "
+                "WHERE person=? AND status='active' AND interest_norm<>?",
+                (pnorm, inorm)).fetchall()
+            for r in rows:
+                pom = difflib.SequenceMatcher(None, inorm, r["interest_norm"]).ratio()
+                if pom >= 0.75:
+                    _log.warning("PERSON_INTEREST_DUP_WARN_V1: %s má nový zájem "
+                                 "„%s\" a už má „%s\" (podobnost %.2f) — "
+                                 "může to být totéž; sloučení je na člověku",
+                                 pnorm, interest, r["interest"], pom)
+        except Exception as e:
+            _log.debug("dup warn: %s", e)
 
     def interests_for(self, person: str, limit: int = 10) -> List[PersonInterest]:
         pnorm = _norm(person)
@@ -194,6 +266,134 @@ def format_block(interests: List[PersonInterest]) -> str:
     if not interests:
         return ""
     return ", ".join(i.interest for i in interests)
+
+
+# ── PERSON_INTEREST_CONSOLIDATE_V1 (4.9.) — SLUC DUPLICITY, ALE AZ PO ZEPTANI
+# Uklid dat po nocni extrakci: jedna osoba mela `historie` (4), `história` (6)
+# i `hustoria` (2) — tri radky jednoho zajmu. Rozpad neni kosmetika:
+# `evidence_count` ridi poradi ve vypisu i blok UZ ZNAME ZAJMY, kterym se krmi
+# tatáz extrakce, takze se chyba sama zivi. (Po slouceni je to nejsilnejsi
+# zajem osoby, 12 — coz rozpad uplne schovaval.)
+#
+# DVA KROKY, a oba jsou nutne:
+#  1. LEXIKALNI PRESCREEN (difflib >= `merge_ratio`) — levny, jen vybira
+#     kandidaty. SAM O SOBE ROZHODOVAT NESMI: ZMERENO 4.9., ze
+#     `historie`↔`hustoria` (chceme sloucit) a `historie`↔`hysterie` (nesmime)
+#     maji STEJNE ratio 0.750, stejne prvni pismeno, stejnou delku i editacni
+#     vzdalenost. Dalsi pasti: `astronomie`↔`gastronomie` 0.952,
+#     `chemie`↔`chemik` 0.833, `biologie`↔`geologie` 0.750.
+#     ⛔ Cistě retezcovy dedup proto NESTAVET — tise smaze odlisny zajem.
+#  2. SEMANTICKY ROZHODCI (maly model). Zmereno na 16 dvojicich × 3 behy:
+#     prescreen jich pusti 14 a model je vyhodnotil **14/14 spravne a 3/3
+#     stabilne**, vcetne vsech ctyr pasti vyse. Bezi jen na kandidatech,
+#     kterych jsou jednotky za mesic → cena ~nula.
+#
+# ⚠️ NIC SE NEMAZE: prohrany radek dostane `status='merged'` (vsechny dotazy
+# filtruji `status='active'`), takze chybne slouceni je vratitelne jednim
+# UPDATE. Evidence a examples se scitaji do vitezneho radku.
+# ⚠️ Fail-safe: model nedostupny / neparsovatelna odpoved / herni rezim →
+# NESLUCUJE SE. Ticha odpoved znamena „nech to byt", ne „slouc".
+def consolidate_person_interests(config: dict, diary_db_path: str) -> int:
+    """Slouci duplicitni zajmy tehoz cloveka. Vraci pocet slouceni."""
+    import difflib
+    cfg = (config.get("person_interests", {}) or {})
+    prah = float(cfg.get("merge_ratio", 0.75))
+    max_slouceni = int(cfg.get("max_merges_per_night", 5))
+    model = str(cfg.get("merge_model", "qwen2.5:7b"))
+    try:
+        from scripts.ollama_client import ollama_generate
+    except ImportError:
+        _log.warning("consolidate: ollama_client nedostupny, skip")
+        return 0
+    store = PersonInterestStore(config, diary_db_path)
+    slouceno = 0
+    try:
+        conn = store._connect()
+    except Exception as e:
+        _log.warning("consolidate: DB nedostupna: %s", e)
+        return 0
+    try:
+        osoby = [r["person"] for r in conn.execute(
+            "SELECT DISTINCT person FROM person_interests WHERE status='active'")]
+        for osoba in osoby:
+            rows = conn.execute(
+                "SELECT * FROM person_interests WHERE person=? AND status='active' "
+                "ORDER BY evidence_count DESC, id", (osoba,)).fetchall()
+            hotovo = set()
+            for i in range(len(rows)):
+                if rows[i]["id"] in hotovo or slouceno >= max_slouceni:
+                    continue
+                for j in range(i + 1, len(rows)):
+                    if rows[j]["id"] in hotovo or slouceno >= max_slouceni:
+                        continue
+                    a, b = rows[i], rows[j]
+                    pom = difflib.SequenceMatcher(
+                        None, a["interest_norm"], b["interest_norm"]).ratio()
+                    if pom < prah:
+                        continue
+                    if not _je_totez(ollama_generate, model, config,
+                                     a["interest"], b["interest"]):
+                        _log.info("PERSON_INTEREST_CONSOLIDATE_V1: %s — „%s\" × "
+                                  "„%s\" (%.2f) NEsloučeno, model říká, že to "
+                                  "není totéž", osoba, a["interest"],
+                                  b["interest"], pom)
+                        continue
+                    _sluc_radky(conn, a, b)
+                    hotovo.add(b["id"]); slouceno += 1
+                    _log.warning("PERSON_INTEREST_CONSOLIDATE_V1: %s — „%s\" "
+                                 "pohltilo „%s\" (podobnost %.2f, model ANO)",
+                                 osoba, a["interest"], b["interest"], pom)
+    finally:
+        conn.close()
+    if slouceno:
+        _log.info("consolidate_person_interests: sloučeno %d", slouceno)
+    return slouceno
+
+
+_MERGE_SYSTEM = (
+    "Rozhodni, jestli dva názvy označují TENTÝŽ zájem téhož člověka. "
+    "Odpověz JEDNÍM slovem: ANO nebo NE.\n"
+    "ANO = jde o totéž, jen jinak napsané (překlep, jiný pád, jiný jazyk, "
+    "bez diakritiky).\n"
+    "NE = jsou to různé věci, i když se slova podobají.\n"
+    "Příklady:\n"
+    "„fotbal\" a „futbal\" -> ANO\n"
+    "„astronomie\" a „gastronomie\" -> NE\n"
+    "„literatura\" a „literaturu\" -> ANO\n"
+    "„biologie\" a „geologie\" -> NE")
+
+
+def _je_totez(gen, model: str, config: dict, a: str, b: str) -> bool:
+    """Semanticky rozhodci. Cokoliv jineho nez jasne ANO = NESLUCOVAT."""
+    try:
+        out = gen(model=model, system=_MERGE_SYSTEM,
+                  prompt="„%s\" a „%s\" ->" % (a, b), config=config,
+                  options={"temperature": 0.0, "num_ctx": 2048,
+                           "num_predict": 5}, keep_alive="10m")
+    except Exception as e:
+        _log.warning("consolidate: rozhodci selhal (neslučuji): %s", e)
+        return False
+    return (out or "").strip().upper().startswith("ANO")
+
+
+def _sluc_radky(conn, vitez, prohry):
+    """Evidence + examples do viteze, prohrany radek na status='merged'.
+    NEMAZE — chybne slouceni se vraci jednim UPDATE."""
+    ex = _load_examples(vitez["examples"])
+    vid = {_norm(x) for x in ex}
+    for e in _load_examples(prohry["examples"]):
+        if _norm(e) not in vid:
+            ex.append(e); vid.add(_norm(e))
+    conn.execute(
+        "UPDATE person_interests SET evidence_count=?, first_seen=?, "
+        "last_seen=?, examples=? WHERE id=?",
+        ((vitez["evidence_count"] or 0) + (prohry["evidence_count"] or 0),
+         min(vitez["first_seen"], prohry["first_seen"]),
+         max(vitez["last_seen"], prohry["last_seen"]),
+         json.dumps(ex[:20], ensure_ascii=False), vitez["id"]))
+    conn.execute("UPDATE person_interests SET status='merged' WHERE id=?",
+                 (prohry["id"],))
+    conn.commit()
 
 
 # ── Noční extrakce (přiživeno na průchod nitek — sdílí _gather_dialogs) ──────

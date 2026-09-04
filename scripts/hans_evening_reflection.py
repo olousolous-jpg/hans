@@ -360,6 +360,17 @@ class HansEveningReflection:
         except Exception as _pe:
             _log.warning("extract_person_interests selhal (reflexe OK): %s", _pe)
 
+        # PERSON_INTEREST_CONSOLIDATE_V1 (4.9.) — hned ZA extrakci, at se
+        # duplicita nedostane do zitrejsiho bloku UZ ZNAME ZAJMY (tim se
+        # chyba sama zivila). Nic nemaze, jen prepne status na 'merged'.
+        try:
+            from scripts.hans_person_interests import (
+                consolidate_person_interests as _cpi)
+            _cpi(self._config, self._diary_path)
+        except Exception as _ce:
+            _log.warning("consolidate_person_interests selhal (reflexe OK): %s",
+                         _ce)
+
         # HANS_PERSONAL_QUESTIONS_V1 (#3) — vřelá OSOBNÍ otázka per osoba.
         # NEZÁVISLE na dialozích: i bez konverzace chce Hans projevit zájem.
         try:
