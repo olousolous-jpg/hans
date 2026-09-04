@@ -1356,6 +1356,11 @@ class HansRoutine:
         self._maybe_calendar_sync()
         # HANS_NOTIFY_QUEUE_V1 — odešli, co do fronty zapsal skript zvenčí.
         self._drain_notify_queue()
+        # HANS_WEBSHARE_PRESUN_TICK_V1 — dotáhni stahování z Webshare: stahuje
+        # se na Pi (běží nonstop), hotový soubor se přesouvá na PC. Patří to
+        # sem, do tick(), a NE do nočních úloh: PC se v noci vypíná (~3:27),
+        # takže by přesun narazil přesně na to, kvůli čemu se stahuje na Pi.
+        self._maybe_webshare_presun()
         # HANS_REFLECTION_BRAIN_UP_CATCHUP_V1 — dojeď VČEREJŠÍ reflexi, když
         # večerní okno propásla (PC bývá po 23:00 vypnuté). ⚠️ Patří sem, do
         # tick(), NE do `_run_night_tasks` — ten běží pod `if self.is_night`,
@@ -1369,6 +1374,34 @@ class HansRoutine:
         # NIGHT_WORKER_THREAD_V1 — noční LLM analytika se sem UŽ NEVOLÁ; běží
         # ve vlastním vlákně (_night_worker_loop). Zaseklá Ollama tak
         # neblokuje tento tick ani volajícího (proaktivita/film/autoplay).
+
+    def _maybe_webshare_presun(self):
+        """HANS_WEBSHARE_PRESUN_TICK_V1 — hotové stažení přesuň z Pi na PC.
+
+        ⚠️ Levné, když není co dělat: `hotove_ke_presunu()` je jen pohled do
+        JSON souboru a `os.path.exists`, žádné SSH. Teprve když něco čeká, sáhne
+        se na PC. Tick běží často, takže dotaz po síti v každém kole by byl
+        zbytečná zátěž.
+        ⚠️ PC se kvůli přesunu NEBUDÍ — když spí, soubor na Pi počká.
+        """
+        try:
+            from scripts import hans_webshare as _ws
+            if not _ws.hotove_ke_presunu():
+                return
+            for zprava in _ws.presun_hotove(self.config):
+                _log.info("webshare: %s", zprava)
+                # HANS_WEBSHARE_NOTIFIER_FIX_V1 — `self.notify()` na téhle třídě
+                # NEEXISTUJE (napsal jsem ho z hlavy; grep ukázal, že jediný
+                # výskyt byl ten můj) a volání by tiše spadlo do `except`.
+                # Proaktivní zprávy chodí přes callback `_notifier` — týž vzor
+                # jako u Severky (ř. 666) a směru (ř. 690).
+                if self._notifier:
+                    try:
+                        self._notifier(zprava)
+                    except Exception as _ne:
+                        _log.warning("webshare notifier selhal: %s", _ne)
+        except Exception as e:
+            _log.debug("webshare presun tick: %s", e)
 
     def _drain_notify_queue(self, path: str = "data/notify_queue.jsonl"):
         """HANS_NOTIFY_QUEUE_V1 — pošli zprávy, které do fronty zapsal skript

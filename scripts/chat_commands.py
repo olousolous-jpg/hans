@@ -17,6 +17,15 @@ from __future__ import annotations
 import logging
 import re
 import threading
+# HANS_CHAT_IMPORT_TIME_V1 (4.9.) — `time` v modulovém scope CHYBĚL, ačkoli ho
+# tělo souboru používá. Ostrý běh /hledani spadl na „name 'time' is not
+# defined“ a prověrka ukázala, že tatáž mina leží i v `_cmd_rozvrh` (ř. 663
+# volá time.time(), funkce žádný import nemá — `import time` níž je v JINÉ
+# funkci, `_cmd_interest`, a lokální import se ven nepropíše).
+# ⚠️ Offline testy to minuly: bez přihlašovacích údajů se běh k té větvi
+# nedostal a vracel se dřív. Chytil to až běh v ŽIVÉM Hansovi.
+# Lokální `import time as _t` na jiných místech tím nejsou dotčené.
+import time
 from typing import Callable, Optional
 
 _log = logging.getLogger("chat_commands")
@@ -4775,4 +4784,218 @@ register(
                  r"\bzastav\s+na\s+chv[íi]li\b"],
     handler=_cmd_pauza,
     help_text="Pauza/pokračování přehrávání: /pauza",
+)
+
+
+# ─── /hledani — hledání na webshare.cz (HANS_WEBSHARE_CMD_V1) ───────────
+# Otevřený bod z backlogu: film mimo Kodi knihovnu pro Hanse neexistoval.
+# Datová cesta je `hans_webshare`, tohle je jen ústa k ní.
+#
+# ⚠️ VZORY MUSÍ BÝT UKOTVENÉ NA „WEBSHARE“, NE NA HOLÉM „NAJDI“ — to slovo
+# už používají dvě jiné cesty (`/vzpominka` a `/nastroj`) a široký vzor by jim
+# řeč sebral. Ověřeno grepem před stavbou.
+# ⚠️ DOTAZ NA STAV („jak jde to stahování“) MUSÍ HLÁSIT, NE SPOUŠTĚT — ta past
+# je doložená u `/preloz` a u `/hlidej`, proto má vlastní vzor i větev.
+_WS_STAV: dict = {}          # jméno → {"nalezy": […], "dotaz": str, "ts": float}
+_WS_TTL_S = 1800             # starší výběr než půl hodiny už není, co uživatel viděl
+
+# Filtry, které smí stát na konci dotazu („duna 2 1080p“).
+_WS_FILTRY = ("2160p", "1080p", "720p", "576p", "480p", "4k", "uhd",
+              "cz", "cesky", "česky", "dabing", "sk", "slovensky",
+              "tit", "titulky", "bluray", "web", "hdtv", "dvd", "cam")
+
+
+def _ws_rozeber(args: str) -> tuple:
+    """Z argumentů vytáhni (dotaz, filtr). U NL shody přijde CELÁ věta."""
+    a = (args or "").strip()
+    if _route_origin() == "nl":
+        # usečni všechno po slovo „webshare“ včetně předložky za ním
+        m = re.search(r"webshar\w*\s*", a, re.IGNORECASE)
+        if m:
+            pred, za = a[:m.start()], a[m.end():]
+            # „najdi mi na websharu X“ → X ; „je X na websharu?“ → X
+            a = za.strip() if za.strip() else pred
+        a = re.sub(r"^(a\s+)?(pros[íi]m\s+)?(m[ůu][žz]e[šs]\s+)?"
+                   r"(najdi|hledej|hledat|pod[íi]vej\s+se|zkus|kouk\w*|"
+                   r"vyhledej|se[žz]eň|je)\s*(mi\s+)?(n[ěe]jak\w*\s+)?"
+                   r"(film\w*\s+|seri[áa]l\w*\s+)?(na\s+|v\s+|o\s+)?", "",
+                   a, flags=re.IGNORECASE).strip()
+    # HANS_WEBSHARE_PREDLOZKA_V1 (4.9.) — po useknutí u slova „webshare“ zbyde
+    # v „podívej se na webshare NA Dunu 2“ ještě předložka a hledalo by se
+    # doslova „na Dunu 2“. Odhaleno vlastním testem extrakce, ne až provozem.
+    if _route_origin() == "nl":
+        a = re.sub(r"^(na|o|v|ve|k|ke|pro|po)\s+", "", a.strip(),
+                   flags=re.IGNORECASE)
+    a = a.strip(" ?!.,„“\"'")
+    filtr = ""
+    slova = a.split()
+    if len(slova) > 1 and _fold_diacritics(slova[-1].lower()) in [
+            _fold_diacritics(f) for f in _WS_FILTRY]:
+        filtr = slova[-1].lower()
+        a = " ".join(slova[:-1]).strip()
+    return a, filtr
+
+
+def _cmd_hledani(handler, name, args) -> str:   # HANS_WEBSHARE_CMD_V1
+    """/hledani <film> [1080p|cz|…] — hledej na Webshare;
+    /hledani stahni N — stáhni N-tý nález na PC; /hledani stav — jak jde stahování."""
+    from scripts import hans_webshare as ws
+    cfg = getattr(handler, "config", {}) or {}
+    a = (args or "").strip()
+    low = _fold_diacritics(a.lower())
+
+    if not (cfg.get("webshare", {}) or {}).get("enabled", True):
+        return "Hledání na Webshare mám vypnuté, pane."
+
+    # ── dotaz na STAV — NIC nespouští ──
+    if re.search(r"^stav\b|jak\s+(to\s+)?(jde|pokracuje|vypada)|"
+                 r"u[zs]\s+(je|to)\s+(stazen|hotov)|stahuje[sš]?\s*\?*$", low):
+        try:
+            return ws.stav_stahovani(cfg)
+        except Exception as e:
+            return "Ke stavu stahování se teď nedostanu, pane (%s)." % e
+
+    if not ws.nastaveno(cfg):
+        return ("K Webshare nemám přihlašovací údaje, pane — doplňte je v config.json "
+                "do sekce `webshare` (username a password). Pak už budu hledat.")
+
+    # ── stáhnout N-tý nález ──
+    m = re.search(r"^(?:stahni|stah|vezmi|chci)\s*(?:c\.|cislo\s*)?(\d+)\s*$"
+                  r"|^(\d+)\s*$", low)
+    if m:
+        cislo = int(m.group(1) or m.group(2))
+        st = _WS_STAV.get(name or "")
+        if not st or (time.time() - st.get("ts", 0)) > _WS_TTL_S:
+            return ("Nemám čerstvý výpis, pane — zadejte nejdřív "
+                    "/hledani <název> a pak číslo.")
+        nalezy = st.get("nalezy") or []
+        if not (1 <= cislo <= len(nalezy)):
+            return "Pod číslem %d nic nemám, pane — vybral jsem %d nálezů." % (
+                cislo, len(nalezy))
+        p = nalezy[cislo - 1]
+        try:
+            # HANS_WEBSHARE_CMD_PI_V1 (4.9.) — přes rozcestník `stahni()`,
+            # ne napřímo na PC. Velikost se PŘEDÁVÁ, protože bez ní nemá
+            # kontrola volného místa na Pi co porovnávat a stahování by mohlo
+            # zaplnit systémový disk Hanse.
+            u = ws.stahni(cfg, p["ident"], p["nazev"], p.get("velikost") or 0)
+        except Exception as e:
+            return "Stáhnout se to nepodařilo, pane: %s" % e
+        _ws_zapis_denik(cfg, p, u)
+        if u.get("kde") == "pi":
+            return ("Stahuji „%s“ (%s) k sobě, pane — až to doběhne, přesunu "
+                    "to na počítač. Volné připojení je pomalé, tak to nějakou "
+                    "dobu potrvá; „jak jde to stahování“ vám řekne, kde jsem."
+                    % (p["nazev"][:80], ws.velikost_str(p["velikost"])))
+        return ("Stahuji „%s“ (%s) na počítač, pane. Zeptáte-li se "
+                "„jak jde to stahování“, řeknu, kde to je." % (
+                    p["nazev"][:80], ws.velikost_str(p["velikost"])))
+
+    dotaz, filtr = _ws_rozeber(a)
+    if not dotaz:
+        st = _WS_STAV.get(name or "")
+        if st and (time.time() - st.get("ts", 0)) <= _WS_TTL_S:
+            return "Naposledy jsem hledal „%s“:\n%s" % (
+                st.get("dotaz"), ws.vypis(st["nalezy"], _ws_kolik(cfg)))
+        return ("Co mám na Webshare najít, pane? Např. /hledani Duna 2 1080p; "
+                "pak /hledani stahni 1.")
+
+    c = cfg.get("webshare", {}) or {}
+    try:
+        nalezy = ws.hledej(cfg, dotaz, limit=int(c.get("limit", 25)),
+                           kategorie=str(c.get("kategorie", "video")),
+                           razeni=str(c.get("razeni", "relevance")))
+    except Exception as e:
+        return "Na Webshare jsem se teď nedostal, pane: %s" % e
+    if filtr:
+        pred = len(nalezy)
+        nalezy = ws.filtruj(nalezy, filtr)
+        if not nalezy:
+            return ("Na „%s“ jsem našel %d souborů, ale žádný ve filtru „%s“, pane. "
+                    "Zkuste to bez něj." % (dotaz, pred, filtr))
+    if not nalezy:
+        # HANS_WEBSHARE_PRAZDNO_ROZLISIT_V1 (4.9.) — ROZLIŠIT dva různé důvody
+        # prázdna. „Nic jsem nenašel“ je nepravda, když nálezy byly a jen
+        # všechny vypadly na filtru nesmyslných názvů. Doloženo hned při
+        # zapnutí filtru: dotaz „Duna“ → 25 nálezů, 25 přeskočeno, tedy
+        # prázdný výpis a klamavá věta. Falešné „nic tam není“ je horší než
+        # šum — uživatel podle něj přestane hledat.
+        _psk0 = 0
+        try:
+            _psk0 = ws.preskoceno()
+        except Exception:
+            pass
+        if _psk0:
+            return ("Na „%s“ jsem našel %d souborů, ale u všech je název "
+                    "nesmyslný (třeba „du49g84gij“), takže jsem je přeskočil, "
+                    "pane. Chcete-li je přesto vidět, přepněte "
+                    "webshare.preskoc_bez_jmena na false — nebo zkuste "
+                    "přesnější název." % (dotaz, _psk0))
+        return "Na „%s“ jsem na Webshare nic nenašel, pane." % dotaz
+    _WS_STAV[name or ""] = {"nalezy": nalezy, "dotaz": dotaz, "ts": time.time()}
+    # HANS_WEBSHARE_PRESKOCENO_HLASI_V1 (4.9.) — přeskočené nálezy se PŘIZNÁVAJÍ.
+    # Filtr na nesmyslné názvy je užitečný, ale kdyby mazal tiše, uživatel by
+    # nikdy nezjistil, že mu něco chybí — a u hledání je to zrovna ten druh
+    # poruchy, který se pozná až po dlouhé době. Vypisuje se i to, jak filtr
+    # vypnout, ať se k zahozeným dá dostat.
+    _psk = 0
+    try:
+        _psk = ws.preskoceno()
+    except Exception:
+        pass
+    hlava = "Našel jsem k „%s“%s (kvalitu odhaduji z názvu souboru):" % (
+        dotaz, (" — filtr %s" % filtr) if filtr else "")
+    _pozn = ("\n(%d nálezů jsem přeskočil, protože jejich název nic neříká — "
+             "vypnout jde klíčem webshare.preskoc_bez_jmena.)" % _psk) if _psk else ""
+    return "%s\n%s%s\n\nStáhnu který? Stačí /hledani stahni <číslo>." % (
+        hlava, ws.vypis(nalezy, _ws_kolik(cfg)), _pozn)
+
+
+def _ws_kolik(cfg) -> int:
+    try:
+        return int((cfg.get("webshare", {}) or {}).get("vypis_kolik", 8))
+    except Exception:
+        return 8
+
+
+def _ws_zapis_denik(cfg, polozka, uloha) -> None:
+    """Deníková událost `webshare_download` — ať se dá dohledat, co se stahovalo."""
+    try:
+        import json as _js
+        import sqlite3 as _sq
+        db = (cfg.get("diary_db")
+              or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+              or "data/hans_diary.db")
+        data = _js.dumps({"ident": polozka.get("ident"),
+                          "nazev": polozka.get("nazev"),
+                          "velikost": polozka.get("velikost"),
+                          "kvalita": polozka.get("kvalita"),
+                          "cesta": uloha.get("cesta")}, ensure_ascii=False)
+        c = _sq.connect(db, timeout=5.0)
+        c.execute("INSERT INTO diary (ts, event_type, title, data, note) "
+                  "VALUES (?,?,?,?,?)",
+                  (time.time(), "webshare_download", polozka.get("nazev", "")[:120],
+                   data, "Stáhl jsem z Webshare „%s“ na počítač." % (
+                       polozka.get("nazev", "")[:80])))
+        c.commit()
+        c.close()
+    except Exception as e:
+        _log.debug("webshare: deníkový zápis selhal: %s", e)
+
+
+register(
+    "hledani",
+    slash_aliases=["hledani", "hledání", "hledej", "webshare", "ws"],
+    nl_patterns=[
+        # Vždy ukotveno na „webshare“ — viz poznámka výše.
+        r"\b(na|v|z|ze)\s+webshar\w*",
+        r"\bwebshar\w*\s+(hledej|najdi|zkus|m[áa]|nem[áa])",
+        r"\b(hledej|najdi|vyhledej|pod[íi]vej\s+se)\b.{0,40}\bwebshar",
+        # dotaz na stav probíhajícího stažení
+        r"\bjak\s+(to\s+)?(jde|pokra[čc]uje)\s+(to\s+)?stahov[áa]n[íi]",
+        r"\bu[žz]\s+(je|to)\s+sta[žz]en\w*\b",
+    ],
+    handler=_cmd_hledani,
+    help_text=("Hledání na Webshare: /hledani <název> [1080p|cz|bluray]; "
+               "/hledani stahni N; /hledani stav"),
 )
