@@ -799,7 +799,13 @@ def is_source_query(text: str) -> bool:
         # 9/15, propadly přesně tyhle formulace a u „odkud jsi čerpal?" model
         # místo klasifikace ZAČAL ODPOVÍDAT („z encyklopedie"). Regex je tu
         # měřeně lepší; detail v backlogu.
-        r"\b[čc]erpal",                      # „odkud/z čeho jsi čerpal"
+        # HANS_SOURCE_IS_SENSOR_V2 (4.9.) — PŘÍTOMNÝ ČAS. V2 doplnil jen
+        # minulé „čerpal" (to byl doložený miss z 17.7.), takže „odkud
+        # ČERPÁŠ informace o počasí?" propadlo dál a router z něj udělal
+        # hlášení o počasí. Změřeno na 1226 reálných replikách: tyhle dva
+        # vzory přidají PŘESNĚ 1 zásah — právě tu větu, žádný falešný.
+        r"\b[čc]erp(al|[áa][šs]|[áa]te)",     # „odkud jsi čerpal / čerpáš / čerpáte"
+        r"\bodkud\s+(bere[šs]|berete)",       # „odkud berete informace o…"
         r"\bodkud\s+(jsi|si|m[áa][šs]|jste)",  # „odkud jsi to vzal/čerpal"
         r"\bz\s+[čc]eho\s+(jsi|si)\s+(to\s+)?(vzal|m[áa][šs]|[čc]erpal)",
         r"\bkde\s+(ses|jsi\s+se)\s+(to\s+)?dozv[ěe]d[ěe]l",
@@ -951,6 +957,32 @@ def sources_answer(db_path: str, user_text: str,
         if _o_pritomnosti:
             return ("To nemám ze zápisků, %s — vidím to kamerou. "
                     "Hlásím, koho právě rozpoznávám v místnosti." % oslov)
+        # HANS_SOURCE_IS_SENSOR_V2 (4.9.) — TÁŽ TŘÍDA, DALŠÍ DVA ZDROJE.
+        # V1 pokryl jen přítomnost osob (kamera), takže „odkud máš informace
+        # o počasí?" pořád dostalo *„nemám v paměti uložený konkrétní článek…
+        # jen obecná znalost"* — a to je NEPRAVDA: počasí Hans bere z ČHMÚ
+        # (`weather_chmu.WeatherCHMU`) a teplotu/vlhkost v místnosti měří
+        # vlastními čidly (`data/surroundings.db`). Falešné popření vlastního
+        # zdroje je horší než mlčení: uživatel z něj usoudí, že si Hans počasí
+        # vymýšlí.
+        # ⚠️ Pořadí je významné — obě větve stojí AŽ ZA přítomností osob,
+        # aby „odkud víš, že tu je Jana?" dál odpovídalo kamerou.
+        _venku = _re.compile(
+            r"\bpo[čc]as[íi]|\bvenku\b|za\s+oknem|\bp[řr][ée]dpov[ěe]|"
+            r"\bpredpoved|\bpr[šs][íi]\b|\bsn[ěe][žz][íi]\b", _re.IGNORECASE)
+        _uvnitr = _re.compile(
+            r"(v\s+pokoji|v\s+m[íi]stnosti|uvnit[řr]|\btady\b|\btu\b)"
+            r".{0,40}(teplot|vlhkost|stup[ňn]|dusno)"
+            r"|(teplot|vlhkost|stup[ňn]|dusno).{0,40}"
+            r"(v\s+pokoji|v\s+m[íi]stnosti|uvnit[řr])", _re.IGNORECASE)
+        if _venku.search(user_text or ""):
+            return ("To nemám ze zápisků, %s — počasí beru z Českého "
+                    "hydrometeorologického ústavu, pokaždé znovu. "
+                    "Uložený článek k tomu tedy nemám a mít nemusím." % oslov)
+        if _uvnitr.search(user_text or ""):
+            return ("To nemám ze zápisků, %s — teplotu a vlhkost v místnosti "
+                    "měřím vlastními čidly. Je to údaj z měření, ne z četby."
+                    % oslov)
     except Exception:
         pass
 

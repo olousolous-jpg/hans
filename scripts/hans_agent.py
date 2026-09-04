@@ -631,7 +631,20 @@ def _run_weather(handler, args) -> str:
         wx = WeatherCHMU(lat=float(_w.get("lat", 50.08)),
                          lon=float(_w.get("lon", 14.42)))
         kdy = str((args or {}).get("kdy") or "").strip().lower()
+        # HANS_WEATHER_RAW_MSG_FIX_V1 (4.9.) — surová věta visí na instanci
+        # ROUTERU (`AgentRouter._raw_message`, nastavuje ji `propose`), NE na
+        # handleru. `getattr(handler, "_raw_message")` proto vracel prázdno,
+        # `_ZITRA_PAT` nikdy nesedl a zítřejší předpověď v produkci stála JEN
+        # na argumentu `kdy` z routeru — ačkoli komentář u akce tvrdil opak.
+        # Odhalil to až živý test v běžícím Hansovi: „jaké bude zítra počasí?"
+        # vrátilo DNEŠEK. Offline to nešlo vidět, protože si lešení
+        # `_raw_message` na handler samo dosadilo. [[measure-production-path]]
+        # `_run_person_info` (o pár set řádků níž) tuhle cestu už zná —
+        # protahuje se sem TÝŽ mechanismus, nezakládá se nový.
+        _ar = (getattr(handler, "_agent_inst", None)
+               or getattr(handler, "_agent", None))
         veta = str((args or {}).get("_veta")
+                   or getattr(_ar, "_raw_message", "")
                    or getattr(handler, "_raw_message", "") or "")
         chce_zitra = kdy.startswith("zit") or kdy.startswith("zít") \
             or bool(_ZITRA_PAT.search(veta))
@@ -1101,8 +1114,21 @@ ACTIONS: dict[str, Action] = {
         # u `HANS_CMD_LLM_ROUTE_V3` je změřeno, že nepomohly, a byl by to
         # [[prompt-debt-tool-calling]]. Oprava patří do STRUKTURY: o zítřek se
         # stará `_ZITRA_PAT` uvnitř `_run_weather`, tedy až za rozhodnutím.
-        "Odpovědět na dotaz o AKTUÁLNÍM počasí / jak je venku. "
-        "Argument `kdy` = „zitra“, ptá-li se výslovně na předpověď.",
+        # HANS_WEATHER_HINT_FIX_V2 (4.9.) — V1 NESTAČIL. Odebral hint „zitra"
+        # i větu o ZÍTŘKU z popisu, ale slovo „zitra" nechal v řádku
+        # o argumentu `kdy` — a popis je pro router JEDINÝ podklad, čím se
+        # akce liší od sousedů. Přeměřeno 4.9. (3 běhy na větu):
+        #     „kdy se zitra hraje MS v hokeji?"  → report_weather 3/3  ✗
+        #     „zitra mam volno"                  → report_weather 3/3  ✗
+        # Po odebrání slova i argumentu: obojí None 3/3, a všechny čtyři
+        # legitimní dotazy („jaké bude zítra počasí?", „bude zítra pršet?",
+        # „jaká je předpověď na zítra?", „jak je venku?") dál 3/3 správně.
+        # ⚠️ Argument `kdy` je NADBYTEČNÝ: `_run_weather` si zítřek přečte
+        # z věty přes `_ZITRA_PAT`, tedy AŽ ZA rozhodnutím routeru. Tím je
+        # zítřejší předpověď zachovaná, aniž to slovo vidí router.
+        # ⚠️ Ověření V1 bylo JEDNORÁZOVÉ a trefilo se do šťastného běhu —
+        # proto se tohle měřilo 3× na větu. [[within-session-numbers-lie]]
+        "Odpovědět na dotaz o AKTUÁLNÍM počasí / jak je venku.",
         # ⚠️ HANS_WEATHER_HINT_FIX_V1 (3.9.) — „zítra"/„zitra" tu bylo pár hodin
         # a bylo to REGRESE, kterou odhalilo až přeměření: samotné „zítra" nemá
         # s počasím nic společného, takže pre-gate pustil dál věty, které pak
@@ -1115,7 +1141,8 @@ ACTIONS: dict[str, Action] = {
         hints=["počasí", "pocasi", "venku", "prší", "prsi", "pršet", "prset",
                "sněží", "snezi", "teplo venku", "zima venku", "za oknem",
                "slunečno", "předpověď", "predpoved"],
-        args=["kdy"], run=_run_weather, grounding=None,
+        # args=[] — viz HANS_WEATHER_HINT_FIX_V2 výše: `kdy` router jen sváděl.
+        args=[], run=_run_weather, grounding=None,
         needs_confirm=False, cooldown_s=10),
     "report_climate": Action(
         "report_climate",
