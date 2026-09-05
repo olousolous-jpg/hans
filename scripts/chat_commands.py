@@ -2923,6 +2923,47 @@ register(
 )
 
 
+# ─── /sen — co se Hansovi zdálo (HANS_DREAM_RECALL_V1) ────────────────────
+def _cmd_sen(handler, name, args) -> str:
+    """HANS_DREAM_RECALL_V1 (5.9.) — dotaz na sen z deníku, ne z fantazie."""
+    from scripts.hans_recall import dream_answer
+    q = (args or "").strip()
+    # Týž důvod jako u `_cmd_cetl`: LLM router předává args="" (pojistka proti
+    # mutujícím podpříkazům), takže by se ztratilo TÉMA i slovo „dnes".
+    # Příkaz je čistě ČTECÍ, takže se původní věta vezme z vlákna.
+    if not q:
+        try:
+            _tc = getattr(handler, "_thread_ctx", None)
+            if _tc and _tc[0]:
+                q = str(_tc[0])
+        except Exception:
+            pass
+    out = dream_answer(_recall_db(handler), q, asker=name)
+    return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+
+
+register(
+    "sen",
+    slash_aliases=["sen", "sny", "snil"],
+    # ⚠️ O tom, jestli se dotaz k obsluze vůbec dostane, rozhodují TYHLE vzory,
+    # ne větvení uvnitř — proto jsou obě osoby (ti/vám) u KAŽDÉHO tvaru
+    # [[test-both-grammatical-persons]].
+    # ⛔ „zdálo se MI" schválně chybí: to o svém snu mluví uživatel, ne Hans.
+    nl_patterns=[
+        r"\bzd[áa]lo\s+se\s+(ti|v[áa]m)\b",
+        r"\bnezd[áa]lo\s+se\s+(ti|v[áa]m)\b",
+        r"\bsnilo\s+se\s+(ti|v[áa]m)\b",
+        r"\bo\s+[čc]em\s+(jsi|jste)\s+snila?\b",
+        r"\bm[ěe]l(a)?\s+(jsi|jste)\s+.{0,20}\bsen\b",
+        r"\b(tv[ůu]j|v[áa][šs])\s+(posledn[íi]\s+|dne[šs]n[íi]\s+)?sen\b",
+        r"\bco\s+se\s+(ti|v[áa]m)\s+zd[áa]lo\b",
+        r"\bjak[ýy]\s+(jsi|jste)\s+m[ěe]l(a)?\s+sen\b",
+    ],
+    handler=_cmd_sen,
+    help_text="Co se mi zdálo (přímo z deníku): zdálo se ti něco? tvůj poslední sen",
+)
+
+
 # ─── /zdroje — odkud Hans čerpal (HANS_SOURCES_V1) ─────────────────────────
 def _cmd_zdroje(handler, name, args) -> str:
     """Vypíše odkazy na to, co Hans četl. Deterministicky z deníku.

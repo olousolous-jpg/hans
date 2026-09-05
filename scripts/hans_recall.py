@@ -1150,7 +1150,18 @@ _TOPIC_PAT = re.compile(
     # poslední čtení — doloženo 20.8.: „odkud jsi čerpal informace
     # o normalizaci" → seznam dnešní četby, která s normalizací nesouvisí.
     # Změřeno na 1171 reálných větách: mění se 3, všechny jsou tenhle tvar.
-    r"(?:[čc]etla?\s+(?:jsi|sis)?\s*(?:n[ěe]co\s+)?o|"
+    # HANS_DREAM_RECALL_V1 (5.9.) — a rodina „zdálo/snilo se ti … o X".
+    # Bez ní vracelo `_extract_topic` u snového dotazu PRÁZDNO, takže
+    # „zdálo se ti něco o jednorožcích?" dostalo dnešní nesouvisející sen —
+    # tedy táž třída chyby („šablona odpovídá na jinou otázku"), kvůli které
+    # se `/sen` staví. Patří to SEM, a ne do vlastního vzoru v `dream_answer`:
+    # o tom, co je téma dotazu, má být v tomhle souboru jedna pravda.
+    # Změřeno na 1359 reálných větách: čtecí ani provenienční dotazy se nemění.
+    # ⚠️ Musí to být UVNITŘ vnější skupiny — první pokus ji minul, takže
+    # `m.group(1)` u snového dotazu neexistovala a padalo to na TypeError.
+    r"(?:(?:ne)?(?:zd[áa]lo|snilo)\s+se\s+(?:ti|v[áa]m)\s+"
+    r"(?:n[ěe]co\s+|n[ěe]kdy\s+)*o|"
+    r"[čc]etla?\s+(?:jsi|sis)?\s*(?:n[ěe]co\s+)?o|"
     r"kdy\s+(?:jsi|sis)\s+[čc]etla?\s+o?|"
     r"[čc]erpal\w*\s+(?:informace\s+|[úu]daje\s+|to\s+)?o|"
     r"[čc]etla?\s+jsi)\s+([^?.!]{2,60}?)\s*\??$",
@@ -1380,6 +1391,122 @@ def _dedup_cteni(rows, delsi_vyhrava: bool = False):
         else:
             out.append(x)
     return out
+
+
+# ── HANS_DREAM_RECALL_V1 (5.9.) — NA SEN SE DALO ZEPTAT AZ TED ──────────────
+# Nalez z testovaciho rozhovoru 5. 9.: „zdalo se ti dneska neco?" -> Hans
+# odpovedel improvizovanou uvahou o fotografii. Pritom ma v deniku 303 zaznamu
+# `event_type='dream'` a od 5. 9. v nich dokonce sam vystupuje jako postava.
+# Retezec „zdalo" nebyl v kodu jako vzor ANI JEDNOU, takze dotaz propadl do
+# volneho hovoru a model si sen vymyslel.
+#
+# Volny hovor smi fabulovat [[free-chat-may-confabulate]], ale tohle je NAROK
+# NA VLASTNI PAMET — tatáž trida jako `HANS_REMEMBER_HONEST_V1` ze 4. 9.:
+# Hans ma zaznam a misto nej vyda vymysl.
+#
+# Deterministicky, bez LLM — presne jako `reading_answer` o kus niz.
+_DREAM_DEN_ZACATEK_H = 18   # sen zapsany po 18:00 patri k NOCI, ktera prave zacina
+
+
+def _je_z_posledni_noci(ts: float) -> bool:
+    """Patri sen k noci, ktera prave skoncila (nebo zacina)?
+
+    ⚠️ Neni to „dnesni datum". Sny se zapisuji ve dvou vlnach — zmereno
+    na 303 zaznamech: **188 ve 22 hodin a 94 o pulnoci** — takze sen z 22:01
+    vcerejsiho dne je „dnes v noci", kdezto podle kalendare je vcerejsi.
+    Hranice je proto 18:00 predchoziho dne, ne pulnoc.
+    """
+    ted = datetime.now()
+    dnes0 = ted.replace(hour=0, minute=0, second=0, microsecond=0)
+    hranice = dnes0.timestamp() - (24 - _DREAM_DEN_ZACATEK_H) * 3600
+    return float(ts) >= hranice
+
+
+def _pta_se_na_dnesek(question: str) -> bool:
+    """Ptal se vylozene na DNESNI noc? (pak je „nic" poctiva odpoved)"""
+    q = _fold(question or "").lower()
+    return bool(re.search(r"\b(dnes\w*|dneska|v noci|tuhle noc|te noci|"
+                          r"minulou noc|posledni noc)\b", q))
+
+
+def dream_answer(db_path: str, question: str = "",
+                 limit: int = 3, asker: Optional[str] = None) -> str:
+    """Co se Hansovi zdalo — z deniku, deterministicky.
+
+    S tematem v dotazu -> hledani mezi sny; bez tematu -> posledni sen.
+    """
+    oslov = _cz_address(asker) if asker else "pane"
+    topic = _extract_topic(question)
+    conn = None
+    try:
+        conn = _ro(db_path)
+        if topic:
+            rows = []
+            videno = set()
+            for stem in _topic_stems(topic):
+                for r in conn.execute(
+                        "SELECT ts, COALESCE(NULLIF(note,''),data) "
+                        "FROM diary WHERE event_type='dream' "
+                        "AND COALESCE(NULLIF(note,''),data) LIKE ? "
+                        "ORDER BY ts DESC LIMIT ?", ("%%%s%%" % stem, limit * 3)):
+                    # LIKE je jen LEVNÝ PŘEDVÝBĚR — sám o sobě chytá i pahýl
+                    # UVNITŘ jiného slova. Doloženo při stavbě: téma „hradech"
+                    # (pahýl „hrad") vytáhlo sen o ZA-HRAD-Ě a Hans na dotaz po
+                    # hradech odpověděl „ano, zdálo se mi" a vypsal zahradu.
+                    # Falešné potvrzení je horší než žádný nález, proto se
+                    # shoda ověří ještě na ZAČÁTKU SLOVA.
+                    if not re.search(r"(?<![\w])" + re.escape(stem),
+                                     r[1] or "", re.IGNORECASE):
+                        continue
+                    if r[0] in videno:
+                        continue
+                    videno.add(r[0]); rows.append(r)
+            rows.sort(key=lambda r: -r[0])
+            rows = rows[:limit]
+            if not rows:
+                # ⚠️ Formulace je schválně o HLEDÁNÍ, ne o neexistenci.
+                # `_topic_stems` je hrubý pahýl a české střídání kmene mu
+                # uteče: doloženo „o vlacích" × sen o „vlacích" zapsaný jako
+                # „vlaky" (k/c). Tvrdit za takového stavu „nic se mi nezdálo"
+                # by bylo falešné zapření — což je tatáž třída chyby, kterou
+                # tenhle příkaz opravuje. Radši přiznat mez hledání.
+                return ("Sny si zapisuji, %s, ale o „%s“ jsem v nich "
+                        "nic nenašel. Nebudu si vymýšlet — zkuste to prosím "
+                        "říct jinak, hledám podle slov." % (oslov, topic))
+            lines = ["– %s: %s" % (_cz_date(ts), _zkrat_sen(txt))
+                     for ts, txt in rows]
+            return ("Ano, %s — o „%s“ se mi zdálo:\n%s"
+                    % (oslov, topic, "\n".join(lines)))
+        row = conn.execute(
+            "SELECT ts, COALESCE(NULLIF(note,''),data) FROM diary "
+            "WHERE event_type='dream' ORDER BY ts DESC LIMIT 1").fetchone()
+        if not row or not (row[1] or "").strip():
+            return "Žádný sen zatím zapsaný nemám, %s." % oslov
+        ts, txt = row[0], row[1]
+        if _je_z_posledni_noci(ts):
+            return "Dnes v noci se mi zdálo tohle, %s:\n%s" % (oslov, _zkrat_sen(txt))
+        if _pta_se_na_dnesek(question):
+            # Nevydavat starsi sen za dnesni — to je tatáž trida chyby jako
+            # falesny narok na pamet.
+            return ("Dnes v noci se mi nic nezdálo, %s — aspoň nic, co bych si "
+                    "byl zapsal. Poslední sen mám z %s:\n%s"
+                    % (oslov, _cz_date(ts), _zkrat_sen(txt)))
+        return ("Poslední sen mám v deníku z %s, %s:\n%s"
+                % (_cz_date(ts), oslov, _zkrat_sen(txt)))
+    except Exception as e:
+        _log.debug("dream_answer: %s", e)
+        return ""
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _zkrat_sen(txt: str, limit: int = 600) -> str:
+    t = " ".join(str(txt or "").split())
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
 
 
 def reading_answer(db_path: str, question: str = "",
