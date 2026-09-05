@@ -173,6 +173,42 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
 
 # ── Dispatcher ─────────────────────────────────────────────────────────
 
+def _oslov_dle_tazatele(text, handler, name):
+    """HANS_CMD_ADDRESSEE_V1 (5.9.) — SROVNEJ OSLOVENÍ I U PŘÍKAZOVÝCH ODPOVĚDÍ.
+
+    `cz_names.fix_addressee` (a v ní `HANS_ADDRESSEE_ZENA_PANE_V1` ze 4. 9.)
+    slibuje v docstringu, že běží „po KAŽDÉ odpovědi". NEBĚŽÍ: volá se až na
+    konci `send_chat_message`, a PŘED tím řádkem je v té metodě **16 returnů**;
+    Matrix navíc volá `dispatch` napřímo (`bridge_commands`), takže se do té
+    metody vůbec nedostane [[two-command-paths-agent-vs-bridge]].
+    Doloženo živě 5. 9.: ŽENA → `/verify` → „Nemám co ověřovat, PANE."
+    V `chat_commands.py` je **46 příkazů** se šablonou obsahující „pane".
+
+    ⛔ NEPŘEPISOVAT ty šablony po jedné — 4. 9. bylo výslovně rozhodnuto, že
+    jedno místo je levnější, robustnější a pokryje i texty z modelu. Tohle to
+    rozhodnutí NEruší, naopak ho konečně platí i tady.
+
+    Proč zrovna `dispatch`, a ne obal kolem `send_chat_message`: teče přes něj
+    web i Matrix, a hlavně je to **PŘED zápisem** do `conv_store` a deníku.
+    Obal až nad návratem by opravil, co uživatel vidí, ale do historie by se
+    uložil původní tvar — a ta historie je modelu few-shotem
+    [[conv-history-is-few-shot]], takže by se „pane" ženě učil dál.
+
+    Bezpečnost: `fix_addressee` sahá jen na OSLOVOVACÍ pozici, takže výpisy
+    typu „jméno: zájem" (1. pád na začátku řádku) zůstávají — ověřeno
+    regresí. Je idempotentní, takže druhé proběhnutí v ocasu nic nezmění.
+    """
+    if not text or not isinstance(text, str) or not name:
+        return text
+    try:
+        from scripts.cz_names import fix_addressee
+        out, _n = fix_addressee(text, name, getattr(handler, "config", None))
+        return out
+    except Exception as e:
+        _log.debug("HANS_CMD_ADDRESSEE_V1 preskocen: %s", e)
+        return text
+
+
 def dispatch(command: tuple[str, str], handler, name: Optional[str]) -> str:
     """Spustí command. handler = openwebui_direct_handler instance.
     Vrátí text odpovědi pro chat."""
@@ -181,7 +217,8 @@ def dispatch(command: tuple[str, str], handler, name: Optional[str]) -> str:
     if not spec:
         return f"⚠ Neznámý příkaz: {cmd_id}"
     try:
-        return spec["handler"](handler, name, args)
+        return _oslov_dle_tazatele(
+            spec["handler"](handler, name, args), handler, name)
     except Exception as e:
         _log.error("dispatch %s failed: %s", cmd_id, e)
         return f"⚠ Příkaz {cmd_id} selhal: {e}"

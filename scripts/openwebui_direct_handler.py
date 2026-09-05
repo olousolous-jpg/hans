@@ -3637,8 +3637,14 @@ class OpenWebUIDirectHandler:
             from scripts.avatar_render import render_in_progress
             if render_in_progress():
                 from scripts.hans_persona import persona_name as _pn
-                _reply = ("Zrovna maluji, pane — až obraz dokončím, budu se "
-                          "Vám plně věnovat. Chvilku strpení.")
+                # HANS_CMD_ADDRESSEE_V1 — i tahle hláška oslovovala ženu
+                # „pane"; je to jediná natvrdo psaná v celé `send_chat_message`
+                # a ukládá se rovnou do `conv_store`, takže se srovnává TADY,
+                # ne až za návratem.
+                from scripts.cz_names import address as _adr_paint
+                _reply = ("Zrovna maluji, %s — až obraz dokončím, budu se "
+                          "Vám plně věnovat. Chvilku strpení."
+                          % (_adr_paint(name, self.config) if name else "pane"))
                 try:
                     self.conv_store.add_exchange(name, user_message, _reply,
                                                  channel=channel)
