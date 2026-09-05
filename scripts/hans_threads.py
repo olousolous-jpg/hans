@@ -42,6 +42,12 @@ from typing import List, Optional
 
 _log = logging.getLogger("hans_threads")
 
+# THREADS_LAPSE_V1 (5.9.) — strop vynoreni JE JEDNA HODNOTA. Cte ho
+# `surface_for` (kdy uz se neptat) i `lapse_stale` (kdy nitku zavrit).
+# Kdyby se rozesly, nitka by se prestala vynorovat, ale nikdy by nezanikla —
+# presne stav, ktery tenhle marker resi.
+MAX_SURFACES = 3
+
 _WS = re.compile(r"\s+")
 
 
@@ -180,7 +186,7 @@ class ThreadStore:
             _log.warning("open_threads failed: %s", e)
             return []
 
-    def surface_for(self, person: str, max_surfaces: int = 3,
+    def surface_for(self, person: str, max_surfaces: int = MAX_SURFACES,
                     cooldown_h: float = 12.0) -> Optional[Thread]:
         """Voice-ready single entry point: nejvhodnější otevřená nitka osoby
         k navnaváze. Vynechá nitky přes cap (otravování) nebo v cooldownu.
@@ -219,6 +225,65 @@ class ThreadStore:
                 conn.close()
         except Exception as e:
             _log.warning("mark_surfaced failed: %s", e)
+
+    def lapse_stale(self, max_surfaces: int = MAX_SURFACES,
+                    lapse_after_days: float = 14.0,
+                    max_open_days: float = 60.0,
+                    dry_run: bool = False) -> list:
+        """THREADS_LAPSE_V1 — zavri nitky, na ktere uz nema smysl se ptat.
+        Vraci seznam (id, person, topic, duvod). `dry_run` nic nezapise.
+
+        PROC: `surface_for` ma strop `max_surfaces` proti otravovani, ale
+        nitka pres strop zustavala `open` NAVZDY. Doloheno 5.9.: vsech 9
+        otevrenych nitek melo times_surfaced=3, nejstarsi z nich 81 dni
+        a naposledy vynorena pred 79 dny → proaktivni vrstva MLCELA u vsech
+        osob a `open_threads` (limit 6) sypala tytez zvetrale nitky do
+        KAZDEHO chatoveho promptu jako „rozjete".
+
+        Dve nezavisla kriteria (OR):
+          • VYCERPANA — dosahla stropu vynoreni a `lapse_after_days` se na ni
+            nikdo neozval. Ptat se poctvrte uz je otravovani.
+          • ZVETRALA — je otevrena dele nez `max_open_days` bez ohledu na
+            vynoreni. Ptat se v zari na kvetiny z cervna je horsi nez mlcet.
+
+        ⚠️ Nitka se ZAVIRA, ne maze, a `resolution` rika PROC — aby se
+        nepletla s tou, kterou osoba doopravdy vyresila. Vyresene nitky
+        zaviraji `extract_threads` (vetev 'resolved') a ty maji vlastni text.
+        """
+        now = time.time()
+        out = []
+        try:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT id, person, topic, times_surfaced, "
+                    "last_surfaced_ts, created_ts FROM person_threads "
+                    "WHERE status='open'").fetchall()
+                for r in rows:
+                    stari = (now - float(r["created_ts"] or now)) / 86400.0
+                    # bez vynoreni bereme stari nitky, ne nulu
+                    _ls = float(r["last_surfaced_ts"] or 0.0)
+                    od_vyn = (now - _ls) / 86400.0 if _ls > 0 else stari
+                    duvod = ""
+                    if (int(r["times_surfaced"] or 0) >= max_surfaces
+                            and od_vyn >= lapse_after_days):
+                        duvod = ("vycerpano — %dx vynoreno, %d dni bez odezvy"
+                                 % (int(r["times_surfaced"] or 0), int(od_vyn)))
+                    elif stari >= max_open_days:
+                        duvod = "zvetralo — otevreno %d dni" % int(stari)
+                    if duvod:
+                        out.append((int(r["id"]), r["person"], r["topic"], duvod))
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("lapse_stale failed: %s", e)
+            return []
+        if dry_run:
+            return out
+        for rid, person, topic, duvod in out:
+            self.close(rid, resolution="THREADS_LAPSE_V1: %s" % duvod)
+            _log.info("thread LAPSE [%s] %s: %.40s (%s)", rid, person, topic, duvod)
+        return out
 
     def close(self, topic_or_id, person: Optional[str] = None,
               resolution: str = "") -> bool:
@@ -456,6 +521,17 @@ def extract_threads(config: dict, diary_db_path: str,
         return {"opened": 0, "closed": 0}
 
     store = ThreadStore(config, diary_db_path)
+    # THREADS_LAPSE_V1 — nejdriv doziti, teprve pak extrakce: zvetrale nitky
+    # se tim nedostanou do bloku „UZ OTEVRENE NITKY" (open_threads ma limit,
+    # takze halda starych nitek vytlaci ty cerstve) ani do chatoveho promptu.
+    try:
+        _lapsed = store.lapse_stale(
+            lapse_after_days=float(cfg.get("lapse_after_days", 14.0)),
+            max_open_days=float(cfg.get("max_open_days", 60.0)))
+        if _lapsed:
+            _log.info("extract_threads: dozilo %d zvetralych nitek", len(_lapsed))
+    except Exception as e:
+        _log.warning("extract_threads: lapse_stale selhal: %s", e)
     er = config.get("evening_reflection", {}) or {}
     model = str(cfg.get("model", er.get("model",
                 "jobautomation/OpenEuroLLM-Czech:latest")))

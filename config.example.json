@@ -508,7 +508,10 @@
     "window_hours": 26,
     "max_open_per_person": 6,
     "num_ctx": 8192,
-    "_num_ctx_note": "Okno pro extrakci nitek. Prompt nese az 20 replik jedne osoby: nejhorsi zmereny den 16 576 znaku (~5 500-8 300 tokenu) proti vychozim 2048. Kdo zvedne pocet replik, musi zvednout i tohle."
+    "_num_ctx_note": "Okno pro extrakci nitek. Prompt nese az 20 replik jedne osoby: nejhorsi zmereny den 16 576 znaku (~5 500-8 300 tokenu) proti vychozim 2048. Kdo zvedne pocet replik, musi zvednout i tohle.",
+    "lapse_after_days": 14.0,
+    "max_open_days": 60.0,
+    "_lapse_note": "THREADS_LAPSE_V1 (5.9.): nitka pres strop vynoreni (surface_for, MAX_SURFACES=3) zustavala open NAVZDY. Doloheno: vsech 9 otevrenych nitek melo 3 vynoreni, nejstarsi 81 dni, naposledy vynorena pred 79 dny -> proaktivni vrstva mlcela u vsech osob a open_threads sypala tytez zvetrale nitky do kazdeho chatoveho promptu. Nocni extract_threads je ted nejdriv dozije: lapse_after_days = dni ticha po dosazeni stropu, max_open_days = tvrdy strop stari bez ohledu na vynoreni. Nitka se ZAVIRA, ne maze, a resolution rika proc."
   },
   "person_interests": {
     "window_hours": 26,
