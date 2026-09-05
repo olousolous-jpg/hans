@@ -345,6 +345,28 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
     if not art or not (art.get("text") or "").strip():
         return None
 
+    # HANS_WIKI_NAMESAKE_V1 (5.9.) - nasel se clanek o VECI POJMENOVANE po tom,
+    # nac se uzivatel ptal? Dolozeno: "neco od Karla Capka" -> "Karla Capka
+    # (Pisek)", tedy ULICE. Sklonovany tvar dotazu se s nazvem ulice shoduje
+    # doslova, takze wiki gate nema co zamitnout; rozhodne az P138 ve
+    # Wikidatech. Sedi to sem, a ne do `_wikipedia_search`, protoze tady vzniká
+    # skoda: odpoved jde cloveku a v noci by se zapsala do pameti.
+    _namesake = None
+    try:
+        from scripts.hans_facts import pojmenovano_po_cloveku
+        _osoba = pojmenovano_po_cloveku(art.get("title") or topic, topic,
+                                        lang=_lang)
+        if _osoba:
+            _art2 = wr.wikipedia_article(_osoba, lang=_lang, max_chars=_max)
+            # Prazdny druhy pokus nesmi shodit dohledani - puvodni clanek je
+            # sice o ulici, ale porad je to lepsi nez tvrdy None; a
+            # `_render_provisional` na neshodu nazvu upozorni sam.
+            if _art2 and (_art2.get("text") or "").strip():
+                art = _art2
+                _namesake = _osoba
+    except Exception as e:
+        _log.debug("HANS_WIKI_NAMESAKE_V1 preskocen: %s", e)
+
     summary = _summarize_for_user(config, topic, art)
     if not summary:
         return None  # mozek mimo uprostřed → honest bypass
@@ -353,6 +375,13 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
         "topic": topic, "source": "wikipedia",
         "resolved_title": art.get("title") or topic,
         "url": art.get("url") or "", "summary": summary,
+        # HANS_WIKI_NAMESAKE_NOTE_V1 - proc se heslo jmenuje jinak nez dotaz.
+        # ⚠️ MEZ: nese se jen v pameti tohohle behu, ne v tabulce. Kdyz se
+        # tentyz dotaz zopakuje TYZ DEN, vrati se ulozeny nalez pres
+        # `recent_pending_for_topic` a poznamka spadne zpet na obecnou. Je to
+        # podcenene, ne nepravdive, a novy sloupec kvuli tomu nestoji za
+        # migraci; kdyby to nekdy vadilo, patri to do schematu.
+        "namesake": _namesake,
     }
     try:
         add_finding(db_path, asker=asker or "", query=query, topic=topic,
@@ -374,7 +403,18 @@ def _render_provisional(row: dict, asker: Optional[str],
     # Heslo se nejmenuje jako dotaz → řekni to ROVNOU, ať to uživatel pozná sám
     # a nemusí čekat na noční ověření. Doloženo živě: „Zootropium" → heslo
     # „Zootropic" (přes redirect článek o heterotrofech) = úplně jiná věc.
-    if not _titles_align(row.get("topic") or "", src):
+    # HANS_WIKI_NAMESAKE_NOTE_V1 (5.9.) - kdyz se heslo zmenilo DOLOZENE
+    # (P138 ve Wikidatech), neni to "nejblizsi nalez" a varovat pred nim by
+    # bylo zavadejici: prave naopak, tenhle nazev je ten spravny a puvodni
+    # shoda byla past. Doloženo pri zivem overeni opravy 5.9.: Hans vratil
+    # spravneho Karla Capka a pod nim napsal, ze "muze jit o neco uplne
+    # jineho". Duvod se proto rekne misto varovani.
+    if row.get("namesake"):
+        summary += ("\n\n(Poznámka: dotaz „%s\" byl ve skloňovaném tvaru a "
+                    "Wikipedie pod ním vede něco pojmenovaného po té osobě; "
+                    "vzal jsem proto heslo o ní samotné.)"
+                    % (row.get("topic") or ""))
+    elif not _titles_align(row.get("topic") or "", src):
         summary += ("\n\n(Poznámka: heslo přesně na „%s\" jsem nenašel, tohle je "
                     "nejbližší nález „%s\" — může jít o něco úplně jiného.)"
                     % (row.get("topic") or "", src))

@@ -207,6 +207,149 @@ def je_film(source_title: str, lang: str = "cs") -> bool:
     return je_film_stav(source_title, lang) is True
 
 
+# HANS_WIKI_NAMESAKE_V1 (5.9.) - CLANEK POJMENOVANY PO NEKOM NENI ODPOVED O NEM.
+#
+# Dolozeno zivym rozhovorem 5.9.: "Cetl jste neco od Karla Capka?" -> Hans
+# odpovedel popisem ULICE V PISKU a chystal se to v noci zapsat do pameti.
+# Pricina neni v prahu: kotva je ve sklonovanem tvaru ("Karla Capka") a
+# cs.wikipedia ma clanek presne toho jmena, protoze ceske ulice se jmenuji
+# 2. padem osob. Zmereno - `_title_similarity`/`_title_coverage` daji ulici
+# 1.00/1.00, kdezto spravnemu "Karel Capek" 0.00/0.00, takze zadne
+# prerovnani vysledku to nespravi. Rozhodne az VLASTNOST P138 (je
+# pojmenovano po), a ta miri presne na spravny clanek.
+#
+# ZMERENO NA REALNYCH DATECH, A MERENI ZABILO NAIVNI VERZI: ze 40 entit
+# s nejvyssi evidenci maji P138 tri - "Tour de France" -> Francie,
+# "Zlate oko" -> dum Goldeneye, "Eden - Vitejte v raji" -> Eden. Samotne
+# P138 by je vsechny presmerovalo SPATNE. Proto se prepina jen tehdy,
+# kdyz je ten, po kom je to pojmenovano, CLOVEK (P31 = Q5) - tim vsechny
+# tri odpadnou uz na typu.
+#
+# ⚠️ Poradi podminek je vec mereni, ne vkusu; obe strany overeny na sedmi
+# pripadech (viz `regrese_helpers`). Levny predfiltr `_jmenoveho_tvaru`
+# odmitne 71 % realnych entit ZDARMA, takze se na Wikidata chodi jen u
+# tvaru, kde tahle kolize vubec muze nastat.
+#
+# ⛔ "Nevim" NENI "neni pojmenovano po cloveku" - sit dole, 429, chybejici
+# P138 i chybejici sitelink vraceji None a volajici nechava puvodni clanek.
+# Je to tentyz trihodnotovy slib jako u `je_film_stav` vys.
+LIDSKE_QID = "Q5"
+
+
+def _n_tokeny(text: str) -> list:
+    """Slova titulu bez zavorkoveho upresneni ("Karla Capka (Pisek)")."""
+    import re as _re
+    text = _re.sub(r"\([^)]*\)", " ", text or "")
+    return [w for w in _re.findall(r"[^\W\d_]+", text, _re.UNICODE) if len(w) > 1]
+
+
+def _jmenoveho_tvaru(titul: str) -> bool:
+    """Vypada titul jako holé JMENO (>=2 slova, vsechna velkym)?
+
+    Levny predfiltr, aby se na Wikidata nechodilo u kazdeho dohledani.
+    Zmereno na 551 realnych entitach: projde 29 %. Odmitne zdarma prave to,
+    co ma v nazvu druhove slovo malym pismenem ("Cardiffsky hrad",
+    "Zlate oko", "Tour de France") - tedy vetsinu falesnych kandidatu.
+    """
+    ws = _n_tokeny(titul)
+    return len(ws) >= 2 and all(w[:1].isupper() for w in ws)
+
+
+def _stejne_jmeno(titul: str, jmeno: str) -> bool:
+    """Je `titul` jen JMENO te osoby, bez druhoveho slova navic?
+
+    Porovnava se po dvojicich na tri znaky, protoze cesky 2. pad meni
+    koncovku i kmen: "Karla Capka" x "Karel Capek" se na cely tvar ani na
+    kmen bez samohlasky NESHODUJI (prchave -e-), na prefix ano.
+    Volnost prefixu tu nevadi - porovnava se titul s popiskem entity, na
+    kterou UKAZUJE SAM SEBOU pres P138, ne dva cizi retezce.
+    """
+    a, b = _n_tokeny(titul), _n_tokeny(jmeno)
+    if not a or not b or len(a) != len(b):
+        return False
+    return all(x[:3].lower() == y[:3].lower() for x, y in zip(a, b))
+
+
+def _cs_clanek(qid: str, lang: str = "cs"):
+    """QID -> nazev clanku v dane jazykove mutaci (None = nema ho)."""
+    if not qid:
+        return None
+    u = ("https://www.wikidata.org/w/api.php?action=wbgetentities&ids=%s"
+         "&props=sitelinks&format=json" % qid)
+    try:
+        ent = (_get(u).get("entities") or {}).get(qid) or {}
+    except RateLimit:
+        raise
+    except Exception as e:
+        _log.debug("_cs_clanek(%r): %s", qid, e)
+        return None
+    return ((ent.get("sitelinks") or {}).get("%swiki" % lang) or {}).get("title")
+
+
+def pojmenovano_po_cloveku(nalezeny_titul: str, dotaz: str,
+                           lang: str = "cs"):
+    """Nazev clanku o CLOVEKU, po kterem je `nalezeny_titul` pojmenovan.
+
+    None = nechat puvodni clanek (nevim / neni to tenhle pripad).
+
+    Prepne se JEN kdyz plati vsechno:
+      1. titul je jmenoveho tvaru (levny predfiltr),
+      2. dotaz je obsazen v titulu - jinak se resi jina vec,
+      3. titul ma P138 a jeho cil je CLOVEK (P31 = Q5),
+      4. uzivatel si o ten druh veci nerekl: bud je dotaz vlastni
+         podmnozinou titulu ("Karla Capka" v "Pamatnik Karla Capka"),
+         nebo je titul jen jmeno te osoby ("Bozeny Nemcove").
+         Kdyz se nekdo zepta primo na "Pamatnik Karla Capka", nesplni ani
+         jedno a pamatnik mu zustane.
+    """
+    if not nalezeny_titul or not dotaz:
+        return None
+    if not _jmenoveho_tvaru(nalezeny_titul):
+        return None
+    t_dotaz = [w.lower() for w in _n_tokeny(dotaz)]
+    t_titul = [w.lower() for w in _n_tokeny(nalezeny_titul)]
+    if not t_dotaz or not set(t_dotaz) <= set(t_titul):
+        return None
+    try:
+        qid, _ = qid_for(nalezeny_titul, lang)
+        if not qid:
+            return None
+        time.sleep(PAUZA_S)
+        u = ("https://www.wikidata.org/w/api.php?action=wbgetentities&ids=%s"
+             "&props=claims&format=json" % qid)
+        claims = ((_get(u).get("entities") or {}).get(qid) or {}).get("claims") or {}
+        cile = []
+        for c in claims.get("P138", []):
+            v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value") or {}
+            if isinstance(v, dict) and v.get("id"):
+                cile.append(v["id"])
+        if not cile:
+            return None
+        for cil in cile:
+            time.sleep(PAUZA_S)
+            if LIDSKE_QID not in typy_qid(cil):
+                continue
+            clanek = _cs_clanek(cil, lang)
+            if not clanek:
+                continue
+            uzsi = set(t_dotaz) < set(t_titul)
+            if not (uzsi or _stejne_jmeno(nalezeny_titul, clanek)):
+                _log.info("HANS_WIKI_NAMESAKE_V1: %r nechavam - dotaz %r si "
+                          "o ten druh veci rekl sam", nalezeny_titul, dotaz)
+                return None
+            _log.info("HANS_WIKI_NAMESAKE_V1: %r je pojmenovano po cloveku "
+                      "%r -> beru jeho clanek (dotaz %r)",
+                      nalezeny_titul, clanek, dotaz)
+            return clanek
+    except RateLimit:
+        _log.info("HANS_WIKI_NAMESAKE_V1: rate limit - nechavam puvodni clanek")
+        return None
+    except Exception as e:
+        _log.debug("pojmenovano_po_cloveku(%r): %s", nalezeny_titul, e)
+        return None
+    return None
+
+
 def _popisky(qids: set, lang: str = "cs") -> dict:
     """QID → (český název, ANGLICKÝ název). Jedním dávkovým dotazem.
 
