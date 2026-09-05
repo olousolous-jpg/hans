@@ -57,6 +57,95 @@ _DREAM_SCENE_SYSTEM = (
     "dreamlike surreal atmosphere, soft hazy light, rich detail, masterful."
 )
 
+# ── HANS_DREAM_SELF_FIGURE_V1 (5.9.) — Hans ve vlastnim snu ─────────────────
+# Zadani uzivatele: „hans by v nich mel pouzivat vlastni vzhled".
+#
+# ⚠️ ZJISTENO MERENIM, ne odhadem: ve snech dosud ZADNA POSTAVA NEBYLA.
+# Vygenerovane prompty byly psane ve 2. osobe / gerundiem („Lie in a violet-lit
+# room… peering down at you", „Cleaning silver service in a hall") — snici byl
+# KAMERA, ne postava. Nebylo tedy cemu davat tvar; zadani neni „vymenit
+# obliceji", ale „dostat Hanse do snu a pak mu udrzet podobu".
+#
+# ⛔ IP-Adapter (ten od avatara) sem NEJDE — je SDXL-only, kdezto sny jedou
+# FLUXem. Podobu drzi PuLID, ktery uz v projektu bezi (HANS_ART_PULID_V1).
+#
+# ⛔ ROZHODNOUT TO INSTRUKCI V PROMPTU NESTACI — ZMERENO. Veta „je-li to cira
+# scenerie, nech scenu bez postavy" model IGNORUJE: sen „steny kancelare jsou
+# tkane z ruzoveho hedvabi, proplétají se v nich vlaky" (bez snicino jednani)
+# dostal Hanse doprostred pouste. Bez gate v KODU by byl Hans v KAZDEM snu.
+#
+# ⛔ CESKY REGEX TAKY NE: 7/8 na rucni sade (mine pritomny cas „lestim",
+# „pestuji"), a doplneni slovesnych koncovek to rozbije — „-ím" je v cestine
+# i mekke pridavne jmeno, takze `predtim` a `obrim` daly falesne poplachy.
+#
+# ✅ ROZHODUJE MALY KLASIFIKATOR (vzor `hans_intent._ask_classifier`,
+# temperature 0): 10/10 na rucni sade a STABILNE 3x po sobe, vcetne obou
+# pripadu, ktere regex nezvladl. U ~1 snu denne je jedno volani zanedbatelne.
+# Pomer na 303 realnych snech: ~2/3 s postavou, ~1/3 cira scenerie.
+_DREAM_SELF_SYSTEM = (
+    "Rozhodni, jestli VYPRAVĚČ snu ve snu sám VYSTUPUJE jako jednající nebo "
+    "přítomná postava.\n"
+    "ANO = vypravěč něco dělá, někde je, něco drží, jde, leží, uklízí, dívá se.\n"
+    "NE  = sen popisuje jen prostředí, věci nebo jiné postavy; vypravěč "
+    "v něm nevystupuje.\n"
+    "Úvodní formule „Zdálo se mi, že…\" NEZNAMENÁ, že vypravěč vystupuje.\n\n"
+    "Příklady:\n"
+    "„Zdálo se mi, že jsem putoval schodišti.\" -> ano\n"
+    "„Zdálo se mi, že leštím nekonečné sály.\" -> ano\n"
+    "„Zdálo se mi, že stěny kanceláře jsou tkané z hedvábí a proplétají se "
+    "v nich vlaky.\" -> ne\n"
+    "„Zdálo se mi, že dům měl nekonečně mnoho pokojů a v každém seděl jiný "
+    "Koláč.\" -> ne\n\n"
+    "Odpověz JEDNÍM slovem: ano nebo ne."
+)
+
+# Snovy scene prompt VE VARIANTE S POSTAVOU. Proti zakladnimu se lisi jen
+# odstavcem o snicim — zbytek MUSI zustat shodny, jinak by se menila i
+# vytvarna podoba snu, ne jen pritomnost postavy.
+_DREAM_SCENE_SYSTEM_FIGURE = (
+    "You turn a person's short surreal DREAM into ONE concise English prompt for "
+    "an SDXL image model. Output ONLY the prompt (no preamble, no quotes). Depict "
+    "the dream as a single dreamlike, symbolic, ATMOSPHERIC scene — surreal, "
+    "evocative, painterly. "
+    "IMPORTANT: the dreamer tells the dream in FIRST PERSON and HE APPEARS IN "
+    "THE IMAGE as a visible human figure: an older gentleman in a dark suit. "
+    "Write him into the scene explicitly (for example 'an older gentleman in a "
+    "dark suit walking up the crumbling staircase'). NEVER address the viewer "
+    "as 'you' and never use a bare gerund without a subject. "
+    "Keep what the dream literally mentions, render it dreamlike. "
+    "NO text, letters, words or book covers. End with: oil painting, "
+    "dreamlike surreal atmosphere, soft hazy light, rich detail, masterful."
+)
+
+
+def _snici_vystupuje(config: dict, text: str) -> bool:
+    """Vystupuje snici ve snu jako postava? Selhani/nejednoznacne → False
+    (= dnesni chovani bez postavy). Fail-safe smerem k SCENERII: radsi Hanse
+    vynechat nez ho vlozit do snu, ve kterem nebyl."""
+    try:
+        from scripts.hans_intent import _ask_classifier
+        out = _ask_classifier(config, _DREAM_SELF_SYSTEM, (text or "").strip())
+    except Exception as e:
+        _log.debug("art: klasifikace snu selhala (%s) → bez postavy", e)
+        return False
+    w = (out or "").strip().lower()
+    return w.startswith("ano")
+
+
+def _aktualni_tvar(config: dict) -> str:
+    """Nejnovejsi vyrenderovana Hansova tvar (data/avatar/vN/idle.png).
+
+    Protahuje `avatar_render.identity_reference`, ktera tuhle logiku uz ma
+    (vcetne prepisu `hans_avatar.identity_reference`) — jen ji vola s verzi
+    NAD kteroukoli existujici, protoze ta funkce hleda vzdy STARSI nez zadana.
+    """
+    try:
+        from scripts.avatar_render import identity_reference
+        return identity_reference(config, 9999) or ""
+    except Exception:
+        return ""
+
+
 # HANS_DAY_PAINTING_V1 — Hans namaluje obraz vystihující svůj DEN a NÁLADU.
 _DAY_SCENE_SYSTEM = (
     "You turn a person's DAY and their MOOD into ONE concise English SDXL prompt for "
@@ -863,7 +952,8 @@ def _last_in_series(db_path: str, series: str) -> Optional[dict]:
 def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
                   en_fallback: str = None,
                   scene_system: str = None, scene_intro: str = None,
-                  series: str = "", cs_subject: str = ""):
+                  series: str = "", cs_subject: str = "",
+                  ref_image: str = "", ref_weight: float = 0.0):
     """Vyrenderuje 1 obraz přes ComfyUI/SDXL. Vrací (rel_path, prompt, vision_desc)
     nebo None. VRAM orchestrace uvnitř (unload LLM → render → _comfy_free →
     llava vize → warm hans-czech). vision_desc = llava popis renderu pro hodnocení
@@ -925,7 +1015,31 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
     ok = False
     vision_desc = ""
     try:
-        if _use_flux:
+        # HANS_DREAM_SELF_FIGURE_V1 — podoba z reference pres FLUX+PuLID.
+        # ⚠️ Vaha 0,45, NE vyssi: zmereno na temze snu, temze seedu a temze
+        # promptu proti 0,9 — nizsi vaha vysla LEPE V OBOU OHLEDECH naraz
+        # (vernejsi vek i ucesu z reference A snovejsi scena). Vysoka vaha
+        # pretlacila i popis stari z promptu a scenu zplostila.
+        _ipa_name = None
+        if ref_image and ref_weight > 0 and _use_flux and os.path.exists(ref_image):
+            _tmp = _resize_to_temp(ref_image)
+            if _tmp:
+                _ipa_name = _comfy_upload_image(base, _tmp)
+                try:
+                    os.remove(_tmp)
+                except Exception:
+                    pass
+            if not _ipa_name:
+                _log.warning("art: referenci %s se nepodarilo nahrat → "
+                             "render bez podoby", ref_image)
+        if _use_flux and _ipa_name:
+            wf = _comfy_workflow_flux_pulid(
+                ckpt, prompt, seed, w, h,
+                int(acfg.get("flux_steps", 20)),
+                float(acfg.get("flux_guidance", 3.5)),
+                _ipa_name, float(ref_weight))
+            _log.info("art: FLUX+PuLID — podoba z %s (w=%.2f)", ref_image, ref_weight)
+        elif _use_flux:
             wf = _comfy_workflow_flux(ckpt, prompt, seed, w, h,
                                       int(acfg.get("flux_steps", 20)),
                                       float(acfg.get("flux_guidance", 3.5)))
@@ -1918,7 +2032,14 @@ def paint_self(config: dict, diary_db_path: str, full_figure: bool = True,
 
     # HANS_ART_SELF_V1 — TEMPLATE = Hansův vytvořený avatar (img2img) → DRŽÍ jeho
     # vzhled. Bez avatara fallback na txt2img z descriptoru.
+    # HANS_ART_SELF_LATEST_FACE_V1 (5.9.) — dosud tu bylo natvrdo
+    # „data/avatar/v1/idle.png". `hans_avatar.face_image` je v configu PRAZDNE,
+    # takze autoportrety kreslily podobu z v1, zatimco aktualni tvar je v3 —
+    # cela prace na vyvoji avatara se do nich nepromitala. Logika „vezmi
+    # nejnovejsi vN" uz existuje (`avatar_render.identity_reference`), jen ji
+    # `paint_self` nevolal.
     avatar_path = ((config.get("hans_avatar", {}) or {}).get("face_image")
+                   or _aktualni_tvar(config)
                    or "data/avatar/v1/idle.png")
     img_name = None
     if os.path.exists(avatar_path):
@@ -2599,10 +2720,23 @@ def paint_dream(config: dict, diary_db_path: str) -> bool:
     text = dream["text"]
     title = "Sen"
     scene_intro = "A dream (described in Czech):\n%s\n\n" % text
+    # HANS_DREAM_SELF_FIGURE_V1 — vystupuje Hans v TOMHLE snu? Rozhoduje KOD
+    # (klasifikator), ne instrukce v promptu — ta se zmerila jako nefunkcni.
+    _sys = _DREAM_SCENE_SYSTEM
+    _ref, _wgt = "", 0.0
+    _vaha = float(dcfg.get("pulid_weight", 0.45))
+    if _vaha > 0 and _snici_vystupuje(config, text):
+        _tvar = _aktualni_tvar(config)
+        if _tvar:
+            _sys, _ref, _wgt = _DREAM_SCENE_SYSTEM_FIGURE, _tvar, _vaha
+            _log.info("art: sen — Hans v nem vystupuje, maluji ho podle %s", _tvar)
+        else:
+            _log.info("art: sen — Hans v nem vystupuje, ale nemam jeho tvar "
+                      "(data/avatar/vN/idle.png) → bez postavy")
     res = _render_image(config, title, text, diary_db_path,
                         en_fallback="a surreal, dreamlike scene, soft and atmospheric",
-                        scene_system=_DREAM_SCENE_SYSTEM, scene_intro=scene_intro,
-                        series="dream")
+                        scene_system=_sys, scene_intro=scene_intro,
+                        series="dream", ref_image=_ref, ref_weight=_wgt)
     if not res:
         _log.warning("art: sen se nevyrenderoval — retry příště")
         return False

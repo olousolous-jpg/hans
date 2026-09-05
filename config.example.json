@@ -635,7 +635,9 @@
       "enabled": true,
       "max_age_days": 4,
       "_note": "HANS_DREAMS_PER_DREAM_V1: Hans maluje KAZDY novy sen (mimo 2denni creative throttle). Idempotence dle dream_ts = 1x/sen; min_interval_hours = kratky odstup proti duplicitnim snum z tehoz noci.",
-      "min_interval_hours": 8
+      "min_interval_hours": 8,
+      "pulid_weight": 0.45,
+      "_pulid_note": "HANS_DREAM_SELF_FIGURE_V1 (5.9.): kdyz snici ve snu vystupuje (rozhoduje klasifikator, ne prompt), Hans se do obrazu namaluje podle nejnovejsi data/avatar/vN/idle.png pres FLUX+PuLID. 0.45 ZMERENO proti 0.9 na temze snu, seedu i promptu: nizsi vaha vysla LEPE v obou ohledech naraz (vernejsi vek i uces A snovejsi scena) - nezvysovat. 0 = vypnuto, sny se malují jako dosud bez postavy."
     },
     "day_painting": {
       "enabled": true,
