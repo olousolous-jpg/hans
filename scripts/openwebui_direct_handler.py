@@ -1530,6 +1530,21 @@ class OpenWebUIDirectHandler:
         except Exception:
             return ''
 
+    # HANS_ENTITY_STRIP_ASKER_V1 (5.9.) — na entitni cestu NESMI jit prefix
+    # „<jmeno> se pta:". Je to TATAZ past, kterou u karet osob resil
+    # HANS_PERSON_CARD_KC_FIX_V1 (19.8.) — jen se tehdy neopravila i tady.
+    # Doloheno 5.9.: „zkouska se pta: kdy vzniklo Divadlo Jary Cimrmana?"
+    # resolvovalo entitu „Zkouska" (id 80, clanek z 5.7., PRAZDNA glosa) ->
+    # fact_block vrati „o tomto pojmu mam zaznam, ale bez blizsi definice" ->
+    # vysledek 'grounded' -> abstinencni brzda se NESPUSTI. Zkouseni Kolacem
+    # jede prave pod jmenem `zkouska`, takze si tim travilo vlastni mereni.
+    # ⚠️ `_q_for_retrieval` si prefix drzi ZAMERNE (embedding jim najde kartu
+    # osoby u „kdo jsem?") — proto se strhava az tady, ne u zdroje.
+    _ASKER_PFX = re.compile(r"^\s*\S+\s+se\s+pt[áa]:\s*")
+
+    def _bez_tazatele(self, text) -> str:
+        return self._ASKER_PFX.sub("", str(text or ""))
+
     def _entity_facts_line(self, text: str) -> str:
         """HANS_ENTITY_FACTS_ALSO_WITH_NOTES_V1 — jen řádek strukturovaných
         faktů k entitě z dotazu (bez glosy). Prázdné, když entita není nebo
@@ -1538,7 +1553,7 @@ class OpenWebUIDirectHandler:
             _es = self._entity_store()
             if _es is None:
                 return ''
-            _ent = _es.resolve(str(text))
+            _ent = _es.resolve(self._bez_tazatele(text))
             if not _ent:
                 return ''
             return _es._facts_line(_ent.get('id'))
@@ -1554,7 +1569,7 @@ class OpenWebUIDirectHandler:
             _es = self._entity_store()
             if _es is None:
                 return ''
-            _ent = _es.resolve(str(text))
+            _ent = _es.resolve(self._bez_tazatele(text))   # HANS_ENTITY_STRIP_ASKER_V1
             if not _ent:
                 return ''
             logging.getLogger(__name__).info(

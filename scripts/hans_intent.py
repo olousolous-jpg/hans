@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import unicodedata
 from dataclasses import dataclass
 from typing import Optional
@@ -300,6 +301,11 @@ class HansIntent:
         # na „popovídám si", ALE NIKDY nevezme dobře doložený faktický dotaz
         # a neudělá z něj nezakotvené povídání — ty totiž mají skóre ≥1
         # a do šedé zóny se vůbec nedostanou.
+        # HANS_INTENT_ANCHOR_FALLBACK_V1 — pamatuj si, ze LLM krok probehl
+        # a NEROZHODL (nedostupny / nejednoznacna odpoved). Jen v tom stavu
+        # smi nize zaskocit kotva; kdyz je `use_llm=false`, chova se to jako
+        # dosud (rezim "jen regexy" je zamerna konfigurace, ne porucha).
+        _llm_nerozhodl = False
         if self._use_llm and self._enabled:
             _cached = self._llm_cache.get(msg)
             if _cached is None:
@@ -317,6 +323,7 @@ class HansIntent:
                     intent=kw.intent if kw.intent != "volna" else "udalost",
                     confidence=0.7, source="llm")
             # None → model nedostupný/nejednoznačný → keyword jako dosud
+            _llm_nerozhodl = True   # HANS_INTENT_ANCHOR_FALLBACK_V1
 
         # 3) FALLBACK — keyword nejistý + LLM nedostupný.
         # Když keyword aspoň něco naznačil, vrať to. Jinak BEZPEČNĚ faktická
@@ -330,6 +337,52 @@ class HansIntent:
             # radši grounding (událost) než tichá konfabulace
             return IntentResult(intent="udalost", confidence=0.4,
                                 source="fallback")
+        # HANS_INTENT_ANCHOR_FALLBACK_V1 (5.9.) — KDYZ POJISTKA VYPADNE,
+        # ROZHODUJE KOTVA TEMATU, NE SEZNAM SLOV.
+        #
+        # Doloheny pripad: zkouska Kolacem #30, veta „potrebuji vice informaci
+        # o Souborne vydani del Bohuslava Martinu". Nema otaznik ani zadne
+        # slovo z `_FACTUAL_SIGNAL` -> keyword conf 0,30 -> seda zona ->
+        # klasifikator na PC 2x timeout -> fallback „volna" -> volny hovor ->
+        # zadny grounding, zadna abstinencni brzda (bezi jen na
+        # `factual_nofacts`) -> 15 vet bez opory.
+        #
+        # ⛔ NEROZSIROVAT `_FACTUAL_SIGNAL` o „potrebuji informace" — to je
+        # whack-a-mole na POVRCH textu (prompt debt). Kotva se pta na neco
+        # jineho: MA TA VETA PREDMET, o kterem se da neco dohledat?
+        # Zmereno retro na 1 359 realnych zpravach z `human_chat`:
+        #   seda zona 1 034 · z toho fallback -> volna bez signalu 374
+        #   z tech 374 ma kotvu 62 (17 %) — „nastuduj vice o Jara Cimrman",
+        #   „ukaz mi zdroj o Icon of the Seas", `namaluj X` (ty chytne prikaz
+        #   driv, takze neskodi); zbylych 312 je skutecny small talk
+        #   („to je pravda.", „ano, dame si kafe") a zustava volny.
+        # Nejhorsi mozny vysledek teto vetve je ABSTINENCE, ne konfabulace.
+        #
+        # ⚠️ Prefix „<jmeno> se pta:" MUSI pryc — jinak by se kotvou stal
+        # TAZATEL (tataz past jako HANS_PERSON_CARD_KC_FIX_V1, 19.8.).
+        # `kotva_tematu` je cisty regex bez DB: zmereno 37 µs/volani.
+        if _llm_nerozhodl:
+            try:
+                from scripts.hans_convindex import kotva_tematu as _kotva
+                _cfg = self._config or {}
+                _kp = (_cfg.get("known_persons", {}) or {})
+                _vyn = tuple(_kp.keys()) + tuple(
+                    str(v.get("nom", "")) for v in _kp.values())
+                try:
+                    from scripts.hans_persona import persona_name as _pn
+                    _vyn += (str(_pn(_cfg) or ""),)
+                except Exception:
+                    pass
+                _cista = re.sub(r"^\s*\S+\s+se\s+pt[áa]:\s*", "", msg)
+                _t = _kotva(_cista, vynech=_vyn)
+                if _t:
+                    _log.info(
+                        "intent: klasifikator nerozhodl, ale veta ma kotvu "
+                        "%r → FAKTICKA (radsi grounding nez tichy vymysl)", _t)
+                    return IntentResult(intent="udalost", confidence=0.4,
+                                        source="fallback_kotva")
+            except Exception as _e:
+                _log.debug("fallback_kotva selhal (%s) → volna jako dosud", _e)
         return IntentResult(intent="volna", confidence=0.5, source="fallback")
 
     # ── Keyword vrstva ─────────────────────────────────────────────────────────
@@ -431,12 +484,14 @@ class HansIntent:
     def _llm_is_factual(self, msg: str) -> Optional[bool]:
         """Zeptej se mini modelu: je to faktický dotaz? None = nedostupný.
 
-        ⚠️ ZÁMĚRNĚ NEJDE přes `ollama_client.ollama_chat`: ten má globální
-        `game_mode_on()` gate a míří na PC endpoint. Tenhle klasifikátor běží
-        na MALÉM modelu PŘÍMO NA PI (CPU, ~1 GB) — s VRAM na PC nemá nic
-        společného a musí fungovat i když je PC vypnuté nebo se hraje. Právě
-        proto byla LLM vrstva dosud vypnutá (qwen2.5:7b se k hans-czech do
-        16 GB nevešel) — mini model na Pi tenhle spor ruší."""
+        ⚠️ POZOR, TENHLE ODSTAVEC DŘÍV LHAL: stálo tu „běží na MALÉM modelu
+        PŘÍMO NA PI … musí fungovat i když je PC vypnuté". Od 5.8.
+        (`HANS_INTENT_PC_V1`) to NEPLATÍ — `_ask_classifier` míří na
+        `hans-czech` NA PC. Když je PC dole nebo zahlcené, tenhle detektor
+        MLČÍ (None) a rozhoduje fallback v `classify`; přesně to 5.9. vyrobilo
+        konfabulaci ve zkoušce #30. `is_about_self` má tutéž opravu.
+        ⚠️ ZÁMĚRNĚ NEJDE přes `ollama_client.ollama_chat`: ten má vlastní
+        retry/timeout politiku pro chat; klasifikace musí být krátká."""
         out = _ask_classifier(self._config, self._LLM_SYSTEM, msg)
         if out is None:
             return None
@@ -486,6 +541,43 @@ _SELF_SYSTEM = (
 _self_cache: dict = {}
 
 
+# ── HANS_INTENT_CLF_DOWN_LOG_V1 (5.9.) ──────────────────────────────────────
+# Selhani klasifikatoru se logovalo na DEBUG, takze v produkci NEBYLA ANI
+# STOPA. Zkouska Kolacem #30 (5.9. 00:27) ukazala, proc to vadi: pod zatezi
+# PC vypadne LEVNA POJISTKA (klasifikace, timeout 20 s) driv nez DRAHE
+# GENEROVANI (chat, 120 s) — Hans odpovi, ale bez opory. Bezpecnost tedy
+# degraduje PRED schopnosti a nikdo se to nedozvi.
+# Throttle podle vzoru LOG_CIRCUIT_V1: prvni selhani hned, dalsi nejvys
+# 1x/5 min s poctem, a po navratu jeden radek "OBNOVEN". Nocni vypnuti PC
+# tim log nezaplavi.
+_CLF_FAIL_N: int = 0
+_CLF_FAIL_LAST_LOG: float = 0.0
+_CLF_DOWN: bool = False
+_CLF_LOG_EVERY_S: float = 300.0
+
+
+def _clf_selhalo(exc) -> None:
+    global _CLF_FAIL_N, _CLF_FAIL_LAST_LOG, _CLF_DOWN
+    _CLF_FAIL_N += 1
+    _CLF_DOWN = True
+    now = time.time()
+    if now - _CLF_FAIL_LAST_LOG >= _CLF_LOG_EVERY_S:
+        _log.warning(
+            "intent: klasifikator NEDOSTUPNY (%s) — %d selhani od posledniho "
+            "hlaseni; dotazy v sede zone jedou na fallback", exc, _CLF_FAIL_N)
+        _CLF_FAIL_LAST_LOG = now
+        _CLF_FAIL_N = 0
+
+
+def _clf_ok() -> None:
+    global _CLF_FAIL_N, _CLF_DOWN
+    if _CLF_DOWN:
+        _log.info("intent: klasifikator OBNOVEN (%d tichych selhani predtim)",
+                  _CLF_FAIL_N)
+        _CLF_DOWN = False
+        _CLF_FAIL_N = 0
+
+
 def _ask_classifier(config: dict, system: str, message: str) -> Optional[str]:
     """HANS_INTENT_PC_V1 (5.8.) — jedno místo, kudy jdou klasifikační dotazy.
 
@@ -524,9 +616,11 @@ def _ask_classifier(config: dict, system: str, message: str) -> Optional[str]:
         req = _url.Request(url + "/api/chat", body,
                            {"Content-Type": "application/json"})
         with _url.urlopen(req, timeout=int(ic.get("timeout", 20))) as r:
-            return _json.loads(r.read())["message"]["content"]
+            _out = _json.loads(r.read())["message"]["content"]
+        _clf_ok()          # HANS_INTENT_CLF_DOWN_LOG_V1
+        return _out
     except Exception as e:
-        _log.debug("klasifikátor nedostupný (%s) → fallback", e)
+        _clf_selhalo(e)    # HANS_INTENT_CLF_DOWN_LOG_V1 (drive tichy DEBUG)
         return None
 
 

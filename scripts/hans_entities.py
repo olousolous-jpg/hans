@@ -60,6 +60,77 @@ def _tokens(s: str) -> List[str]:
     return re.findall(r"[a-z0-9]+", _norm(s))
 
 
+def _prefix_len(a: str, b: str) -> int:
+    """Delka spolecneho prefixu dvou tokenu."""
+    n = 0
+    for ca, cb in zip(a, b):
+        if ca != cb:
+            break
+        n += 1
+    return n
+
+
+# ── HANS_ENTITY_PROPER_NOUN_PREFIX_V1 (5.9.) ────────────────────────────────
+# ROZHODCIM NENI DELKA, ALE PRAVOPIS.
+#
+# Doloheny pripad (zkouska Kolacem #30, 5.9. 00:27): dotaz o Bohuslavu
+# MARTINU resolvoval entitu MARTAN ("hypoteticky obyvatel planety Mars") ->
+# C1 ji vydala jako autoritativni fakt -> 'grounded' -> abstinencni brzda A1
+# se NESPUSTILA -> 15 vet bez opory. [[partial-grounding-disables-abstention]]
+#
+# ⛔ TRI CESTY ZMERENY, DVE ZAMITNUTY — nezkouset znovu (detail v BACKLOG.md):
+# (a) Pomerove pravidlo na DELKU prefixu je slepa ulice, protoze
+#         gotika ~ goticke   n=4 min=6 max=7   LEGITIMNI
+#         martan ~ martinu   n=4 min=6 max=7   VADNA
+#     maji TOTOZNY TVAR. Archiv u HANS_ENTITY_PREFIX_MAXLEN_V1 mel pravdu.
+# (b) Shoda entity s `kotva_tematu`: na 1 359 vetach 8 vyher a 8 ztrat
+#     (kotva bere prvni velke pismeno, casto vedlejsi slovo: „Kde", „Osmi").
+# (c) Oznacit `entita_c1` za tenkou cestu pro grounding_guard NESTACI —
+#     zmereno na odpovedi #30: guard zahodi 1 vetu z 15 (prah 2), protoze
+#     `overlap == 0.0` znamena „neni o tematu, neni co overovat".
+#
+# ✅ CO FUNGUJE: ceske VLASTNI JMENO se sklonuje jen v koncovce, takze spravna
+# shoda drzi dlouhy prefix; nahodna shoda dvou RUZNYCH jmen se rozejde brzy.
+# Obecna jmena se odvozovanim meni vic (gotika->goticke) a spatne obecne jmeno
+# je min nebezpecne. Proto: token psany ve VETE velkym pismenem musi prefixem
+# pokryt >= `proper_noun_prefix_ratio` delsiho tokenu; token psany malym si
+# drzi dnesni volnejsi pravidlo. Presna shoda projde vzdy.
+#
+# ZMERENO na 1 359 realnych vetach z `human_chat`: resolvuje se 188 -> 187,
+# tj. JEDINY rozdil (`Cesko` u dotazu na Cesky raj — tam byla stejne spatne).
+# Zavre pritom tri DOLOZENE vady: martan~Martinu (#30), svatba~Svatyne (21.8.)
+# a spencer~Spenat (4.8., „Bud Spencer" -> obraz o spenatu).
+# ⚠️ Prahy 0,65 (ztrati Daliho na preklep „Salvator") a 0,68 (ztrati
+#    Radeckeho) jsou HORSI — neposouvat nahoru.
+#
+# 🟡 ZNAMA MEZ: rozdil gotika~goticke × martan~martinu je JEN ve velkem
+# pismenu. Kdyz uzivatel pise bez velkych pismen („co vis o martinu"), je
+# pravidlo NECINNE a plati dnesni chovani. Je to tedy FAIL-OPEN: umi jen ubrat
+# falesne shody u velkych pismen, nikdy nepridat novou.
+#
+# ⚠️ ZAMERNE SE NEMENI `_tok_match` — pouziva ho 5 dalsich modulu
+# (film_director_check, kodi_client, hans_recall, hans_lessons, hans_study)
+# a ty se opiraji o jeho dokumentovane chovani. Pritvrzeni sedi JEN v
+# `resolve()`, tedy tam, kde bylo zmereno. [[action-description-is-router-change]]
+_PROPER_RATIO_DEFAULT = 0.62
+
+
+def _upper_folded(text: str) -> set:
+    """Slozene tvary tech slov vety, ktera jsou psana VELKYM pismenem.
+
+    Deli se stejnym vzorem jako `_tokens`, jen se pocita pres SYROVY text,
+    aby se zachovala velikost pismen. Slova, ktera se po normalizaci
+    nerozpadnou na `[a-z0-9]+`, se ignoruji.
+    """
+    out = set()
+    for raw in re.findall(r"\w+", text or "", re.UNICODE):
+        if not raw[:1].isupper():
+            continue
+        for f in re.findall(r"[a-z0-9]+", _norm(raw)):
+            out.add(f)
+    return out
+
+
 def _tok_match(a: str, b: str) -> bool:
     """Dva tokeny odpovídají téže bázi navzdory českému skloňování:
     sdílený prefix ≥4 znaky A ≥ (kratší délka − 3). „cardiffsky"↔„cardiffskem",
@@ -435,6 +506,18 @@ class EntityStore:
         if not q_tokens:
             return None
         q_content = [t for t in q_tokens if len(t) >= 4]
+        # HANS_ENTITY_PROPER_NOUN_PREFIX_V1 — matcher pro TENHLE dotaz
+        _q_upper = _upper_folded(query)
+        _ratio = float(self.cfg.get("proper_noun_prefix_ratio",
+                                    _PROPER_RATIO_DEFAULT))
+
+        def _match_q(key_tok: str, q_tok: str) -> bool:
+            if not _tok_match(key_tok, q_tok):
+                return False
+            if key_tok == q_tok or q_tok not in _q_upper:
+                return True     # presna shoda / obecne jmeno → jako dosud
+            return (_prefix_len(key_tok, q_tok)
+                    >= _ratio * max(len(key_tok), len(q_tok)))
         best_id, best_score = None, 0
         for _id, keys in self._all_keys():
             for k in keys:
@@ -442,7 +525,7 @@ class EntityStore:
                 if not kt:
                     continue  # jen krátké tokeny → moc nejednoznačné
                 matched = [t for t in kt
-                           if any(_tok_match(t, qt) for qt in q_tokens)]
+                           if any(_match_q(t, qt) for qt in q_tokens)]
                 # plná shoda VŠECH tokenů, NEBO (u víceslovných jmen) shoda
                 # prvního I posledního tokenu — řeší prostřední jména
                 # („Erich Robert Sorge" ↔ dotaz „Erich Sorge").
@@ -454,7 +537,7 @@ class EntityStore:
                 # špatného jmenovce). Tj. všechny obsahové tokeny dotazu musí
                 # sednout na entitu.
                 q_all_matched = all(
-                    any(_tok_match(kt_tok, qt) for kt_tok in kt)
+                    any(_match_q(kt_tok, qt) for kt_tok in kt)
                     for qt in q_content)
                 # HANS_ENTITY_SURNAME_PERSON_ONLY_V1 (4.8.) — „shoda na posledním
                 # tokenu" dává smysl JEN u jmen osob (příjmení: „pan Sorge" →
