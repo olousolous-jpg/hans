@@ -870,29 +870,80 @@ def _find_entity_in_text(db_path: str, text: str) -> Optional[tuple]:
     return best
 
 
-def _last_hans_topics(db_path: str, limit: int = 3) -> list:
+# HANS_SOURCE_REFERENT_SCOPE_V1 (5.9.) — VÝPIS NENÍ TVRZENÍ.
+# Hansova replika, která něco VYJMENOVÁVÁ (odrážky, číslování, dvojtečka na
+# konci řádku, „mimo jiné:"), je REPORT o tom, co se dělo — ne tvrzení
+# o světě. Náhodné slovo v takovém seznamu se nesmí stát „tématem, o kterém
+# jsem se dočetl na Wikipedii".
+# Doloženo třemi reálnými případy (12.–19. 8.), viz `_last_hans_topics`.
+_VYCET_PAT = re.compile(
+    r"(\n\s*[-•*·]\s|\n\s*\d+[.)]\s|mimo\s+jin[ée]:|:\s*\n)")
+
+
+def _je_vycet(text: str) -> bool:
+    return bool(_VYCET_PAT.search(text or ""))
+
+
+def _last_hans_topics(db_path: str, limit: int = 3,
+                      person: Optional[str] = None,
+                      okno_s: float = 3600.0) -> list:
     """Extrahuj potenciální témata z NĚKOLIKA posledních Hansových replik.
     Vrací list stringů (celý text Hansovy repliky) — volající pak matchuje entity.
+
+    HANS_SOURCE_REFERENT_SCOPE_V1 (5.9.) — TŘI MEZE. Navazuje na
+    `HANS_ENTITY_WORDBOUND_V1` (30.8.), který opravil, KTERÁ slova smí
+    matchovat; tohle omezuje, KTERÝ TEXT se vůbec prohledává. Bez toho je
+    tvrzení o PROVENIENCI vyrobené z náhodné věty — a to je konfabulace
+    v nejcitlivějším místě.
+
+    1. `person` — jen repliky TÉŽE osobě. Dřív se bralo globální pořadí
+       deníku, takže „odkud to víš?" mohlo sáhnout po replice, kterou Hans
+       dal NĚKOMU JINÉMU. Doložený nález #8: odpověď „O tématu Surrealismus
+       jsem se dočetl na Wikipedii", přičemž Surrealismus padl v hovoru
+       s JINÝM MLUVČÍM a v tomhle hovoru vůbec ne.
+    2. `okno_s` — referent anaforické otázky musí být ČERSTVÝ. Změřeno na
+       30 reálných dotazech na zdroj: medián mezery 1,0 min, 90. percentil
+       8,1 min, maximum 46,7 min → hodina má rezervu 100 %.
+    3. `_je_vycet` — výpis se přeskočí (viz komentář výše).
+
+    ⚠️ `person=None` = beze změny (žádný filtr osoby) — kdyby funkci volal
+    někdo, kdo mluvčího nezná, chová se jako dosud.
+    Selhání kterékoli meze vede nejhůř k POCTIVÉMU PŘIZNÁNÍ („konkrétní zdroj
+    nabídnout nemohu"), nikdy k vymyšlenému zdroji. Fail-safe je abstinence.
     """
     conn = None
     try:
         conn = _ro(db_path)
-        rows = conn.execute(
-            "SELECT note FROM diary WHERE event_type='human_chat' "
-            "ORDER BY ts DESC LIMIT ?", (limit * 3,)).fetchall()
+        if okno_s and okno_s > 0:
+            rows = conn.execute(
+                "SELECT note FROM diary WHERE event_type='human_chat' "
+                "AND ts >= ? ORDER BY ts DESC LIMIT ?",
+                (time.time() - float(okno_s), limit * 8)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT note FROM diary WHERE event_type='human_chat' "
+                "ORDER BY ts DESC LIMIT ?", (limit * 8,)).fetchall()
     except Exception:
         return []
     finally:
         if conn:
             conn.close()
+    _kdo = (person or "").strip().lower()
     out = []
     for (note,) in rows:
         # note = "<osoba>: ...\nHans: ..." — vytáhni jen Hansovu část
         if not note:
             continue
+        if _kdo and note.partition(":")[0].strip().lower() != _kdo:
+            continue                      # replika NĚKOMU JINÉMU
         idx = note.find("Hans:")
         if idx >= 0:
-            out.append(note[idx + 5:].strip())
+            _h = note[idx + 5:].strip()
+            if _je_vycet(_h):
+                continue                  # výpis není tvrzení
+            out.append(_h)
+        if len(out) >= limit:
+            break
         if len(out) >= limit:
             break
     return out
@@ -950,7 +1001,7 @@ def sources_answer(db_path: str, user_text: str,
             _hlaseni = _re.compile(
                 r"(vid[íi]m\s+(tu|tady)|nikoho\s+nevid[íi]m|"
                 r"zahl[ée]dl\s+jsem|je\s+doma|jsou\s+doma)", _re.IGNORECASE)
-            for _r in _last_hans_topics(db_path, limit=2):
+            for _r in _last_hans_topics(db_path, limit=2, person=asker):
                 if _hlaseni.search(_r or ""):
                     _o_pritomnosti = True
                     break
@@ -990,7 +1041,7 @@ def sources_answer(db_path: str, user_text: str,
     hit = _find_entity_in_text(db_path, user_text)
     if not hit:
         # fallback z posledních Hansových replik (user řekl jen „a odkud to víš")
-        for hans_reply in _last_hans_topics(db_path, limit=3):
+        for hans_reply in _last_hans_topics(db_path, limit=3, person=asker):
             hit = _find_entity_in_text(db_path, hans_reply)
             if hit:
                 break
@@ -1007,7 +1058,8 @@ def sources_answer(db_path: str, user_text: str,
             "nechci si nic vymýšlet." % oslov)
 
 
-def sources_reply(db_path: str, user_text: str = "", limit: int = 5) -> str:
+def sources_reply(db_path: str, user_text: str = "", limit: int = 5,
+                  asker: Optional[str] = None) -> str:
     """HANS_SOURCE_QUERY_V1 — grounding blok pro dotaz „odkud to víš".
 
     STRATEGIE (17.7. — přepracováno na FAKTA, ne instrukce; malý model neuměl
@@ -1021,7 +1073,7 @@ def sources_reply(db_path: str, user_text: str = "", limit: int = 5) -> str:
     hit = _find_entity_in_text(db_path, user_text)
     if not hit:
         # 2) entita v Hansově předchozí odpovědi (user: „a odkud to víš?")
-        for hans_reply in _last_hans_topics(db_path, limit=3):
+        for hans_reply in _last_hans_topics(db_path, limit=3, person=asker):
             hit = _find_entity_in_text(db_path, hans_reply)
             if hit:
                 break

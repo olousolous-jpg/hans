@@ -955,7 +955,9 @@ class OpenWebUIDirectHandler:
                           or "data/hans_diary.db")
                 self._vysledek_groundingu('grounded', 'zdroje')
                 _log_dbg.info('HANS_SOURCE_QUERY_V1: match → sources_reply grounding')
-                return sources_reply(_dbp_s, user_text=str(_text))
+                # HANS_SOURCE_REFERENT_SCOPE_V1 — mluvčí musí dojít až dolů,
+                # jinak fallback sáhne po replice dané NĚKOMU JINÉMU.
+                return sources_reply(_dbp_s, user_text=str(_text), asker=name)
         except Exception as _sqe:
             logging.getLogger(__name__).warning(
                 'HANS_SOURCE_QUERY_V1 check selhal: %s', _sqe)
