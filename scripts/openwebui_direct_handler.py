@@ -3625,35 +3625,19 @@ class OpenWebUIDirectHandler:
         except Exception as _ce:
             print(f"[Chat] command dispatch error: {_ce}")
 
-        # ── HANS_CHAT_WAIT_FOR_PAINT_V1 (5.8.) — maluju, ozvu se potom ──────
-        # Chatová odpověď natáhne hans-czech (8 GB) do VRAM a tím podřízne
-        # běžící render: FLUX se nevejde, spadne do lowvram a obraz trvá
-        # násobně dýl (naměřeno 475 s vs 210 s). `pause_warmup` tenhle případ
-        # NEKRYJE — ta zabíjí jen automatické re-piny, ne reálný chat.
-        # Proto radši krátká poctivá věta než tichý sabotovaný obraz.
-        # ZÁMĚRNĚ AŽ ZA PŘÍKAZY: `/stav`, `/zdravi` apod. musí jít i při
-        # malování (jsou deterministické, mozek nepotřebují).
-        try:
-            from scripts.avatar_render import render_in_progress
-            if render_in_progress():
-                from scripts.hans_persona import persona_name as _pn
-                # HANS_CMD_ADDRESSEE_V1 — i tahle hláška oslovovala ženu
-                # „pane"; je to jediná natvrdo psaná v celé `send_chat_message`
-                # a ukládá se rovnou do `conv_store`, takže se srovnává TADY,
-                # ne až za návratem.
-                from scripts.cz_names import address as _adr_paint
-                _reply = ("Zrovna maluji, %s — až obraz dokončím, budu se "
-                          "Vám plně věnovat. Chvilku strpení."
-                          % (_adr_paint(name, self.config) if name else "pane"))
-                try:
-                    self.conv_store.add_exchange(name, user_message, _reply,
-                                                 channel=channel)
-                except Exception:
-                    pass
-                print("[Chat] odloženo — %s právě renderuje obraz" % _pn(self.config))
-                return _reply
-        except Exception as _pe:
-            print(f"[Chat] paint-wait gate error: {_pe}")
+        # ── HANS_PAINT_GATE_AFTER_BYPASS_V1 (5.9.) — BRÁNA SE PŘESUNULA NÍŽ ──
+        # Stála tady, hned za příkazy, s odůvodněním „příkazy jsou
+        # deterministické, mozek nepotřebují". To odůvodnění platí — jenže
+        # POD tímhle místem je dalších SEDM deterministických bypassů
+        # (datum/čas, kdo se ptá, doporučení knihy, karta osoby, nárok na
+        # paměť, dotaz na zdroj, prohloubení studia) a ty brána brala s sebou.
+        # Doloženo testovacím rozhovorem 5. 9.: render 17:17→17:22 spolkl
+        # ŠEST z deseti tahů, mezi nimi „zapamatuj si to" — což je čistá
+        # šablona bez modelu.
+        # Brána proto sedí až TĚSNĚ PŘED AGENTNÍ VRSTVOU, tedy před prvním
+        # místem, které mozek opravdu potřebuje. Jediná věc mezi tím, která
+        # ho potřebuje taky, je dohledání (`lookup_now`) — to má vlastní
+        # hlídku o pár desítek řádků níž.
 
         # HANS_KNOWLEDGE_CHECK_V1 BYPASS (18.7. → 19.7.) — hans-czech persona
         # halucinuje „mám v paměti záznamy" i pro věci, které nikdy neviděl
@@ -3769,6 +3753,22 @@ class OpenWebUIDirectHandler:
                     from scripts.hans_recall import _extract_knowledge_topic
                     from scripts.hans_findings import lookup_now
                     _topic_kb = _extract_knowledge_topic(user_message)
+                    # HANS_PAINT_GATE_AFTER_BYPASS_V1 — dohledání je JEDINÁ věc
+                    # nad přesunutou bránou, která potřebuje mozek (shrnuje
+                    # článek LLM). Při běžícím renderu se přeskočí, ať nesebere
+                    # VRAM obrazu; odpověď pak spadne na poctivé „nemám
+                    # záznam" nebo na hlášku o malování níž.
+                    # ⚠️ `lookup_now` si sám kontroluje jen `brain_available`,
+                    # a ta je při renderu PRAVDA (Ollama běží, jen se o GPU
+                    # dělí) — proto tahle hlídka navíc.
+                    if _topic_kb:
+                        try:
+                            from scripts.avatar_render import render_in_progress
+                            if render_in_progress():
+                                _topic_kb = ""
+                                print("[Chat] dohledání odloženo — právě se maluje")
+                        except Exception:
+                            pass
                     if _topic_kb:
                         _prov = lookup_now(self.config, _dbp_kb, _topic_kb,
                                            user_message, asker=name)
@@ -3877,6 +3877,40 @@ class OpenWebUIDirectHandler:
                 return _dr
         except Exception as _de:
             print(f"[Chat] deepen response error: {_de}")
+
+        # ── HANS_CHAT_WAIT_FOR_PAINT_V1 (5.8.) — maluju, ozvu se potom ──────
+        # Chatová odpověď natáhne hans-czech (8 GB) do VRAM a tím podřízne
+        # běžící render: FLUX se nevejde, spadne do lowvram a obraz trvá
+        # násobně dýl (naměřeno 475 s vs 210 s). `pause_warmup` tenhle případ
+        # NEKRYJE — ta zabíjí jen automatické re-piny, ne reálný chat.
+        # Proto radši krátká poctivá věta než tichý sabotovaný obraz.
+        # ⚠️ HANS_PAINT_GATE_AFTER_BYPASS_V1 (5.9.) — MÍSTO JE PODSTATNÉ.
+        # Nesmí se posunout zpátky nahoru za příkazy: mezi tímto řádkem
+        # a příkazy leží sedm deterministických bypassů, které mozek
+        # nepotřebují, a nahoře je brána brala s sebou.
+        try:
+            from scripts.avatar_render import render_in_progress
+            if render_in_progress():
+                from scripts.hans_persona import persona_name as _pn
+                # HANS_CMD_ADDRESSEE_V1 — i tahle hláška oslovovala ženu
+                # „pane"; je to jediná natvrdo psaná v celé `send_chat_message`
+                # a ukládá se rovnou do `conv_store`, takže se srovnává TADY,
+                # ne až za návratem.
+                from scripts.cz_names import address as _adr_paint
+                _reply = ("Zrovna maluji, %s — až obraz dokončím, budu se "
+                          "Vám plně věnovat. Chvilku strpení."
+                          % (_adr_paint(name, self.config) if name else "pane"))
+                try:
+                    self.conv_store.add_exchange(name, user_message, _reply,
+                                                 channel=channel)
+                except Exception:
+                    pass
+                self._log_human_chat_to_diary(name, user_message, _reply,
+                                              bypass_kind="paint_wait")
+                print("[Chat] odloženo — %s právě renderuje obraz" % _pn(self.config))
+                return _reply
+        except Exception as _pe:
+            print(f"[Chat] paint-wait gate error: {_pe}")
 
         # ── HANS_AGENT_V1 — agentní vrstva (kontextové akce z konverzace) ──
         # PO parse_command (příkazy mají přednost), PŘED běžným chatem.
