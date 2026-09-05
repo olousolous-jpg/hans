@@ -723,6 +723,26 @@ def je_fakt_o_mluvcim(text: str) -> bool:
     return bool(_FAKT_O_MLUVCIM.search(text or ""))
 
 
+# HANS_REMEMBER_HONEST_V1 (5.9.) — VYSLOVNA ZADOST „pamatuj si, ze ...".
+# Sdileny predikat (leaf modul) — obe vrstvy si ho importuji, dve kopie by se
+# rozesly [[command-preempts-agent-same-message]].
+# ⚠️ ZAMERNE UZKE: jen explicitni pokyn k zapamatovani, ne „mam rad X" samo
+# o sobe. Zmereno na 1 359 realnych zpravach: 2 shody, a ANI JEDNA nebyla fakt
+# o mluvcim (technicky fakt o HW a nakupni pripominka). Sirsi verze by
+# unesla prave tyhle dva pripady, kam nepatri.
+_ZADOST_ZAPAMATOVAT = re.compile(
+    r"\b(?:za)?pamatuj\s+si\b"
+    r"|\bzapi[šs]\s+si\b"
+    r"|\bpoznamenej\s+si\b"
+    r"|\bzapamatuj\s+(?:si\s+)?[,:]?\s*[žz]e\b",
+    re.IGNORECASE)
+
+
+def zada_o_zapamatovani(text: str) -> bool:
+    """Zada uzivatel VYSLOVNE, aby si to Hans zapamatoval?"""
+    return bool(_ZADOST_ZAPAMATOVAT.search(text or ""))
+
+
 # HANS_FRONTED_TOPIC_V1 — VYTCENE TEMA (topikalizace): „a co detektivky, ty
 # ctes?", „a rukodelna prace, cetl jsi o tom neco?". Tema stoji PRED carkou,
 # zbytek vety uz je jen otazka — takze zadny extraktor tematu ho nenajde

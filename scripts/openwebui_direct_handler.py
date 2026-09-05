@@ -3789,6 +3789,47 @@ class OpenWebUIDirectHandler:
         except Exception as _kce:
             print(f"[Chat] knowledge check bypass error: {_kce}")
 
+        # HANS_REMEMBER_HONEST_V1 (5.9.) — NEROB NAROK NA PAMET, KTERY NEPLATI.
+        # Doloheno: „pamatuj si ze me bavi priroda" -> „Ano, pamatuji si, ze
+        # vas bavi priroda." Jenze v tu chvili ulozeno NENI nic; zajem doplni
+        # az nocni `extract_person_interests` nad `human_chat`.
+        # Volny hovor smi fabulovat [[free-chat-may-confabulate]], ale NAROK
+        # NA VLASTNI PAMET je jina trida — kdyby se uzivatel za deset minut
+        # zeptal „co me bavi?", Hans by to jeste nevypsal.
+        #
+        # ⛔ ZAPSAT ZAJEM ROVNOU SE NESMI (rozhodnuto 4.9.): vedlejsi ucinek
+        # nesmi viset na jedne ceste, protoze chatovy prikaz agentni vrstvu
+        # preskoci. Pokryva to nocni extrakce, ktera routovani nevidi.
+        # Odpoved se proto jen srovna s pravdou: Hans slibi, ze si to zapise.
+        # Slib je splnitelny — vymena UZ JE v `human_chat`, odkud nocni pass cte.
+        #
+        # 🟡 POCTIVE K CETNOSTI: na 1 359 realnych zpravach by tahle vetev
+        # nezabrala ANI JEDNOU (2 zadosti o zapamatovani, zadna z nich fakt
+        # o mluvcim). Je to oprava tridy, ne caste vady.
+        # ⚠️ Kdyz LLM router posle tutez vetu na `/zajmy`, dostane uzivatel
+        # VYPIS zajmu — to je neuzitecne, ale NENI to falesny narok na pamet,
+        # takze se tim tahle oprava nemine.
+        try:
+            from scripts.hans_intent import (je_fakt_o_mluvcim,
+                                             zada_o_zapamatovani)
+            if (zada_o_zapamatovani(user_message)
+                    and je_fakt_o_mluvcim(user_message)):
+                from scripts.cz_names import address as _adr
+                _os = _adr(name, self.config) if name else "pane"
+                _rh = ("Zapíšu si to k Vašim zájmům, %s. Ještě to v paměti "
+                       "nemám — projdu si dnešní hovor večer a doplním to." % _os)
+                print("[Chat] HANS_REMEMBER_HONEST_V1 → deterministic bypass")
+                try:
+                    self.conv_store.add_exchange(name, user_message, _rh,
+                                                 channel=channel)
+                except Exception:
+                    pass
+                self._log_human_chat_to_diary(name, user_message, _rh)
+                return _rh
+        except Exception as _rhe:
+            logging.getLogger(__name__).debug(
+                'HANS_REMEMBER_HONEST_V1 preskocen: %s', _rhe)
+
         # HANS_SOURCE_QUERY_V1 — bypass LLM (17.7.). hans-czech persona
         # odmítá sdílet URL i s explicitním groundingem — persona finetune
         # silnější než system prompt. Vzor `commitments_answer` /

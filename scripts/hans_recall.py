@@ -1383,9 +1383,18 @@ def _dedup_cteni(rows, delsi_vyhrava: bool = False):
 
 
 def reading_answer(db_path: str, question: str = "",
-                   limit: int = 4) -> str:
+                   limit: int = 4, asker: Optional[str] = None) -> str:
     """Co/kdy jsem četl — reálné čtecí eventy z deníku, deterministicky.
-    S tématem v dotazu → hledání; bez → poslední čtení."""
+    S tématem v dotazu → hledání; bez → poslední čtení.
+
+    HANS_READING_ASKER_V1 (5.9.) — oslovení podle TAZATELE. Dosud tu byly
+    ctyri natvrdo psane „pane", takze vypis cetby oslovoval „pane" i zenu.
+    `_cmd_cetl` jmeno mel a jen ho nepredaval. Vzor je tentyz jako o par set
+    radku vys (`oslov = _cz_address(asker) if asker else "pane"`), aby v tomhle
+    souboru nebyly dve pravdy o osloveni.
+    ⚠️ „pane" zustava JEN jako fallback pro volani BEZ tazatele (skripty,
+    regresni behoun) — tam neni z ceho vokativ odvodit."""
+    oslov = _cz_address(asker) if asker else "pane"   # HANS_READING_ASKER_V1
     topic = _extract_topic(question)
     conn = None
     try:
@@ -1429,7 +1438,7 @@ def reading_answer(db_path: str, question: str = "",
                 if rows:
                     break
             if not rows:
-                return (f"Prošel jsem svůj deník, pane — o „{topic}“ v něm "
+                return (f"Prošel jsem svůj deník, {oslov} — o „{topic}“ v něm "
                         f"žádný záznam čtení nemám. Nebudu si vymýšlet; "
                         f"jestli chcete, mohu si o tom něco přečíst.")
             rows = _dedup_cteni(rows, delsi_vyhrava=True)[:limit]
@@ -1447,7 +1456,7 @@ def reading_answer(db_path: str, question: str = "",
                 if snip:
                     line += f" — {str(snip).strip()}"
                 lines.append(line)
-            return (f"Ano, pane — tohle mám o „{topic}“ ve svém deníku "
+            return (f"Ano, {oslov} — tohle mám o „{topic}“ ve svém deníku "
                     f"skutečně zapsáno:\n" + "\n".join(lines))
         # bez tématu → poslední čtení
         # HANS_READING_DEDUP_V1 (21.8.) — týž titul má v deníku i několik
@@ -1469,7 +1478,7 @@ def reading_answer(db_path: str, question: str = "",
         rows = [r for r in rows if not _je_k_filmu(r[1], r[2], _kodi)]
         rows = _dedup_cteni(rows)[:limit]
         if not rows:
-            return ("V deníku zatím žádné čtení zapsané nemám, pane.")
+            return (f"V deníku zatím žádné čtení zapsané nemám, {oslov}.")
         lines = []
         for ts, etype, title, snip in rows:
             t = (title or "").strip() or "(bez názvu)"
@@ -1477,7 +1486,7 @@ def reading_answer(db_path: str, question: str = "",
                     "book_completion_reflection": "dočtená kniha"}.get(
                         etype, "četba")
             lines.append(f"– {_cz_date(ts)} ({kind}): {t}")
-        return ("Podle mého deníku jsem naposledy četl toto, pane:\n"
+        return (f"Podle mého deníku jsem naposledy četl toto, {oslov}:\n"
                 + "\n".join(lines))
     except Exception as e:
         _log.warning("reading_answer selhal: %s", e)

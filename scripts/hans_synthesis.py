@@ -367,7 +367,20 @@ class HansSynthesis:
         except Exception:
             _gm = False
         if _gm:
-            raise LLMOffline("game mode — VRAM vyhrazena hře")
+            # HANS_PAUSE_REASON_V1 (5.9.) — hlaska rikala „hre" i tehdy, kdyz
+            # VRAM drzel PREKLAD. Doloheno 5.9. 01:14: uzivatel pustil /preloz
+            # a v logu stalo „game mode — VRAM vyhrazena hre", takze to pri
+            # ranni kontrole vypadalo, ze nekdo hraje ve ctvrt na dve v noci.
+            # `game_mode_on()` je OR nad dvema priznaky (viz jeho docstring);
+            # duvod se proto pojmenuje az tady, podle toho, ktery drzi.
+            _duvod = "hra"
+            try:
+                from scripts.ollama_client import translate_pause_on
+                if translate_pause_on():
+                    _duvod = "preklad"
+            except Exception:
+                pass
+            raise LLMOffline("VRAM je vyhrazena: %s" % _duvod)
         url = f"{self._base_url}/api/chat/completions"
         headers = {
             "Authorization": f"Bearer {self._token}",

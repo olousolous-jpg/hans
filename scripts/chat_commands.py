@@ -1511,7 +1511,17 @@ def _distill_paint_subject(config, name, handler, subj: str):
 register(
     "namaluj",
     slash_aliases=["namaluj", "nakresli"],
-    nl_patterns=[r"\bnamaluj", r"\bnamalovat\b", r"\bnakresli", r"vytvoř\s+obr",
+    # HANS_ART_CMD_TYPO_V1 (5.9.) — tolerance PREKLEPU v kmeni slova.
+    # Doloheny dva realne pripady, oba propadly do volneho hovoru nebo na cizi
+    # prikaz: „zkus jeste jednou NAMALOVAR obrazek s Richardem sorge" (-> None,
+    # pak router -> report_person = karta o Sorgeovi misto obrazu) a „NAMAKUJ
+    # obraz o filmu co jsi dnes videl" (-> /film, protoze slovo „film" ve vete
+    # prebilo zkomolene sloveso).
+    # `nama[kl]\w*` pokryje namaluj/namaloval/namalovat/namalovar/namakuj,
+    # `nakresl\w*` i nakreslit/nakresleny. Precedens `ja[kmn]` u wellbeing.
+    # ⚠️ ZMERENO na 1 359 realnych zpravach: rozdily PRESNE 2 a jsou to obe
+    # doloheme chyby — zadna jina veta se tim neunese.
+    nl_patterns=[r"\bnama[kl]\w*", r"\bnakresl\w*", r"vytvoř\s+obr",
                  r"\bp[řr]ekresli", r"\bp[řr]emaluj",
                  r"\boprav\s+(ten\s+|ten[hz]le\s+)?(obraz|obr[áa]zek)"],
     handler=_cmd_namaluj,
@@ -2856,7 +2866,7 @@ def _cmd_cetl(handler, name, args) -> str:
                 q = str(_tc[0])
         except Exception:
             pass
-    out = reading_answer(_recall_db(handler), q)
+    out = reading_answer(_recall_db(handler), q, asker=name)  # HANS_READING_ASKER_V1
     return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
 
 

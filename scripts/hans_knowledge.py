@@ -139,6 +139,32 @@ class HansKnowledge:
             return False
 
         kid = self._collections[collection_key]
+        # HANS_KNOWLEDGE_UPLOAD_RETRY_V1 (5.9.) — jeden timeout = TICHE ZTRACENY
+        # DOKUMENT. Doloheno 4.9. 23:17: „Knowledge upload selhal
+        # (hans_filmy/movie_...): Read timed out" a tim to skoncilo — zaznam
+        # o filmu se do RAG uz nikdy nedostal a nikdo se to nedozvedel.
+        # `_add_to_collection` retry MEL, ale samotny `_upload_file` ne.
+        # ⚠️ RETRY JE BEZPECNY, protoze `upload()` je IDEMPOTENTNI podle
+        # `doc_id` (viz docstring: „pokud doc_id uz existuje, nahradi ho") —
+        # stara verze se na zacatku smaze, takze druhy pokus neudela duplikat
+        # ani kdyby prvni server-side castecne prosel.
+        # Neresi to trvaly vypadek (na ten by byla potreba odlozena fronta,
+        # [[ollama-deferred-processing]]) — jen prechodny timeout, coz je
+        # presne pozorovany pripad.
+        _pokusu = int(getattr(self, "_upload_retries", 3))
+        for _pokus in range(_pokusu):
+            _ok = self._upload_once(kid, collection_key, doc_id, title, text,
+                                    metadata, posledni=(_pokus == _pokusu - 1))
+            if _ok:
+                return True
+            if _pokus < _pokusu - 1:
+                time.sleep(2.0 * (_pokus + 1))
+        return False
+
+    def _upload_once(self, kid, collection_key: str, doc_id: str, title: str,
+                     text: str, metadata, posledni: bool = True) -> bool:
+        """Jeden pokus o upload. `posledni` rozhoduje, jestli se selhani
+        zaloguje jako WARNING (konec) nebo INFO (bude retry)."""
         with self._lock:
             try:
                 # Pokud existuje stará verze, smaž ji
@@ -176,8 +202,12 @@ class HansKnowledge:
                           collection_key, doc_id, len(text))
                 return True
             except Exception as e:
-                _log.warning("Knowledge upload selhal (%s/%s): %s",
-                             collection_key, doc_id, e)
+                if posledni:
+                    _log.warning("Knowledge upload selhal (%s/%s): %s",
+                                 collection_key, doc_id, e)
+                else:
+                    _log.info("Knowledge upload selhal (%s/%s): %s — zkusim znovu",
+                              collection_key, doc_id, e)
                 return False
 
     def query(
