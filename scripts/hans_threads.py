@@ -368,6 +368,81 @@ def _ask_after_to_ts(s: str) -> float:  # THREAD_DUE_EXTRACT_V1
     return ts
 
 
+# ── HANS_THREAD_NOT_ABOUT_SELF_V1 (5.9.) ────────────────────────────────────
+# Nitka MA BYT o zivote OSOBY. Doloheno 5.9.: ze 4 nitek, ktere by Hans
+# proaktivne vytahl, se ctyri ptaly uzivatele na OBRAZY, ktere namaloval HANS
+# („Jak vypada ten prurez Zemekoule?", „Jak pokracuje s malovanim obrazu
+# Kolace?"). Kontext takove nitky je doslova Hansova vlastni replika:
+#     id 19  „Jsem pozadan, abych namaloval prurez zemekouli."
+#     id 21  „Ja bych si, pane, precetl znovu zaznamy o Sale..."
+#     id 22  „Pri studiu Norimberskeho procesu jsem si uvedomil..."
+#
+# ⚠️ PROMPTEM SE TO UZ RESILO A NESTACI TO. `THREAD_SELF_ORIENT_V1` (18.7.)
+# tuhle tridu VYSLOVNE zakazuje a jeho vlastni priklad („jak se ti dari
+# balancovat jeho studium") je nitka 17. Presto ze 7 nitek vzniklych po 18.7.
+# jsou 3 vadne — vcetne nejnovejsi ze 4.9. Tyz vzorec jako u zajmu:
+# prompt-level obrana nestaci, rozhodnout to musi kod pri ZAPISU.
+#
+# ROZHODCI (zmereno na vsech 25 realnych nitkach):
+#   1. Ke kterym replice kontext patri? Porovnava se s JEDNOTLIVYMI replikami,
+#      NE se slitym dnem — Hans mluvi hodne, takze proti slitemu textu vysel
+#      prekryv 1,00 u uplne vsech nitek a rozhodci byl k nicemu.
+#   2. Mluvi v ni Hans O SOBE (1. osoba jednotneho cisla)?
+# Teprve OBOJE ZAROVEN = nitka nevznikne. Samotne „je to Hansova replika"
+# nestaci: nitka 14 („Pan domu prave sleduje film Proud krve, zda se, ze je
+# zaujaty") je Hansova veta O UZIVATELI a ta legitimni je.
+#
+# ⚠️ FAIL-OPEN: kdyz se kontext neda priradit (prepis uz v denikovem okne
+# neni, skore 0), nitka PROJDE. Radsi obcasna nitka navic nez tise zahozena
+# informace o cloveku.
+# Sdili `grounding_guard._stems` — tataz otazka („z ceho ta veta vychazi?"),
+# takze zadny novy mechanismus. [[search-archive-before-fixing]]
+_SELF_1OS = re.compile(
+    r"\b(jsem|bych|abych|maluji|[čc]erp[áa]m|studuji|[čc]tu|"
+    r"sv[éeouí]\w*|m[éeů]\w*|m[ůu]j|j[áa])\b", re.IGNORECASE)
+
+
+def _repliky_dne(note: str) -> list:
+    """Rozpad denikoveho zaznamu na [(kdo, text), ...]; kdo = 'osoba'|'hans'."""
+    n = note or ""
+    i = n.find("\nHans:")
+    if i < 0:
+        i = n.find("Hans:")
+    if i < 0:
+        return [("osoba", n.partition(":")[2].strip())]
+    out = [("osoba", n[:i].partition(":")[2].strip())]
+    for veta in re.split(r"(?<=[.!?])\s+", n[i:].partition(":")[2].strip()):
+        if veta.strip():
+            out.append(("hans", veta.strip()))
+    return out
+
+
+def _je_o_hansovi(context: str, notes: list) -> bool:
+    """True = kontext nitky je Hansova replika, ve ktere mluvi O SOBE."""
+    ctx = (context or "").strip()
+    if not ctx:
+        return False
+    if not _SELF_1OS.search(ctx):
+        return False                       # nemluvi o sobe → nitka projde
+    try:
+        from scripts.grounding_guard import _stems
+    except Exception:
+        return False                       # bez merítka radsi pustit
+    S = _stems(ctx)
+    if len(S) < 3:
+        return False                       # prilis kratke na soud
+    kdo, nej = None, 0.0
+    for note in (notes or []):
+        for mluvci, txt in _repliky_dne(note):
+            T = _stems(txt)
+            if not T:
+                continue
+            sc = len(S & T) / len(S)
+            if sc > nej:
+                kdo, nej = mluvci, sc
+    return kdo == "hans" and nej >= 0.80
+
+
 def extract_threads(config: dict, diary_db_path: str,
                     window_hours: float = 26.0) -> dict:
     """Noční krok: z denních human_chat vytáhne otevřené nitky per osoba +
@@ -399,6 +474,20 @@ def extract_threads(config: dict, diary_db_path: str,
 
     opened = closed = 0
     for person, notes in dialogs.items():
+        # HANS_THREAD_NO_PLACEHOLDER_V1 (5.9.) — zastupny nazev NENI osoba.
+        # `uzivatel` je fantom z naseho vlastniho kodu (`_handle_web_chat`
+        # dosadi „Uživatel", kdyz request jmeno nenese) — u zajmu to resil
+        # PERSON_INTEREST_NO_PLACEHOLDER_V1 (4.9.), sem ale nedosahl a nitka
+        # id 21 pod nim vznikla. Tataz vada, druha tabulka → SDILENY predikat,
+        # ne druha kopie seznamu. Skutecni HOSTE se neblokuji.
+        try:
+            from scripts.hans_person_interests import je_zastupne_jmeno
+            if je_zastupne_jmeno(person):
+                _log.info("threads: %r je zastupny nazev, nitky nezakladam",
+                          person)
+                continue
+        except Exception:
+            pass
         existing = store.open_threads(person, limit=max_open)
         open_block = ""
         if existing:
@@ -431,6 +520,15 @@ def extract_threads(config: dict, diary_db_path: str,
                 continue
             topic = (it.get("topic") or "").strip()
             if not topic:
+                continue
+            # HANS_THREAD_NOT_ABOUT_SELF_V1 — nitka o Hansove vlastni praci ne
+            _ctx = (it.get("context") or "").strip()
+            if _je_o_hansovi(_ctx, notes):
+                # ⚠️ zadne `_pn(config)` v teto hlasce — jmeno persony se
+                # importuje ve VETVI vys a pri selhani importu by tu vzniklo
+                # NameError uvnitr nocniho behu.
+                _log.info("threads: %r zahozeno — kontext je vlastni replika "
+                          "o sobe (%.60s)", topic, _ctx)
                 continue
             if store.add_thread(person, topic,
                                 context=(it.get("context") or "").strip(),
