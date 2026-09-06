@@ -459,9 +459,12 @@ class OpenWebUIDirectHandler:
                                                       not should_greet)
         return greeted
 
-    def _send_greeting_async(self, name: str, confidence: float):
+    def _send_greeting_async(self, name: str, confidence: float, duvod=None):
+        # HANS_GESTURE_WAVE_GREET_V1 — `duvod` rekne, PROC se zdravi (dnes
+        # zamavani gestem). Bez nej by pozdrav na mavnuti znel stejne jako
+        # pozdrav pri rozpoznani tvare a neslo by je od sebe odlisit.
         try:
-            prompt = self._generate_greeting_prompt(name)
+            prompt = self._generate_greeting_prompt(name, duvod=duvod)
             first  = [True]
 
             def _on_sentence(sentence: str):
@@ -2668,7 +2671,7 @@ class OpenWebUIDirectHandler:
         # endregion
         return system_msg
 
-    def _generate_greeting_prompt(self, name: str) -> tuple:
+    def _generate_greeting_prompt(self, name: str, duvod=None) -> tuple:
         self._greeting_thread_surfaced = False  # GREETING_THREAD_POPUP_V1
         hour = datetime.now().hour
         if 5  <= hour < 12: tod = "ráno"
@@ -2680,6 +2683,9 @@ class OpenWebUIDirectHandler:
         system = self._build_system(name, for_greeting=True) + (
             " Pozdrav stručně a důstojně: nanejvýš dvě krátké věty,"
             " žádná dlouhá souvětí.")  # GREETING_BREVITY_V1
+        if duvod:  # HANS_GESTURE_WAVE_GREET_V1
+            system += (" Zdravíš proto, že ti %s. Odpověz JEN krátkým"
+                       " pozdravem, jedinou větou." % duvod)
         # Přidej náladu do tónu pozdravu
         _hi2 = getattr(self, '_hans_idle', None)
         if _hi2 and hasattr(_hi2, '_mood'):
@@ -2771,6 +2777,25 @@ class OpenWebUIDirectHandler:
         # výpadek > rozjetá nitka > ranní zdraví > co Hans dělal.
         _lead = False
 
+        # 0) HANS_GREET_REASON_LEAD_V1 (6.9.) — POZDRAV NA VYZADANI (dnes
+        # zamavani gestem) vede pred vsemi ostatnimi duvody.
+        # Zmereno 6.9.: `duvod` pridany jen do `system` NEZABRAL — vetev (4)
+        # nize rika v `user` doslova "zmin, cemu ses venoval behem jejich
+        # nepritomnosti", a model poslechne tu konkretnejsi a blizsi
+        # instrukci. Vsech 8 pozdravu na mavnuti zacinalo "Behem Vasi
+        # nepritomnosti...". Prompt debt: veta v promptu prohrava se
+        # soupericí vetou, proto to musi byt VETEV, ne dodatek.
+        if duvod:
+            # Pokyn uzivatele 6.9.: na mavnuti JEN KRATKY POZDRAV. Delsi
+            # uvitani (cemu se venoval, nitky, pocasi) zustava u rozpoznani
+            # tvare — tam ma smysl, protoze clovek prave prisel.
+            user = (
+                f"Pozdrav {name} JEDNOU krátkou větou — právě {duvod}. "
+                f"Je {tod}. Nic víc nepřidávej: žádnou zmínku o jeho "
+                f"nepřítomnosti, o tom čemu ses věnoval, ani o počasí."
+            )
+            _lead = True
+
         # 1) HANS_DOWNTIME_V1 — byl jsem dlouho mimo provoz: přiznám a zeptám se.
         try:
             _dt_g = getattr(_hi, '_downtime', None) if _hi else None
@@ -2836,7 +2861,7 @@ class OpenWebUIDirectHandler:
 
         # GREETING_WEATHER_OPTIN_V1 — počasí JEN když reálně zjištěné; přesná
         # citace (neodhaduj) → konec konfabulace „82 °C". Jinak nezmiňuj.
-        if _wants_weather:
+        if _wants_weather and not duvod:   # HANS_GREET_REASON_LEAD_V1
             _wx = getattr(self, "_weather", None)
             _tomorrow = ((_wx.get_tomorrow_string() if _wx else "") or "").strip()
             if _tomorrow:

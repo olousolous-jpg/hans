@@ -67,6 +67,46 @@ class GestureClient:
             GESTURE_FIST:      float(cfg.get("hold_seconds", 0.0)),
         }
 
+        # HANS_GESTURE_WAVE_V1 (6.9.) — zamavani otevrenou dlani = pozdrav.
+        # Klasifikator umi jen STATICKOU otevrenou dlan; mavani je pohyb,
+        # takze se sklada az tady z casove stopy jejich poloh.
+        self._wave_only     = bool(cfg.get("wave_only", True))
+        self._wave_window_s = float(cfg.get("wave_window_s", 1.5))
+        self._wave_min_amp  = float(cfg.get("wave_min_amplitude", 0.02))
+        # 0.02 = jen pojistka proti sumu; o mavnuti rozhoduje pomer
+        # k sirce dlane nize (drive tu bylo 0.06 = skryty prah na vzdalenost).
+        self._wave_min_rev  = int(cfg.get("wave_min_reversals", 1))
+        self._wave_eps      = float(cfg.get("wave_eps", 0.01))
+        self._wave_cooldown = float(cfg.get("wave_cooldown_s", 5.0))
+        # Kolik poloh dlane musi v okne byt. Zmereno 6.9.: klasifikator
+        # vraci open_hand nepravidelne (1x/s az 30x/s podle drzeni ruky),
+        # takze tohle je hlavni paka, kdyz mavani "nechyta".
+        self._wave_min_samples = int(cfg.get("wave_min_samples", 3))
+        # Nasobek SIRKY DLANE — meritko nezavisle na vzdalenosti.
+        self._wave_min_amp_rel = float(cfg.get("wave_min_amplitude_rel", 0.6))
+        # HANS_GESTURE_ROI_V1
+        self._roi_on     = bool(cfg.get("roi_enabled", True))
+        self._roi_w_mult = float(cfg.get("roi_width_faces", 5.0))
+        self._roi_min_w  = float(cfg.get("roi_min_width", 0.30))
+        self._roi_up     = float(cfg.get("roi_up_faces", 1.0))
+        self._roi_down   = float(cfg.get("roi_down_faces", 3.0))
+        self._roi_skip_above = float(cfg.get("roi_skip_above", 0.85))
+        # HANS_GESTURE_WAVE_EDGE_V1
+        self._wave_armed     = True
+        self._wave_last_seen = 0.0
+        self._wave_rearm_s   = float(cfg.get("wave_rearm_s", 4.0))
+        self._wave_track    = deque(maxlen=60)   # (t, cx) normalizovane
+        self._wave_last_fired = 0.0
+        # HANS_GESTURE_DEBUG_V1 — `gesture.debug` zvedne diagnostiku na INFO.
+        # Bez toho je cela cesta nema: chyby socketu jsou na DEBUG a vyjimka
+        # v _loop se spolkne, takze mlceni klienta nejde odlisit od "nikdo
+        # nemava". Slouzi i k ladeni prahu mavani.
+        self._debug        = bool(cfg.get("debug", False))
+        self._dbg_submits  = 0
+        self._dbg_open     = 0
+        self._dbg_frames   = 0
+        self._dbg_last     = 0.0
+
         if not self.enabled:
             _log.info("GestureClient disabled")
             return
@@ -75,10 +115,30 @@ class GestureClient:
         self._thread.start()
         _log.info("GestureClient started — using dedicated gesture socket %s", SOCK_PATH)
 
-    def submit(self, frame: np.ndarray):
+    def submit(self, frame: np.ndarray, oblast=None):
+        """`oblast` = (x1,y1,x2,y2) normalizovane okoli osoby (bbox tvare).
+
+        HANS_GESTURE_ROI_V1 (6.9.) — POSILAT VYREZ, NE CELY ZABER.
+        Zmereno 6.9.: detektor dlane skaluje vstup vzdy na 192x192, takze
+        rozhoduje POMER dlane k zaberu — a ten se zmensenim snimku NEMENI.
+        Dlan ze 2 m mela 9,6 px at se poslalo 640x360 nebo 1280x720, proto
+        zvetsovat rozliseni nema smysl. Vyrez ten pomer meni: pri treti
+        sirky zaberu ma tataz dlan ~29 px.
+        """
         if not self.enabled or self._busy:
             return
         import cv2 as _cv2
+        vyrez = None
+        if oblast is not None and self._roi_on:
+            vyrez = self._spocti_vyrez(oblast)
+        if vyrez is not None:
+            h0, w0 = frame.shape[:2]
+            _x1 = max(0, int(vyrez[0] * w0)); _y1 = max(0, int(vyrez[1] * h0))
+            _x2 = min(w0, int(vyrez[2] * w0)); _y2 = min(h0, int(vyrez[3] * h0))
+            if _x2 - _x1 >= 64 and _y2 - _y1 >= 64:
+                frame = frame[_y1:_y2, _x1:_x2]
+            else:
+                vyrez = None
         # Zmenši na 640x360
         h, w = frame.shape[:2]
         if w > 640:
@@ -91,7 +151,10 @@ class GestureClient:
         lab = _cv2.merge([l, a, b])
         frame = _cv2.cvtColor(lab, _cv2.COLOR_LAB2RGB)
         with self._lock:
-            self._pending = frame.copy()
+            # vyrez putuje S framem — bez nej by se vracene souradnice
+            # nedaly prevest zpet do globalniho ramce
+            self._pending = (frame.copy(), vyrez)
+        self._dbg_submits += 1
 
     def connect(self) -> bool:
         # Počkej až do 3s na socket pokud ještě neexistuje
@@ -126,6 +189,16 @@ class GestureClient:
         self._hold_frames = int(cfg.get("hold_frames",  self._hold_frames))
         self._cooldown_s  = float(cfg.get("cooldown_s", self._cooldown_s))
         self.enabled      = bool(cfg.get("enabled",     self.enabled))
+        # HANS_GESTURE_WAVE_V1 — prahy mavani za tepla, ladi se za behu
+        # bez restartu (web admin zapise config -> _on_settings_save).
+        self._wave_only     = bool(cfg.get("wave_only",      self._wave_only))
+        self._wave_window_s = float(cfg.get("wave_window_s", self._wave_window_s))
+        self._wave_min_amp  = float(cfg.get("wave_min_amplitude", self._wave_min_amp))
+        self._wave_min_rev  = int(cfg.get("wave_min_reversals",   self._wave_min_rev))
+        self._wave_eps      = float(cfg.get("wave_eps",      self._wave_eps))
+        self._wave_cooldown = float(cfg.get("wave_cooldown_s", self._wave_cooldown))
+        self._wave_min_samples = int(cfg.get("wave_min_samples", self._wave_min_samples))
+        self._wave_min_amp_rel = float(cfg.get("wave_min_amplitude_rel", self._wave_min_amp_rel))
 
     def _recv_exact(self, sock, n):
         buf = b""
@@ -139,20 +212,35 @@ class GestureClient:
     def _loop(self):
         while True:
             with self._lock:
-                frame = self._pending
+                _job = self._pending
                 self._pending = None
-            if frame is None:
+            if _job is None:
                 time.sleep(0.02)
                 continue
+            frame, _vyrez = _job
             self._busy = True
             try:
                 result = self._send_frame(frame)
-                if result is not None:
+                if result is None:
+                    if self._debug:
+                        _log.info("gesto[dbg]: server nevratil nic "
+                                  "(spojeni=%s)", self._connected)
+                else:
                     gesture_id, bbox = result[0], result[1]
                     lm = result[2] if len(result) > 2 else None
+                    # HANS_GESTURE_ROI_V1 — zpet do souradnic CELEHO zaberu.
+                    # Bez toho by posun vyrezu (clovek se pohne) sam vyrobil
+                    # zdanlivy pohyb dlane = falesne mavani.
+                    if bbox and _vyrez:
+                        _vx1, _vy1, _vx2, _vy2 = _vyrez
+                        _sw, _sh = (_vx2 - _vx1), (_vy2 - _vy1)
+                        bbox = (_vx1 + bbox[0] * _sw, _vy1 + bbox[1] * _sh,
+                                _vx1 + bbox[2] * _sw, _vy1 + bbox[3] * _sh)
                     self._update_state(gesture_id, bbox, lm)
-            except Exception:
-                pass
+            except Exception as _e:
+                # HANS_GESTURE_DEBUG_V1 — drive `pass`: chyba ve zpracovani
+                # framu mizela beze stopy.
+                _log.warning("gesto: zpracovani framu selhalo: %s", _e)
             finally:
                 self._busy = False
 
@@ -196,6 +284,92 @@ class GestureClient:
                 self._connected = False
         return None
 
+    def _spocti_vyrez(self, tvar):
+        """Okoli osoby kolem bboxu tvare. Mavajici ruka byva vedle hlavy
+        nebo pod ni, proto je vyrez siroky a tahne se dolu. Vraci
+        normalizovane (x1,y1,x2,y2), nebo None kdyz by vyrez nic neusetril
+        (clovek je blizko — tam mavani funguje i bez vyrezu)."""
+        try:
+            fx1, fy1, fx2, fy2 = [float(v) for v in tvar[:4]]
+        except Exception:
+            return None
+        fw, fh = fx2 - fx1, fy2 - fy1
+        if fw <= 0 or fh <= 0:
+            return None
+        cx = (fx1 + fx2) / 2.0
+        pw = max(fw * self._roi_w_mult, self._roi_min_w) / 2.0
+        x1, x2 = cx - pw, cx + pw
+        y1 = fy1 - fh * self._roi_up
+        y2 = fy2 + fh * self._roi_down
+        x1, y1 = max(0.0, x1), max(0.0, y1)
+        x2, y2 = min(1.0, x2), min(1.0, y2)
+        if (x2 - x1) >= self._roi_skip_above or (x2 - x1) <= 0.05:
+            return None      # vyrez skoro cely zaber → nema smysl
+        return (x1, y1, x2, y2)
+
+    def _proc_ne(self, duvod: str):
+        """Rekne, CO mavani chybelo. Bez toho se prahy ladi naslepo —
+        'nesepnulo' muze znamenat tri ruzne veci. Hlasi se nejvys 1x za 2 s,
+        aby to nezaplavilo log."""
+        if not self._debug:
+            return
+        _t = time.time()
+        if _t - getattr(self, "_proc_last", 0.0) < 2.0:
+            return
+        self._proc_last = _t
+        _log.info("gesto[dbg]: mavani NE — %s", duvod)
+
+    def _je_mavani(self, now: float) -> bool:
+        """HANS_GESTURE_WAVE_V1 — je pohyb dlane zamavani?
+
+        Mavani = dlan jde vodorovne SEM A TAM. Sama zmena polohy nestaci
+        (ruka mohla jen prejet zaberem), proto se vedle amplitudy vyzaduje
+        i ZMENA SMERU — to je jediny znak, ktery mavani od presunu odlisi.
+        Drobny sum kolem klidne ruky se odfiltruje prahem _wave_eps.
+        """
+        okno = [p for p in self._wave_track
+                if now - p[0] <= self._wave_window_s]
+        if len(okno) < self._wave_min_samples:
+            self._proc_ne("malo vzorku v okne: %d < %d"
+                          % (len(okno), self._wave_min_samples))
+            return False
+        xs = [p[1] for p in okno]
+        rozpeti = max(xs) - min(xs)
+        # HANS_GESTURE_WAVE_RELAMP_V1 (6.9.) — rozpeti se meri v NASOBCICH
+        # SIRKY DLANE, ne v podilu zaberu.
+        # Zmereno 6.9. ze 2 m: „male rozpeti 0.042 < 0.060 (vzorku 5)" —
+        # tyz pohyb rukou zabira z dvou metru zhruba polovicni podil zaberu
+        # nez z jednoho, takze pevny prah je ve skutecnosti prah na
+        # VZDALENOST. Snizit ho nejde: zblizka by zacal chytat drobne pohyby.
+        # Sirka dlane se se vzdalenosti zmensuje stejne jako mavnuti, takze
+        # jejich POMER uz na vzdalenosti nezavisi.
+        _sirky = sorted(p[2] for p in okno)
+        _dlan  = _sirky[len(_sirky) // 2]          # median
+        _rel   = rozpeti / _dlan
+        if rozpeti < self._wave_min_amp or _rel < self._wave_min_amp_rel:
+            self._proc_ne("male rozpeti: %.3f (=%.2f sirky dlane %.3f) "
+                          "< abs %.3f / rel %.2f, vzorku %d"
+                          % (rozpeti, _rel, _dlan, self._wave_min_amp,
+                             self._wave_min_amp_rel, len(okno)))
+            return False
+        smer = 0
+        obraty = 0
+        for i in range(1, len(xs)):
+            d = xs[i] - xs[i - 1]
+            if abs(d) < self._wave_eps:
+                continue
+            s = 1 if d > 0 else -1
+            if smer and s != smer:
+                obraty += 1
+            smer = s
+        if obraty < self._wave_min_rev:
+            self._proc_ne("malo obratu: %d < %d (rozpeti %.3f, vzorku %d)"
+                          % (obraty, self._wave_min_rev, rozpeti, len(okno)))
+            return False
+        self._wave_popis = ("rozpeti %.3f = %.2f sirky dlane, obratu %d, "
+                            "vzorku %d" % (rozpeti, _rel, obraty, len(okno)))
+        return True
+
     def _update_state(self, gesture_id: int, bbox=None, lm=None):
         now = time.time()
 
@@ -203,6 +377,73 @@ class GestureClient:
         if self._warmup_frames > 0:
             self._warmup_frames -= 1
             return
+
+        if self._debug:
+            self._dbg_frames += 1
+            if now - self._dbg_last >= 2.0:
+                self._dbg_last = now
+                _log.info("gesto[dbg]: odeslano=%d zpracovano=%d dlani=%d "
+                          "posledni_id=%s bbox=%s stopa=%d",
+                          self._dbg_submits, self._dbg_frames, self._dbg_open,
+                          gesture_id, "ano" if bbox else "ne",
+                          len(self._wave_track))
+
+        # HANS_GESTURE_WAVE_V1 — stopa polohy dlane. Sbira se PRED hlasovanim
+        # a PRED vetvi na GESTURE_NONE zamerne: pri mavani je dlan casto
+        # rozmazana pohybem, takze detekce mezi kmity vypadava. Kdyby se
+        # stopa cistila s kazdym vypadkem, mavani by se nikdy neposkladalo.
+        if gesture_id == GESTURE_OPEN_HAND and bbox:
+            try:
+                # HANS_GESTURE_WAVE_RELAMP_V1 — do stopy patri i SIRKA dlane:
+                # slouzi jako meritko vzdalenosti (viz _je_mavani).
+                _x1, _x2 = float(bbox[0]), float(bbox[2])
+                self._wave_track.append(
+                    (now, (_x1 + _x2) / 2.0, max(_x2 - _x1, 1e-6)))
+            except Exception:
+                pass
+            self._dbg_open += 1
+            # POZOR: nejdriv si zapamatuj, kdy byla dlan videna NAPOSLED,
+            # a teprve pak prepis. Kontrola odjisteni nize porovnava prave
+            # tuhle predchozi hodnotu — proti `now` by vysla vzdy 0.
+            _naposled = self._wave_last_seen
+            self._wave_last_seen = now
+            # HANS_GESTURE_WAVE_PREVOTE_V1 (6.9.) — mavani se vyhodnocuje UZ
+            # TADY, PRED majoritnim hlasovanim.
+            # Duvod (zmereno za behu, ne odhadnuto): pri mavani je dlan
+            # rozmazana a detekce vypadava — open_hand chodi ~0,5x/s proti
+            # ~14 framum/s. Hlasovani chce 4 z 5 a sest nul za sebou buffer
+            # vycisti, takze mavani se za nim NIKDY neposklada. Hlasovani je
+            # spravny nastroj pro STATICKE gesto (drzena dlan, pest), kdezto
+            # mavani je definovane POHYBEM — a ten uz stopa poloh nese sama.
+            if self._wave_only and self.on_gesture:
+                # HANS_GESTURE_WAVE_EDGE_V1 (6.9.) — mavani je UDALOST, ne stav.
+                # Zmereno 6.9. se dvema lidmi v mistnosti: 701 platnych
+                # vyhodnoceni → 34 POZDRAVU ZA 12 MINUT. Dokud se ruka hybe
+                # (a pri hovoru se gestikuluje porad), podminky se plni
+                # znovu a znovu, takze cooldown jen ridil zaplavu.
+                # Po pozdravu se proto ceka, az dlan na chvili ZMIZI —
+                # teprve pak je dalsi mavnuti nove.
+                if not self._wave_armed:
+                    if now - _naposled >= self._wave_rearm_s:
+                        self._wave_armed = True
+                        self._wave_track.clear()
+                    else:
+                        return
+                if (self._je_mavani(now) and
+                        now - self._wave_last_fired >= self._wave_cooldown):
+                    self._wave_last_fired  = now
+                    self._wave_armed       = False
+                    self._wave_track.clear()
+                    self._vote_buf.clear()
+                    self._last_fired_name  = "wave"
+                    self.last_gesture      = "wave"
+                    self.last_gesture_time = now
+                    self.last_landmarks    = lm
+                    _log.info("gesto: zamavani — %s",
+                              getattr(self, "_wave_popis", "?"))
+                    print("[Gesture] FIRED: wave (pohyb)", flush=True)
+                    self.on_gesture("wave", bbox)
+                    return
 
         # Majority vote z posledních 5 framů
         self._vote_buf.append(gesture_id)
@@ -244,6 +485,14 @@ class GestureClient:
         if (held >= required_hold and
                 name != self._last_fired_name and
                 self.on_gesture):
+            # HANS_GESTURE_WAVE_V1 — otevrena dlan strili JEN jako "wave".
+            # Mavani JE otevrena dlan, takze bez tohohle by kazde zamavani
+            # spustilo i akci staticke dlane (drive pauza Kodi).
+            if voted == GESTURE_OPEN_HAND and self._wave_only:
+                # HANS_GESTURE_WAVE_PREVOTE_V1 — mavani uz obslouzila vetev
+                # nad hlasovanim; sem dojde jen DRZENA dlan, ktera zamerne
+                # nedela nic (jinak by ji doprovazel kazdy pozdrav).
+                return
             self._last_fired_name  = name
             self.last_gesture      = name
             self.last_gesture_time = now

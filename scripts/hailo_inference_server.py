@@ -35,6 +35,7 @@ import struct
 # nově v scripts/blaze_palm_anchors.py). BlazeDetector se nikdy nepoužíval.
 import logging
 import threading
+import time   # HANS_GESTURE_STATS_V1
 import numpy as np
 import cv2
 from pathlib import Path
@@ -71,6 +72,49 @@ def _normalize_landmarks(lm_flat):
         lm /= scale
     return lm.flatten()
 
+# HANS_GESTURE_STATS_V1 (6.9.) — kde se ztraceji dlane pri mavani.
+# Klient to nerozlisi: bbox se posila jen SPOLU s gestem, takze "dlan
+# nenalezena" a "dlan nalezena, ale klasifikator si nebyl jisty" vypadaji
+# z jeho strany stejne. Statistika se tiskne jen kdyz gesture.debug.
+_GST = {"framu": 0, "palm": 0, "sticky": 0, "bez_palm": 0,
+        "ml_pod_prahem": 0, "ml_gesto": 0, "otevrena": 0, "last": 0.0,
+        "palm_max": 0.0, "palm_max_okno": 0.0}
+# Pozor: _CFG vznika az NIZE v souboru, proto se cte lenive (drive to
+# shodilo cely server na NameError pri importu).
+_GST_DEBUG = None
+_GST_PRAH  = 0.75
+_GEOM_FALLBACK = True   # HANS_GESTURE_GEOM_FALLBACK_V1
+
+def _gst_cfg():
+    global _GST_DEBUG, _GST_PRAH
+    if _GST_DEBUG is None:
+        _g = _CFG.get("gesture", {}) if isinstance(_CFG, dict) else {}
+        _GST_DEBUG = bool(_g.get("debug", False))
+        _GST_PRAH  = float(_g.get("ml_min_proba", 0.75))
+    return _GST_DEBUG
+
+def _gst_tick():
+    if not _gst_cfg():
+        return
+    now = time.time()
+    if now - _GST["last"] < 5.0:
+        return
+    _GST["last"] = now
+    log.info("gesto[srv]: framu=%d palm=%d sticky=%d bez_palm=%d "
+             "ml_pod_prahem(%.2f)=%d ml_gesto=%d otevrena_dlan=%d "
+             "| skore dlane: v okne max=%.3f, celkem max=%.3f (prah %.2f)",
+             _GST["framu"], _GST["palm"], _GST["sticky"], _GST["bez_palm"],
+             _GST_PRAH, _GST["ml_pod_prahem"], _GST["ml_gesto"],
+             _GST["otevrena"], _GST["palm_max_okno"], _GST["palm_max"],
+             PALM_SCORE_THRESH)
+    _lbl = {k[6:]: v for k, v in _GST.items() if k.startswith("label_")}
+    if _lbl:
+        log.info("gesto[srv]: co model vidi: %s | geometrie videla "
+                 "otevrenou dlan %dx, z toho pouzita %dx",
+                 _lbl, _GST.get("geom_open", 0), _GST.get("geom_pouzito", 0))
+    _GST["palm_max_okno"] = 0.0
+
+
 def _ml_classify(lm_flat) -> int:
     """Klasifikuj gesto pomocí ML modelu. Vrátí GESTURE_* konstantu."""
     if _ML_MODEL is None:
@@ -79,10 +123,15 @@ def _ml_classify(lm_flat) -> int:
         lm_norm = _normalize_landmarks(lm_flat).reshape(1, -1)
         proba = _ML_MODEL.predict_proba(lm_norm)[0]
         max_proba = proba.max()
-        if max_proba < 0.75:   # nejistá predikce = none
+        _gst_cfg()
+        if max_proba < _GST_PRAH:   # nejistá predikce = none
+            _GST["ml_pod_prahem"] += 1
             return 0
+        _GST["ml_gesto"] += 1
         pred_idx = proba.argmax()
         label = _ML_LE.inverse_transform([pred_idx])[0]
+        # HANS_GESTURE_STATS_V1 — CO model vidi misto otevrene dlane.
+        _GST["label_" + str(label)] = _GST.get("label_" + str(label), 0) + 1
         return _ML_LABEL_MAP.get(label, 0)
     except Exception:
         return None
@@ -742,6 +791,12 @@ class CombinedEngine:
         anchors = palm_anchors()
 
         log.debug('[PALM_DBG] max_score=%.4f thresh=%.2f', scores.max(), PALM_SCORE_THRESH)
+        try:   # HANS_GESTURE_STATS_V1 — nejvyssi skore detektoru dlane
+            _ms = float(scores.max())
+            if _ms > _GST["palm_max"]:      _GST["palm_max"] = _ms
+            if _ms > _GST["palm_max_okno"]: _GST["palm_max_okno"] = _ms
+        except Exception:
+            pass
         mask = scores >= PALM_SCORE_THRESH
         if not mask.any():
             return []
@@ -783,6 +838,9 @@ class CombinedEngine:
         # Stage 1: palm detection
         palms = self.run_palm(frame)
         log.debug('[PALM] detected=%d', len(palms))
+        _GST["framu"] += 1          # HANS_GESTURE_STATS_V1
+        if palms: _GST["palm"] += 1
+        _gst_tick()
         palm_bbox = None
         if palms:
             px1, py1, px2, py2 = palms[0]
@@ -807,6 +865,7 @@ class CombinedEngine:
             self._sticky_palm_miss += 1
             if (self._sticky_palm_bbox is not None and
                     self._sticky_palm_miss <= self._STICKY_PALM_MAX):
+                _GST["sticky"] += 1    # HANS_GESTURE_STATS_V1
                 px1,py1,px2,py2 = self._sticky_palm_bbox
                 palm_bbox = self._sticky_palm_bbox
                 h, w = frame.shape[:2]
@@ -823,6 +882,7 @@ class CombinedEngine:
                     crop = frame
             else:
                 self._lm_ema = None
+                _GST["bez_palm"] += 1   # HANS_GESTURE_STATS_V1
                 return GESTURE_NONE, None, None
 
         # Stage 2: hand landmark on crop
@@ -869,7 +929,23 @@ class CombinedEngine:
         gid = _ml_classify(best_lm)
         if gid is None:
             gid = classify_gesture(best_lm)
+        # HANS_GESTURE_GEOM_FALLBACK_V1 (6.9.) — ZALOHA PRO OTEVRENOU DLAN.
+        # Zmereno 6.9.: model (z 5.4.) vratil na skutecne mavani
+        # none=397, thumbs_up=11, open_hand=1 — ruku VIDI, ale nepozna ji.
+        # Protoze `none` je pro nej plnohodnotna trida, geometricka vetev
+        # vyse se NIKDY nespusti (bezi jen kdyz model uplne chybi).
+        # Geometrie pocita natazene prsty z 21 landmarku a na otevrenou
+        # dlan je shovivavejsi. Beri ji jen kdyz ML rekl NONE a jen pro
+        # OPEN_HAND — u ostatnich gest by pribyly plane poplachy.
+        _geom = classify_gesture(best_lm)
+        if _geom == GESTURE_OPEN_HAND:
+            _GST["geom_open"] = _GST.get("geom_open", 0) + 1
+            if gid == GESTURE_NONE and _GEOM_FALLBACK:
+                gid = GESTURE_OPEN_HAND
+                _GST["geom_pouzito"] = _GST.get("geom_pouzito", 0) + 1
         log.debug('[HAND] gesture_id=%d', gid)
+        if gid == GESTURE_OPEN_HAND:
+            _GST["otevrena"] += 1       # HANS_GESTURE_STATS_V1
         return gid, best_lm, palm_bbox
     def close(self):
         try: self.vdevice.release()

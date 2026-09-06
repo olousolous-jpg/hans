@@ -585,6 +585,12 @@ class PicamDisplayController:
                 if _known_now:
                     self._present_known    = _known_now
                     self._present_known_ts = now
+                    # HANS_GESTURE_WAVER_V1 — k jmenum i jejich BBOXY, aby
+                    # slo urcit, KDO mava (viz _pozdrav_na_zamavani).
+                    self._present_pairs = [
+                        (n, b) for b, i in zip(boxes, identities)
+                        for n in (i[0],)
+                        if n not in ("Unknown", "Person", "...", "?", "")]
 
                 # Greeting trigger — pozdrav rozpoznané osoby přes chat handler.
                 # handle_face_recognition() je idempotentní (session/daily flag),
@@ -632,7 +638,17 @@ class PicamDisplayController:
 
             # ── Gesture recognition ───────────────────────────────
             if frame_idx % DETECT_EVERY == 0 and not scanning:
-                self.gesture.submit(lores_frame)
+                # HANS_GESTURE_ROI_V1 — posli okoli NEJVETSI (=nejblizsi)
+                # tvare, ne cely zaber: dlan tim ziska nekolikanasobek
+                # pixelu a gesta dosahnou dal. Bez tvare jde cely zaber
+                # (puvodni chovani).
+                _obl = None
+                if boxes:
+                    try:
+                        _obl = max(boxes, key=lambda b: (b[2]-b[0])*(b[3]-b[1]))
+                    except Exception:
+                        _obl = None
+                self.gesture.submit(lores_frame, oblast=_obl)
 
             # ── Gesture data collection ────────────────────────────
             # GESTURE_COLLECTION_METHOD_V1: extracted to self._handle_gesture_collection
@@ -1541,12 +1557,22 @@ class PicamDisplayController:
 
     def _on_gesture(self, gesture, bbox=None):  # ON_GESTURE_METHOD_V1
         """Volá se z GestureClient když rozpozná gesto.
-        - open_hand → toggle Kodi play/pause
+        - wave → pozdrav rozpoznané osoby (HANS_GESTURE_WAVE_GREET_V1)
+        - open_hand → toggle Kodi play/pause (jen když gesture.open_hand_kodi)
         - fist → start/stop voice recording
         Aktualizuje self._last_gesture* state pro main loop."""
         self._last_gesture      = gesture
         self._last_gesture_time = time.time()
         self._last_gesture_bbox = bbox
+        if gesture == "wave":
+            self._pozdrav_na_zamavani(bbox)
+            return
+        if gesture == "open_hand" and not self.config.get(
+                "gesture", {}).get("open_hand_kodi", False):
+            # HANS_GESTURE_WAVE_GREET_V1 — staticka dlan zamerne NEDELA nic.
+            # Mavani JE otevrena dlan, takze zapnuta vetev Kodi by kazdy
+            # pozdrav doprovodila pauzou filmu.
+            return
         if gesture == "open_hand":
             # 🖐 Open hand → Kodi pause/play
             if not hasattr(self, "_kodi_playing"):
@@ -1572,6 +1598,53 @@ class PicamDisplayController:
                 else:
                     self._fist_stop_sent = False
                     voice.trigger()
+
+    def _pozdrav_na_zamavani(self, _bbox=None):  # HANS_GESTURE_WAVE_GREET_V1
+        """Zamávání otevřenou dlaní → Hans pozdraví.
+
+        Jméno bere z self._present_known (HANS_MENU_PRESELECT_V1) — už se
+        plní v hlavní smyčce, nic dalšího se kvůli tomu neukládá. Když
+        nikoho nepoznal, pozdraví bez jména.
+
+        Volá _send_greeting_async NAPŘÍMO, tedy MIMO should_greet_person:
+        zamávání je VYŽÁDANÝ pozdrav a musí fungovat i podruhé, zatímco
+        běžný pozdrav při rozpoznání tváře je záměrně 1× za session/den.
+        """
+        _ow = getattr(self, "openwebui_chat", None)
+        if _ow is None or not getattr(_ow, "enabled", False):
+            return
+        _jmeno, _conf = None, 1.0
+        try:
+            if (self._present_known and
+                    time.time() - self._present_known_ts <= 10.0):
+                _jmeno = self._present_known[0]
+                # HANS_GESTURE_WAVER_V1 (6.9.) — kdyz je v mistnosti vic
+                # lidi, vezmi toho, jehoz TVAR je nejbliz mavajici dlani.
+                # Doloženo 6.9.: pri dvou lidech Hans zdravil i toho, kdo
+                # nemaval — bral prvni rozpoznanou osobu.
+                _pairs = getattr(self, "_present_pairs", None)
+                if _bbox and _pairs and len(_pairs) > 1:
+                    _dx = (float(_bbox[0]) + float(_bbox[2])) / 2.0
+                    _dy = (float(_bbox[1]) + float(_bbox[3])) / 2.0
+                    def _vzdal(par):
+                        _b = par[1]
+                        return (((_b[0] + _b[2]) / 2.0 - _dx) ** 2 +
+                                ((_b[1] + _b[3]) / 2.0 - _dy) ** 2)
+                    _jmeno = min(_pairs, key=_vzdal)[0]
+        except Exception:
+            pass
+        # Prazdne jmeno by v conv_store vyrobilo soubor ".json" (skryte
+        # smeti), proto neznamy dostane klic "host".
+        _jmeno = _jmeno or "host"
+        _syslog.info("gesto: zamávání → pozdrav (%s)", _jmeno)
+        try:
+            import threading as _th
+            _th.Thread(target=_ow._send_greeting_async,
+                       args=(_jmeno, _conf),
+                       kwargs={"duvod": "zamával ti na pozdrav"},
+                       daemon=True).start()
+        except Exception as _e:
+            _syslog.error("gesto: pozdrav selhal: %s", _e)
 
     # ── Settings hot-reload (ConfigGUI on_save + web admin watcher) ──────
 
