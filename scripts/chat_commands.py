@@ -2974,6 +2974,19 @@ def _cmd_zdroje(handler, name, args) -> str:
     import sqlite3 as _sq
     from datetime import datetime as _dt
     db = _recall_db(handler)
+    # HANS_SENSOR_SOURCE_SHARED_V1 (6.9.) — CIDLO MA PREDNOST PRED ZAPISKY.
+    # Bez tohohle odpovedel prikaz na "odkud cerpas informace o pocasi?"
+    # vypisem PRECTENYCH CLANKU. Pocasi je z ČHMÚ a teplota z cidel, ne
+    # z cetby — a falesne popreni vlastniho zdroje je horsi nez mlceni.
+    # Predikat se NEKOPIRUJE: je to tataz funkce, kterou vola i
+    # `sources_answer` na LLM ceste, aby nevznikly dve pravdy.
+    try:
+        from scripts.hans_recall import sensor_source_answer
+        _cidlo = sensor_source_answer(db, (args or ""), asker=name or "")
+        if _cidlo:
+            return _cidlo
+    except Exception:
+        pass
     # ⚠️ U NL vzorů přijde jako `args` CELÁ zpráva (parse_command vrací msg),
     # takže „odkud jsi vlastně čerpal?" by se hledalo jako téma a nic nenašlo.
     # Téma se proto tahá týmž extraktorem jako u /cetl; prázdné = vypiš poslední.
@@ -3094,12 +3107,43 @@ def _cmd_zdroje(handler, name, args) -> str:
 register(
     "zdroje",
     slash_aliases=["zdroje", "odkazy", "literatura", "zdroj", "odkaz"],
+    # HANS_SOURCES_VYKANI_V1 (6.9.) — vzory znaly JEN TYKANI a jen uzky
+    # okruh formulaci. Zmereno: tykani 6/6, VYKANI 0/6 — a prave cizi clovek
+    # Hansovi vyka. [[test-both-grammatical-persons]]
+    # Dolozeno 6. 9.: "dokazal byste mi ukazat, odkud presne jste to cetl,
+    # tedy nejaky odkaz nebo nazev?" -> prikaz se nespustil, odpovedel LLM
+    # frazi "nemam pristup k externim zdrojum, moje znalosti pochazeji
+    # z trenninku". To je NEPRAVDA: v deniku je 473 radku se `source_url`
+    # (467 z nich web_read), takze Hans ty odkazy realne MA.
+    #
+    # ⚠️ Klauzule v promptu uz zuzena JE (HANS_SOURCE_QUERY_V1, 17. 7.) a
+    # dokonce vyslovne rika "Neodbyvej frazi 'nemam pristup k externim
+    # zdrojum'". Model ji presto pouzil — proto se to resi BRANOU, ne dalsi
+    # vetou v promptu.
+    #
+    # 📏 ZMERENO na 1362 realnych replikach: +9 nove zachycenych,
+    # 0 ukradenych jinemu prikazu, 0 ztracenych.
+    # ⛔ Vzory na odkaz zamerne vyzaduji 2. osobu (das/date/mas/mate/posles),
+    # aby neunesly opacny smer — kdyz uzivatel odkaz SAM POSILA
+    # ("posilam ti odkaz", "precti si tenhle odkaz"), patri to do cteni webu,
+    # ne do vypisu zdroju [[read-and-remember-links]].
+    # Samostatny vzor na "odkaz(y) na clanek" tu BYL a je ZAMERNE PRYC:
+    # chytal prave "posilam ti odkaz na clanek", a pritom je nadbytecny —
+    # vsechny realne dotazy ("mas odkaz na clanek…", "muzes poslat odkazy
+    # na clanky…") uz pokryvaji vzory s 2. osobou. Overeno na korpusu.
     nl_patterns=[
-        r"\bodkud\s+(jsi|si|to)\s+.{0,12}(čerpal|cerpal|m[áa][šs]|vz[áa]l|v[íi][šs])",
-        r"\b(z\s+)?[čc]eho\s+(jsi|si)\s+.{0,10}(čerpal|cerpal|vych[áa]zel)",
-        r"\bd[áa][šs]\s+(mi\s+)?odkaz",
-        r"\bkde\s+(jsi|si)\s+(to\s+)?(četl|cetl|na[šs]el|vzal)",
+        r"\bodkud\s+(\w+\s+){0,2}(jsi|si|to|jste)\b.{0,18}"
+        r"(čerpal|cerpal|m[áa][šs]|m[áa]te|vz[áa]l|v[íi][šs]|v[íi]te|[čc]etl|[čc]etla|dozv[ěe])",
+        r"\bodkud\s+([čc]erp[áa][šs]|[čc]erp[áa]te)\b",
+        r"\b(z\s+)?[čc]eho\s+(jsi|si|jste)\s+.{0,10}(čerpal|cerpal|vych[áa]zel)",
+        r"\b(z\s+)?[čc]eho\s+(studuje[šs]|studujete)\b",
+        r"\b(d[áa][šs]|d[áa]te|m[áa][šs]|m[áa]te|po[šs]le[šs]|po[šs]lete)"
+        r"\s+(mi\s+)?(n[ěe]jak[ýéya]\s+)?odkaz",
+        r"\bm[uů][žz]e([šs]|te)\s+(mi\s+)?(poslat|uk[áa]zat|d[áa]t)\s+.{0,14}odkaz",
+        r"\bkde\s+(jsi|si|jste)\s+(to\s+)?(četl|cetl|na[šs]el|na[šs]la|vzal|vzala|dozv[ěe]d[ěe]l)",
         r"\bjak[ýy]\s+(je\s+)?(ten\s+)?zdroj",
+        r"\b(uka[žz]|uka[žz]te)\s+(mi\s+)?(sv[ée]\s+)?zdroj",
+        r"\bjak[ée]\s+(m[áa][šs]|m[áa]te)\s+.{0,12}zdroj",
         r"\bposli\s+(mi\s+)?odkaz|\bpo[šs]li\s+(mi\s+)?odkaz",
     ],
     handler=_cmd_zdroje,

@@ -949,19 +949,23 @@ def _last_hans_topics(db_path: str, limit: int = 3,
     return out
 
 
-def sources_answer(db_path: str, user_text: str,
-                   asker: Optional[str] = None) -> Optional[str]:
-    """HANS_SOURCE_QUERY_V1 — DETERMINISTICKÁ odpověď (bypass LLM).
+def sensor_source_answer(db_path: str, user_text: str,
+                         asker: str = "") -> Optional[str]:
+    """HANS_SENSOR_SOURCE_SHARED_V1 (6.9.) — pochazi tvrzeni z CIDLA, ne ze cteni?
 
-    Hans-czech (persona finetune) neposlouchá grounding — odmítá sdílet URL
-    i když je má doslova v promptu (17.7. doložený případ „Icon of the Seas").
-    Malý model je natrénovaný na personu „nemám externí zdroje" silněji než
-    kterákoliv system-prompt instrukce. Řešení: pro dotaz na zdroj obejdi LLM
-    a vygeneruj odpověď sám. Vzor: `commitments_answer`, `film_knowledge_answer`.
+    Vraci hotovou odpoved (kamera / ČHMÚ / čidla v pokoji), nebo None.
 
-    Vrací string (Hansovým hlasem) nebo None (nic k nabídnutí → propadne do LLM).
+    Blok byl doted uvnitr `sources_answer`, takze se k nemu chatovy prikaz
+    /zdroje nedostal. Dolozeno 6. 9.: po rozsireni vzoru (HANS_SOURCES_VYKANI_V1)
+    zacal prikaz brat i "odkud cerpas informace o pocasi?" a odpovedel
+    VYPISEM PRECTENYCH CLANKU — tedy presne tou chybou, kterou
+    HANS_SOURCE_IS_SENSOR_V2 uz 4. 9. opravil na druhe ceste.
+
+    ⛔ NEDELAT z toho druhy predikat v chat_commands: pak by existovaly
+    dve pravdy o tom, co je udaj z cidla, a rozesly by se. Proto je to
+    JEDNA funkce, kterou volaji obe cesty.
     """
-    oslov = _cz_address(asker) if asker else "pane"  # HANS_NAME_INFLECTION_V1
+    oslov = _cz_address(asker) if asker else "pane"
     # HANS_SOURCE_IS_SENSOR_V1 (20.8.) — NE KAŽDÉ TVRZENÍ POCHÁZÍ ZE ČTENÍ.
     # Doloženo 20.8.: „a odkud to víš, že tu je Jana?" → „nemám uložený
     # konkrétní článek s odkazem" — což je nesmysl, přítomnost člověka Hans
@@ -1036,6 +1040,26 @@ def sources_answer(db_path: str, user_text: str,
                     % oslov)
     except Exception:
         pass
+    return None
+
+
+def sources_answer(db_path: str, user_text: str,
+                   asker: Optional[str] = None) -> Optional[str]:
+    """HANS_SOURCE_QUERY_V1 — DETERMINISTICKÁ odpověď (bypass LLM).
+
+    Hans-czech (persona finetune) neposlouchá grounding — odmítá sdílet URL
+    i když je má doslova v promptu (17.7. doložený případ „Icon of the Seas").
+    Malý model je natrénovaný na personu „nemám externí zdroje" silněji než
+    kterákoliv system-prompt instrukce. Řešení: pro dotaz na zdroj obejdi LLM
+    a vygeneruj odpověď sám. Vzor: `commitments_answer`, `film_knowledge_answer`.
+
+    Vrací string (Hansovým hlasem) nebo None (nic k nabídnutí → propadne do LLM).
+    """
+    oslov = _cz_address(asker) if asker else "pane"  # HANS_NAME_INFLECTION_V1
+    # HANS_SENSOR_SOURCE_SHARED_V1 — cidlo ma prednost pred zapisky.
+    _sens = sensor_source_answer(db_path, user_text, asker)
+    if _sens:
+        return _sens
 
 
     hit = _find_entity_in_text(db_path, user_text)
