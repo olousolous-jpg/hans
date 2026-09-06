@@ -95,6 +95,13 @@ class GestureClient:
         self._wave_armed     = True
         self._wave_last_seen = 0.0
         self._wave_rearm_s   = float(cfg.get("wave_rearm_s", 4.0))
+        # HANS_GESTURE_WAVE_METRIKY_V1 — 0 = kriterium vypnute (jen se meri)
+        self._wave_min_palm_face = float(cfg.get("wave_min_palm_vs_face", 0.0))
+        self._wave_min_obr_s     = float(cfg.get("wave_min_reversals_per_s", 0.0))
+        self._wave_max_od_tvare  = float(cfg.get("wave_max_face_widths", 0.0))
+        self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", 0.0))
+        self._sirka_tvare        = 0.0
+        self._stred_tvare        = None
         self._wave_track    = deque(maxlen=60)   # (t, cx) normalizovane
         self._wave_last_fired = 0.0
         # HANS_GESTURE_DEBUG_V1 — `gesture.debug` zvedne diagnostiku na INFO.
@@ -129,6 +136,16 @@ class GestureClient:
             return
         import cv2 as _cv2
         vyrez = None
+        if oblast is not None:
+            try:
+                # sirka TVARE je prirozene meritko: realna dlan je zhruba
+                # velikosti obliceje, kdezto falesna detekce na textilii
+                # byva mnohem mensi.
+                self._sirka_tvare = max(float(oblast[2]) - float(oblast[0]), 1e-6)
+                self._stred_tvare = ((float(oblast[0]) + float(oblast[2])) / 2.0,
+                                     (float(oblast[1]) + float(oblast[3])) / 2.0)
+            except Exception:
+                pass
         if oblast is not None and self._roi_on:
             vyrez = self._spocti_vyrez(oblast)
         if vyrez is not None:
@@ -199,6 +216,10 @@ class GestureClient:
         self._wave_cooldown = float(cfg.get("wave_cooldown_s", self._wave_cooldown))
         self._wave_min_samples = int(cfg.get("wave_min_samples", self._wave_min_samples))
         self._wave_min_amp_rel = float(cfg.get("wave_min_amplitude_rel", self._wave_min_amp_rel))
+        self._wave_min_palm_face = float(cfg.get("wave_min_palm_vs_face", self._wave_min_palm_face))
+        self._wave_min_obr_s     = float(cfg.get("wave_min_reversals_per_s", self._wave_min_obr_s))
+        self._wave_max_od_tvare  = float(cfg.get("wave_max_face_widths", self._wave_max_od_tvare))
+        self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", self._wave_min_palm_w))
 
     def _recv_exact(self, sock, n):
         buf = b""
@@ -366,8 +387,57 @@ class GestureClient:
             self._proc_ne("malo obratu: %d < %d (rozpeti %.3f, vzorku %d)"
                           % (obraty, self._wave_min_rev, rozpeti, len(okno)))
             return False
-        self._wave_popis = ("rozpeti %.3f = %.2f sirky dlane, obratu %d, "
-                            "vzorku %d" % (rozpeti, _rel, obraty, len(okno)))
+        # HANS_GESTURE_WAVE_METRIKY_V1 — dve veliciny, ktere podle snimku
+        # z 13:45 oddeluji skutecne mavani od halucinace na polstari:
+        #  (a) pomer dlan/tvar — realna dlan je zhruba jako oblicej,
+        #      falesna detekce na textilii byva zlomkem;
+        #  (b) obratu za sekundu — mavani je rytmicke, falesny zachyt byl
+        #      dlouhy pomaly drift (24 vzorku, 1 obrat).
+        # HANS_GESTURE_WAVE_MIN_PALM_V1 (6.9.) — ABSOLUTNI velikost dlane.
+        # Rozhodnuti uzivatele 6.9.: radeji gesto jen zblizka, ale spolehlive.
+        # Duvod z merenych dat: halucinace na textilii a zaluziich mely dlan
+        # 0,012-0,021 sirky zaberu, skutecna dlan zblizka ~0,07-0,10.
+        # Velikost je odlisi bezpecne, zatimco POMER (dlan/tvar) ne — u
+        # falesne detekce vysel 0,48-0,80, protoze mala byla i tvar.
+        # ⚠️ Cena: gesto dosahne jen asi na metr. Dosah se vrati az
+        # s pretrenovanym modelem, ne dalsim ladenim prahu.
+        if self._wave_min_palm_w > 0 and _dlan < self._wave_min_palm_w:
+            self._proc_ne("dlan moc mala: %.3f < %.3f (asi halucinace na "
+                          "textilii, nebo je clovek moc daleko)"
+                          % (_dlan, self._wave_min_palm_w))
+            return False
+        _tvar = getattr(self, "_sirka_tvare", 0.0)
+        _pomer_tvar = (_dlan / _tvar) if _tvar > 1e-6 else -1.0
+        _doba = max(okno[-1][0] - okno[0][0], 1e-6)
+        _obr_s = obraty / _doba
+        self._wave_popis = (
+            "rozpeti %.3f = %.2f sirky dlane, obratu %d, vzorku %d "
+            "| dlan %.3f = %.2f tvare, %.1f obratu/s, %.1f s"
+            % (rozpeti, _rel, obraty, len(okno),
+               _dlan, _pomer_tvar, _obr_s, _doba))
+        # HANS_GESTURE_WAVE_NEAR_FACE_V1 (6.9.) — mavajici ruka je U TELA.
+        # Doloženo snimky z 13:45 a 13:53: falesne zachyty lezely na
+        # prikryvce a polstari DALEKO od osob, klidne u kraje zaberu.
+        # Vzdalenost se meri v nasobcich sirky tvare, takze plati na metr
+        # i na dva.
+        _stred = getattr(self, "_stred_tvare", None)
+        if self._wave_max_od_tvare > 0 and _stred and _tvar > 1e-6:
+            _sx = sum(p[1] for p in okno) / len(okno)
+            _vzd = abs(_sx - _stred[0]) / _tvar
+            if _vzd > self._wave_max_od_tvare:
+                self._proc_ne("dlan daleko od tvare: %.1f sirky tvare > %.1f"
+                              % (_vzd, self._wave_max_od_tvare))
+                return False
+            self._wave_popis += ", %.1f tvare od hlavy" % _vzd
+        if self._wave_min_palm_face > 0 and 0 <= _pomer_tvar < self._wave_min_palm_face:
+            self._proc_ne("dlan moc mala vuci tvari: %.2f < %.2f (%s)"
+                          % (_pomer_tvar, self._wave_min_palm_face,
+                             self._wave_popis))
+            return False
+        if self._wave_min_obr_s > 0 and _obr_s < self._wave_min_obr_s:
+            self._proc_ne("prilis pomaly pohyb: %.1f obratu/s < %.1f (%s)"
+                          % (_obr_s, self._wave_min_obr_s, self._wave_popis))
+            return False
         return True
 
     def _update_state(self, gesture_id: int, bbox=None, lm=None):

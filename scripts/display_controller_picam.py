@@ -548,6 +548,10 @@ class PicamDisplayController:
                     self._guard_tick(main_frame)
                 except Exception:
                     pass
+            # HANS_GESTURE_WAVE_SNAP_V1 — reference na posledni frame, aby
+            # sel pri zachytu mavani ulozit snimek (jen odkaz, zadna kopie).
+            if main_frame is not None:
+                self._posledni_frame = main_frame
 
             # ── Hailo face detection ──────────────────────────────────────
             # B5B_HAILO_PIPELINE_V1: extracted to self._pipeline.detect_faces
@@ -1645,6 +1649,60 @@ class PicamDisplayController:
                        daemon=True).start()
         except Exception as _e:
             _syslog.error("gesto: pozdrav selhal: %s", _e)
+        self._zprava_o_zamavani(_jmeno)
+        self._snimek_zamavani(_bbox, _jmeno)
+
+    def _snimek_zamavani(self, bbox, jmeno):  # HANS_GESTURE_WAVE_SNAP_V1
+        """Ulozi snimek v okamziku zachytu do data/gesta/ (cerveny ramecek
+        = co bylo povazovano za dlan).
+
+        Duvod: falesne zachyty nejde resit prahy, dokud nevime, CO systém
+        za dlan povazoval — 2,95 sirky dlane vypada jako poctive mavnuti
+        at uz je ta 'dlan' cokoliv.
+        """
+        if not self.config.get("gesture", {}).get("wave_snapshot", False):
+            return
+        _fr = getattr(self, "_posledni_frame", None)
+        if _fr is None:
+            return
+        try:
+            from pathlib import Path as _P
+            _d = _P("data/gesta"); _d.mkdir(parents=True, exist_ok=True)
+            _img = _fr.copy()
+            if bbox:
+                _h, _w = _img.shape[:2]
+                cv2.rectangle(_img,
+                              (int(bbox[0] * _w), int(bbox[1] * _h)),
+                              (int(bbox[2] * _w), int(bbox[3] * _h)),
+                              (0, 0, 255), 2)
+            _cesta = _d / ("%s_%s.jpg" % (time.strftime("%H%M%S"), jmeno))
+            cv2.imwrite(str(_cesta), cv2.cvtColor(_img, cv2.COLOR_RGB2BGR))
+            for _old in sorted(_d.glob("*.jpg"))[:-40]:
+                try: _old.unlink()
+                except Exception: pass
+            _syslog.info("gesto: snimek zachytu -> %s", _cesta)
+        except Exception as _e:
+            _syslog.warning("gesto: snimek se neulozil: %s", _e)
+
+    def _zprava_o_zamavani(self, jmeno):  # HANS_GESTURE_WAVE_NOTIFY_V1
+        """Potvrzení na Matrix, že mávnutí zabralo — i s čísly, aby šlo
+        zkoušet meze gesta bez čtení logu a bez reproduktoru.
+
+        Posílá se přes `send`, NE `send_proactive`: zamávání je akce
+        uživatele, takže odpověď patří hned. `send_proactive` by ji
+        v tichém okně (22–9) odložil a vypadalo by to, že gesto nesepnulo.
+        """
+        if not self.config.get("gesture", {}).get("wave_notify", True):
+            return
+        _n = getattr(self.openwebui_chat, "telegram", None)
+        if _n is None or not getattr(_n, "enabled", False):
+            return
+        _popis = getattr(getattr(self, "gesture", None), "_wave_popis", "")
+        try:
+            _n.send("\U0001F44B Zamávání zachyceno — %s%s"
+                    % (jmeno, (" (%s)" % _popis) if _popis else ""))
+        except Exception as _e:
+            _syslog.warning("gesto: zpráva na Matrix selhala: %s", _e)
 
     # ── Settings hot-reload (ConfigGUI on_save + web admin watcher) ──────
 
