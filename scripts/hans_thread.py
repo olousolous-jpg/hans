@@ -92,7 +92,7 @@ _ANAPHORA_HINTS = (
 # HANS_THREAD_ANAPHORA_WORDBOUND_V1 (26.8.) — nápovědy se hledaly jako HOLÝ
 # PODŘETĚZEC, takže „pře<myslel jsem>" spustilo rozřešení odkazu ve větě, která
 # žádný odkaz nemá. Doloženo: „Poslyš, přemýšlel jsem, že bych ti dal na starost
-# něco navíc… co všechno vlastně umíš?" → `odkaz rozřešen → Oldu` (Title-case
+# něco navíc… co všechno vlastně umíš?" → `odkaz rozřešen → Standu` (Title-case
 # záloha vytáhla jméno z předchozí Hansovy repliky). Věta má přitom vlastní
 # předmět víc než dost. Hledá se proto na HRANICÍCH SLOV.
 # ⚠️ Podmínku `not has_own_subject(...) OR nápověda` NELZE přehodit na AND —

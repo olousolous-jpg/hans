@@ -116,7 +116,7 @@ t("bez předchozí cesty → nepotlačovat",
 
 # -- A1: napoveda na HRANICI SLOV (HANS_THREAD_ANAPHORA_WORDBOUND_V1, 26.8.) --
 # Doslovna veta z testovaciho rozhovoru 26.8.: 'pre<myslel jsem>' spoustelo
-# rozreseni odkazu ve vete, ktera zadny odkaz nema -> 'odkaz rozresen -> Oldu'.
+# rozreseni odkazu ve vete, ktera zadny odkaz nema -> 'odkaz rozresen -> Standu'.
 # Popisky schvalne BEZ ceskych uvozovek: ASCII " uvnitr nich ukonci retezec.
 _TURNS_JMENO = [("assistant",
                 "Naposledy jsem tu zahledl Standu, ted tu ale nikoho nevidim.")]

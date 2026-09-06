@@ -118,7 +118,7 @@ class ConversationStore:
         neodpovi), hromadi se monolog — a `get_history` ho cely podava
         chatovemu modelu jako few-shot. Ten pak jejich TVAR kopiruje do
         odpovedi na uplne jine otazky.
-        **Doloženo živě 4.9.**: ve 3 z 5 tahu zacala odpoved „Henko, dobry
+        **Doloženo živě 4.9.**: ve 3 z 5 tahu zacala odpoved „Jano, dobry
         den." a mela vlepenou doslovnou predpoved „Zitra (05.09.): slaby
         dest 16-23°C." — vcetne odpovedi na dotaz o Star Treku. Predpoved
         do POZDRAVU patri (uzivatelsky opt-in `greeting.special_greetings`),

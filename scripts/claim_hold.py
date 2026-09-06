@@ -1,7 +1,7 @@
 """HANS_CLAIM_HOLD_V1 — Hans se drží toho, co má zapsáno, i když mu někdo tvrdí opak.
 
 Doložený případ (23.8., simulovaný rozhovor):
-    Hans: „Naposledy jsem Henku viděl před 23 minutami…"   ← z deníku, správně
+    Hans: „Naposledy jsem Janu viděl před 23 minutami…"   ← z deníku, správně
     já:   „před chvílí jsi říkal, že naposledy ve 12:15. která odpověď platí?"
     Hans: „Máte pravdu. … deník říká 12:15. Předtím jsem měl mylnou informaci."
 Přijal MOU nepravdu jako fakt ze svého deníku — o tah dřív přitom deník četl

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HANS_CLAIM_HOLD_V1 — trvalý test: drží se Hans svého záznamu?
 
-Z nálezu 23.8.: Hans přečetl deník správně („Naposledy jsem Henku viděl před
+Z nálezu 23.8.: Hans přečetl deník správně („Naposledy jsem Janu viděl před
 23 minutami"), a když jsem mu podsunul jiný čas, přijal MOU nepravdu jako údaj
 z vlastního deníku. Test hlídá obě strany — že se spor pozná, i že se
 nepozná tam, kde se poznat nemá (falešné držení by bylo horší než žádné).
@@ -12,9 +12,9 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.claim_hold import disputed_last_seen, hold
 
-ZAZNAM = ("Naposledy jsem Henku viděl před 23 minutami; předtím v neděli "
+ZAZNAM = ("Naposledy jsem Janu viděl před 23 minutami; předtím v neděli "
           "23. srpna 2026 v 09:42. Tak to mám zapsáno v deníku.")
-TED = "Vidím Henku právě teď, pane. Tak to mám zapsáno v deníku."
+TED = "Vidím Janu právě teď, pane. Tak to mám zapsáno v deníku."
 JINE = ("Vyšetřování ztráty třídní knihy je hra Divadla Járy Cimrmana. "
         "Záznamy mi neříkají více.")
 
@@ -31,32 +31,32 @@ CASES = [
     # (popis, dotaz, historie, má se spustit?)
     ("odkaz na řečené + čerstvý záznam",
      "pred chvili jsi rikal ze naposledy ve 12:15. ktera odpoved plati?",
-     h("kdy jsi videl henku?", ZAZNAM), True),
+     h("kdy jsi videl janu?", ZAZNAM), True),
     ("s diakritikou",
      "říkal jsi ale něco jiného, tak která odpověď platí?",
-     h("kdy jsi viděl Henku?", ZAZNAM), True),
+     h("kdy jsi viděl Janu?", ZAZNAM), True),
     ("tvrdil jsi",
      "tvrdil jsi, že tu byla ráno. to nesedí.",
-     h("kdy jsi viděl Henku?", ZAZNAM), True),
+     h("kdy jsi viděl Janu?", ZAZNAM), True),
     ("spor nad „vidím právě teď“",
      "opravdu? vzdyt jsi rikal ze tu nikdo neni",
      h("je tu někdo?", TED), True),
     ("prosté zpochybnění",
-     "urcite?", h("kdy jsi viděl Henku?", ZAZNAM), True),
+     "urcite?", h("kdy jsi viděl Janu?", ZAZNAM), True),
 
     # ── nesmí se spustit ─────────────────────────────────────────────────
     ("spor, ale poslední tvrzení není o vidění",
      "pred chvili jsi rikal neco jineho, ktera odpoved plati?",
      h("co je zač ta hra?", JINE), False),
     ("záznam ve vlákně, ale žádný spor",
-     "a kdy tu byla predtim?", h("kdy jsi viděl Henku?", ZAZNAM), False),
+     "a kdy tu byla predtim?", h("kdy jsi viděl Janu?", ZAZNAM), False),
     ("prázdná historie",
      "pred chvili jsi rikal ze ve 12:15", [], False),
     ("spor je ve zprávě UŽIVATELE, ne v Hansově replice",
      "ktera odpoved plati?",
-     h("naposledy jsem Henku viděl ve 12:15"), False),
+     h("naposledy jsem Janu viděl ve 12:15"), False),
     ("běžná otázka",
-     "kdy jsi viděl Henku?", h("ahoj", "Dobrý den, pane."), False),
+     "kdy jsi viděl Janu?", h("ahoj", "Dobrý den, pane."), False),
     ("prázdný dotaz", "", h("x", ZAZNAM), False),
 ]
 
@@ -72,7 +72,7 @@ def main() -> int:
             bad += 1
             print(f"  ✗ {popis}: dostal {got}, čekáno {ceka}")
     # ── uvození odpovědi ──────────────────────────────────────────────────
-    _v = hold("Naposledy jsem Henku viděl před 23 minutami. "
+    _v = hold("Naposledy jsem Janu viděl před 23 minutami. "
               "Tak to mám zapsáno v deníku.",
               "pred chvili jsi rikal ze naposledy ve 12:15. ktera plati?")
     for popis, podminka in (
@@ -84,7 +84,7 @@ def main() -> int:
             ok += 1; print(f"  ✓ hold()   | {popis}")
         else:
             bad += 1; print(f"  ✗ hold(): {popis} — {_v[:90]}")
-    if hold("Vidím Henku právě teď.", "opravdu?").endswith("právě teď.") :
+    if hold("Vidím Janu právě teď.", "opravdu?").endswith("právě teď.") :
         ok += 1; print("  ✓ hold()   | bez času v dotazu nic nedolepuje")
     else:
         bad += 1; print("  ✗ hold() dolepuje i bez času v dotazu")
