@@ -121,6 +121,62 @@ def is_reflective_ask(text: str) -> bool:
                 or _REFLECTIVE_PAT.search(_deaccent(t)))
 
 
+# ── HANS_MEMORY_ASK_V1 (6.9.) — DOTAZ NA TO, CO UZIVATEL DRIV REKL ──────────
+# Dolozeno simulovanym rozhovorem 6. 9.: na vetu
+#   "nevim, jestli mi zbylo dost mouky - pamatujete si, co jsem vam o tom
+#    minule rikala?"
+# padlo GROUNDING: nonfactual <- volny_hovor, tedy ZADNA opora a ZADNA
+# abstinencni brzda -> Hans si vymyslel jak obsah ("chybi vam mouka na
+# svestkove knedliky"), tak EXISTENCI evidence ("zaznamy o spotrebovanych
+# surovinach jsou detailni"). V deniku o mouce od te osoby neni nic.
+#
+# Rozhoduje RAMOVANI, ne tema: "co jsem ti rikal o mouce?" projde jako
+# `udalost`, ale "pamatujes si, co jsem ti o tom rikal?" spadne do `volna`.
+# Zmereno 3 behy na vetu - klasifikace je STABILNI, jde o systematickou
+# chybu, ne o sum.
+#
+# Mechanismus na odpoved uz existuje od 2. 7. (HANS_CHAT_RECALL_V1: doslovne
+# rozhovory jsou v RAG `hans_pripady`, ktery je v retrieval kolekcich pro
+# `osobnost`/`udalost`). Tohle NENI novy mechanismus - jen brana, ktera k nemu
+# pri `volna` nedosahne. [[search-archive-before-fixing]]
+#
+# 📏 ZMERENO na 1362 realnych replikach: predikat sedne na 9 (0,66 %),
+# z toho 3 zachyti driv chatovy prikaz /rozhovory -> fakticky meni chovani
+# u 4 vet (0,3 %). Zapis ("zapamatuj si, ze...") nechytil ANI JEDNOU.
+#
+# ⚠️ UZKE SCHVALNE: musi tam byt sloveso vybavovani A ZAROVEN odkaz na to,
+# co bylo receno. Same "pamatujes" by ukrojilo i vztahovy hovor, kde je
+# fabulace v poradku [[free-chat-may-confabulate]].
+# ⛔ Rozkaz "zapamatuj si, ze..." je ZAPIS a ma vlastni cestu - lookbehind
+# (?<!za) plus _MEMORY_WRITE_PAT ho drzi stranou. Kdyby se sem dostal,
+# Hans by misto ulozeni zajmu zacal prohledavat pamet.
+_MEMORY_ASK_PAT = re.compile(
+    r"(?<!za)(?:\bpamatuje[\u0161s]\b|\bpamatujete\b"
+    r"|\bvzpom[\u00edi]n[\u00e1a][\u0161s]\b|\bvzpom[\u00edi]n[\u00e1a]te\b"
+    r"|\b[\u0159r][\u00edi]kal[a]?\s+jsem\s+(?:ti|v[\u00e1a]m)\b"
+    r"|\bzmi[\u0148n]oval[a]?\s+jsem\s+(?:se\s+)?(?:ti|v[\u00e1a]m)\b"
+    r"|\bpov[\u00edi]dal[a]?\s+jsem\s+(?:ti|v[\u00e1a]m)\b"
+    r"|\bco\s+jsem\s+(?:ti|v[\u00e1a]m)\b)", re.I)
+
+_MEMORY_WRITE_PAT = re.compile(
+    r"\bzapamatuj|\bzapi[\u0161s]\s+si|\bpamatuj\s+si\b", re.I)
+
+
+def is_memory_recall_ask(text: str) -> bool:
+    """Pta se clovek na to, co UZ BYLO receno (spolecna historie)?
+
+    True = odpoved MUSI stat na zaznamech, ne na fantazii. Rozkaz
+    "zapamatuj si, ze..." je zapis, ne dotaz, a vraci False.
+    """
+    if not text:
+        return False
+    t = str(text)
+    if _MEMORY_WRITE_PAT.search(t) or _MEMORY_WRITE_PAT.search(_deaccent(t)):
+        return False
+    return bool(_MEMORY_ASK_PAT.search(t)
+                or _MEMORY_ASK_PAT.search(_deaccent(t)))
+
+
 # ── Keyword/heuristické vzory ────────────────────────────────────────────────
 # VOLNÁ konverzace — pozdravy, emoce, "o tobě", společenské fráze.
 _VOLNA_PAT = re.compile(
@@ -280,6 +336,21 @@ class HansIntent:
             return IntentResult(intent="volna", confidence=1.0, source="keyword")
 
         msg = message.strip()
+
+        # HANS_MEMORY_ASK_V1 — dotaz na drive recene MUSI jit faktickou
+        # cestou. Sedi ZAMERNE pred keyword vrstvou: ta vraci u teto
+        # rodiny `volna` s conf 0.65, tedy nad gray_zone (0.6), takze
+        # by se vratila drive a mini model uz vubec nedostal slovo.
+        # Presnejsi keyword tridu (film/osobnost/misto) si necháváme,
+        # jen `volna` se prepisuje na `udalost` — tyz idiom jako u LLM
+        # vetve nize.
+        if is_memory_recall_ask(msg):
+            _kwm = self._classify_keyword(msg)
+            _im = _kwm.intent if _kwm.intent != "volna" else "udalost"
+            _log.info("intent: dotaz na drive recene → %s (%.40s)", _im, msg)
+            return IntentResult(intent=_im,
+                                confidence=max(_kwm.confidence, 0.9),
+                                source="keyword")
 
         # 1) KEYWORD vrstva (levná, bez sítě)
         kw = self._classify_keyword(msg)
