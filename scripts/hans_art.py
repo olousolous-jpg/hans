@@ -1188,6 +1188,35 @@ def render_now(config: dict, diary_db_path: str, title: str = "") -> Optional[tu
 
 
 # ── HANS_CAPABILITY_AWARENESS_V1 — malování na LIBOVOLNÉ téma (na požádání) ──
+# HANS_ART_CS_CASE_V1 (6.9.) — namet od uzivatele prichazi ve 4. PADU a casto
+# BEZ DIAKRITIKY („namaluj mi kocku"). qwen2.5:7b to cetl jako jine slovo a
+# maloval neco jineho: „kocku" -> hraci KOSTKA (doloženo živě 6. 9., obraz
+# zlute kostky misto kocky), „sovu" -> jestrab, „vlci maky" -> vyjici vlci,
+# „most v zimni mlze" -> postava v mlze (most cetl jako anglicke „most").
+#
+# ZMERENO (8 nametu x 3 behy, temperature 0.6):
+#   dnesni stav                     13/24
+#   namet rucne do 1. padu          21/24  <- vinu nese PAD, ne diakritika
+#   (samotna diakritika jen         15/24)
+#   tato klauzule                   24/24
+# Na vlastnich jmenech a fransizach neskodi: 21/24 -> 23/24.
+#
+# ⛔ Cesta pres normalizacni LLM krok (namet -> 1. pad) je ZMERENA A ZAMITNUTA:
+#   qwen2.5:7b 3/48 (plodi „koralku cukru", michá cyrilici),
+#   hans-czech 0/48 (jen opisuje few-shot vzory).
+# ⛔ Anglicka napoveda z `_translate_subject` take NE: 15/24 -> 17/24 a u
+#   „kocku" udela TYZ omyl („cube"), u „vlci maky" vrati „wolves'bane".
+# Model tedy PREKLADAT UMI — jen spatne cte vstup. Proto klauzule, ne kod.
+_CS_CASE_HINT = (
+    "The Czech phrase may be INFLECTED (an oblique case) and may be written "
+    "WITHOUT diacritics \u2014 e.g. 'kocku' means 'ko\u010dka' (a cat), "
+    "'sovu' means 'sova' (an owl). Before writing the prompt, work out the "
+    "dictionary (nominative) form of every Czech noun and depict THAT. Never "
+    "guess an English word by how the Czech letters look. If a Czech word "
+    "looks like an English word (e.g. 'most' = bridge, 'pes' = dog), it is "
+    "still CZECH \u2014 translate it."
+)
+
 _SUBJECT_SCENE_SYSTEM = (
     "You turn a short Czech description of a SUBJECT or theme into ONE concise "
     "English SDXL image prompt — an evocative, artistic INTERPRETATION (an "
@@ -1199,7 +1228,7 @@ _SUBJECT_SCENE_SYSTEM = (
     "themselves (their look), not a movie poster or cinema scene. "
     "Reply in ENGLISH ONLY (no Chinese/Japanese). NO text, letters or "
     "words in the image, NO watermark. End with: digital painting, atmospheric, "
-    "detailed, artistic, high quality."
+    "detailed, artistic, high quality. " + _CS_CASE_HINT
 )
 
 
@@ -1598,7 +1627,7 @@ _STYLE_SCENE_SYSTEM = (
     "quotes). Reply in ENGLISH ONLY (no Chinese/Japanese). NO text, letters or "
     "words in the image, NO watermark. END with strong English keywords of the "
     "requested ART STYLE (movement/artist name + its visual traits), NOT a generic "
-    "tail."
+    "tail. " + _CS_CASE_HINT
 )
 
 
