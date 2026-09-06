@@ -388,7 +388,11 @@
     "wave_max_face_widths": 3.0,
     "_wave_max_face_note": "Max. vzdalenost dlane od hlavy v nasobcich sirky tvare. Mavajici ruka je u tela; falesne zachyty lezely na prikryvce u kraje zaberu.",
     "wave_min_palm_width": 0.035,
-    "_wave_min_palm_note": "Min. sirka dlane jako podil zaberu. Halucinace na textilii mely 0.012-0.021, skutecna dlan zblizka 0.07-0.10. Omezuje gesto zhruba na metr — ZAMERNE (volba uzivatele 6.9.: radeji bliz a spolehlive)."
+    "_wave_min_palm_note": "Min. sirka dlane jako podil zaberu. Halucinace na textilii mely 0.012-0.021, skutecna dlan zblizka 0.07-0.10. Omezuje gesto zhruba na metr — ZAMERNE (volba uzivatele 6.9.: radeji bliz a spolehlive).",
+    "wave_min_duration_s": 0.5,
+    "_wave_min_duration_note": "Min. delka mavani v sekundach. 0 = vypnuto. Falesny zachyt mel 0,2 s pri 10,4 obratu za sekundu — clovek tak mavnout neumi. Odmita fyzicky nemozny stav, takze na dosah nesaha.",
+    "wave_max_palm_vs_face": 2.0,
+    "_wave_max_palm_face_note": "Max. pomer sirky dlane k sirce tvare. 0 = vypnuto. Doplnek k wave_min_palm_vs_face — v kodu byly jen DOLNI meze, takze nesmysl na druhou stranu prosel: falesny zachyt mel dlan 4,37x vetsi nez tvar."
   },
   "matrix": {
     "_note": "HANS_MATRIX_V1 — E2E šifrovaný most (matrix.org). Alternativa k Telegramu, kde poskytovatel NEvidí obsah. Vyžaduje apt: python3-matrix-nio python3-olm.",

@@ -98,6 +98,8 @@ class GestureClient:
         # HANS_GESTURE_WAVE_METRIKY_V1 — 0 = kriterium vypnute (jen se meri)
         self._wave_min_palm_face = float(cfg.get("wave_min_palm_vs_face", 0.0))
         self._wave_min_obr_s     = float(cfg.get("wave_min_reversals_per_s", 0.0))
+        self._wave_max_palm_face = float(cfg.get("wave_max_palm_vs_face", 0.0))
+        self._wave_min_doba      = float(cfg.get("wave_min_duration_s", 0.0))
         self._wave_max_od_tvare  = float(cfg.get("wave_max_face_widths", 0.0))
         self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", 0.0))
         self._sirka_tvare        = 0.0
@@ -218,6 +220,8 @@ class GestureClient:
         self._wave_min_amp_rel = float(cfg.get("wave_min_amplitude_rel", self._wave_min_amp_rel))
         self._wave_min_palm_face = float(cfg.get("wave_min_palm_vs_face", self._wave_min_palm_face))
         self._wave_min_obr_s     = float(cfg.get("wave_min_reversals_per_s", self._wave_min_obr_s))
+        self._wave_max_palm_face = float(cfg.get("wave_max_palm_vs_face", self._wave_max_palm_face))
+        self._wave_min_doba      = float(cfg.get("wave_min_duration_s", self._wave_min_doba))
         self._wave_max_od_tvare  = float(cfg.get("wave_max_face_widths", self._wave_max_od_tvare))
         self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", self._wave_min_palm_w))
 
@@ -437,6 +441,28 @@ class GestureClient:
         if self._wave_min_obr_s > 0 and _obr_s < self._wave_min_obr_s:
             self._proc_ne("prilis pomaly pohyb: %.1f obratu/s < %.1f (%s)"
                           % (_obr_s, self._wave_min_obr_s, self._wave_popis))
+            return False
+        # HANS_GESTURE_WAVE_IMPOSSIBLE_V1 (6.9. vecer) — GEOMETRICKY NEMOZNE STAVY.
+        # Nalez uzivatele: i po zvednuti prahu chodily falesne pozdravy.
+        # Rozbor sesti zachytu za den ukazal, ze v kodu byly JEN DOLNI meze,
+        # takze nesmysl na druhou stranu prosel bez povsimnuti:
+        #   19:11  mavnuti za 0,2 s pri 10,4 obratu/s
+        #   19:41  dlan 4,37x VETSI nez tvar
+        # Obe pojistky odmitaji stav, ktery u skutecneho mavani nastat NEMUZE
+        # (clovek nemavne za dve desetiny sekundy a dlan neni vetsi nez hlava),
+        # takze na dosah ani na skutecne gesto nesahaji — na rozdil od
+        # zvedani prahu velikosti dlane, ktere dosah zkracuje.
+        # ⛔ Horni mez na ROZPETI se zamerne nepridava: dve zbyle podezrele
+        # detekce (rozpeti 7,7 a 7,1 sirky dlane) chce rozhodnout SNIMEK,
+        # ne odhad — `wave_snapshot` je proto znovu zapnuty.
+        if self._wave_min_doba > 0 and _doba < self._wave_min_doba:
+            self._proc_ne("prilis kratke na mavnuti: %.2f s < %.2f (%s)"
+                          % (_doba, self._wave_min_doba, self._wave_popis))
+            return False
+        if self._wave_max_palm_face > 0 and _pomer_tvar > self._wave_max_palm_face:
+            self._proc_ne("dlan vetsi nez tvar, to nejde: %.2f > %.2f (%s)"
+                          % (_pomer_tvar, self._wave_max_palm_face,
+                             self._wave_popis))
             return False
         return True
 
