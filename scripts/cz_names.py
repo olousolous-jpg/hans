@@ -480,7 +480,20 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
     except Exception:
         _g = ""
     if _g in ("zena", "\u017eena", "z", "f", "female"):
-        _pane = re.compile(r"(?:(?<=^)|(?<=,))(\s*)pane\b(?=\s*(?:[.,;:!?]|$))",
+        # HANS_ADDRESSEE_ZENA_PANE_V2 (6.9.) — puvodni trida terminatoru
+        # [.,;:!?] pokryvala jen 190 z 262 natvrdo psanych osloveni v kodu;
+        # zbylych 72 ma za oslovenim POMLCKU (59x, napr. hlaska o malovani
+        # „S radosti, pane — maluji obraz…“) nebo vypustku.
+        # Doloženo živě 6. 9.: známá osoba ženského rodu dostala u malování
+        # oslovení pane. Po zásahu 254 z 262 (97 %); zbytek se sklada za
+        # behu z %s / {} a projde, nebo je to zamerne osloveni jineho cloveka.
+        # ⛔ Rozšiřovat dál na libovolné slovo NELZE: terminátorem nesmí
+        # být další slovo, jinak by se z oslovení druhé osoby titulem
+        # a jménem stalo oslovení partnerky s cizím jménem za ním.
+        # Terminátorem smí být jenom interpunkce.
+        _pane = re.compile(r"(?:(?<=^)|(?<=,))(\s*)pane\b"
+                           r"(?=\s*(?:[.,;:!?\u2026()\u201c\u00bb]"
+                           r"|[\u2014\u2013-]|$))",
                            re.IGNORECASE | re.MULTILINE)
         text, cnt3 = _pane.subn(lambda m: m.group(1) + target, text)
         n += cnt3
