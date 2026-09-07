@@ -663,6 +663,9 @@ class PicamDisplayController:
             self._pipeline.detect_objects(
                 _ctx, main_frame, lores_frame, now, scanning, face_visible)
 
+            # ── Sber framu pro MERENI (HANS_FRAME_SAMPLING_V1) ────────
+            self._sample_frame(main_frame, now, face_visible)
+
             # ── Draw + Display ────────────────────────────────────────────
             # HANS_MENU_V1 — runtime preview window open/close
             if self._preview_on and not self._win_created:
@@ -1683,6 +1686,52 @@ class PicamDisplayController:
             _syslog.info("gesto: snimek zachytu -> %s", _cesta)
         except Exception as _e:
             _syslog.warning("gesto: snimek se neulozil: %s", _e)
+
+    def _sample_frame(self, frame, now, face_visible):
+        """HANS_FRAME_SAMPLING_V1 (7.9.) — periodicky sber framu pro MERENI.
+
+        Postaveno kvuli mereni VLM („co osoby DELAJI“): vzorek nebylo odkud
+        brat. Web server nema endpoint na snimek, `data/harvest` jsou vyrezy
+        tvari, `data/body` je prazdne, `data/guard` je 640x480 potmy
+        a `/tmp/room_snapshot.jpg` se prepisuje jednou za 2 h.
+
+        Ukladá rovnou na `width` px (default 1024) — v plnem rozliseni VLM
+        spadne na `cudaMalloc out of memory` vedle rezidentniho hans-czech.
+
+        ⚠️ Jsou to ZABERY MISTNOSTI s lidmi — proto default vypnuto,
+        rotace na `keep` kusu a po vyhodnoceni zase vypnout (tyz rezim jako
+        `gesture.wave_snapshot`).
+
+        ⚠️ Limit `only_with_person`: ridi se `face_visible`, tedy
+        VIDITELNOU TVARI. Clovek zady ke kamere se nezachyti. Na sber „co
+        kdo dela“ to staci, na uplne pokryti ne.
+        """
+        cfg = self.config.get("frame_sampling", {})
+        if not cfg.get("enabled", False) or frame is None:
+            return
+        if cfg.get("only_with_person", True) and not face_visible:
+            return
+        if now - getattr(self, "_last_frame_sample", 0.0) < float(
+                cfg.get("interval_s", 120)):
+            return
+        self._last_frame_sample = now
+        try:
+            _d = Path(cfg.get("dir", "data/mereni/framy"))
+            _d.mkdir(parents=True, exist_ok=True)
+            _img = frame
+            _w = int(cfg.get("width", 1024))
+            if _w and _img.shape[1] > _w:
+                _h = int(_img.shape[0] * _w / _img.shape[1])
+                _img = cv2.resize(_img, (_w, _h))
+            _cesta = _d / (time.strftime("%Y%m%d_%H%M%S") + ".jpg")
+            cv2.imwrite(str(_cesta), cv2.cvtColor(_img, cv2.COLOR_RGB2BGR),
+                        [cv2.IMWRITE_JPEG_QUALITY, 85])
+            _keep = int(cfg.get("keep", 60))
+            for _old in sorted(_d.glob("*.jpg"))[:-_keep]:
+                try: _old.unlink()
+                except Exception: pass
+        except Exception as _e:
+            _syslog.warning("frame_sampling: snimek se neulozil: %s", _e)
 
     def _zprava_o_zamavani(self, jmeno):  # HANS_GESTURE_WAVE_NOTIFY_V1
         """Potvrzení na Matrix, že mávnutí zabralo — i s čísly, aby šlo
