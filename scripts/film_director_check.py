@@ -29,9 +29,20 @@ _log = logging.getLogger(__name__)
 
 # „…film *Sedmikrásky* od Miloše Formana", „snímek „Vlaky" od Jiřího Menzela",
 # „režie Věra Chytilová", „natočil Miloš Forman"
+# HANS_DIRECTOR_PASSIVE_V1 (7.9.) — TRPNÝ ROD A „v režii".
+# Doloženo 7. 9.: „*Kamarád do deště* byl ZREŽÍROVÁN Milošem Formanem"
+# (režie je Jaroslav Soukup) prošlo bez povšimnutí — vzor znal jen činný rod
+# a holé „od". Kontrola tím byla mrtvá i na SVÉM VLASTNÍM doloženém případu
+# z 21. 8. („Sedmikrásky od Miloše Formana"), který neprošel z druhého
+# důvodu — viz `_TITUL` níž.
 _ATRIBUCE = re.compile(
     r"(?P<cele>\s*(?:od|re[žz]ie|re[žz][ií]s[ée]r[aky]?|re[žz]is[ée]rem|"
-    r"re[žz]is[ée]rky|nato[čc]il[aiy]?)\s+"
+    r"re[žz]is[ée]rky|nato[čc]il[aiy]?|"
+    # ⚠️ Pomocné sloveso MUSÍ být uvnitř `cele` — jinak po odstranění
+    # atribuce zůstane osiřelé „byl" („*Kamarád* byl a vznikl roku 1988").
+    # Odhaleno až kontrolou VÝSTUPU; test na „změněno/nezměněno" to nechytil.
+    r"(?:byl[aoy]?\s+)?(?:zre[žz][ií]rov|nato[čc]en)[aáeéiíy]*n?[aáeéoy]?|"
+    r"v\s+re[žz]ii)\s+"
     r"(?P<kdo>[A-ZÁ-Ž][\wá-ž]+(?:\s+[A-ZÁ-Ž][\wá-ž]+){1,2}))",
     re.UNICODE)
 # titul: nejbližší „…" / *…* / "…" PŘED atribucí
@@ -105,6 +116,16 @@ def _z_wikipedie(config, titul: str) -> str:
     return ""
 
 
+def _osirela_spojka(text: str, od: int) -> str:
+    """Po odstranění atribuce uprostřed věty zůstane spojka bez levé strany
+    („*Kamarád do deště* A VZNIKL roku 1988"). Uklidí ji.
+    ⚠️ Jen na místě řezu a jen spojku — zbytek věty se nesahá."""
+    return re.sub(r"^(\s*)(?:a|i|ale|a\s+tak[ée]?)\s+", r"\1",
+                  text[od:], count=1, flags=re.IGNORECASE) and \
+           text[:od] + re.sub(r"^(\s*)(?:a|i|ale|a\s+tak[ée]?)\s+", r"\1",
+                              text[od:], count=1, flags=re.IGNORECASE)
+
+
 def zkontroluj_rezii(odpoved: str, kodi=None, config=None) -> str:
     """Vrátí odpověď s ověřenou atribucí (nebo beze změny)."""
     if not odpoved:
@@ -141,7 +162,14 @@ def zkontroluj_rezii(odpoved: str, kodi=None, config=None) -> str:
         spravne = rezie[0]
         _log.info("HANS_FILM_DIRECTOR_CHECK_V1: %r není režisér %r → %r "
                   "(z knihovny)", tvrzeny, titul, spravne)
-        return odpoved.replace(m.group("cele"), " od %s" % spravne, 1)
+        # HANS_DIRECTOR_PASSIVE_V1 — nahradit lze JEN tvar „od X"; u trpného
+        # rodu („byl zrežírován X") a u „režie X" by vznikla zmršenina
+        # („byl od Jaroslav Soukup"). Tam se atribuce odstraní a doplní se
+        # správné jméno vlastní větou — gramaticky bezpečné pro každý tvar.
+        if _JEN_OD.match(m.group("cele").strip()):
+            return odpoved.replace(m.group("cele"), " od %s" % spravne, 1)
+        _bez = odpoved.replace(m.group("cele"), "", 1)
+        return _osirela_spojka(_bez, m.start()).rstrip() + " Režii má %s." % spravne
 
     clanek = _z_wikipedie(config, titul)
     if not clanek:
@@ -155,7 +183,7 @@ def zkontroluj_rezii(odpoved: str, kodi=None, config=None) -> str:
         return odpoved
     _log.info("HANS_FILM_DIRECTOR_CHECK_V1: %r u %r nesedí (v článku není) "
               "→ atribuce odstraněna", tvrzeny, titul)
-    upravena = odpoved.replace(m.group("cele"), "", 1)
+    upravena = _osirela_spojka(odpoved.replace(m.group("cele"), "", 1), m.start())
     # HANS_DIRECTOR_ONLY_FILM_V1 — bez „pane": tahle funkce adresáta NEZNÁ
     # a doloženě se ta věta lepila i do odpovědí ženám.
     return upravena.rstrip() + " Režiséra si ale zpaměti raději neurčím."
