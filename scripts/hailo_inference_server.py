@@ -790,6 +790,16 @@ class CombinedEngine:
             from scripts.blaze_palm_anchors import palm_anchors
         anchors = palm_anchors()
 
+        # HANS_GESTURE_PALM_SCORE_LOG_V1 (7.9.) — DOČASNĚ NA INFO.
+        # Měření: 7. 9. bylo doloženo snímky, že ŽÁDNÁ z dosud sledovaných
+        # metrik (šířka dlaně, dlaň/tvář, počet obratů, rytmus, skóre
+        # landmarků) neodliší pravé mávnutí od falešného — falešný záchyt měl
+        # ve všech LEPŠÍ čísla než dvě pravá. Skóre detektoru dlaně je jediný
+        # nezměřený kandidát; podle měření z 6. 9. by rozlišovat mělo
+        # (halucinace na textilii 0.27–0.31, skutečná dlaň 0.64–0.89).
+        # ✅ VYHODNOCENO 7. 9.: palm score NEROZLIŠUJE (falešný záchyt měl medián
+        # 0.236, tedy shodně s pravým mávnutím) — vráceno na debug. Rozlišuje až
+        # vzdálenost dlaně od hlavy, viz HANS_GESTURE_HEAD_DIST_V2.
         log.debug('[PALM_DBG] max_score=%.4f thresh=%.2f', scores.max(), PALM_SCORE_THRESH)
         try:   # HANS_GESTURE_STATS_V1 — nejvyssi skore detektoru dlane
             _ms = float(scores.max())

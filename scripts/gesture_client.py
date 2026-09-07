@@ -537,6 +537,23 @@ class GestureClient:
                     self.last_landmarks    = lm
                     _log.info("gesto: zamavani — %s",
                               getattr(self, "_wave_popis", "?"))
+                    # HANS_GESTURE_TRVALY_ZAPIS_V1 (7.9.) — ZÁCHYTY MUSÍ PŘEŽÍT
+                    # ROTACI LOGU. `data/system.log` drží ~2 dny (4 soubory),
+                    # takže než se nasbírá dost mávnutí, starší zmizí.
+                    # Doloženo týž den: restart přepsal /tmp/hailo_server.log
+                    # a vzorky palm score od pravých mávnutí byly pryč.
+                    # Slouží k vyhodnocení `wave_max_face_widths` 1.5
+                    # (HANS_GESTURE_HEAD_DIST_V2). Jen čísla + jméno, žádný obraz.
+                    try:
+                        import time as _t
+                        from pathlib import Path as _P
+                        _d = _P("data/mereni"); _d.mkdir(parents=True, exist_ok=True)
+                        with open(_d / "gesta.log", "a", encoding="utf-8") as _f:
+                            _f.write("%s\t%s\n" % (
+                                _t.strftime("%Y-%m-%d %H:%M:%S"),
+                                getattr(self, "_wave_popis", "?")))
+                    except Exception:
+                        pass
                     print("[Gesture] FIRED: wave (pohyb)", flush=True)
                     self.on_gesture("wave", bbox)
                     return

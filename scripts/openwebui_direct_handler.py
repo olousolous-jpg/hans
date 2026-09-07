@@ -135,6 +135,35 @@ _PROMPT_BLOKY = (
 )
 
 
+# ── HANS_EVIDENCE_V1 (7.9.) — CO MODEL DOSTAL JAKO FAKTA ───────────────────
+# Brzdy (grounding_guard, A1) dosud soudily odpověď proti `grounding` + 6
+# zprávám historie, ale model dostal 19 bloků o ~16 000 znacích. Věta
+# podložená blokem `kodi` nebo `room` proto vypadala jako výmysl — doloženo
+# 7. 9.: guard zahodil pravdivé „Poslední dobou jsem sledoval *For Your Eyes
+# Only*" (kodi_playing týž den v 09:54).
+#
+# ⚠️ ROZDĚLENÍ NENÍ ODHAD — navazuje na HANS_OWN_WORK_NOT_FACT_V1 (22.8.),
+# kde je na 444 reálných faktických dotazech změřeno, že Hansova VLASTNÍ
+# TVORBA (eseje, postřehy, kapitoly životního příběhu) se v retrievalu
+# prosazuje, ale doklad o světě NENÍ. Táž hranice platí tady:
+#   • EVIDENCE = co Hans naměřil, viděl nebo si zapsal (smysly, deník, paměť)
+#   • NE-evidence = kdo Hans JE a co si MYSLÍ (persona, autobiografie,
+#     syntetické nápady, nálada, ponaučení, vlastní směr)
+# Kdyby se do evidence pustil `story` (3 140 zn autobiografie) nebo `idea`,
+# stala by se z Hansovy vlastní prózy „opora" pro tvrzení o světě — přesně
+# ta třída, kvůli které guard existuje.
+_EVIDENCNI_BLOKY = (
+    "time", "persons", "surr", "kodi", "room", "place", "cal",
+    "diary", "read", "study", "health", "teddy", "memory",
+    "threads", "interests", "cap", "current",
+)
+
+
+def evidence_text(hodnoty: dict) -> str:
+    """Text, který model dostal JAKO FAKTA (bez persony a vlastní tvorby)."""
+    return "\n".join(str(hodnoty.get(n) or "") for n in _EVIDENCNI_BLOKY).strip()
+
+
 def slozit_prompt(hodnoty: dict, varianta: str) -> str:
     """HANS_PROMPT_BLOCKS_TABLE_V1 — složí prompt v pořadí `_PROMPT_BLOKY`.
     Bloky, které do varianty nepatří nebo jsou prázdné, se přeskočí."""
@@ -2529,6 +2558,15 @@ class OpenWebUIDirectHandler:
             "interests": interests_ctx, "qsuggest": qsuggest_ctx,
             "routine": routine_ctx, "cap": cap_ctx, "current": current,
         }
+        # HANS_EVIDENCE_V1 — `_hodnoty` byly dosud LOKÁLNÍ a po složení promptu
+        # zmizely, takže brzdy o 19 blocích nevěděly. Uchováme je na instanci.
+        # ⚠️ Poslední vyhrává: chatový most zpracovává dotazy sériově, takže to
+        # sedí; při paralelním zpracování by se to muselo předávat parametrem.
+        try:
+            self._posledni_evidence = evidence_text(_hodnoty)
+        except Exception:
+            self._posledni_evidence = ""
+
         if for_greeting:
             # GREETING_LEAN_SYSTEM_V1 — pozdrav drží JEN to nutné k pozdravení:
             # identita, čas, kdo je tu, fyzický a náladový tón (+ vzácný Severka
@@ -4163,6 +4201,48 @@ class OpenWebUIDirectHandler:
                                 _h.get('content', _h) if isinstance(_h, dict) else _h)
                     except Exception:
                         pass
+                    # HANS_EVIDENCE_V1 — guard soudil proti `grounding` + 6
+                    # zprávám, ale model dostal 19 bloků (~16 000 zn). Věta
+                    # podložená blokem `kodi`/`room`/`diary` proto vypadala
+                    # jako výmysl. Přidáváme JEN evidenční bloky — persona,
+                    # autobiografie, nápady a nálada se do opory NEPOČÍTAJÍ
+                    # (viz `_EVIDENCNI_BLOKY` a HANS_OWN_WORK_NOT_FACT_V1).
+                    # Klíč je kvůli A/B měření a rychlému návratu.
+                    _ev = getattr(self, "_posledni_evidence", "") or ""
+                    _use_ev = bool((self.config.get("grounding_guard", {}) or {})
+                                   .get("use_evidence", True))
+                    # HANS_EVIDENCE_AB_V1 (7.9.) — PÁROVÉ MĚŘENÍ, dočasné.
+                    # A/B přes restart NEFUNGUJE: odpověď se mezi běhy liší,
+                    # takže počet zahozených vět je funkcí ODPOVĚDI, ne jen
+                    # reference. Proto se guard spočítá DVAKRÁT nad TOUTÉŽ
+                    # odpovědí — s evidencí i bez — a do logu jde rozdíl.
+                    # Použije se varianta podle `use_evidence`. Druhý výpočet
+                    # je jen množinová operace nad kmeny, řádově zdarma.
+                    try:
+                        _d_bez = _gg_check(response, _facts)[1]
+                        _d_s = _gg_check(response, _facts + ' ' + _ev)[1] if _ev else _d_bez
+                        logging.getLogger(__name__).info(
+                            "HANS_EVIDENCE_AB_V1: bez evidence %d vět bez opory, "
+                            "s evidencí %d (evidence %d zn, aktivní=%s)",
+                            len(_d_bez), len(_d_s), len(_ev), _use_ev)
+                        # ⚠️ `system.log` se rotuje a 4 soubory pokrývají jen
+                        # ~2 DNY — měření, které má běžet déle, by se ztratilo.
+                        # Píšeme proto i do trvalého souboru. JEN ČÍSLA,
+                        # žádný obsah odpovědi ani promptu.
+                        try:
+                            import time as _t
+                            _mp = Path("data/mereni"); _mp.mkdir(parents=True, exist_ok=True)
+                            with open(_mp / "evidence_ab.log", "a",
+                                      encoding="utf-8") as _f:
+                                _f.write("%s\t%d\t%d\t%d\t%s\n" % (
+                                    _t.strftime("%Y-%m-%d %H:%M:%S"),
+                                    len(_d_bez), len(_d_s), len(_ev), _use_ev))
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    if _use_ev and _ev:
+                        _facts += ' ' + _ev
                     _clean, _dropped = _gg_check(response, _facts)
                     # GROUNDING_GUARD_ACTIVE_V2 (22.8.) — ÚZKÉ ZAPNUTÍ.
                     # Doloženo 22.8. na hradu Kost: podklad byl JEDNA věta ze
