@@ -345,6 +345,62 @@ async def harvest_page(request: Request):
     return HTMLResponse((TEMPLATES_DIR / "harvest.html").read_text(encoding="utf-8"))
 
 
+# ── HANS_OBJ_ANNOT_V1 (7.9.) — RUČNÍ POJMENOVÁNÍ DETEKOVANÝCH OBJEKTŮ ───────
+# Nápad uživatele: použít týž postup jako u sběru tváří (/harvest) — ukázat
+# snímky pokoje s rámečky a nechat člověka říct, co v nich doopravdy je.
+# Důvod: COCO detektor se v tomhle pokoji plete (`bed` je ve skutečnosti gauč,
+# v datech je i `banana`, historicky `airplane`/`train`/`surfboard`).
+# `object_remapping` se dosud plnil odhadem; tohle dá měřenou pravdu.
+# Data připraví `scripts/objekty_anotace.py`.
+OBJ_DIR = Path("data/mereni/objekty")
+
+
+@app.get("/objekty", response_class=HTMLResponse)
+async def objekty_page(request: Request):
+    return HTMLResponse((TEMPLATES_DIR / "objekty.html").read_text(encoding="utf-8"))
+
+
+@app.get("/api/objekty/seznam")
+async def objekty_seznam():
+    det = OBJ_DIR / "detekce.json"
+    if not det.is_file():
+        return {"snimky": [], "hotovo": {}, "chyba":
+                "Chybí data — spusť: python3 scripts/objekty_anotace.py"}
+    data = json.loads(det.read_text(encoding="utf-8"))
+    lab = OBJ_DIR / "labels.json"
+    hotovo = json.loads(lab.read_text(encoding="utf-8")) if lab.is_file() else {}
+    snimky = [{"soubor": k, "objekty": v} for k, v in sorted(data.items())]
+    return {"snimky": snimky, "hotovo": hotovo,
+            "celkem": sum(len(v) for v in data.values())}
+
+
+@app.get("/api/objekty/img/{fname}")
+async def objekty_img(fname: str):
+    if "/" in fname or ".." in fname:
+        raise HTTPException(400, "bad path")
+    p = OBJ_DIR / fname
+    if not p.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(str(p), media_type="image/jpeg")
+
+
+@app.post("/api/objekty/label")
+async def objekty_label(payload: dict):
+    """Ulož, co je ve kterém rámečku. `{soubor, i, skutecny}`.
+    `skutecny` prázdné / "nic" = v rámečku není nic (halucinace detektoru)."""
+    soubor = str(payload.get("soubor") or "")
+    i = payload.get("i")
+    skutecny = str(payload.get("skutecny") or "").strip()
+    if not soubor or i is None:
+        raise HTTPException(400, "chybí soubor/i")
+    OBJ_DIR.mkdir(parents=True, exist_ok=True)
+    lab = OBJ_DIR / "labels.json"
+    d = json.loads(lab.read_text(encoding="utf-8")) if lab.is_file() else {}
+    d.setdefault(soubor, {})[str(i)] = skutecny
+    lab.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"ok": True, "ulozeno": {"soubor": soubor, "i": i, "skutecny": skutecny}}
+
+
 @app.get("/api/harvest/groups")
 async def harvest_groups(limit: int = 60):
     from scripts.face_harvest import known_names, load_sessions

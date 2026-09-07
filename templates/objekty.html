@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hans — co je v rámečku</title>
+<style>
+  :root{--bg:#1e1e2e;--bg2:#2a2a3e;--bg3:#313145;--fg:#cdd6f4;--fg2:#a6adc8;
+        --acc:#89b4fa;--grn:#a6e3a1;--red:#f38ba8;--org:#fab387}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:10;background:var(--bg2);
+         padding:12px 14px;border-bottom:1px solid #45475a}
+  h1{margin:0;font-size:17px}
+  .sub{color:var(--fg2);font-size:13px;margin-top:3px}
+  .wrap{padding:12px;max-width:1100px;margin:0 auto}
+  .grp{background:var(--bg2);border:1px solid #45475a;border-radius:10px;
+       padding:12px;margin-bottom:14px}
+  .grp img{width:100%;border-radius:8px;border:1px solid #45475a;display:block}
+  .cas{font-weight:600;margin-bottom:8px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+       padding:8px;border-radius:8px;background:var(--bg3);margin-top:8px}
+  .cip{font-weight:700;padding:3px 9px;border-radius:6px;color:#1e1e2e}
+  .det{color:var(--fg2);font-size:13px;min-width:150px}
+  input{font:inherit;padding:7px 10px;border-radius:7px;border:1px solid #45475a;
+        background:var(--bg);color:var(--fg);flex:1;min-width:150px}
+  input:focus{outline:none;border-color:var(--acc)}
+  button{font:inherit;padding:7px 12px;border-radius:7px;border:1px solid #45475a;
+         background:var(--bg3);color:var(--fg);cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  .nic{background:#4a2c34;border-color:#6e3d48;color:var(--red)}
+  .ok{border-color:var(--grn);color:var(--grn)}
+  .hot{color:var(--grn);font-size:13px}
+  .navrhy{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+  .navrhy button{padding:4px 9px;font-size:13px;color:var(--fg2)}
+  .prazdno{color:var(--fg2);padding:20px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>Co je doopravdy v rámečku?</h1>
+  <div class="sub" id="stav">načítám…</div>
+</header>
+<div class="wrap" id="obsah"><div class="prazdno">načítám…</div></div>
+
+<script>
+const BEZNE = ["gauč","křeslo","postel","stůl","židle","televize","notebook",
+               "hrnek","kniha","polštář","deka","skříň","okno","lampa","telefon"];
+
+async function nacti(){
+  const r = await fetch("/api/objekty/seznam");
+  const d = await r.json();
+  const el = document.getElementById("obsah");
+  if(d.chyba){ el.innerHTML = '<div class="prazdno">'+d.chyba+'</div>';
+               document.getElementById("stav").textContent = ""; return; }
+  if(!d.snimky.length){ el.innerHTML = '<div class="prazdno">Žádné snímky.</div>'; return; }
+  const hot = Object.values(d.hotovo||{}).reduce((a,o)=>a+Object.keys(o).length,0);
+  document.getElementById("stav").textContent =
+    d.snimky.length+" snímků · "+d.celkem+" rámečků · hotovo "+hot;
+  el.innerHTML = d.snimky.map(s=>karta(s, d.hotovo[s.soubor]||{})).join("");
+}
+
+function karta(s, hotovo){
+  const cas = s.soubor.replace(/^\d+_/,"").replace(".jpg","")
+                      .replace(/(\d\d)(\d\d)(\d\d)/,"$1:$2:$3");
+  return '<div class="grp"><div class="cas">'+cas+'</div>'
+    + '<img src="/api/objekty/img/'+s.soubor+'" loading="lazy">'
+    + s.objekty.map(o=>radek(s.soubor,o,hotovo[String(o.i)])).join("")
+    + '</div>';
+}
+
+function radek(soubor,o,ulozeno){
+  const id = soubor.replace(/\W/g,"")+"_"+o.i;
+  return '<div class="row" id="r'+id+'">'
+    + '<span class="cip" style="background:'+o.barva+'">#'+o.i+'</span>'
+    + '<span class="det">detektor: <b>'+o.class_name+'</b> ('+o.conf+')</span>'
+    + '<input id="i'+id+'" placeholder="co je doopravdy v rámečku?" value="'
+    + (ulozeno&&ulozeno!=="nic"?ulozeno:"")+'">'
+    + '<button class="ok" onclick="uloz(\''+soubor+'\','+o.i+',\''+id+'\')">Uložit</button>'
+    + '<button class="nic" onclick="nicTam(\''+soubor+'\','+o.i+',\''+id+'\')">Nic tam není</button>'
+    + (ulozeno?'<span class="hot" id="h'+id+'">✓ '+(ulozeno==="nic"?"nic":ulozeno)+'</span>'
+              :'<span class="hot" id="h'+id+'"></span>')
+    + '<div class="navrhy">'
+    + BEZNE.map(n=>'<button onclick="vloz(\''+id+'\',\''+n+'\')">'+n+'</button>').join("")
+    + '</div></div>';
+}
+
+function vloz(id,n){ document.getElementById("i"+id).value = n; }
+
+async function posli(soubor,i,id,skutecny){
+  await fetch("/api/objekty/label",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({soubor:soubor,i:i,skutecny:skutecny})});
+  document.getElementById("h"+id).textContent = "✓ "+(skutecny||"nic");
+}
+function uloz(soubor,i,id){
+  const v = document.getElementById("i"+id).value.trim();
+  if(!v){ alert("Napiš, co v rámečku je — nebo klikni „Nic tam není“."); return; }
+  posli(soubor,i,id,v);
+}
+function nicTam(soubor,i,id){ posli(soubor,i,id,"nic"); }
+
+nacti();
+</script>
+</body>
+</html>
