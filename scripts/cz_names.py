@@ -415,7 +415,22 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
     # v týdenním vzorku 1/103 odpovědí, takže jde o variabilitu, ne o pravidlo —
     # oprava je ale zadarmo, brzda po odpovědi běží tak jako tak. Řeší i
     # diakritiku (config klíč bez háčků → správný tvar s diakritikou).
-    for _form in {str(partner), display_name(partner, config)}:
+    # HANS_ADDRESSEE_BAD_VOC_V1 (7.9.) — MODEL SI VOKATIV VYROBÍ SÁM A SPLETE ROD.
+    # Doloženo 7. 9. navazujícím rozhovorem: „Dobrý večer, MARKO" 3× ze 3,
+    # ačkoli `vocative("Marek")` vrací správně „Marku". Dosavadní oprava znala
+    # jen NOMINATIV („Marek" → „Marku"), špatný vokativ jí propadl.
+    # ⚠️ ÚZKÉ SCHVÁLNĚ: bere se JEN ženská koncovka „-o" u mužského vokativu
+    # (končí na -u/-e). Akuzativ „Marka" se ZÁMĚRNĚ nepřidává — „…, Marka je
+    # doma" je legitimní 3. osoba a vzor za čárkou by ji přepsal na oslovení.
+    _chybne = set()
+    if target and len(target) > 3 and target[-1:] in ("u", "e"):
+        _chybne.add(target[:-1] + "o")          # Marku → Marko
+        # Model často odvozuje od NOMINATIVU, ne od správného vokativu:
+        # „Petr" → „Petro" (kdežto target je „Petře", tedy „Petřo").
+        _nom_o = str(display_name(partner, config) or partner)
+        if _nom_o and _nom_o[-1:].lower() not in "aeiouyáéíóúý":
+            _chybne.add(_nom_o + "o")           # Petr → Petro
+    for _form in {str(partner), display_name(partner, config)} | _chybne:
         if not _form or len(_form) < 3 or _form.lower() == target.lower():
             continue
         # jen v OSLOVENÍ: za čárkou / před dvojtečkou — ne ve 3. osobě
