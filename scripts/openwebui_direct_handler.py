@@ -4204,11 +4204,54 @@ class OpenWebUIDirectHandler:
                                   or is_memory_meta_query(_raw_message))
                     except Exception:
                         pass
+                    # HANS_GUARD_SELF_TOPIC_V1 (7.9.) — DOTAZ NA HANSE SAMÉHO
+                    # NEMÁ OPORU V ZÁPISCÍCH, ALE V SYSTEM PROMPTU.
+                    # Doloženo 7. 9. testem: na "jaké filmy jste v poslední
+                    # době viděl" guard zahodil větu "Poslední dobou jsem
+                    # sledoval *For Your Eyes Only*" — a ta je PRAVDIVÁ,
+                    # `kodi_playing` téhož dne v 09:54. Guard tedy zahodil
+                    # pravdu a přilepil za zbytek popření, že ji Hans má.
+                    # Reálný případ 5. 9. 21:37: na "zkus to jeste jednou"
+                    # správně odpověděl, že maluje Auroru, a dostal za to
+                    # tutéž frázi.
+                    #
+                    # Je to TÁŽ třída, kterou u brzdy A1 řeší
+                    # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — jeho komentář
+                    # výslovně říká, že fakta o Hansovi a domě tečou z bloků
+                    # system promptu (cap, self_state, přítomnost, kodi,
+                    # počasí), kam guard NEVIDÍ; guard tam ale výjimku
+                    # nedostal. Sdílíme tedy TÝŽ predikát `self_topic`,
+                    # nevyrábíme druhý.
+                    #
+                    # Navazuje i na vlastní komentář hlásící větve (12.8.):
+                    # "Guard stojí na předpokladu, že jde vyjmenovat všechno,
+                    # co model dostal — a ten v téhle architektuře NEPLATÍ."
+                    # Přesně proto se mimo tenkou cestu jen hlásí; tohle tutéž
+                    # úvahu dotahuje na dotazy o Hansovi i NA tenké cestě.
+                    #
+                    # 📏 Změřeno na větách z testu 7. 9.: 5/5 falešných zásahů
+                    # má self_topic='asistent'; kontrolní SVĚTOVÉ dotazy
+                    # ("jake hrady jsou v ceskem raji?", "co vis o tom vraku
+                    # u sicilie?") i "co to je karbunkule?" mají 'osoba',
+                    # takže tudy guard běží dál a podtřídy (a) se to netýká.
+                    _o_sobe = False
+                    try:
+                        from scripts.hans_intent import self_topic as _self_topic
+                        _o_sobe = (_self_topic(_raw_message, self.config)
+                                   == 'asistent')
+                    except Exception:
+                        pass
                     if _dropped and _tenky and _uvaha:
                         logging.getLogger(__name__).info(
                             'HANS_REFLECTIVE_ASK_V1: guard NEZASAHUJE — '
                             'úvahová otázka (%d vět bez opory)', len(_dropped))
-                    if _dropped and _tenky and not _uvaha and len(_dropped) >= _prah:
+                    elif _dropped and _tenky and _o_sobe:
+                        logging.getLogger(__name__).info(
+                            'HANS_GUARD_SELF_TOPIC_V1: guard NEZASAHUJE — '
+                            'dotaz na Hanse (opora je v system promptu, '
+                            'ne v zápiscích; %d vět bez opory)', len(_dropped))
+                    if (_dropped and _tenky and not _uvaha and not _o_sobe
+                            and len(_dropped) >= _prah):
                         logging.getLogger(__name__).info(
                             'GROUNDING_GUARD_ACTIVE_V2: ZASAHUJI — %d vět bez '
                             'opory u tenkého podkladu (%s). První: %r',
