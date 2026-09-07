@@ -61,6 +61,24 @@ _ABSTAIN_MARK = re.compile(
 # Otázka nestahuje nic (Hansovy vlastní dotazy v historii).
 _QUESTION = re.compile(r"\?\s*$")
 
+# CLAIM_RETRACT_NO_SELF_V1 (7.9.) — RETRAKCE NENÍ TVRZENÍ, KTERÉ SE BERE ZPĚT.
+# Doloženo 7. 9. při reprodukci: na tutéž otázku třikrát po sobě Hans
+# odpověděl abstinencí, a protože `find_claim` prohledává jeho DŘÍVĚJŠÍ
+# repliky, vzala jako „tvrzení" jeho VLASTNÍ PŘEDCHOZÍ RETRAKCI a zacitovala
+# ji do nové → vnořené závorky:
+#   „Musím se opravit… to, co jsem řekl („Musím se opravit… („Sherlock…")")"
+# Uživatel dostal nečitelnou odpověď, ve které se Hans omlouvá za omluvu.
+#
+# `_ABSTAIN_MARK` to nechytí SCHVÁLNĚ — retrakce neabstinuje, ona tvrdí
+# („musím se opravit"), takže sem patří vlastní vzor. Je to týž princip
+# jako u `_ABSTAIN_MARK`/`_QUESTION`: věty, které samy nic nového netvrdí,
+# se nesmějí brát zpět. Vzor drží NÁVĚŠTÍ retrakce z `retraction()` níž —
+# kdyby se ta formulace měnila, musí se změnit obojí.
+_RETRACTION_MARK = re.compile(
+    r"mus[íi]m\s+se\s+opravit|"
+    r"nem[ěe]l\s+z\s+[čc]eho\s+dolo[žz]it|"
+    r"berte\s+to\s+pros[íi]m\s+jako\s+mou\s+domn[ěe]nku", re.IGNORECASE)
+
 # CLAIM_RETRACT_V1 — dotaz PŘÍMO NA ZDROJ, který téma NEOPAKUJE („a odkud to
 # víš?"). Bez tohohle by retrakce minula nejčastější formulaci: uživatel se
 # ptá zájmenem, takže se nenajde žádný sdílený kmen. Referentem je pak prostě
@@ -109,7 +127,8 @@ def find_claim(question: str, history: Iterable,
         s = sent.strip(" \t\n-•*")
         if len(s.split()) < MIN_WORDS:
             return None
-        if _ABSTAIN_MARK.search(s) or _QUESTION.search(s):
+        if (_ABSTAIN_MARK.search(s) or _QUESTION.search(s)
+                or _RETRACTION_MARK.search(s)):   # CLAIM_RETRACT_NO_SELF_V1
             return None
         return s
 
