@@ -883,3 +883,52 @@ def vytcene_tema(text: str) -> str:
 def pta_se_na_obsazeni(text: str) -> bool:
     """Ptá se věta, KDO ve filmu hraje / kdo ho režíroval?"""
     return bool(_OBSAZENI_PAT.search(text or ""))
+
+
+# ── HANS_CONCEPT_ASK_V1 (7.9.) — DOTAZ NA VÝZNAM POJMU ──────────────────────
+# „co to je karbunkule?" — obecné slovo psané malým písmenem. `kotva_tematu`
+# ho z principu nenajde: kotva se pozná podle VELKÉHO písmene, protože je
+# stavěná na vlastní jména („hrad Kost", „Olgoj Chorchoj"). Dohledání
+# (HANS_INSTANT_LOOKUP_V1) tak nedostane téma a Hans spadne na abstinenci,
+# ačkoli o pojmu nikdy nic tvrdit nemusel.
+#
+# Doloženo 4. 9.: uživatel sledoval Sherlocka Holmese („Modrá karbunkule")
+# a zeptal se, co karbunkule je → „Víc než tohle už o tom nemám". Titul
+# právě běžícího pořadu je přirozený zdroj takových dotazů, takže se to
+# bude opakovat.
+#
+# ⚠️ ÚZKÉ SCHVÁLNĚ. Změřeno na 1365 reálných replikách: **7 shod, všech 7
+# skutečných dotazů na pojem, 0 falešných**. Vyloučit bylo nutné:
+#   • „co je u tebe nového?" (6×) — pozdrav, ne dotaz
+#   • „co je zajímavého na baroku?" (7×) — dotaz na názor, ne na definici;
+#     Hans o baroku VÍ, dohledávat ho není třeba
+#   • „…až doděláš, co je rozpracováno" — příkaz
+# ⛔ Bez těch výluk vzor bral 15 vět, z toho 8 falešně.
+#
+# ⚠️ NEPATŘÍ do `hans_recall._extract_topic`: ta funkce je ZÁMĚRNĚ jen pro
+# čtenářské a provenienční dotazy („četl jsi o X", „čerpal jsi o X") a sdílí
+# ji `/cetl`, `/zdroje` i `/sen`. Rozšíření by dopadlo na ně všechny.
+_POJEM_NE = re.compile(
+    r"\bu\s+(tebe|v[áa]s)\b|zaj[íi]mav|rozpracov|\bnov[éeě]ho\b|\bnovyho\b",
+    re.IGNORECASE)
+_POJEM_PAT = re.compile(
+    r"\bco\s+(?:to\s+)?(?:je|jsou|znamen[áa])\s+(?:to\s+)?"
+    r"[\"„]?([\wáčďéěíňóřšťúůýž][\wáčďéěíňóřšťúůýž\s-]{1,40}?)[\"“]?\s*\??\s*$",
+    re.IGNORECASE)
+_POJEM_STOP = {"to", "tam", "tady", "dnes", "dneska", "za", "na", "v", "ve",
+               "s", "se", "nejak", "nějak", "toho"}
+
+
+def dotaz_na_pojem(veta: str) -> str:
+    """Ptá se věta na VÝZNAM POJMU? Vrátí pojem, nebo '' když ne."""
+    s = (veta or "").strip()
+    if not s or _POJEM_NE.search(s):
+        return ""
+    m = _POJEM_PAT.search(s)
+    if not m:
+        return ""
+    slova = [w for w in m.group(1).split()
+             if w.lower().strip(",.?!") not in _POJEM_STOP]
+    if not slova or len(slova) > 3:
+        return ""
+    return " ".join(slova).strip(" ,.?!\"„“")

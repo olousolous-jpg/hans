@@ -784,6 +784,19 @@ class OpenWebUIDirectHandler:
                 pass
             tema = kotva_tematu(veta or "", vynech=_known)
             if not tema:
+                # HANS_CONCEPT_ASK_V1 (7.9.) — ZÁLOHA pro OBECNÝ POJEM.
+                # `kotva_tematu` pozná téma podle VELKÉHO písmene, protože je
+                # stavěná na vlastní jména („hrad Kost"). Obecné slovo psané
+                # malým písmenem („co to je karbunkule?") tedy z principu
+                # nenajde a dohledání se nespustí. Predikát je SDÍLENÝ
+                # (`hans_intent`), ať o tom, co je dotaz na pojem, existuje
+                # jedna pravda. Jen záloha — když kotva téma najde, neptáme se.
+                try:
+                    from scripts.hans_intent import dotaz_na_pojem
+                    tema = dotaz_na_pojem(veta or "") or None
+                except Exception:
+                    tema = None
+            if not tema:
                 return None
             _dbp = (self.config.get("hans_idle", {}) or {}).get(
                 "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"
