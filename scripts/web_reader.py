@@ -59,6 +59,42 @@ def _token_match(a: str, b: str) -> bool:
     return False
 
 
+# ── HANS_WIKI_EXACT_TOKEN_V1 (7.9.) — PREFIX SÁM NESTAČÍ ────────────────────
+# `_token_match` bere prefix od 4 znaků (kvůli českému skloňování), takže
+# „karbunkule" sedne na „Karbunkulový" — jenže to je JINÉ SLOVO (přídavné
+# jméno). Doloženo 7. 9.: dotaz „co to je karbunkule?" (uživatel se ptal na
+# drahokam z právě sledované Modré karbunkule) by přes `lookup_now` vrátil
+# „Karbunkulový hřeben je horský hřeben v Tatrách" — a to VČETNĚ odkazu na
+# Wikipedii, tedy konfabulaci s falešným zdrojem. Horší než mlčet.
+#
+# ⛔ PRÁH `wiki_title_min_coverage` ZVEDNOUT NELZE — změřeno: „Hrad Gutštejn"
+# i „Hora Říp" mají tutéž hodnotu 0.50 jako karbunkule, takže by padly s ní.
+# Coverage tuhle třídu nerozliší; rozlišuje ji TVAR shody: u správných sedí
+# token PŘESNĚ („Gutštejn"=="Gutštejn"), u vadných jen prefixem.
+#
+# Uplatní se JEN při neúplném pokrytí (cov < 1.0) — celé pokrytí je samo
+# o sobě dost silné a „gotické architektuře" → „Gotická architektura"
+# (samé prefixy) tím projde beze změny.
+#
+# 📏 Změřeno na 567 reálných entitách se `source_title`: NOVĚ by se zamítla
+# NULA. Kontrolní případy z HANS_WIKI_COVERAGE_V1 (Gutštejn, Říp, Válečné
+# zločiny, Avengers) procházejí dál, 8/8.
+def _ma_presny_token(query: str, title: str) -> bool:
+    """Sedí aspoň jeden token TITULU přesně (po odstranění diakritiky)?"""
+    t = _PAREN.sub("", title or "")
+    qt = {_odstran_diakritiku(x) for x in _title_tokens(query)}
+    tt = [_odstran_diakritiku(x) for x in _title_tokens(t)]
+    if not tt:
+        return True
+    return any(x in qt for x in tt)
+
+
+def _odstran_diakritiku(s: str) -> str:
+    import unicodedata as _ud
+    return "".join(c for c in _ud.normalize("NFD", s or "")
+                   if _ud.category(c) != "Mn").lower()
+
+
 def _title_similarity(query: str, title: str) -> float:
     """Kolik query tokens má odpovídající token v titulu (0.0–1.0). Substring
     match query v titulu = auto 1.0 (např. „Icon of the Seas" ↔ „Icon of the
@@ -369,10 +405,21 @@ class WebReader:
                 _best = max((p.get("title", "") for p in pfx),
                             key=lambda t: _title_similarity(query, t),
                             default="")
+                _pcov = _title_coverage(query, _best) if _best else 0.0
+                # HANS_WIKI_EXACT_TOKEN_V1 — i v prefix větvi. Gate na
+                # pokrytí tu byl, kontrola TVARU shody ne — a prefixsearch
+                # je našeptávač, takže sem míří přesně ty vadné trefy:
+                # „karbunkule" → „Karbunkulový hrebeň" (cov 0.50, jen prefix).
+                # ⚠️ Obě větve (`prefixsearch` i `srsearch`) musí držet TOTÉŽ,
+                # jinak se rozejdou a jedna propustí, co druhá zamítá —
+                # doloženo 7. 9.: gate přidaný jen do srsearch byl MRTVÝ,
+                # protože prefixsearch vrátil titul dřív.
                 if (_best and _title_similarity(query, _best) >= _pmin
-                        and _title_coverage(query, _best) >= float(
+                        and _pcov >= float(
                             (self.config.get("curiosity", {}) or {})
-                            .get("wiki_title_min_coverage", 0.4))):
+                            .get("wiki_title_min_coverage", 0.4))
+                        and not (_pcov < 1.0
+                                 and not _ma_presny_token(query, _best))):
                     return _best
                 _log.debug("Wikipedia prefixsearch %r pro %r pod prahem → "
                            "zkouším srsearch", _best, query)
@@ -411,6 +458,15 @@ class WebReader:
             if best_title and best_score >= min_score:
                 _cov = _title_coverage(query, best_title)
                 if _cov >= _min_cov:
+                    # HANS_WIKI_EXACT_TOKEN_V1 — při NEÚPLNÉM pokrytí musí
+                    # aspoň jeden token titulu sedět přesně, ne jen prefixem.
+                    if _cov < 1.0 and not _ma_presny_token(query, best_title):
+                        _log.info(
+                            "HANS_WIKI_EXACT_TOKEN_V1: %r → %r zamítnuto "
+                            "(pokrytí %.2f jen prefixové, žádný token nesedí "
+                            "přesně) — raději nic než cizí článek",
+                            query, best_title, _cov)
+                        return None
                     return best_title
                 _log.info("HANS_WIKI_COVERAGE_V1: %r → %r zamítnuto "
                           "(pokrytí titulu %.2f < %.2f) — raději nic než "
