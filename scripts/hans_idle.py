@@ -961,16 +961,25 @@ class HansIdle:
     # Volající se NEMÁ starat o interní strukturu hans_idle (curiosity, mood, ...).
     # Pokud některý subsystém není inicializovaný, metoda tiše projde.
 
-    def event_objects_seen(self, class_names: list):
+    def event_objects_seen(self, class_names: list, curiosity: bool = True):
         """Hans vidí objekty v záběru (list).
 
         Mood reaguje na celou scénu (všechny objekty),
         Curiosity reaguje jen na první objekt (zajímavý fakt o jedné věci).
+
+        HANS_OBJDET_UNGATE_V1 (7.9.): `curiosity=False` nechá jen NÁLADU.
+        Důvod je datový, ne výkonový — `trigger_object` volá
+        `wikipedia_read` a cooldown je 2 h NA OBJEKT, takže po odgatování
+        detekce (á 6 s) by šest tříd v pokoji vyrobilo až 72 čtení denně
+        proti dnešním 30–60 celkem, a pořád o tomtéž nábytku. To teče do
+        zaujetí → koníčků → Severky; tutéž patologii už jednou řešil
+        HANS_ENGAGEMENT_DEDUP_V1. Výchozí True drží chování volajících,
+        kteří parametr nepředávají.
         """
         if not class_names:
             return
         # Curiosity — jen první objekt, ať se Hans nepřehlcuje
-        if hasattr(self, '_curiosity') and self._curiosity is not None:
+        if curiosity and hasattr(self, '_curiosity') and self._curiosity is not None:
             try:
                 first = class_names[0]
                 if first:

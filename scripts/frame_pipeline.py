@@ -473,8 +473,18 @@ class FramePipeline:
                          else _OBJ_DETECT_INTERVAL * 5)
         _obj_last     = (self.last_obj_detect if not face_visible
                          else self.last_obj_detect_with_face)
-        if (scanning and self.ctrl.obj_client and self.ctrl.surr_db and
-                now - _obj_last >= _obj_interval):
+        # HANS_OBJDET_UNGATE_V1 (7.9.): detekce visela na `scanning`, ktere
+        # je od 13. 7. TRVALE False — servo je vypnute, takze
+        # `servo_controller` je None. Nebyl to zamer, ale vedlejsi skoda
+        # vypnuti serva: posledni zaznam v surroundings.db je 13. 7. 2026.
+        # `scanning` se ZAMERNE nemeni — na radku 644 v display controlleru
+        # na nem visi ROZPOZNAVANI TVARI (`not scanning`), ktere by se tim
+        # vyplo. Proto samostatny klic.
+        _obj_always = bool(self.ctrl.config.get(
+            "object_detection", {}).get("always_on", False))
+        if ((scanning or _obj_always) and self.ctrl.obj_client
+                and self.ctrl.surr_db
+                and now - _obj_last >= _obj_interval):
 
             self.last_obj_detect = now
             pan = (self.ctrl.servo_controller.current_pan
@@ -598,9 +608,15 @@ class FramePipeline:
                         [d['class_name'] for d in named])
                 # Objekty viděné — HANS_EVENT_API_REWRITE_V1
                 # Hans_idle si rozdělí: curiosity[0] + mood na celý list
+                # HANS_OBJDET_UNGATE_V1 — `curiosity` rozhoduje, jestli
+                # videny predmet smi spustit CTENI na Wikipedii. Nalada
+                # jede vzdy (je levna a nekumuluje data).
+                _obj_curio = bool(self.ctrl.config.get(
+                    "object_detection", {}).get("curiosity", True))
                 if hasattr(self.ctrl, '_hans_idle'):
                     self.ctrl._hans_idle.event_objects_seen(
-                        [d.get('class_name','') for d in named])
+                        [d.get('class_name','') for d in named],
+                        curiosity=_obj_curio)
                 self.ctrl._save_object_thumbs(_detect_frame, named)
                 # Self-question při zajímavém objektu (10% šance)
                 # HANS_EVENT_API_REWRITE_V1
@@ -611,7 +627,11 @@ class FramePipeline:
                         # QUESTIONS_OBSERVATION_CZ_V1 — label do češtiny (COCO_CZ)
                         # + přirozená věta (model neechuje "Zaznamenán byl bed.");
                         # filtr na reálné EN labely (nudný nábytek).
-                        if (_cn2 not in ('tv', 'couch', 'chair') and
+                        # HANS_OBJDET_UNGATE_V1 — self-question tece do
+                        # teze curiosity cesty (trigger_question), takze
+                        # ji drzi tentyz klic.
+                        if (_obj_curio and
+                                _cn2 not in ('tv', 'couch', 'chair') and
                                 _rnd2.random() < 0.1):
                             from scripts.surroundings_db import COCO_CZ as _CZ
                             _ctx2 = f'V místnosti jsem zahlédl {_CZ.get(_cn2, _cn2)}.'
