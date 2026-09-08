@@ -145,8 +145,8 @@ def _jmena_z(cfg: dict) -> set:
 
     ⚠️ Bere i PÁDOVÉ TVARY, ne jen klíč. Čeština jméno ohýbá a texty v configu
     ho nesou skloňované: `greeting.user_prompt` obsahoval příklad „Dobrý večer,
-    **Oldo**" a prošel prvním skenem, protože klíč je `olda` a vokativ „Oldo"
-    na něj nesedí. Tvary jsou v `known_persons.<kdo>.{nom,gen,dat,acc,loc,voc}`
+    **<vokativ>**" a prošel prvním skenem, protože klíč je 1. pád a vokativ
+    na něj nesedí (u vzoru „Jana" by to bylo „Jano"). Tvary jsou v `known_persons.<kdo>.{nom,gen,dat,acc,loc,voc}`
     — přesně proto tam jsou (HANS_VOCATIVE_CONSONANT_V1)."""
     jm = set()
     for sekce in _JMENA_ODKUD:
@@ -166,9 +166,10 @@ def _jmena_z(cfg: dict) -> set:
 
 
 def bez_diakritiky(s: str) -> str:
-    """„Šárka" → „sarka". Bez tohohle projde jméno psané s háčky:
-    v configu je klíč `sarka`, ale v poznámce stojí `Šárka` — a přesně tak
-    8. 9. unikl `recognition_tuning._gallery_note` prvnímu skenu."""
+    """Sundá diakritiku: „Žofie" → „zofie". Bez tohohle projde jméno psané
+    s háčky — v configu je klíč bez diakritiky, ale v poznámce stojí s ní,
+    a přesně tak 8. 9. unikl `recognition_tuning._gallery_note` prvnímu
+    skenu."""
     return "".join(c for c in unicodedata.normalize("NFKD", s)
                    if not unicodedata.combining(c)).lower()
 

@@ -304,7 +304,8 @@ class SurroundingsDB:
     def build_llm_context(self, max_age_s: int = 1800,
                           visible_persons: list = None,
                           pan_angle: float = None,
-                          weather_str: str = None) -> str:
+                          weather_str: str = None,
+                          asker_known: bool = True) -> str:
         lines  = []
         remap  = {k: v for k, v in self.config.get("object_remapping", {}).items()
                   if not k.startswith("_")}
@@ -337,7 +338,17 @@ class SurroundingsDB:
                 lines.append("V místnosti vidím: " + ", ".join(parts) + ".")
 
         persons = self.get_persons()
-        if persons:
+        # HANS_PROMPT_HOUSEHOLD_PRIVACY_V1 (8. 9.) — DRUHY zdroj, kterym se
+        # slozeni domacnosti sypalo cizimu tazateli. Vedle bloku v handleru
+        # stala i tahle veta („Zname osoby v dome: <jmeno> (zena — pani domu)...")
+        # a slo z ni odvodit i to, koho Hans naposledy videl — doloženo
+        # ověřovacím rozhovorem 8. 9.: „Naposledy jsem tu zahlédl <jméno>."
+        # `asker_known=True` je default schvalne: kdo parametr nepreda,
+        # dostane dnesni chovani, at se nikomu tise neztrati kontext.
+        if persons and not asker_known:
+            lines.append("S člověkem, se kterým mluvíš, o lidech z tohoto domu "
+                         "NEMLUV — ani jména, ani role, ani vztahy.")
+        elif persons:
             p_parts = []
             for p in persons:
                 entry = p["name"]
@@ -368,7 +379,21 @@ class SurroundingsDB:
         # = celou větu úplně vynech (chat módu, kde 3. strany dráždí model);
         # [] = „nikdo neni" (dnešní explicit signal); non-empty = normální list.
         if visible_persons is None:
-            pass  # skip line entirely
+            # HANS_VISION_NOT_DENIED_V1 (8. 9.) — zamlčet KDO tu je neznamená
+            # tvrdit, že Hans nevidí. Dřív se věta vynechala úplně (`pass`)
+            # a model si prázdno doplnil popřením vlastní SCHOPNOSTI:
+            # doloženo týž den u cizího tazatele — „Nemám možnost vizuálního
+            # vnímání prostředí", ačkoli kamera v tu chvíli rozpoznávala dvě
+            # osoby (person_seen v deníku). V témže rozhovoru přitom na jinou
+            # otázku místnost detailně popsal → Hans si odporoval ve dvou
+            # tazích po sobě.
+            # Hranice zůstává tam, kde ji chtěl HANS_CHAT_HIDE_3RD_PARTY_V1:
+            # o TŘETÍCH OSOBÁCH se nemluví. Mění se jen to, že model dostane
+            # PRAVDIVÝ důvod místo prázdna, které si vyplní konfabulací.
+            lines.append(
+                "Do místnosti vidíš (kamera funguje), ale s tímto člověkem "
+                "o tom, kdo v ní právě je, nemluvíš — místo popírání zraku "
+                "řekni, že to nesdělíš.")
         elif visible_persons:
             known_vis = [n for n in visible_persons
                          if n not in ("Unknown", "...", "?", "")]

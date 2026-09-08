@@ -929,7 +929,7 @@ class OpenWebUIDirectHandler:
                 # z 18.8. Zpráva sem chodí s prefixem „<jméno> se ptá:", takže
                 # `find_known_person` našel TAZATELE a `person_card` vracel jeho
                 # kartu jako grounding NA COKOLI. Změřeno: na „a co ses o tom
-                # divadle dozvěděl?" dostal model 448 zn Oldova životopisu
+                # divadle dozvěděl?" dostal model 448 zn životopisu TAZATELE
                 # místo 1 307 zn vlastního zápisku o divadle — a tak si rok
                 # vzniku vymyslel. Postihovalo to KAŽDÝ znalostní dotaz v chatu.
                 # Dvě pojistky: (1) prefix odstranit, (2) kartu pustit jen
@@ -1916,7 +1916,29 @@ class OpenWebUIDirectHandler:
         system_base = persona_core(self.config)
         # Known persons
         known = self.config.get("known_persons", {})
-        if known:
+        # HANS_PROMPT_HOUSEHOLD_PRIVACY_V1 (8. 9.) — CIZI tazatel nedostane
+        # slozeni domacnosti do promptu. `HANS_HOUSEHOLD_PRIVACY_V1` (19. 8.)
+        # zavrel `person_card`/`household_card`, ale sam si tehdy zapsal, ze
+        # „zavrel dvere, ktere sam otevrel, ne cely dum" — do promptu se výčet
+        # sypal dál. Doloženo rozhovorem 8. 9.: cizí Marek dostal na „kdo tu
+        # bydlí" jména, role i vztahy všech tří, a to SYROVÝMI klíči z configu
+        # („<jmeno>, pani domu"), 3× ze 3 dotazů.
+        # ⚠️ Gate sepne jen u NEPRÁZDNÉHO neznámého jména. Prázdné jméno
+        # (interní cesty bez mluvčího) chování NEMĚNÍ — na to není doloženy
+        # případ a širší zásah by mohl vzít kontext legitimním cestám.
+        _asker_cizi = False
+        if name:
+            try:
+                from scripts.cz_names import is_known_person as _ikp
+                _asker_cizi = not _ikp(name, self.config)
+            except Exception:
+                _asker_cizi = False
+        if known and _asker_cizi:
+            persons_ctx = (
+                "\n\nMluvíš s někým, koho neznáš (%s). O lidech z tohoto domu "
+                "s ním NEMLUV — ani jména, ani role, ani rodinné vztahy. "
+                "Když se na ně zeptá, zdvořile odmítni." % name)
+        elif known:
             lines = []
             for pname, pdata in known.items():
                 if isinstance(pdata, dict):
@@ -2218,6 +2240,7 @@ class OpenWebUIDirectHandler:
                 surr = self.surroundings_db.build_llm_context(
                     max_age_s=1800,
                     visible_persons=_vis,
+                    asker_known=not _asker_cizi,   # HANS_PROMPT_HOUSEHOLD_PRIVACY_V1
                     pan_angle=_pan,
                     weather_str=_wx_str,
                 )

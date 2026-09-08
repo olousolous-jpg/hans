@@ -800,6 +800,34 @@ def _run_person_info(handler, args) -> Optional[str]:
 
 
 def _run_who_home(handler, args) -> str:
+    # HANS_WHO_HOME_PRIVACY_V1 (8. 9.) — TŘETÍ zdroj, kterým se domácnost
+    # dostávala k cizímu tazateli. `_run_report_person` o pár řádků výš
+    # `_raw_name` používá už od HANS_HOUSEHOLD_PRIVACY_V1, tahle akce ne —
+    # a přitom to byla PRÁVĚ ONA, na kterou se HANS_CHAT_HIDE_3RD_PARTY_V1
+    # odvolával („na to odpoví agent z živých dat"). Doloženo ověřovacím
+    # rozhovorem 8. 9.: i po zavření obou promptových zdrojů odpověděl
+    # cizímu „Naposledy jsem tu zahlédl <jméno>."
+    # Odmítnutí se SDÍLÍ s `hans_recall._PRIVACY_REFUSAL`, ať se obě cesty
+    # nerozejdou v tom, jak Hans odmítá.
+    # HANS_WHO_HOME_PRIVACY_V2 (8. 9.) — gate patří na VÝSTUP, ne na vstup.
+    # V1 odmítal hned na začátku a tím ukradl i odpovědi, které o lidech
+    # vůbec nejsou: doloženo týž den — „Vidíte něco kamerou?" (router to
+    # posílá sem taky) dostalo privacy odmítnutí místo odpovědi o zraku,
+    # ačkoli předtím odpovídalo správně. Odmítá se proto jen tam, kde by
+    # odpověď SKUTEČNĚ jmenovala osobu; „nikoho nevidím" projde dál.
+    _ar = getattr(handler, "_agent_inst", None) or getattr(handler, "_agent", None)
+    _who = getattr(_ar, "_raw_name", "") or ""
+    _cizi = False
+    try:
+        from scripts.cz_names import is_known_person as _ikp
+        _cfg = getattr(handler, "config", {}) or {}
+        _cizi = bool(_who) and not _ikp(_who, _cfg)
+    except Exception as _pe:
+        log.debug("who_home privacy gate: %s", _pe)
+
+    def _odmitnout():
+        from scripts.hans_recall import _PRIVACY_REFUSAL
+        return _PRIVACY_REFUSAL
     hi = getattr(handler, "_hans_idle", None)
     names = [n for n in (getattr(hi, "_present_names", None) or [])
              if n and n not in ("Unknown", "?", "")]
@@ -815,6 +843,8 @@ def _run_who_home(handler, args) -> str:
             names = [_acc(n, cfg) or n for n in names]
         except Exception:
             pass
+        if _cizi:            # HANS_WHO_HOME_PRIVACY_V2
+            return _odmitnout()
         if len(names) == 1:
             return f"Vidím tu {names[0]}."
         return "Vidím tu: " + ", ".join(names) + "."
@@ -828,6 +858,8 @@ def _run_who_home(handler, args) -> str:
             (time.time() - 900,)).fetchone()
         db.close()
         if r and r[0]:
+            if _cizi:        # HANS_WHO_HOME_PRIVACY_V2
+                return _odmitnout()
             from scripts.cz_names import acc as _cz_acc  # HANS_NAME_INFLECTION_V2
             return f"Naposledy jsem tu zahlédl {_cz_acc(r[0])}, teď tu ale nikoho nevidím."
     except Exception:
