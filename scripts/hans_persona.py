@@ -292,10 +292,16 @@ if __name__ == "__main__":
     print("\n=== persona_interests (deník NEBO seed) ===")
     print(repr(persona_interests(cfg)))
 
-    # Regrese: jádro s adresami se musí přesně rovnat greeting.system_prompt
-    want = apply_name(cfg.get("greeting", {}).get("system_prompt"), cfg)
-    if want:
-        got = persona_core(cfg, with_address=True)
-        print("\n=== REGRESE persona_core(with_address=True) == greeting.system_prompt ===")
-        print("MATCH" if got == want else "DIFFERS")
+    # HANS_GREETING_PROMPT_DEAD_V1 (8. 9.) — dřív se tu jádro porovnávalo
+    # s `greeting.system_prompt`. Ta kopie byla mrtvá (nikdo ji v produkci
+    # nečetl) a rozešla se s identitou, takže test hlásil DIFFERS na něco,
+    # co Hansovo chování vůbec neovlivňuje. Klíč je zrušen; kontroluje se
+    # to, na čem chat opravdu stojí — že se jádro poskládá ze všech tří částí.
+    _core = (cfg.get("persona", {}) or {}).get("core", "")
+    _addr = (cfg.get("persona", {}) or {}).get("address_rules", "")
+    got = persona_core(cfg, with_address=True)
+    print("\n=== REGRESE persona_core skládá CORE + jazyk + oslovení ===")
+    _ok = bool(got) and (not _core or apply_name(_core, cfg).strip()[:40] in got) \
+        and (not _addr or apply_name(_addr, cfg).strip()[:30] in got)
+    print("OK" if _ok else "CHYBÍ ČÁST JÁDRA")
     sys.exit(0)

@@ -146,10 +146,16 @@ def _load_config() -> dict:
     global _config_cache
     if _config_cache is None:
         try:
-            _config_cache = json.loads(
-                (_ROOT / "config.json").read_text(encoding="utf-8"))
+            # HANS_CONFIG_SPLIT_V1 — jmena osob zijou v PRIVATNI casti configu,
+            # takze cteni jen verejneho souboru by tenhle modul oslepilo.
+            from scripts.config_io import load as _cio_load
+            _config_cache = _cio_load()
         except Exception:
-            _config_cache = {}
+            try:
+                _config_cache = json.loads(
+                    (_ROOT / "config.json").read_text(encoding="utf-8"))
+            except Exception:
+                _config_cache = {}
     return _config_cache
 
 

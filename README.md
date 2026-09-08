@@ -280,7 +280,8 @@ python3 deploy/setup.py        # kompletní průvodce (níže) → vytvoří con
    do Claude/ChatGPT, jeho JSON odpověď vložíš zpět a stane se Hansovou personou.
    (Nebo Enter = výchozí anglický majordomus.)
 2. **Připojení** — IP (PC/Kodi), OpenWebUI login + token, STT token, WOL MAC.
-3. **Zápis** `config.json` (vychází z `config.example.json`).
+3. **Zápis** — rozdělený: laděné hodnoty do `config.json` (verzovaný),
+   tajemství do `config.private.json` (nikdy v gitu).
 4. **Paměť** — vytvoří RAG kolekce v OpenWebUI a naseeduje identitu.
 5. **Avatar** — z osobnosti vyrenderuje Hansovu tvář (volitelné, vyžaduje ComfyUI).
 
@@ -306,7 +307,9 @@ slouží jako ukázka architektury — k tomu směřuj i diskuzi.
 - `scripts/` — jádro (vnímání, paměť, kognice, tvorba; `hans_*.py`)
 - `main.py`, `web_admin.py` — vstupní bod + webový dashboard
 - `deploy/` — setup průvodce, installer, bundle, systemd
-- `config.example.json` — šablona konfigurace (bez tajemství)
+- `config.json` — laděné hodnoty Hanse (prahy, chování); **verzovaný**
+- `config.private.example.json` — šablona pro tajemství (jména, tokeny, IP);
+  zkopíruj na `config.private.json` a vyplň
 
 > Soukromá data (deník, biometrie tváří, klíče, konfigurace) zůstávají **lokálně**
 > — `.gitignore` je drží mimo repozitář.

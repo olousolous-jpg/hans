@@ -10,11 +10,13 @@ Spuštění z kořene projektu:
     python3 deploy/setup.py
 
 Základ bere z existujícího config.json (ponechá všechna ostatní nastavení), nebo
-z config.example.json (pro čistou instalaci z GitHubu). Před zápisem zazálohuje.
+z config.json + config.private.example.json (pro čistou instalaci z GitHubu).
+Před zápisem zazálohuje. HANS_CONFIG_SPLIT_V1: zapisuje ROZDĚLENĚ.
 """
 
 import json
 import os
+from pathlib import Path
 import re
 import shutil
 import sys
@@ -23,7 +25,22 @@ from fnmatch import fnmatch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(ROOT, "config.json")
-EXAMPLE = os.path.join(ROOT, "config.example.json")
+# HANS_CONFIG_SPLIT_V1 (8. 9.) — config je ve DVOU souborech. Verejny
+# `config.json` je nove VERZOVANY (je v repu vzdy), privatni cast se
+# zaklada z `config.private.example.json`.
+EXAMPLE = os.path.join(ROOT, "config.private.example.json")
+PRIVATE = os.path.join(ROOT, "config.private.json")
+
+
+def _cio():
+    """scripts/config_io — jediny, kdo zna delici caru mezi verejnym
+    a privatnim configem. Pouziva se pro CTENI i ZAPIS: pruvodce se pta
+    na tokeny a IP, a bez rozdeleni by je zapsal do verejneho souboru,
+    ktery jde do gitu."""
+    if ROOT not in sys.path:
+        sys.path.insert(0, ROOT)
+    from scripts import config_io
+    return config_io
 _IP_RE = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}")
 
 # ── logické otázky → kam se v configu dosadí ─────────────────────────────────
@@ -131,8 +148,9 @@ def _migrate(cfg, target):
     except Exception as e:
         print(f"CHYBA při kopírování: {e}")
         return False
-    json.dump(cfg, open(os.path.join(target, "config.json"), "w", encoding="utf-8"),
-              ensure_ascii=False, indent=2)
+    # HANS_CONFIG_SPLIT_V1 — i tady rozdelene, cil je novy strom s vlastnim gitem
+    if not _cio().save(cfg, root=Path(target)):
+        print("CHYBA: config se nepodarilo bezpecne rozdelit"); return False
     print(f"✓ Nový Hans v {target}")
     print("  Další kroky na novém místě:")
     print("    1) nainstaluj závislosti: pip install --break-system-packages "
@@ -219,7 +237,9 @@ def _setup_personality(cfg):
                       ("address_rules", "persona.address_rules")):
         if data.get(key):
             _set(cfg, path, data[key])
-    _set(cfg, "greeting.system_prompt", data["core"])          # greeting sdílí core
+    # HANS_GREETING_PROMPT_DEAD_V1 (8. 9.) — `greeting.system_prompt` se uz
+    # NEZAKLADA: byla to zmrazena kopie identity, kterou nikdo necetl a ktera
+    # se rozchazela se Severkou. Identitu drzi `persona.core`.
     if data.get("greeting_user_prompt"):
         _set(cfg, "greeting.user_prompt", data["greeting_user_prompt"])
     print(f"  ✓ Osobnost nastavena: {_get(cfg, 'persona.name')}\n")
@@ -341,14 +361,23 @@ def _setup_avatar(cfg):
 
 
 def main():
-    if os.path.exists(CONFIG):
-        base = CONFIG
-    elif os.path.exists(EXAMPLE):
-        base = EXAMPLE
-        print("config.json nenalezen → vycházím z config.example.json")
-    else:
-        print("CHYBA: nenalezen config.json ani config.example.json"); sys.exit(1)
-    cfg = json.load(open(base, encoding="utf-8"), object_pairs_hook=OrderedDict)
+    if not os.path.exists(CONFIG):
+        print("CHYBA: nenalezen config.json (verejna cast je soucasti repa)")
+        sys.exit(1)
+    # HANS_CONFIG_SPLIT_V1 — slouceny pohled: verejne hodnoty z repa
+    # + privatni cast, kterou pri ciste instalaci zastoupi vzor.
+    cfg = json.load(open(CONFIG, encoding="utf-8"), object_pairs_hook=OrderedDict)
+    _priv = PRIVATE if os.path.exists(PRIVATE) else (
+        EXAMPLE if os.path.exists(EXAMPLE) else None)
+    if _priv:
+        if _priv == EXAMPLE:
+            print("config.private.json nenalezen → vychazim ze vzoru")
+        try:
+            cfg = _cio()._slouc(
+                cfg, json.load(open(_priv, encoding="utf-8"),
+                               object_pairs_hook=OrderedDict))
+        except Exception as _e:
+            print("VAROVANI: privatni cast se nepodarilo nacist: %s" % _e)
 
     print("\n=== Hans — průvodce nastavením ===")
     print("Enter = ponechat současnou hodnotu (v závorkách). Ctrl+C = konec.\n")
@@ -393,8 +422,13 @@ def main():
                   open(bak, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         print(f"Záloha současného configu → {bak}")
     print("── Krok 4/6: Zápis config.json ───────────────────────────────")
-    json.dump(cfg, open(CONFIG, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    print(f"  ✓ zapsáno do {CONFIG}\n")
+    # HANS_CONFIG_SPLIT_V1 — zapisuje se ROZDELENE. Bez toho by tokeny a IP,
+    # na ktere se pruvodce prave zeptal, skoncily ve verejnem config.json.
+    if _cio().save(cfg, root=Path(ROOT)):
+        print(f"  ✓ zapsáno do {CONFIG} + config.private.json\n")
+    else:
+        print("  🔴 ZAPIS ODMITNUT — ve verejne casti zbylo neco citliveho.")
+        sys.exit(1)
 
     # Kroky 4 + 5 běží AŽ po zápisu (tools čtou čerstvý config.json).
     _setup_memory(cfg)

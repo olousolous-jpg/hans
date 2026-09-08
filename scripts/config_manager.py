@@ -18,8 +18,15 @@ class ConfigManager:
     def load_config(self):
         """Load and validate configuration from JSON file"""
         try:
-            with open(self.config_path, 'r') as f:
-                config = json.load(f)
+            # HANS_CONFIG_SPLIT_V1 — sloucena verejna + privatni cast.
+            try:
+                from scripts.config_io import load as _cio_load
+                config = _cio_load()
+                if not config:
+                    raise ValueError("prazdny config")
+            except Exception:
+                with open(self.config_path, 'r') as f:
+                    config = json.load(f)
             print(f"Configuration loaded from {self.config_path}")
             
             # Validate and fix config

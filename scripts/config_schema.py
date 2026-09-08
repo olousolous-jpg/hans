@@ -748,8 +748,15 @@ GROUPS = [
         "icon": "👋",
         "intro": "Jak Hans zdraví příchozí. Per-osoba pozdravy jako JSON (klíč = jméno, hodnota = instrukce).",
         "fields": [
-            {"path": "greeting.system_prompt", "label": "System prompt", "type": "textarea", "rows": 4,
-             "tip": "Identita pro generování pozdravu."},
+            # HANS_GREETING_PROMPT_DEAD_V1 (8. 9.) — pole ODSTRANĚNO.
+            # `greeting.system_prompt` byla ZMRAŽENÁ KOPIE identity, kterou
+            # v produkci NIKDO nečetl (chat bere `persona_core()` z `persona.*`,
+            # openwebui_direct_handler.py:1916). Zůstala po PERSONA_REFACTOR_11
+            # a rozešla se: 8. 9. v ní stálo „tichý anglický majordomus", zatímco
+            # Hans byl od 3. 9. „přemýšlivý pozorovatel" (Severka id=2).
+            # Nabízet ji v UI bylo horší než ji jen mít — uživatel by ji upravil
+            # a čekal změnu chování, která by nikdy nepřišla.
+            # Identitu edituj v „Hans / Identita" → `persona.core`.
             {"path": "greeting.user_prompt", "label": "User prompt (obecný)", "type": "textarea", "rows": 3,
              "tip": "Šablona pozdravu. Proměnné: {name}, {tod} (denní doba)."},
             {"path": "greeting.special_greetings", "label": "Speciální pozdravy (per osoba)", "type": "json", "rows": 6,

@@ -114,6 +114,13 @@ def toaster_status():
 # ── Config helpers ────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
+    try:   # HANS_CONFIG_SPLIT_V1 — verejna + privatni cast
+        from scripts.config_io import load as _cio_load
+        cfg = _cio_load()
+        if cfg:
+            return cfg
+    except Exception as e:
+        print("[web_admin] config_io.load selhal: %s" % e)
     try:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except Exception as e:
@@ -121,12 +128,15 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> bool:
+    """HANS_CONFIG_SPLIT_V1 — ⚠️ TADY prichazi CELY sloucený objekt z UI.
+    Bez rozdeleni by token nebo jmeno skoncilo ve VEREJNEM config.json
+    a odeslo prvnim commitem. `config_io.save` navic odmitne ulozit, kdyz
+    ve verejne casti neco podezreleho zbyde."""
     try:
-        CONFIG_PATH.write_text(
-            json.dumps(cfg, indent=4, ensure_ascii=False),
-            encoding="utf-8")
-        return True
-    except Exception:
+        from scripts.config_io import save as _cio_save
+        return _cio_save(cfg)
+    except Exception as e:
+        print("[web_admin] config_io.save selhal, NEUKLADAM: %s" % e)
         return False
 
 

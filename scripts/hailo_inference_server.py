@@ -151,7 +151,35 @@ FACE_LM_MAGIC = b'\xFA\xCE\x1A\x0D'  # Mode 1b: detect+embed+landmarks
 GESTURE_SOCK = "/tmp/gesture.sock"   # dedicated gesture socket
 
 # ── Config ────────────────────────────────────────────────────────────────────
+def _cio():
+    """HANS_CONFIG_IO_PATH_V1 — vrat scripts.config_io.load, at uz tenhle
+    soubor bezi jako MODUL (`scripts.x`, root v sys.path) nebo jako SKRIPT
+    (`python3 scripts/x.py`, kde sys.path[0] je `scripts/` a root NENI nikde).
+    Bez tohohle by import tise selhal, fallback by nacetl jen VEREJNOU cast
+    a proces by prisel o privatni klice — hailo server treba o `hailo.recog_hef`,
+    tedy o cestu k modelu. Presne ta trida tiche chyby, kvuli ktere se cely
+    config deli (viz scripts/config_io.py)."""
+    try:
+        from scripts.config_io import load as _l
+        return _l
+    except Exception:
+        pass
+    import sys as _s, os as _o
+    _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+    if _root not in _s.path:
+        _s.path.insert(0, _root)
+    from scripts.config_io import load as _l
+    return _l
+
+
 def _load_config():
+    # HANS_CONFIG_SPLIT_V1 — config je ve DVOU souborech (verejny + privatni).
+    # Nacita se pres sdileny scripts/config_io, aby se osm loaderu nerozeslo.
+    # Fallback zustava, protoze tohle bezi jako SAMOSTATNY PROCES.
+    try:
+        return _cio()()
+    except Exception as e:
+        log.warning("config_io nedostupne (%s), ctu jen verejnou cast", e)
     search = Path(__file__).resolve().parent
     for _ in range(4):
         c = search / "config.json"

@@ -291,7 +291,8 @@ python3 deploy/setup.py        # full guided wizard (below) → creates config.j
    you a ready prompt for Claude/ChatGPT, you paste its JSON answer back and it
    becomes Hans's persona. (Or Enter = default English butler.)
 2. **Connectivity** — IPs (PC/Kodi), OpenWebUI login + token, STT token, WOL MAC.
-3. **Write** `config.json` (based on `config.example.json`).
+3. **Write** — split: tuned values into `config.json` (versioned),
+   secrets into `config.private.json` (never in git).
 4. **Memory** — creates the RAG collections in OpenWebUI and seeds the identity.
 5. **Avatar** — renders Hans's face from his personality (optional, needs ComfyUI).
 
@@ -318,7 +319,9 @@ the architecture rather than plug-and-play — please frame discussion according
 - `scripts/` — the core (perception, memory, cognition, creativity; `hans_*.py`)
 - `main.py`, `web_admin.py` — entry point + web dashboard
 - `deploy/` — setup wizard, installer, bundle, systemd
-- `config.example.json` — config template (no secrets)
+- `config.json` — Hans's tuned values (thresholds, behaviour); **versioned**
+- `config.private.example.json` — template for secrets (names, tokens, IPs);
+  copy to `config.private.json` and fill in
 
 > Private data (diary, face biometrics, keys, configuration) stays **local** —
 > `.gitignore` keeps it out of the repository.

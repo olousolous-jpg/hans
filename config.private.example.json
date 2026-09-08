@@ -1,0 +1,188 @@
+{
+    "hailo": {
+        "recog_hef": ""
+    },
+    "recognition_tuning": {
+        "_max_samples_note": "",
+        "_score_note": "",
+        "_arcface_thresh_note": "",
+        "negatives_path": "",
+        "_pc_margin_note": "",
+        "_pc_neg_note": "",
+        "_gallery_note": "",
+        "_vote_pc_note": "",
+        "pc_clusters": ""
+    },
+    "openwebui_chat": {
+        "base_url": "http://192.168.1.100:0000"
+    },
+    "openwebui_direct": {
+        "base_url": "http://192.168.1.100:0000",
+        "username": "uzivatel",
+        "password": "",
+        "api_token": ""
+    },
+    "matrix": {
+        "homeserver": "http://192.168.1.100:0000",
+        "user_id": "uzivatel",
+        "password": "",
+        "room_id": "",
+        "as_person": "",
+        "users": []
+    },
+    "kodi": {
+        "host": "http://192.168.1.100:0000",
+        "user": "uzivatel",
+        "password": ""
+    },
+    "voice": {
+        "stt_url": "http://192.168.1.100:0000",
+        "stt_token": "",
+        "default_speaker": ""
+    },
+    "face_preprocess": {
+        "_clahe_crop_note": ""
+    },
+    "gemini": {
+        "api_key": ""
+    },
+    "openrouter": {
+        "api_key": ""
+    },
+    "hans_avatar": {
+        "animate": {
+            "comfy_url": "http://192.168.1.100:0000",
+            "ollama_url": "http://192.168.1.100:0000"
+        },
+        "comfyui_url": "http://192.168.1.100:0000"
+    },
+    "knowledge": {
+        "base_url": "http://192.168.1.100:0000",
+        "collections": {
+            "hans_identita": "00000000-0000-0000-0000-000000000000",
+            "hans_filmy": "00000000-0000-0000-0000-000000000000",
+            "hans_cetba": "00000000-0000-0000-0000-000000000000",
+            "hans_pripady": "00000000-0000-0000-0000-000000000000",
+            "hans_denik": "00000000-0000-0000-0000-000000000000",
+            "hans_dila": "00000000-0000-0000-0000-000000000000"
+        }
+    },
+    "pc_remote": {
+        "_note": "",
+        "host": "http://192.168.1.100:0000",
+        "user": "uzivatel",
+        "key_path": ""
+    },
+    "persona": {
+        "address_rules": ""
+    },
+    "film_suggest": {
+        "genre_prefs": "",
+        "film_prefs": ""
+    },
+    "study": {
+        "research_tier": {
+            "mailto": "uzivatel"
+        }
+    },
+    "health": {
+        "_note": ""
+    },
+    "self_insight": {
+        "reasoning_url": "http://192.168.1.100:0000"
+    },
+    "intent": {
+        "base_url": "http://192.168.1.100:0000"
+    },
+    "face_harvest": {
+        "_stav_note": "",
+        "_stopped_note": ""
+    },
+    "subtitles": {
+        "api_key": "",
+        "_api_key_note": "",
+        "username": "uzivatel",
+        "password": "",
+        "_login_note": "uzivatel",
+        "api_base": "http://192.168.1.100:0000"
+    },
+    "translate": {
+        "pc_host": "http://192.168.1.100:0000",
+        "pc_user": "uzivatel",
+        "pc_key": "",
+        "smb_prefix": "http://192.168.1.100:0000",
+        "_path_note": ""
+    },
+    "webshare": {
+        "username": "uzivatel",
+        "password": "",
+        "_note_token_ttl_s": ""
+    },
+    "greeting": {
+        "user_prompt": "uzivatel"
+    },
+    "wol_pc_mac": "00:00:00:00:00:00",
+    "wol_pc_ip": "",
+    "known_persons": {
+        "standa": {
+            "gender": "muž",
+            "notes": "pan domu",
+            "nom": "Standa",
+            "acc": "Standu",
+            "voc": "Stando"
+        },
+        "jana": {
+            "gender": "žena",
+            "notes": "pani domu",
+            "nom": "Jana",
+            "acc": "Janu",
+            "voc": "Jano",
+            "full": "Johana"
+        }
+    },
+    "relationship_seed": {
+        "alice": {
+            "display_name": "Alice",
+            "role": "head of household",
+            "family_links": {
+                "spouse": "bob",
+                "children": [
+                    "carol"
+                ]
+            }
+        },
+        "bob": {
+            "display_name": "Bob",
+            "role": "head of household",
+            "family_links": {
+                "spouse": "alice",
+                "children": [
+                    "carol"
+                ]
+            }
+        },
+        "carol": {
+            "display_name": "Carol",
+            "role": "child",
+            "family_links": {
+                "parents": [
+                    "alice",
+                    "bob"
+                ]
+            }
+        }
+    },
+    "person_name_forms": {
+        "alice": [
+            "alice",
+            "alici",
+            "alicí"
+        ],
+        "bob": [
+            "bob",
+            "bobovi",
+            "boba"
+        ]
+    },
+    "_navod": "HANS_CONFIG_SPLIT_V1 — zkopiruj na config.private.json a vypln. Ladene hodnoty (prahy, chovani) jsou ve VERZOVANEM config.json a sem nepatri. Delici caru drzi scripts/config_io.py a hlida ji i pri zapisu."
+}

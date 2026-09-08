@@ -1,7 +1,14 @@
 # ── HANS — co se NIKDY nesmí dostat do gitu (soukromí + tajemství) ──
-# Reálná konfigurace s hesly/klíči/IP (sdílí se jen config.example.json)
-config.json
+# HANS_CONFIG_SPLIT_V1 (8. 9.) — config je ROZDĚLENÝ na dva soubory:
+#   config.json          → VEŘEJNÝ, VERZOVANÝ. 1 180 laděných hodnot (91 %),
+#                          které do 8. 9. nebyly v gitu vůbec.
+#   config.private.json  → tajemství: jména domácnosti, tokeny, IP, MAC, UUID.
+# Dělicí čáru drží scripts/config_io.py — a hlídá ji i při zápisu, takže
+# `web_admin` nemůže poslat token do veřejného souboru.
+config.private.json
+config.private.json.*
 config.json.*
+config.default.json
 *.bak
 *.bak*
 
