@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os          # HANS_TRANSLATE_PRIORITY_V1 — getpid/kill u osirele pauzy
+import threading   # HANS_WARMUP_PAUSE_REFCOUNT_V1 — zámek nad čítačem pauzy
 import time
 from pathlib import Path
 from typing import Optional
@@ -223,27 +224,147 @@ CONNECT_TIMEOUT = 3            # OLLAMA_CONNECT_TIMEOUT_V1 — s, jen na naváz�
 # base-model analytika drží VRAM. Bez toho 4min pin hans-czech (8GB) evictuje
 # base OpenEuroLLM (8GB) uprostřed generování (8+8 > 16GB VRAM) → 300s timeouty.
 _warmup_pause_until = 0.0
+# HANS_WARMUP_PAUSE_REFCOUNT_V1 (8.9.) — pauzu drží VÍC dávek najednou a
+# `resume_warmup` ji dřív NULOVAL bez ohledu na to, kdo ji nastavil: kdo
+# skončil první, odemkl keepalive i všem ostatním. Doloženo v noci 8.9.:
+# studium si vzalo pauzu ve 03:01:39 (na 20 min), immune doběhl po DVOU
+# sekundách ve 03:02:33 a svým `finally: resume_warmup()` ji zrušil → od
+# 03:05:57 se hans-czech re-pinoval á 4 min doprostřed studijní session →
+# 8+8 > 16 GB → read timeouty 300/300/90 s a DVA výpisky z odborných prací
+# spadly na anglický abstrakt místo Hansova výpisku.
+# Fix: počítadlo držitelů. Pauza padne až když ji pustí POSLEDNÍ.
+# ⚠️ `_warmup_pause_until` zůstává jako auto-expiry STROP — nepárové
+# `resume` (výjimka mimo finally, viz hans_evening_reflection) tím pauzu
+# nezasekne napořád. Pojistka nesmí být závislá jen na čítači.
+_warmup_pause_depth = 0
+_warmup_state_lock = threading.Lock()
 
 def pause_warmup(seconds: float) -> None:
     """Uspi keepalive warmup na `seconds` (auto-expiry = cap, kdyby dávka
-    spadla bez resume). Idempotentní: okno jen prodlouží, nezkrátí."""
-    global _warmup_pause_until
-    _warmup_pause_until = max(_warmup_pause_until, time.time() + float(seconds))
+    spadla bez resume). Idempotentní: okno jen prodlouží, nezkrátí.
+    HANS_WARMUP_PAUSE_REFCOUNT_V1: zvyšuje počet držitelů."""
+    global _warmup_pause_until, _warmup_pause_depth
+    with _warmup_state_lock:
+        _warmup_pause_depth += 1
+        _warmup_pause_until = max(_warmup_pause_until,
+                                  time.time() + float(seconds))
 
 def resume_warmup() -> None:
-    """Zruš pauzu warmupu (konec analytické dávky)."""
-    global _warmup_pause_until
-    _warmup_pause_until = 0.0
+    """Pusť svůj podíl na pauze warmupu (konec analytické dávky).
+    HANS_WARMUP_PAUSE_REFCOUNT_V1: pauza padne až s POSLEDNÍM držitelem —
+    krátká dávka tím přestala odemykat VRAM dlouhé, která pořád běží."""
+    global _warmup_pause_until, _warmup_pause_depth
+    with _warmup_state_lock:
+        if _warmup_pause_depth > 0:
+            _warmup_pause_depth -= 1
+        else:
+            # HANS_WARMUP_UNPAIRED_RESUME_V1 (8.9.) — resume bez pause.
+            # Refcount z principu nepozná, KDO ho volá, takže nepárové
+            # volání by pauzu shodilo úplně stejně jako dřív. Dnes takové
+            # v kódu není (všech 6 dávek volá párově); tahle hláška je tu,
+            # aby se budoucí nepárové volání neschovalo jako tiché odemčení
+            # VRAM uprostřed cizí dávky — přesně to se hledalo celé ráno 8.9.
+            _log.warning("resume_warmup bez odpovídajícího pause_warmup — "
+                         "VRAM pauza je odemčená, ačkoli ji nikdo nedržel")
+        if _warmup_pause_depth <= 0:
+            _warmup_pause_depth = 0
+            _warmup_pause_until = 0.0
 
 def warmup_paused() -> bool:
-    return time.time() < _warmup_pause_until
+    return _warmup_pause_depth > 0 and time.time() < _warmup_pause_until
+
+
+# HANS_BASE_SLOT_V1 (8.9.) — VÝLUČNOST base-model dávek napříč cestami.
+# Samotný refcount výše brání předčasnému odemčení, ale nebrání tomu, aby
+# dvě base-model dávky (8 GB každá) běžely SOUČASNĚ. Doloženo 7.9.: studium
+# + `narrative` + reasoning qwen3:30b naráz → warmup sám čekal 193,9 s na
+# VRAM a jeden `/api/generate` skončil fatálním timeoutem.
+# Dosavadní `_creative_busy` v `hans_routine._night_tick` je LOKÁLNÍ
+# proměnná jednoho ticku, takže cesta „brain_up catchup" (kterou studium
+# 8.9. šlo) o ní vůbec neví.
+# ⚠️ Slot má vlastní auto-expiry ze stejného důvodu jako pauza: držitel,
+# který spadne bez `release`, nesmí zablokovat noční rutinu napořád.
+# ⚠️ FAIL-OPEN: když se dávka slotu nedočká, pokračuje BEZ něj (jen WARNING).
+# Horší než dosavadní stav to nebude a noční okno se tím nikdy nezasekne.
+_base_slot_until = 0.0
+_base_slot_label = ""
+_base_slot_token = 0
+_base_slot_seq = 0
+# HANS_BASE_SLOT_REENTRANT_V1 (8.9.) — slot MUSÍ poznat vlastní vlákno.
+# Odhaleno regresním testem: kdyby base-model dávka zavolala uvnitř sebe
+# druhou (dnes se to v kódu nestává, ale nic tomu nebrání), čekala by na
+# vlastní slot celých `wait_s` a noční rutina by na 5 minut ztuhla. Zámek,
+# který nepozná svého držitele, je past — proto reentrance podle `ident`.
+_base_slot_thread = None
+_base_slot_depth = 0
+
+def acquire_base_slot(label: str, hold_s: float,
+                      wait_s: float = 900.0) -> Optional[int]:
+    """Zaber slot pro base-model dávku. Vrátí token (pro `release_base_slot`)
+    nebo None, když se ho nedočkal — volající pak běží dál bez výlučnosti.
+    Reentrantní: totéž vlákno slot dostane hned a drží ho do posledního
+    `release_base_slot`."""
+    global _base_slot_until, _base_slot_label, _base_slot_token
+    global _base_slot_seq, _base_slot_thread, _base_slot_depth
+    _me = threading.get_ident()
+    _dead = time.time() + float(wait_s)
+    _cekal = False
+    while True:
+        with _warmup_state_lock:
+            _ted = time.time()
+            _volny = _ted >= _base_slot_until
+            if _base_slot_thread == _me and not _volny:
+                # vnořené volání z téhož vlákna — neblokuj se o sebe sama
+                _base_slot_depth += 1
+                _base_slot_until = max(_base_slot_until, _ted + float(hold_s))
+                return _base_slot_token
+            if _volny:
+                _base_slot_seq += 1
+                _base_slot_token = _base_slot_seq
+                _base_slot_until = _ted + float(hold_s)
+                _base_slot_label = str(label)
+                _base_slot_thread = _me
+                _base_slot_depth = 1
+                if _cekal:
+                    _log.info("VRAM slot: %s zabral po čekání", label)
+                return _base_slot_token
+            _drzi, _zbyva = _base_slot_label, _base_slot_until - _ted
+        if time.time() >= _dead:
+            _log.warning("VRAM slot: %s se nedočkal (drží '%s' ještě %.0f s) "
+                         "— běžím bez výlučnosti", label, _drzi, _zbyva)
+            return None
+        if not _cekal:
+            _log.info("VRAM slot: %s čeká, běží '%s' (zbývá %.0f s)",
+                      label, _drzi, _zbyva)
+            _cekal = True
+        time.sleep(2.0)
+
+def release_base_slot(token: Optional[int]) -> None:
+    """Uvolni slot. Pustí ho JEN vlastník — dávka, které mezitím vypršel
+    hold, tím nesmí sebrat slot tomu, kdo ho po ní legitimně zabral.
+    Vnořené držení se odpočítává (HANS_BASE_SLOT_REENTRANT_V1)."""
+    global _base_slot_until, _base_slot_label, _base_slot_thread
+    global _base_slot_depth
+    if not token:
+        return
+    with _warmup_state_lock:
+        if _base_slot_token != token:
+            return
+        if _base_slot_depth > 0:
+            _base_slot_depth -= 1
+        if _base_slot_depth <= 0:
+            _base_slot_depth = 0
+            _base_slot_until = 0.0
+            _base_slot_label = ""
+            _base_slot_thread = None
 
 
 import contextlib as _contextlib
 
 
 @_contextlib.contextmanager
-def base_model_batch(config: Optional[dict] = None, pause_s: float = 1800):
+def base_model_batch(config: Optional[dict] = None, pause_s: float = 1800,
+                     label: str = ""):
     """HANS_BASE_MODEL_BATCH_V1 — VRAM handoff pro dávku běžící na BASE modelu
     (8GB) vedle rezidentního hans-czech (8GB > 16GB VRAM). Na vstupu:
       1) pause_warmup — oba keepalive (ping_model + ollama_warmup) přestanou
@@ -254,7 +375,18 @@ def base_model_batch(config: Optional[dict] = None, pause_s: float = 1800):
     hans-czech se dotáhne on-demand při reálném chatu. Sjednocuje handoff, který
     dřív měly jen study/maker inline (immune/evening_reflection měly jen pause →
     thrashing)."""
+    _tok = None
     try:
+        # HANS_BASE_SLOT_V1 — nejdřív výlučnost, teprve pak unload: dvě dávky
+        # by si jinak navzájem vyhazovaly model z VRAM (thrashing).
+        try:
+            # wait_s ZÁMĚRNĚ nižší než hold: čekání nesmí držet noční tick
+            # déle, než trvá typická dávka. Po vypršení se běží bez slotu
+            # (fail-open) — horší než stav před HANS_BASE_SLOT_V1 to není.
+            _tok = acquire_base_slot(label or "base dávka", pause_s,
+                                     wait_s=300.0)
+        except Exception as _se:
+            _log.debug("base_model_batch slot: %s", _se)
         pause_warmup(pause_s)
         try:
             ollama_unload_all(config=config)
@@ -264,6 +396,10 @@ def base_model_batch(config: Optional[dict] = None, pause_s: float = 1800):
     finally:
         try:
             resume_warmup()
+        except Exception:
+            pass
+        try:
+            release_base_slot(_tok)
         except Exception:
             pass
 

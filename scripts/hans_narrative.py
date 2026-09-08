@@ -149,7 +149,8 @@ def consolidate(config: dict, db_path: str, model: str = None,
         # jinak thrashing → prázdné/uříznuté odpovědi → „prázdná kapitola" loop
         # (doloženo 3.8.: 149× za noc + 300s timeouty).
         from scripts.ollama_client import ollama_generate, base_model_batch
-        with base_model_batch(config, pause_s=max(timeout + 120, 600)):
+        with base_model_batch(config, pause_s=max(timeout + 120, 600),
+                              label="narrative"):  # HANS_BASE_SLOT_V1
             text = ollama_generate(
                 model=model, prompt=_build_prompt(m, name), system=system,
                 config=config, timeout=timeout, keep_alive=0,

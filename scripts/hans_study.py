@@ -2457,26 +2457,24 @@ def run_study_session(config: dict, diary_db_path: str, knowledge=None,
     #     „projde" jen náhodou (hans-czech vyprší při klidu), ve dne/ránu ne.
     # Po session resume_warmup re-povolí keepalive → hans-czech se dotáhne.
     # Auto-expiry pauzy 20 min = cap, kdyby impl spadl bez resume.
+    # HANS_BASE_SLOT_V1 (8.9.) — inline pause+unload nahrazen SDÍLENÝM
+    # `base_model_batch`, protože samotný handoff nestačil: studium a další
+    # base-model dávky se navzájem nevidí. Doloženo 8.9. — studium jelo cestou
+    # „brain_up catchup", immune cestou `_night_tick`; `_creative_busy` je
+    # lokální proměnná jednoho ticku, takže mezi těmito dvěma cestami
+    # NEEXISTOVALO vzájemné vyloučení. Context manager dělá totéž co dosavadní
+    # inline kód (pause_warmup + aktivní unload, resume ve finally) a navíc
+    # zabere slot, takže druhá dávka počká místo souběhu.
     try:
-        from scripts.ollama_client import (pause_warmup as _pw,
-                                           ollama_unload_all as _ua)
-        _pw(1200)
-        _ua(config=config)
+        from scripts.ollama_client import base_model_batch as _bmb
     except Exception:
-        pass
-    try:
-        from scripts.ollama_client import resume_warmup as _rw
-    except Exception:
-        _rw = None
-    try:
+        _bmb = None
+    if _bmb is None:
         return _run_study_session_impl(config, diary_db_path, knowledge,
                                        diary_writer)
-    finally:
-        if _rw is not None:
-            try:
-                _rw()
-            except Exception:
-                pass
+    with _bmb(config, pause_s=1200, label="studium"):
+        return _run_study_session_impl(config, diary_db_path, knowledge,
+                                       diary_writer)
 
 
 def _run_study_session_impl(config: dict, diary_db_path: str, knowledge=None,

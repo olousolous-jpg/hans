@@ -783,9 +783,16 @@ def make_from_study(config: dict, db_path: str, topic: str,
     # modelu (8GB); hans-czech (8GB) je rezidentní, 8+8 > 16GB VRAM. Uvolni ho
     # AKTIVNĚ (pause_warmup samo nestačí — keep_alive=-1 nevyprší), jinak coder
     # call ve dne 300s timeoutuje (v noci projde jen náhodou). Resume+warm finally.
+    # HANS_BASE_SLOT_V1 (8.9.) — slot se bere PŘED unloadem: dvě base-model
+    # dávky by si jinak navzájem vyhazovaly model z VRAM. Struktura funkce
+    # (return uprostřed + finally s _warm_chat) zůstává, přibylo jen zabrání
+    # a uvolnění slotu.
+    _slot_tok = None
     try:
         from scripts.ollama_client import (pause_warmup as _pw,
-                                           ollama_unload_all as _ua)
+                                           ollama_unload_all as _ua,
+                                           acquire_base_slot as _abs)
+        _slot_tok = _abs("maker", 1800)
         _pw(1800)
         _ua(config=config)
     except Exception:
@@ -837,6 +844,11 @@ def make_from_study(config: dict, db_path: str, topic: str,
         try:
             from scripts.ollama_client import resume_warmup as _rw
             _rw()
+        except Exception:
+            pass
+        try:   # HANS_BASE_SLOT_V1 — pustit slot i když dílo selhalo
+            from scripts.ollama_client import release_base_slot as _rbs
+            _rbs(_slot_tok)
         except Exception:
             pass
         try:

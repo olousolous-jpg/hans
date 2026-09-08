@@ -240,9 +240,18 @@ class HansEveningReflection:
         # unload hans-czech. Samotná pauza nestačí — keep_alive=-1 nevyprší a
         # Ollama ho neevictuje ani pro nový request → 8+8 > 16GB → 300s timeout.
         # Auto-expiry pauzy 30 min; resume v finally níž.
+        # HANS_BASE_SLOT_V1 (8.9.) — i večerní reflexe je base-model dávka,
+        # takže patří do sdíleného slotu. ⚠️ `resume` níž NENÍ ve `finally`
+        # (mezi ním a tímhle místem je `return text`), takže při výjimce se
+        # pauza ani slot nepustí — obojí drží auto-expiry 30 min. To je
+        # dosavadní chování, jen se teď týká i slotu; proto má slot vlastní
+        # expiraci a čekající dávka fail-open, ne zaseknutí.
+        self._slot_tok = None
         try:
             from scripts.ollama_client import (pause_warmup as _pause_warmup,
-                                               ollama_unload_all as _unload_all)
+                                               ollama_unload_all as _unload_all,
+                                               acquire_base_slot as _abs)
+            self._slot_tok = _abs("večerní reflexe", 1800)
             _pause_warmup(1800)
             _unload_all(config=self._config)
         except Exception as _pwe:
@@ -397,8 +406,10 @@ class HansEveningReflection:
 
         # HANS_WARMUP_PAUSE_V1 — base-dávka hotová, vrať keepalive warmup.
         try:
-            from scripts.ollama_client import resume_warmup as _resume_warmup
+            from scripts.ollama_client import (resume_warmup as _resume_warmup,
+                                               release_base_slot as _rbs)
             _resume_warmup()
+            _rbs(getattr(self, "_slot_tok", None))   # HANS_BASE_SLOT_V1
         except Exception as _rwe:
             _log.debug("resume_warmup nedostupné: %s", _rwe)
 

@@ -2413,7 +2413,8 @@ class HansRoutine:
                     # ne jen pause: keep_alive=-1 hans-czech sám nevyprší → jinak
                     # 8+8 > 16GB → 300s timeout (doloženo v noci 2.8.).
                     from scripts.ollama_client import base_model_batch
-                    with base_model_batch(self.config, pause_s=600):
+                    with base_model_batch(self.config, pause_s=600,
+                                          label="immune"):  # HANS_BASE_SLOT_V1
                         from scripts.hans_immune import run_immune_check
                         _icode = run_immune_check(self.config, self._diary_path)
                     if _icode != "deferred":
