@@ -596,13 +596,13 @@
         "variety_s": 300,
         "_display_note": "display_enabled=true zapne tvar na obrazovce (levy horni roh) dle nalady. Vyzaduje restart Hanse + byt u obrazovky na overeni.",
         "seed": {
-            "role": "english butler",
-            "attire": "black tailcoat, white gloves, high collar",
-            "age_look": "late 50s",
+            "role": "historian and archivist",
+            "attire": "navy blue suit with silver pinstripe, silk pocket square",
+            "age_look": "late 50s to early 60s",
             "build": "tall, slim",
-            "demeanor": "formal and reserved",
-            "setting": "wood-panelled hall",
-            "palette": "black, white, dark wood",
+            "demeanor": "formal and reserved yet slightly more approachable",
+            "setting": "library filled with ancient books and modern digital screens",
+            "palette": "navy blue, silver, dark wood, light grey",
             "identity_anchor": "same man, consistent face, grey hair, kind eyes"
         },
         "overrides": {},
@@ -620,7 +620,8 @@
         "identity_ipadapter_file": "ip-adapter-plus-face_sdxl_vit-h.safetensors",
         "identity_clip_vision": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
         "render_retries": 3,
-        "_render_retries_note": "AVATAR_RENDER_RETRY_V1 (3.9.): kolikrat zopakovat JEDEN obrazek, kdyz ComfyUI spadne. Na ROCm pada na 'Memory access fault by GPU node-1' pri reloadu SDXL (3.9. 9x za den), systemd ho zvedne, ale rozpracovana uloha zmizi. Bez retry skoncila cela sada neuplna a rendered zustalo 0 -> priste se renderuje vsech 13 znovu vcetne hotovych. 1 = bez opakovani."
+        "_render_retries_note": "AVATAR_RENDER_RETRY_V1 (3.9.): kolikrat zopakovat JEDEN obrazek, kdyz ComfyUI spadne. Na ROCm pada na 'Memory access fault by GPU node-1' pri reloadu SDXL (3.9. 9x za den), systemd ho zvedne, ale rozpracovana uloha zmizi. Bez retry skoncila cela sada neuplna a rendered zustalo 0 -> priste se renderuje vsech 13 znovu vcetne hotovych. 1 = bez opakovani.",
+        "_seed_note": "VYCHOZI podoba pro CISTOU instalaci — ne zivy stav. Aktualni vzhled drzi tabulka `avatar_descriptors` v hans_diary.db (avatar se vyviji podle charakteru, AVATAR_DESCRIPTOR_V1) a config se tim NEPREPISUJE. Srovnano 8. 9. s verzi 3 — do te doby tu stal puvodni 'english butler', coz vypadalo jako vada, ackoli zivy avatar byl davno jinde."
     },
     "hans_art": {
         "enabled": true,
@@ -638,7 +639,7 @@
         "_flux_note": "HANS_ART_FLUX_V1: obecne malovani pres FLUX.1-dev fp8 all-in-one (cele postavy/zvirata/sceny — SDXL to nezvladal). use_flux=false vrati SDXL. paint_self (autoportret) FLUX NEpouziva, zustava SDXL+IP-Adapter (podobu drzi IP-Adapter, ten je SDXL-only; FLUX by chtel PuLID rework). FLUX render je studeny 17GB load ~250s; render_timeout 600 pokryva. VRAM: malovani odpoji hans-czech pred renderem, FLUX 12GB ma 16GB pro sebe.",
         "llm_timeout": 90,
         "render_timeout": 900,
-        "_render_timeout_note": "Strop jednoho renderu. Zvednuto 600->900 (4.8.): 600 s obcas nestacilo na REALNY cold-start - SDXL/FLUX se nahrava do plne VRAM po predchozim renderu (dolozeno 10:04 img2img Terence Hill: timeout, ruční zopakovani hned pote 65 s). Fallback po timeoutu funguje (text-grounded malba), ale da horsi obraz nez cekani.",
+        "_render_timeout_note": "Strop jednoho renderu. Zvednuto 600->900 (4.8.): 600 s obcas nestacilo na REALNY cold-start - SDXL/FLUX se nahrava do plne VRAM po predchozim renderu (dolozeno 10:04 img2img portretu zname osoby: timeout, ruční zopakovani hned pote 65 s). Fallback po timeoutu funguje (text-grounded malba), ale da horsi obraz nez cekani.",
         "vision_model": "llava:7b",
         "vision_timeout": 120,
         "verdict_model": "hans-czech:latest",
@@ -663,10 +664,10 @@
             "denoise": 0.7,
             "use_pulid": true,
             "pulid_weight": 0.9,
-            "_pulid_note": "HANS_ART_PULID_V1: znama osoba + scena/akce ('Radecky na motorce') -> FLUX+PuLID: podoba z ref fota + scena z promptu (cele telo). Vyzaduje use_flux=true + custom node ComfyUI_PuLID_Flux_ll + modely (pulid_flux/EVA-CLIP/antelopev2) na PC. use_pulid=false -> legacy img2img (jen portret, drzi kompozici). pulid_weight 0-1.5: vyssi=vernejsi podoba, nizsi=volnejsi scena. Render ~330s (cold FLUX+PuLID).",
-            "_denoise_note": "Ladeno nazivo 4.8. na Bud Spencerovi: 0.50 = premalovana fotka, 0.65 jeste popisne, 0.70 = drzi podobu a uz je to malba (zvoleno), 0.75 zacina posouvat rysy. Cte JEN img2img vetev - PuLID jede na pulid_weight.",
+            "_pulid_note": "HANS_ART_PULID_V1: znama osoba + scena/akce ('<jmeno osoby> na motorce') -> FLUX+PuLID: podoba z ref fota + scena z promptu (cele telo). Vyzaduje use_flux=true + custom node ComfyUI_PuLID_Flux_ll + modely (pulid_flux/EVA-CLIP/antelopev2) na PC. use_pulid=false -> legacy img2img (jen portret, drzi kompozici). pulid_weight 0-1.5: vyssi=vernejsi podoba, nizsi=volnejsi scena. Render ~330s (cold FLUX+PuLID).",
+            "_denoise_note": "Ladeno nazivo 4.8. na portretu zname osoby: 0.50 = premalovana fotka, 0.65 jeste popisne, 0.70 = drzi podobu a uz je to malba (zvoleno), 0.75 zacina posouvat rysy. Cte JEN img2img vetev - PuLID jede na pulid_weight.",
             "portrait_img2img": true,
-            "_portrait_img2img_note": "HANS_ART_PORTRAIT_IMG2IMG_V1 - hole jmeno (namaluj Bud Spencer) se prekresli z REALNE fotky (img2img, denoise) = drzi podobu; namet s akci/mistem (Radecky na motorce) jde na FLUX+PuLID, ktery slozi scenu. false = vse pres PuLID."
+            "_portrait_img2img_note": "HANS_ART_PORTRAIT_IMG2IMG_V1 - hole jmeno (namaluj <jmeno osoby>) se prekresli z REALNE fotky (img2img, denoise) = drzi podobu; namet s akci/mistem (<jmeno osoby> na motorce) jde na FLUX+PuLID, ktery slozi scenu. false = vse pres PuLID."
         },
         "self_portrait": {
             "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors",
