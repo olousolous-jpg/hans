@@ -1350,6 +1350,29 @@ def _cmd_namaluj(handler, name, args) -> str:
                    r"(o\s+|s\s+|se\s+|na\s+t[eé]ma\s+|ohledně\s+|podle\s+|"
                    r"toho\s+jak\s+)?", "", subj).strip(" ?.!,")
 
+    # HANS_ART_SUBJECT_MIDSENTENCE_V1 (8. 9.) — sloveso malování UPROSTŘED věty.
+    # Regex výše je ukotvený na `^`, takže odřízne jen „namaluj X". Když ale
+    # žádost začne jinak („Zmínil jste malování — dokázal byste NAMALOVAT
+    # obraz hradu Karlštejn"), zůstane jako námět CELÁ VĚTA. Doloženo 8. 9.
+    # a není to ojedinělé: **16 z 265 obrazů** má v názvu instrukční šum
+    # („a_ted_namaluj_jean_luc_picard", „supr_muzes_namalovat_obraz_…").
+    # ⚠️ Samotný render tím netrpěl — `hans_art` si námět vytáhne znovu
+    # („místo 'Karlštejn' nese scénu"). Špatně byl NÁZEV souboru a hláška,
+    # kterou vidí uživatel („maluji obraz na téma <celá věta>").
+    # Uplatní se JEN když kotva na začátku nesedla (subj se nezměnil), takže
+    # dnes fungující tvary („namaluj kočku") zůstávají nedotčené.
+    if subj == (args or "").strip().strip(" ?.!,"):
+        _mid = _re.sub(
+            r"(?i).*\b(?:namaluj\w*|namalovat|namaloval\w*|nakresl\w*|"
+            r"vytvoř\w*|přemaluj\w*|překresl\w*)(?:\s+bys?|\s+byste)?"
+            r"\s*(?:mi\s+)?(?:prosím\s+)?(?:obraz|obrázek)?\s*"
+            r"(?:o\s+|s\s+|se\s+|na\s+t[eé]ma\s+|ohledně\s+)?",
+            "", subj).strip(" ?.!,")
+        if _mid and _mid != subj:
+            _log.info("HANS_ART_SUBJECT_MIDSENTENCE_V1: námět %r → %r",
+                      subj[:60], _mid[:60])
+            subj = _mid
+
     # HANS_ART_STYLE_V4 — odděl STYL od námětu („X ve stylu Y" / „stylem Y")
     style = ""
     _sm = _re.search(

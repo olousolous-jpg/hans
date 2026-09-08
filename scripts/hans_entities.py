@@ -346,6 +346,15 @@ def _classify(gloss: str) -> str:
 
 
 
+# HANS_ENTITY_ADJ_MISMATCH_V1 (8. 9.) — české adjektivní koncovky.
+# ⚠️ BEZ DIAKRITIKY: `_tokens` ji odstraňuje, takže vzor s „ém" by nikdy
+# nesedl. (Do téhle pasti jsem při stavbě spadl — první verze pravidla
+# cílový případ vůbec nechytila.)
+# Táž třída jako `HANS_ANCHOR_ADJ_V1` v `hans_convindex` (30. 8.), jen
+# pro entity store; tam se řešila webová kotva, tady grounding.
+_ADJ_KONCOVKA_Q = re.compile(r"(em|ych|eho|emu|ou|ym|ymi)$")
+
+
 class EntityStore:
     def __init__(self, config: dict, db_path: Optional[str] = None):
         self.config = config or {}
@@ -554,6 +563,28 @@ class EntityStore:
                 # 'osoba' → v „osoba + objekt" najdi osobu, ne přebíjející objekt)
                 _ok_etype = (etype is None
                              or (self.get(_id) or {}).get("etype") == etype)
+                # HANS_ENTITY_ADJ_MISMATCH_V1 (8. 9.) — JEDNOSLOVNÁ entita,
+                # která sama NENÍ přídavné jméno, se nesmí trefit na
+                # PŘÍDAVNÉ JMÉNO v dotazu. Doloženo 8. 9. rozhovorem:
+                # „…hrad Gutštejn není v Českém ráji?" → token „ceskem"
+                # sedl prefixem na entitu „Česko" (ev=1) a její gloss
+                # („vnitrozemský stát ve střední Evropě") se stal OPOROU.
+                # Grounding se tím označil `grounded ← entita_c1`, takže
+                # se NESPUSTILA abstinence A1 (ta běží jen u
+                # `factual_nofacts`) a Hans si o Gutštejnu vymyslel zdroj
+                # i kraj. Přesně [[partial-grounding-disables-abstention]]:
+                # tenká opora je horší než žádná.
+                # Víceslovné entity se NEomezují („Norimberský proces" má
+                # adjektivum legitimně) a entita, která sama je adjektivum,
+                # taky ne — proto ta dvě `if` níž.
+                if (full or ends) and len(kt) == 1 \
+                        and not _ADJ_KONCOVKA_Q.search(kt[0]):
+                    _k = kt[0]
+                    if any(qt != _k and len(qt) >= 4
+                           and qt.startswith(_k[:4])
+                           and _ADJ_KONCOVKA_Q.search(qt)
+                           for qt in q_tokens):
+                        continue
                 if full or ends:
                     score = sum(len(t) for t in matched)
                     if score > best_score and _ok_etype:
