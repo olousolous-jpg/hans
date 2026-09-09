@@ -59,6 +59,23 @@ def _route_origin() -> Optional[str]:
     return getattr(_route_tls, "origin", None)
 
 
+# HANS_VIDEL_KOHO_V1 (9. 9.) — SUROVA VETA k prikazu. LLM router predava args
+# zamerne PRAZDNE (fail-closed proti mutujicim podprikazum), takze prikaz uz
+# nepozna, NA CO se clovek ptal. `/videl` to dosud resil tim, ze spadl na
+# tazatele — u otazky „KOHO jste videl" je to vzdy spatne, protoze ta zadny
+# podmet nema.
+# ⚠️ Zamerne na TEMZE `threading.local` jako `origin`, NE na instanci handleru
+# ani routeru: 4. 9. (HANS_WEATHER_RAW_MSG_FIX_V1) cetlo `_run_weather` surovou
+# vetu z HANDLERU, jenze ta zila na instanci ROUTERU — zaloha byla v produkci
+# MRTVA a nikdo si toho nevsiml, protoze staticky to vypadalo spravne.
+def _set_route_msg(msg: Optional[str]) -> None:
+    _route_tls.msg = msg
+
+
+def _route_msg() -> str:
+    return getattr(_route_tls, "msg", "") or ""
+
+
 # ── Registr commands ───────────────────────────────────────────────────
 
 _COMMANDS: dict[str, dict] = {}
@@ -101,6 +118,7 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
     Slash má prioritu. NL detekce běží jen pokud message nezačíná /."""
     msg = message.strip()
     _set_route_origin(None)  # HANS_CAP_SUMMARY_V1 — nezdědit původ z minula
+    _set_route_msg(msg)      # HANS_VIDEL_KOHO_V1 — a ani větu z minula
     if not msg:
         return None
 
@@ -3174,6 +3192,100 @@ register(
 )
 
 
+def _ukazka_casu(fakta: list) -> str:
+    """HANS_EXACT_SAMPLE_FROM_DATA_V1 — ukázka formátu času VZATÁ Z FAKT.
+    Prázdný řetězec, když ve faktech žádný čas není (pak není co ukazovat
+    ani co opsat)."""
+    try:
+        m = re.search(r"\d{1,2}:\d{2}(?:\s*[–-]\s*\d{1,2}:\d{2})?",
+                      " ".join(str(x) for x in (fakta or [])))
+        if m:
+            return ("\nČASY opiš ZNAK PO ZNAKU přesně tak, jak jsou ve "
+                    "faktech (tedy „%s\", ne slovy). " % m.group(0))
+    except Exception:
+        pass
+    return "\n"
+
+
+def _hlas_nad_fakty(cfg, fakta: list, pokyn: str, uvod: str,
+                    min_len: int = 60, timeout: int = 90) -> str:
+    """HANS_HLAS_NAD_FAKTY_V1 (9. 9.) — pust HOTOVÁ fakta Hansovým hlasem.
+
+    Vzniklo z `/dnes`, kde tenhle krok žil natvrdo. Nález uživatele 9. 9.:
+    `/videl` vracel SYROVÝ faktový řádek („V domě jsem dnes viděl: paní
+    <Jméno> (09:29–10:52).") — čísla i špatný pád, ne Hansova řeč.
+    Sdílené, aby se obě cesty nerozešly.
+
+    Vrací '' když mozek není nebo výstup nestojí za to — volající pak vrátí
+    svůj deterministický text (deferral-safe, vzor `_night_reflection`).
+    ⚠️ `min_len` je parametr schválně: `/dnes` píše odstavec, `/videl` větu.
+    """
+    if not fakta:
+        return ""
+    try:
+        from scripts.ollama_client import brain_available
+        if not brain_available(cfg):
+            return ""
+    except Exception:
+        pass
+    try:
+        from scripts.ollama_client import ollama_generate
+        from scripts.hans_persona import persona_core
+        try:
+            core = persona_core(cfg, with_address=False)
+        except Exception:
+            core = ""
+        model = (cfg.get("models", {}) or {}).get("dialog", "hans-czech:latest")
+        system = (core + "\n\n" if core else "") + pokyn + (
+            # HANS_DAY_AT_HOME_EXACT_V1 (7.8.) — hlasový krok komolil PŘESNÁ
+            # data: „10:03–10:15" přepsal na „mezi desátou minutou třetí
+            # a čtvrtou minutou" a počet 23 na „dvacet čtyři krát". Persona
+            # smí formulovat, ale ne přepočítávat.
+            # HANS_DAY_AT_HOME_EXACT_V1 (7. 8.) — hlasovy krok komolil PRESNA
+            # data: „10:03\u201310:15" prepsal na „mezi desatou minutou treti
+            # a ctvrtou minutou" a pocet 23 na „dvacet ctyri krat". Persona
+            # smi formulovat, ale ne prepocitavat.
+            # ⚠️ ZNENI JE ZAMERNE DOSLOVNE TAKOVE, JAKE BYLO ZMERENE.
+            # 9. 9. jsem ho pri vytahovani do sdilene funkce prepsal „lip"
+            # a rozbil: bez teto ukazky psal model casy SLOVY (0/3 bezu),
+            # a nepomohl ani tvar „HH:MM" ani ukazka vzata z fakt.
+            # ⛔ NEPREFORMULOVAT. Kdyby ukazka zase zacala unikat do odpovedi
+            # jako vymysleny udaj, resi to `_ma_osoby` (rubrika o lidech se
+            # neda, kdyz o nich fakta nic nemaji) a `HANS_HLAS_CAS_GUARD_V1`,
+            # ne dalsi prepis teto vety.
+            "\nČASY A ČÍSLA opiš PŘESNĚ tak, jak jsou ve faktech (např. "
+            "„10:03\u201310:15\", „23\") — nepřepisuj je slovy ani "
+            "nezaokrouhluj. Oslovení „pan/paní\" u jmen zachovej, jak je "
+            "uvedeno. Vyjdi POUZE z faktů níže; co v nich není, se nestalo "
+            "— nic si nepřimýšlej. Žádný nadpis, žádné uvozovky, "
+            "žádné odrážky.")
+        out = ollama_generate(
+            model, uvod + NL_RUNTIME.join(fakta) + "\n\nShrň to pánovi.",
+            system=system, config=cfg, timeout=timeout)
+        txt = (out or "").strip().strip('"')
+        # HANS_HLAS_CAS_GUARD_V1 (9. 9.) — POKYNEM TO NEJDE. Model časy
+        # přepisuje slovy („od devíti hodin dvaceti devíti minut") a změřeno
+        # je, že nepomůže ani ukázka formátu („HH:MM", 3/3 slovy), ani ukázka
+        # vzatá z fakt (0/3 číselně). `HANS_DAY_AT_HOME_EXACT_V1` (7. 8.) to
+        # řešil ukázkou v promptu, jenže ta se 9. 9. propsala do odpovědi jako
+        # VYMYŠLENÝ ÚDAJ. Prompt je tedy na obě strany slepá ulička.
+        # Řešení je OVĚŘENÍ, ne pokyn: když fakta čas obsahovala a hlasový
+        # výstup ani jeden nemá, výstup se ZAHODÍ a volající vrátí svou
+        # deterministickou větu. Horší formulace je lepší než zkomolený údaj
+        # — a tahle pojistka by chytila i původní vadu ze 7. 8.
+        if txt and len(txt) >= min_len:
+            _fakta_txt = " ".join(str(x) for x in fakta)
+            if re.search(r"\d{1,2}:\d{2}", _fakta_txt) and \
+                    not re.search(r"\d{1,2}:\d{2}", txt):
+                _log.info("hlas: výstup ZAHOZEN — fakta měla čas HH:MM, "
+                          "odpověď žádný (model ho přepsal slovy)")
+                return ""
+            return txt[:1200]
+    except Exception as e:
+        _log.warning("hlasový krok selhal (%s) — vracím fakta", e)
+    return ""
+
+
 def _cmd_videl(handler, name, args) -> str:
     cfg = getattr(handler, "config", {}) or {}
     from scripts.hans_recall import last_seen_answer
@@ -3190,6 +3302,56 @@ def _cmd_videl(handler, name, args) -> str:
     # protažen. Příkaz je čistě ČTECÍ, takže vzít původní větu je bezpečné.
     # ⚠️ NEDĚLAT plošně: `smer`, `studium`, `seznam`, `zdravi`, `nitky`
     # a `kalendar` mají mutující podpříkazy a prázdné args je před nimi chrání.
+    # HANS_VIDEL_KOHO_V1 (9. 9.) — „KOHO jste dnes videl?" NEMA PODMET, takze
+    # pad na tazatele je u ni vzdy spatne: doloženo naživo „V deníku nemám
+    # žádný záznam, že bych VÁS viděl" na otázku mířenou na kohokoli.
+    # Je to jina otazka nez „kdy jsi videl X" — odpovida se seznamem lidi,
+    # ktere Hans dnes videl, PRES TYZ privacy gate jako `/dnes`.
+    # ⚠️ MUSI byt PRED padem na `_thread_ctx` nize: ten do `q` vlozi CELOU
+    # VETU (ne jmeno), takze pozdeji uz `not q` nikdy neplati a vetev by byla
+    # mrtva. Doloženo 9. 9. — prvni pokus presne takhle nesepnul.
+    _syrova = _route_msg() or (args or "")
+    if not (args or "").strip() and re.search(r"\bkoho\b", _syrova, re.IGNORECASE):
+        from scripts.hans_recall import day_facts, day_fact_lines
+        _f = day_facts(_recall_db(handler))
+        _l = day_fact_lines(_f, cfg, asker=name)
+        # ⚠️ Odmítnutí se hlasovým krokem NEPOUŠTÍ — je to závazná věta
+        # o soukromí, ne fakt k převyprávění; model by ji odvedl jinam.
+        for _r in _l:
+            if _r == _PRIVACY_REFUSAL_TXT():
+                return _r
+        _lide = _f.get("people") or []
+        if not _lide:
+            return "Dnes jsem v domě nikoho neviděl, pane."
+        # HANS_HLAS_NAD_FAKTY_V1 — deterministická věta se SPRÁVNÝM PÁDEM
+        # (nález uživatele 9. 9.: „viděl jsem: paní <Jméno>" — 1. pád po
+        # slovese, které žádá 4.). `cz_names.acc` už tvary má z configu,
+        # nic se tu nevymýšlí — týž zdroj jako `last_seen_answer`.
+        import time as _t
+        from scripts.cz_names import acc as _acc, person_gender as _rod
+        _c = []
+        for _n, _t0, _t1 in _lide:
+            try:
+                _osl = {"žena": "paní ", "muž": "pana "}.get(_rod(_n, cfg), "")
+                _jm = _osl + _acc(_n, cfg)
+            except Exception:
+                _jm = _n
+            _od, _do = (_t.strftime("%H:%M", _t.localtime(_t0)),
+                        _t.strftime("%H:%M", _t.localtime(_t1)))
+            _c.append("%s (%s–%s)" % (_jm, _od, _do) if _t1 - _t0 > 300
+                      else "%s (%s)" % (_jm, _od))
+        _veta = "Dnes jsem v domě viděl " + ", ".join(_c) + "."
+        _hlas = _hlas_nad_fakty(
+            cfg, [_veta],
+            "Pán domu se ptá, koho jsi dnes v domě viděl. Odpověz JEDINOU "
+            "větou v první osobě, svým hlasem. Jména i časy zachovej "
+            "přesně, nikoho nepřidávej a nic dalšího nekomentuj.",
+            "FAKTA — koho jsem dnes viděl:" + NL_RUNTIME,
+            min_len=25, timeout=45)
+        return _hlas or _veta
+    # HANS_LLM_ROUTE_SUBJECT_V1 (7. 8.) — pád na větu z vlákna, aby se
+    # nezratila OSOBA, na kterou se člověk ptá. Běží AŽ ZA koho-větví:
+    # `_thread_ctx[0]` je celá věta, takže by ji jinak zneviditelnil.
     if not q:
         try:
             _tc = getattr(handler, "_thread_ctx", None)
@@ -3199,6 +3361,15 @@ def _cmd_videl(handler, name, args) -> str:
             pass
     out = last_seen_answer(_recall_db(handler), cfg, q, name)
     return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+
+
+def _PRIVACY_REFUSAL_TXT() -> str:
+    """Sdilene odmitnuti z `hans_recall` — nekopirovat text, at se nerozejde."""
+    try:
+        from scripts.hans_recall import _PRIVACY_REFUSAL
+        return _PRIVACY_REFUSAL
+    except Exception:
+        return ""
 
 
 register(
@@ -3223,50 +3394,42 @@ def _cmd_dnes(handler, name, args) -> str:
     cfg = getattr(handler, "config", {}) or {}
     from scripts.hans_recall import day_facts, day_fact_lines
     f = day_facts(_recall_db(handler))
-    lines = day_fact_lines(f, cfg)
+    # HANS_DAY_FACTS_PRIVACY_V1 (9. 9.) — tazatel MUSI dovnitr. Bez nej vypsal
+    # `/dnes` cizimu clovekovi jmeno i casy pritomnosti clena domacnosti
+    # (ctvrty zdroj tehoz uniku, ktery se 8. 9. zaviral na trech mistech).
+    lines = day_fact_lines(f, cfg, asker=name)
     if not f.get("n_events"):
         return "K dnešku nemám v deníku zatím žádný záznam, pane."
     plain = NL_RUNTIME.join("• " + l for l in lines)
 
-    # Bez mozku (herní mód / PC dole) NEČEKEJ a vrať fakta holá —
-    # deferral-safe, vzor `_night_reflection` → statistika.
-    try:
-        from scripts.ollama_client import brain_available
-        if not brain_available(cfg):
-            return "Dnešek podle mého deníku, pane:" + NL_RUNTIME + plain
-    except Exception:
-        pass
-    try:
-        from scripts.ollama_client import ollama_generate
-        from scripts.hans_persona import persona_core
-        try:
-            core = persona_core(cfg, with_address=False)
-        except Exception:
-            core = ""
-        model = (cfg.get("models", {}) or {}).get("dialog", "hans-czech:latest")
-        system = (core + "\n\n" if core else "") + (
-            "Pán domu se ptá, co se dnes v domě dělo. Odpověz souvisle "
-            "(3-5 vět, první osoba, tvým hlasem) — kdo tu byl a kdy, co "
-            "běželo na televizi, co stálo za zmínku. Vyjdi POUZE z faktů "
-            "níže; co v nich není, se nestalo — nic si nepřimýšlej a nic "
-            "nedomýšlej o důvodech. Žádný nadpis, žádné uvozovky, žádný "
-            "výčet s odrážkami.\n"
-            # HANS_DAY_AT_HOME_EXACT_V1 (7.8.) — hlasový krok komolil PŘESNÁ
-            # data: „10:03–10:15" přepsal na „mezi desátou minutou třetí
-            # a čtvrtou minutou" a počet 23 na „dvacet čtyři krát". Persona
-            # smí formulovat, ale ne přepočítávat.
-            "ČASY A ČÍSLA opiš PŘESNĚ tak, jak jsou ve faktech (např. "
-            "„10:03–10:15\", „23\") — nepřepisuj je slovy ani nezaokrouhluj. "
-            "Oslovení „pan/paní\" u jmen zachovej, jak je uvedeno.")
-        out = ollama_generate(
-            model, "FAKTA DNEŠNÍHO DNE:\n" + NL_RUNTIME.join(lines)
-            + "\n\nShrň to pánovi.",
-            system=system, config=cfg, timeout=90)
-        txt = (out or "").strip().strip('"')
-        if len(txt) >= 60:
-            return txt[:1200]
-    except Exception as e:
-        _log.warning("/dnes: hlasový krok selhal (%s) — vracím fakta", e)
+    # Bez mozku (herní mód / PC dole) se fakta vrátí HOLÁ — deferral-safe,
+    # vzor `_night_reflection` → statistika. Kontrolu `brain_available` dělá
+    # `_hlas_nad_fakty` (vrátí '' a spadne se na `plain` níž).
+    # HANS_DNES_NO_PERSON_VACUUM_V1 (9. 9.) — pokyn „kdo tu byl a kdy" žádal
+    # OSOBU i tehdy, když ji fakta neobsahují (cizí tazatel ji nedostane, viz
+    # HANS_DAY_FACTS_PRIVACY_V1) — a model ji poslušně VYMYSLEL:
+    # „Pan Nes se zdržoval zde od 10:03 do 10:15."
+    # 🔴 A ten čas byl DOSLOVA PŘÍKLAD Z TÉHOŽ PROMPTU („10:03–10:15"
+    # u HANS_DAY_AT_HOME_EXACT_V1) — ilustrace se propsala do odpovědi jako
+    # obsah. Když jsou fakta úplná, model příklad neopíše; kopíruje ho až
+    # do PRÁZDNA. Rubrika o lidech se proto zadá jen tehdy, když o lidech
+    # nějaký fakt opravdu je. [[prompt-category-invites-confabulation]]
+    # ⚠️ Příklad časů z pokynu ZMIZEL — je v `_hlas_nad_fakty` bez konkrétního
+    # údaje, právě aby nebylo co opsat.
+    _ma_osoby = any(l.startswith("V domě jsem dnes viděl") for l in lines)
+    _pokyn = ("Pán domu se ptá, co se dnes v domě dělo. Odpověz souvisle "
+              "(3-5 vět, první osoba, tvým hlasem) — "
+              + ("kdo tu byl a kdy, " if _ma_osoby else "")
+              + "co běželo na televizi, co stálo za zmínku. "
+              + ("" if _ma_osoby else
+                 "O LIDECH v domě nepiš vůbec nic — žádná jména, žádné časy "
+                 "příchodu; ve faktech o nich nic není a nesmíš si je "
+                 "domýšlet. ")
+              + "Nic nedomýšlej o důvodech.")
+    _hlas = _hlas_nad_fakty(cfg, lines, _pokyn,
+                            "FAKTA DNEŠNÍHO DNE:" + NL_RUNTIME)
+    if _hlas:
+        return _hlas
     return "Dnešek podle mého deníku, pane:" + NL_RUNTIME + plain
 
 
@@ -4815,6 +4978,10 @@ def resolve_command_llm(message: str, config: dict, turns=None):
         cid = _thread_guard(_llm_route_cache[_ckey], msg, config, turns)
         if cid:
             _set_route_origin("llm")  # HANS_CAP_SUMMARY_V1
+            # HANS_VIDEL_KOHO_V1 — DRUHA navratova cesta routeru (z cache).
+            # Prvni patch ji minul; presne ten vzorec, na ktery CLAUDE.md
+            # upozornuje: „spocitej, kolik cest je pred tvym hrdlem".
+            _set_route_msg(msg)
             return (cid, "")
         return None
     try:
@@ -4922,6 +5089,7 @@ def resolve_command_llm(message: str, config: dict, turns=None):
         return None
     if cid:
         _set_route_origin("llm")  # HANS_CAP_SUMMARY_V1
+        _set_route_msg(msg)       # HANS_VIDEL_KOHO_V1 — args jsou prázdné
         _log.info("HANS_CMD_LLM_ROUTE_V1: '%.40s' → /%s", msg, cid)
         return (cid, "")
     return None

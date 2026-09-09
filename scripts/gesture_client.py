@@ -104,6 +104,13 @@ class GestureClient:
         self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", 0.0))
         self._sirka_tvare        = 0.0
         self._stred_tvare        = None
+        # HANS_GESTURE_FACE_STALE_V1 (9. 9.) — KDY byl udaj o tvari poslednI
+        # platny. Bez razitka drzel `_stred_tvare` posledni znamou tvar
+        # donekonecna a 7. signal ("dlan daleko od tvare") merIl vzdalenost
+        # od hlavy, ktera v zaberu uz nebyla.
+        self._tvar_ts            = 0.0
+        self._wave_max_tvar_age  = float(cfg.get("wave_max_face_age_s", 1.0))
+        self._stale_hlaseno      = 0.0
         self._wave_track    = deque(maxlen=60)   # (t, cx) normalizovane
         self._wave_last_fired = 0.0
         # HANS_GESTURE_DEBUG_V1 — `gesture.debug` zvedne diagnostiku na INFO.
@@ -146,6 +153,7 @@ class GestureClient:
                 self._sirka_tvare = max(float(oblast[2]) - float(oblast[0]), 1e-6)
                 self._stred_tvare = ((float(oblast[0]) + float(oblast[2])) / 2.0,
                                      (float(oblast[1]) + float(oblast[3])) / 2.0)
+                self._tvar_ts = time.time()   # HANS_GESTURE_FACE_STALE_V1
             except Exception:
                 pass
         if oblast is not None and self._roi_on:
@@ -224,6 +232,8 @@ class GestureClient:
         self._wave_min_doba      = float(cfg.get("wave_min_duration_s", self._wave_min_doba))
         self._wave_max_od_tvare  = float(cfg.get("wave_max_face_widths", self._wave_max_od_tvare))
         self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", self._wave_min_palm_w))
+        self._wave_max_tvar_age  = float(cfg.get("wave_max_face_age_s",     # HANS_GESTURE_FACE_STALE_V1
+                                                 self._wave_max_tvar_age))
 
     def _recv_exact(self, sock, n):
         buf = b""
@@ -410,6 +420,28 @@ class GestureClient:
                           "textilii, nebo je clovek moc daleko)"
                           % (_dlan, self._wave_min_palm_w))
             return False
+        # ── HANS_GESTURE_FACE_STALE_V1 (9. 9.) ──────────────────────────────
+        # TRI kriteria nize stoji na tvari (`wave_min/max_palm_vs_face`
+        # a `wave_max_face_widths`), jenze `_stred_tvare` se prepisuje POUZE
+        # kdyz se tvar najde — jinak drzi posledni znamou. Doloženo snimkem
+        # 8. 9. 22:37:42: v zaberu NENI ZADNY CLOVEK, ramecek lezi na dece,
+        # a gate presto vydal "1.2 tvare od hlavy" a mavnuti pustil. Stejne
+        # tak 20:28 (clovek odchazi zady, ruce dole) a 22:04 (clovek zady).
+        # Bez razitka je 7. signal neplatny prave v tech pripadech, kvuli
+        # kterym vznikl. Vzor: pojistka, ktera pri SELHANI DETEKCE mlcky
+        # propousti misto aby odmitla.
+        # ⚠️ Hlasi se na INFO, ne pres `_proc_ne` — ten mlci, dokud neni
+        # zapnute `gesture.debug`, takze ucinek gate by nebylo z ceho zmerit.
+        if self._wave_max_tvar_age > 0:
+            _stari = time.time() - getattr(self, "_tvar_ts", 0.0)
+            if not getattr(self, "_tvar_ts", 0.0) or _stari > self._wave_max_tvar_age:
+                _ted = time.time()
+                if _ted - getattr(self, "_stale_hlaseno", 0.0) > 2.0:
+                    self._stale_hlaseno = _ted
+                    _log.info("gesto: mavnuti ZAMITNUTO — tvar je stara %.1f s "
+                              "(> %.1f), nemam od ceho merit vzdalenost od hlavy",
+                              _stari, self._wave_max_tvar_age)
+                return False
         _tvar = getattr(self, "_sirka_tvare", 0.0)
         _pomer_tvar = (_dlan / _tvar) if _tvar > 1e-6 else -1.0
         _doba = max(okno[-1][0] - okno[0][0], 1e-6)

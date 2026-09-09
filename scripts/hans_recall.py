@@ -2517,11 +2517,17 @@ def day_facts(db_path: str, date_str: Optional[str] = None) -> dict:
     return out
 
 
-def day_fact_lines(f: dict, config: dict = None) -> list:
+def day_fact_lines(f: dict, config: dict = None,
+                   asker: str = None) -> list:
     """`day_facts` → české věty pro LLM grounding i pro deterministický výpis.
 
     Jména se zobrazují přes `cz_names.display_name` — jinak by v textu byla
     tak, jak jsou klíče v konfiguraci (malá písmena, bez diakritiky).
+
+    HANS_DAY_FACTS_PRIVACY_V1 (9. 9.) — `asker` je NEPOVINNÝ a bez něj se
+    chování NEMĚNÍ. Je to schválně: druhý volající je noční souhrn
+    (`hans_routine._write_night_summary`), který jména dostávat MUSÍ.
+    Gate se tedy zapíná jen tam, kde odpověď čte člověk — dnes `/dnes`.
     """
     import time as _t
 
@@ -2545,7 +2551,29 @@ def day_fact_lines(f: dict, config: dict = None) -> list:
         return _t.strftime("%H:%M", _t.localtime(ts))
 
     lines = []
-    if f.get("people"):
+    # ── HANS_DAY_FACTS_PRIVACY_V1 (9. 9.) — ČTVRTÝ zdroj úniku domácnosti ──
+    # 8. 9. se únik zavíral na TŘECH místech (prompt, surroundings, who_home)
+    # a tohle čtvrté se minulo, protože `day_facts`/`day_fact_lines` tazatele
+    # VŮBEC NEDOSTALY — `_cmd_dnes(handler, name, args)` ho přitom v parametru
+    # má. Doloženo naživo 9. 9.: cizí „co se dnes delo doma?" →
+    # „Dnes ráno, od 09:29 do 10:31, navštívila nás paní <jméno>." (i s časy).
+    # Predikát je SDÍLENÝ (`cz_names.is_known_person`), ne nový.
+    _cizi = False
+    if asker:
+        try:
+            from scripts import cz_names as _czn
+            _cizi = not _czn.is_known_person(asker, config)
+        except Exception:
+            _cizi = False          # fail-open: chyba predikátu nesmí umlčet dům
+    if _cizi:
+        # ⚠️ Odmítá se OBOJE — výčet i „nikoho jsem neviděl". Ta druhá věta
+        # totiž cizímu prozradí, že je dům PRÁZDNÝ, což je při use-case
+        # `/hlidej` (dovolená, prázdný dům) horší než jmenný výčet.
+        # A říká se to VÝSLOVNĚ, nemlčí se: HANS_VISION_NOT_DENIED_V1 doložil,
+        # že z vynechané věty si model domyslí popření vlastního zraku.
+        if f.get("people") or f.get("n_events"):
+            lines.append(_PRIVACY_REFUSAL)
+    elif f.get("people"):
         parts = []
         for name, t0, t1 in f["people"]:
             parts.append("%s (%s–%s)" % (_nm(name), _hm(t0), _hm(t1))
