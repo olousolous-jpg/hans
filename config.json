@@ -1496,5 +1496,22 @@
         "_note_base_slot_wait_s": "HANS_BASE_SLOT_WAIT_CFG_V1 — jak dlouho base dávka (studium, maker, reflexe, immune, narrative) čeká na VRAM slot, než se rozjede BEZ výlučnosti (fail-open). 300 s bylo málo: 9. 9. trvala studijní session 20,7 min a immune se nedočkal. Strop je pause_s té dávky. Nikdy nevypínat na 0 — dvě base dávky si pak vyhazují model z VRAM.",
         "trace_calls": true,
         "_note_trace_calls": "HANS_LLM_TRACE_V1 (9. 9.) — zapisuje KAŽDÉ volání LLM (model, volající, trvání) do data/mereni/llm_calls.log. Podklad pro #3 (noční souběh o VRAM): z system.logu se nedá zjistit, který krok vytáhl hans-czech doprostřed base-model dávky. Až se stampede vyřeší, dá se vypnout na false — soubor roste řádově stovky řádků za den."
+    },
+    "library": {
+        "zanr": {
+            "The Adventures of Sherlock Holmes": "beletrie",
+            "The Hound of the Baskervilles": "beletrie",
+            "Pride and Prejudice": "beletrie",
+            "Ivanhoe": "beletrie",
+            "The Importance of Being Earnest": "beletrie",
+            "Around the World in Eighty Days": "beletrie",
+            "The Picture of Dorian Gray": "beletrie",
+            "Já robot – Asimov Isaac": "beletrie",
+            "The Ghost Camp; or, the Avengers": "beletrie",
+            "Meditations": "fakta",
+            "The Haskalah Movement in Russia": "fakta",
+            "Motorcycle, Solo (Harley-Davidson Model WLA)": "fakta"
+        },
+        "_zanr_note": "HANS_RAG_ZANR_KNIHY_V1 (9. 9.) — zanr knihy pro hlavicku RAG chunku (beletrie | fakta). Kapitoly knih teci do TEZE kolekce hans_cetba jako Wikipedie a odborne prace (729 z 6047 dokumentu = 12 %), a chunk z romanu tam lezel pod obecnym '## Zaznam', tedy stejne jako vecny zdroj. ⚠️ Pausalni 'beletrie' NELZE: Meditations (Marcus Aurelius) ma 270 z 1258 kniznich zaznamu (21 %) a beletrie NENI. Kniha, ktera tu NENI, dostane neutralni '## Uryvek z knihy' — zanr se zamerne NEHADA. Novou knihu sem dopsat rucne (titul presne tak, jak je v hans_library.book_title, bez ' — kap. N'). ⚠️ Plati jen na NOVE nahravane chunky; 729 stavajicich ma porad obecnou hlavicku — backfill je samostatna prace."
     }
 }

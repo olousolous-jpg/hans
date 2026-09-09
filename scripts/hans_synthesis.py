@@ -886,7 +886,11 @@ class HansSynthesisHooks:
         if self._knowledge and self._knowledge.enabled:
             try:
                 doc_id = self._build_doc_id(cfg, title, item["ts"])
-                rag_text = self._build_rag_text(evt, title, note, text, item["ts"])
+                _zanr = (self._zanr_knihy(self._config, title)
+                         if evt in ("book_read", "book_completion_reflection")
+                         else "")
+                rag_text = self._build_rag_text(evt, title, note, text,
+                                                item["ts"], _zanr)
                 # HUMAN_CHAT_METADATA
                 _meta = {
                     "typ":   evt,
@@ -975,9 +979,39 @@ class HansSynthesisHooks:
     # ── Builders ────────────────────────────────────────────────────────────
 
     @staticmethod
+    def _zanr_knihy(config, title: str) -> str:
+        """HANS_RAG_ZANR_KNIHY_V1 (9. 9.) — beletrie / literatura faktu / nevím.
+
+        Zdroj je mapa `library.zanr` v configu (titul → „beletrie"|„fakta").
+        Vědomě NEHÁDÁ: co v mapě není, dostane neutrální hlavičku „z knihy".
+        Tvrdit žánr, který neznám, by bylo horší než ho neuvést.
+
+        Proč vůbec: kapitoly knih tečou do TÉŽE RAG kolekce (`hans_cetba`)
+        jako Wikipedie a odborné práce — 729 z 6047 dokumentů (12 %). Chunk
+        z románu tam dosud ležel pod obecným „## Záznam", tedy stejně jako
+        věcný zdroj. ⚠️ Paušální „beletrie" ale NELZE: `Meditations`
+        (Marcus Aurelius) má 270 z 1258 knižních záznamů (21 %) a beletrie
+        NENÍ — mapa je proto per kniha, ne per typ události.
+        """
+        try:
+            import re as _re
+            t = _re.sub(r"\s*[—-]\s*kap(itola)?\.?\s*\d+.*$", "",
+                        (title or "").strip(), flags=_re.IGNORECASE).strip()
+            if not t:
+                return ""
+            mapa = ((config or {}).get("library", {}) or {}).get("zanr", {}) or {}
+            tl = t.lower()
+            for k, v in mapa.items():
+                if str(k).strip().lower() == tl:
+                    return str(v).strip().lower()
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
     def _build_rag_text(event_type: str, title: str,
                         raw_note: str, reflection: str,
-                        ts: float = None) -> str:
+                        ts: float = None, zanr: str = "") -> str:
         """Sestaví text pro RAG: surový obsah + Hansova reflexe.
 
         Pro teddy_dialog: surový dialog Hans+Koláč následovaný reflexí.
@@ -1000,6 +1034,14 @@ class HansSynthesisHooks:
         elif event_type == "web_read":
             header_raw = "## Co jsem četl"
             header_refl = "## Má úvaha k článku"
+        elif event_type in ("book_read", "book_completion_reflection"):
+            # HANS_RAG_ZANR_KNIHY_V1 — dosud propadalo do `else` a dostalo
+            # obecné „## Záznam", takže úryvek z románu byl v RAGu označen
+            # stejně jako věcný zdroj.
+            header_raw = {"beletrie": "## Úryvek z beletrie",
+                          "fakta":    "## Úryvek z literatury faktu",
+                          }.get(zanr, "## Úryvek z knihy")
+            header_refl = "## Má úvaha ke knize"
         elif event_type in ("case_opened", "case_closed"):
             header_raw = "## Případ"
             header_refl = "## Má úvaha"
