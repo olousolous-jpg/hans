@@ -1586,6 +1586,12 @@ def _distill_paint_subject(config, name, handler, subj: str):
     return subj
 
 
+# HANS_ART_NOT_PAST_QUESTION_V1 — minulý čas sloves malování. Otázka
+# „namaloval JSI něco?" je dotaz na hotové dílo, ne příkaz malovat.
+_ART_MINULE = (r"(?:namaloval|namalovala|nakreslil|nakreslila"
+               r"|vytvo[řr]il|vytvo[řr]ila)\w*")
+
+
 register(
     "namaluj",
     slash_aliases=["namaluj", "nakresli"],
@@ -1599,7 +1605,28 @@ register(
     # `nakresl\w*` i nakreslit/nakresleny. Precedens `ja[kmn]` u wellbeing.
     # ⚠️ ZMERENO na 1 359 realnych zpravach: rozdily PRESNE 2 a jsou to obe
     # doloheme chyby — zadna jina veta se tim neunese.
-    nl_patterns=[r"\bnama[kl]\w*", r"\bnakresl\w*", r"vytvoř\s+obr",
+    # ── HANS_ART_NOT_PAST_QUESTION_V1 (9. 9.) ───────────────────────────
+    # Vzory byly `\bnama[kl]\w*` / `\bnakresl\w*`, tedy COKOLI od „namal"
+    # nebo „nakresl" — včetně MINULÉHO ČASU. Doloženo simulovaným rozhovorem
+    # 9. 9.: „namaloval jsi neco?" (dotaz!) spustilo malování s námětem
+    # „jsi neco" (zbytek věty po odstranění slovesa).
+    # 💸 Cena je ze všech falešných spuštění NEJVYŠŠÍ: FLUX drží GPU ~5 min,
+    # `avatar_render` odsune hans-czech i qwen2.5 z VRAM a chat je po tu dobu
+    # zablokovaný („Zrovna maluji") — v tom testu to znehodnotilo 8 z 10 tahů
+    # druhé sady. Plus vznikne odpadní obraz.
+    # ⚠️ Signál k odmítnutí PŘITOM UŽ EXISTOVAL a nepoužil se:
+    # `hans_art` loguje „'jsi neco' je obecné slovo — grounding přeskočen",
+    # tedy VÍ, že námět je nesmysl, a maluje dál.
+    # 📏 Změřeno PŘED zásahem: 73 z 758 replik jde na `/namaluj` a po zúžení
+    # jich jde pořád 73 (0 změn v korpusu); cílová sada 13/13.
+    # Dotazy v minulém čase spadnou na `/obrazy` — příkaz, který na to je.
+    nl_patterns=[r"^(?!.*\b(?:jsi|jste)\b.*\b" + _ART_MINULE + r")"
+                 r"(?!.*\b" + _ART_MINULE + r".*\b(?:jsi|jste)\b)"
+                 r".*\bnama[kl]\w*",
+                 r"^(?!.*\b(?:jsi|jste)\b.*\b" + _ART_MINULE + r")"
+                 r"(?!.*\b" + _ART_MINULE + r".*\b(?:jsi|jste)\b)"
+                 r".*\bnakresl\w*",
+                 r"vytvoř\s+obr",
                  r"\bp[řr]ekresli", r"\bp[řr]emaluj",
                  r"\boprav\s+(ten\s+|ten[hz]le\s+)?(obraz|obr[áa]zek)"],
     handler=_cmd_namaluj,
@@ -1625,6 +1652,11 @@ register(
     nl_patterns=[
         r"namaloval\s+(jsi|si)\b",
         r"co\s+jsi\s+(dnes\w*\s+|v[čc]era\s+|naposledy\s+)?namaloval",
+        # HANS_ART_NOT_PAST_QUESTION_V1 — vykání a „nakreslil/vytvořil".
+        # Vzory výš znaly jen TYKÁNÍ a jen „namaloval"
+        # [[test-both-grammatical-persons]].
+        r"\b" + _ART_MINULE + r"\s+(jsi|jste)\b",
+        r"\b(co|jak[ée]|kolik)\b.*\b(jsi|jste)\b.*\b" + _ART_MINULE,
         r"(posledn[íi]|nov[ýy])\s+obraz\b",
         r"jak[ýy]\s+obraz\s+jsi",
         r"kreslil\s+(jsi|si)\b",
