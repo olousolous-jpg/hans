@@ -103,11 +103,18 @@ if [ -n "$GPG_PASSFILE" ] && [ -f "$GPG_PASSFILE" ]; then
 fi
 
 # --- 4) NAS push (rsync — mount i user@host:cesta) ---
+# BACKUP_OFFSITE_LOUD_V1 (9. 9.) — selhani offsite pushe uz NESMI byt tiche.
+# Doloženo: `/etc/fstab` mel od vymeny desky v NASu starou IP, rsync 45 DNI
+# hlasil „No such device", skript presto koncil USPECHEM a
+# `systemctl status hans-backup` byl zeleny. Z pravidla 3-2-1 tak zbyla
+# JEDNA kopie na Pi a nikdo se to nedozvedel.
+OFFSITE_FAIL=0
 if [ -n "$NAS_DEST" ]; then
     if rsync -a "$UPLOAD" "$NAS_DEST/" 2>&1; then
         echo "== NAS OK: $NAS_DEST =="
     else
         echo "!!! NAS push selhal ($NAS_DEST)"
+        OFFSITE_FAIL=1
     fi
 fi
 
@@ -117,6 +124,7 @@ if [ -n "$RCLONE_REMOTE" ] && command -v rclone >/dev/null; then
         echo "== Proton OK: $RCLONE_REMOTE =="
     else
         echo "!!! Proton push selhal ($RCLONE_REMOTE)"
+        OFFSITE_FAIL=1
     fi
 fi
 
@@ -124,4 +132,11 @@ fi
 ls -1t "$OUT_DIR"/hans_backup_${KIND}_*.tar.gz* 2>/dev/null | tail -n +$((KEEP+1)) | \
     while read -r old; do rm -f "$old" && echo "  rotace: smazán $(basename "$old")"; done
 
+if [ "${OFFSITE_FAIL:-0}" = 1 ]; then
+    # Lokalni archiv JE hotovy (rotace probehla vyse) — nenulovy konec hlasi
+    # jen to, ze OFFSITE kopie chybi. `hans-backup.service` tim spadne do
+    # `failed`, takze se to pozna z `systemctl --user status hans-backup`.
+    echo "== HOTOVO (lokalne), ale OFFSITE KOPIE CHYBI =="
+    exit 2
+fi
 echo "== HOTOVO =="

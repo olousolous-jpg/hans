@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import json
+from scripts.config_io import load as nacti_config
 from scripts.hans_knowledge import HansKnowledge
 
 # event_type → RAG kolekce (rozsah: vysoký signál + web_read + human_chat)
@@ -76,7 +76,13 @@ def _doc_text(title: str, ts: float, body: str) -> str:
 
 
 def main() -> int:
-    cfg = json.load(open(ROOT / "config.json", encoding="utf-8"))
+    # HANS_CONFIG_SPLIT_FIX_V1 (9. 9.) — tenhle nastroj cetl `config.json`
+    # NAPRIMO. Od `HANS_CONFIG_SPLIT_V1` (8. 9.) ale token i kolekce
+    # (`knowledge`, `openwebui_direct`) lezi v `config.private.json`, takze
+    # `HansKnowledge` vysel jako VYPNUTY a nastroj by odmitl bezet
+    # („zadne kolekce v configu"). Nikdo si toho nevsiml, protoze je
+    # jednorazovy. Ke configu se chodi JEN pres `config_io`.
+    cfg = nacti_config()
     kn = HansKnowledge(cfg)
     if not kn.enabled:
         print("✗ HansKnowledge disabled (chybí token/kolekce?) — končím.")

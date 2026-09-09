@@ -1004,6 +1004,14 @@ class HansSynthesisHooks:
             for k, v in mapa.items():
                 if str(k).strip().lower() == tl:
                     return str(v).strip().lower()
+            # Titul bývá i OZDOBENÝ („Dočtená kniha — <název>"), takže když
+            # přesná shoda selže, hledá se název knihy UVNITŘ titulu. Klíče
+            # jsou celé názvy knih (min. 5 znaků), takže záměna nehrozí.
+            # Bez tohohle zůstalo 9 reflexí dočtených knih bez žánru.
+            for k, v in mapa.items():
+                kk = str(k).strip().lower()
+                if len(kk) >= 5 and kk in tl:
+                    return str(v).strip().lower()
         except Exception:
             pass
         return ""
