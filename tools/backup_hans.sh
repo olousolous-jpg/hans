@@ -88,6 +88,23 @@ find . -maxdepth 1 -type f \( -name '*.py' -o -name '*.sh' -o -name '*.json' \
 code_n=$(find "$STAGE/scripts" "$STAGE/tools" -type f 2>/dev/null | wc -l)
 echo "  kód: $code_n souborů (scripts+tools) + templates/deploy/root"
 
+# --- 2c) systemd user jednotky (BACKUP_SYSTEMD_UNITS_V1, 9. 9.) ---
+# Bez nich je obnova NEUPLNA: zive bezi 9 jednotek (hans.service,
+# hans-backup.*, hans-watchdog.*, tunely), ale v repu jsou jen dve —
+# a `hans.service` se od zive verze LISI. `hans-backup.timer` neni nikde,
+# takze po preinstalaci by zmizela i sama zaloha a nikdo by si toho nevsiml.
+# Tataz trida ticheho selhani jako 45denni vypadek offsite pushe.
+# ⚠️ Do ARCHIVU ano, do GITU ne — mohou nest IP a cesty.
+UNITS="$HOME/.config/systemd/user"
+if [ -d "$UNITS" ]; then
+    mkdir -p "$STAGE/systemd_user"
+    cp -p "$UNITS"/*.service "$UNITS"/*.timer "$STAGE/systemd_user/" 2>/dev/null || true
+    # a prostredi zalohy (NAS_DEST, WOL MAC) — bez nej se nastaveni obnovuje slepe
+    [ -f "$HOME/.config/hans-backup.env" ] && \
+        cp -p "$HOME/.config/hans-backup.env" "$STAGE/systemd_user/" 2>/dev/null || true
+    echo "  systemd: $(ls -1 "$STAGE/systemd_user" 2>/dev/null | wc -l) souborů"
+fi
+
 # --- 3) Archiv ---
 ARCHIVE="$OUT_DIR/hans_backup_${KIND}_${STAMP}.tar.gz"
 tar -czf "$ARCHIVE" -C "$STAGE" .
