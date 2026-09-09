@@ -141,6 +141,25 @@ print('  WOL na NAS: %s' % ('odeslano' if wake(mac='${NAS_WOL_MAC}') else 'SELHA
         fi
     done
     [ "$OFFSITE_FAIL" = 1 ] && echo "!!! NAS push selhal po $NAS_TRIES pokusech ($NAS_DEST)"
+    # BACKUP_NAS_RELEASE_V1 (9. 9.) — po zaloze PUSTIT NAS, at muze zase
+    # usnout (prani uzivatele: uspat, NE vypnout).
+    # ⚠️ Uspat ho PRIKAZEM NELZE: na 192.168.88.x ma otevreny JEN port 445
+    # (SMB) — zadne SSH, RDP ani WinRM, tedy zadny kanal pro vzdalene
+    # spusteni. Jedine, co je z Pi v moci, je UVOLNIT RELACI, aby ji NAS
+    # nepocital jako aktivitu a rozbehl si vlastni idle casovac.
+    # Automount (`x-systemd.idle-timeout=60`) by odpojil sam az za minutu
+    # necinnosti; tohle to udela HNED po dokoncene zaloze.
+    # 📌 Kdyby se ukazalo, ze NAS presto neusina, chce to na NEM povolit
+    # kanal (SSH/WinRM) nebo naplanovanou ulohu — z Pi uz to nejde.
+    case "$NAS_DEST" in
+        /*) if mountpoint -q "$(dirname "$NAS_DEST")" 2>/dev/null; then
+                if sudo -n umount "$(dirname "$NAS_DEST")" 2>/dev/null; then
+                    echo "  NAS uvolnen (odpojeno) — muze zase usnout"
+                else
+                    echo "  (NAS se nepodarilo odpojit; automount ho puste sam do 60 s)"
+                fi
+            fi ;;
+    esac
 fi
 
 # --- 5) Proton (rclone) push ---
