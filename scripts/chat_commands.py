@@ -3009,7 +3009,16 @@ register(
         r"(pře)?[čc]etl",
         r"\bcos?\s+(dnes\w*\s+|včera\s+|naposledy\s+)?[čc]etl",
         r"\bkdy\s+(jsi|sis)\s+[čc]etla?\b",
-        r"\b(pře)?[čc]etla?\s+(jsi|sis)\s+(něco|neco|někdy|nekdy|už|uz)?\s*o?\b.{2,}\?",
+        # HANS_VYKANI_DLOUHA_OTAZKA_V1 (9. 9.) — vzor znal JEN TYKÁNÍ
+        # (`jsi|sis`), vykací „četl JSTE" v něm nebylo. Doloženo rozhovorem:
+        # „Četl jste někdy něco od Isaaca Asimova…?" nedošlo ani k regexu,
+        # ani k routeru → Hans řekl „v paměti jsem o tom nic neměl" a šel na
+        # Wikipedii, PŘESTOŽE má 179 deníkových záznamů o té knize a byl
+        # zrovna na kapitole 90–91. ⚠️ Recall vadný NENÍ — `reading_answer`
+        # na tutéž větu odpoví správně; vada byla čistě v ROUTINGU.
+        # 📌 Třetí případ téže asymetrie za jediný den.
+        # [[test-both-grammatical-persons]] · [[corpus-has-no-foreign-speakers]]
+        r"\b(pře)?[čc]etla?\s+(jsi|sis|jste)\s+(něco|neco|někdy|nekdy|už|uz)?\s*o?\b.{2,}\?",
         r"\bco\s+(pr[áa]vě\s+|te[ďd]\s+)?[čc]te[šs]\b",
     ],
     handler=_cmd_cetl,
@@ -3301,7 +3310,12 @@ register(
         r"(informace|inform\w+|[úu]daje|poznatky)\b",
         r"\bodkud\s+(\w+\s+){0,2}(jsi|si|to|jste)\b.{0,18}"
         r"(čerpal|cerpal|m[áa][šs]|m[áa]te|vz[áa]l|v[íi][šs]|v[íi]te|[čc]etl|[čc]etla|dozv[ěe])",
-        r"\bodkud\s+([čc]erp[áa][šs]|[čc]erp[áa]te)\b",
+        # HANS_VYKANI_DLOUHA_OTAZKA_V1 (9. 9.) — vzor chtel „cerpate" HNED
+        # za „odkud". Doloženo rozhovorem: „…odkud PŘESNĚ TYTO INFORMACE
+        # čerpáte?" propadlo, LLM router zvolil `/rozhovory` a druhá brána
+        # to zamítla („ptá se na svět") — takže Hans řekl, že zdroj nemá,
+        # ačkoli ho v deníku s odkazem MÁ. Povoleno až 4 slova mezi.
+        r"\bodkud\s+(\w+\s+){0,4}[čc]erp[áa]([šs]|te)\b",
         r"\b(z\s+)?[čc]eho\s+(jsi|si|jste)\s+.{0,10}(čerpal|cerpal|vych[áa]zel)",
         r"\b(z\s+)?[čc]eho\s+(studuje[šs]|studujete)\b",
         r"\b(d[áa][šs]|d[áa]te|m[áa][šs]|m[áa]te|po[šs]le[šs]|po[šs]lete)"
