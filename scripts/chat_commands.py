@@ -1996,7 +1996,16 @@ _ORIGIN_PAT = re.compile(
     r"|\bsám\s+(sis|jsi)\b|\bsam\s+(sis|jsi)\b"
     r"|\b(zadal|ulozil|uložil|rekl|řekl)\s+(jsem|ti|mi)\b"
     r"|\bkdo\s+(ti|vám|vam)\s+(to\s+)?(zadal|ur[cč]il|vybral)\b"
-    r"|\bod[kK]ud\s+(m[áa][sš]|se\s+vzalo)\b", re.IGNORECASE)
+    r"|\bod[kK]ud\s+se\s+vzalo\b"
+    # HANS_SOURCES_BODY_V1 (9. 9.) — „odkud máš" bylo PŘÍLIŠ ŠIROKÉ a kradlo
+    # dotaz na ZDROJ: „odkud máš informace o hradu X?" končilo u `/studium`
+    # (tedy odpovědí „kdo mi to téma zadal"), místo u `/zdroje`. Vykací tvar
+    # „odkud MÁTE informace" přitom nechytal nikdo a padal na LLM.
+    # `_ORIGIN_PAT` má odpovídat na PŮVOD TÉMATU, takže si o téma říká
+    # výslovně. 📏 Změřeno PŘED zásahem na 758 replikách: 0 změn v routingu,
+    # a 5 z 5 vět o původu tématu zůstalo u `/studium`.
+    r"|\bod[kK]ud\s+(m[áa][sš]|m[áa]te)\s+(to\s+|ten\s+|tohle\s+|tenhle\s+)?"
+    r"(t[ée]ma|n[áa]m[ěe]t|zad[áa]n[íi])\b", re.IGNORECASE)
 
 
 def _je_dotaz_na_puvod(text: str) -> bool:
@@ -3006,6 +3015,41 @@ register(
 
 
 # ─── /zdroje — odkud Hans čerpal (HANS_SOURCES_V1) ─────────────────────────
+# HANS_SOURCES_BODY_V1 (9. 9.) — tázací tvary, které NEJSOU téma.
+_ZDROJ_STOP = {"cem", "čem", "kom", "sobe", "sobě", "tom", "tobe", "tobě",
+               "nich", "ni", "ní", "nem", "něm", "tomhle", "tomto", "nem"}
+_ZDROJ_TEMA_PAT = re.compile(
+    r"\b(?:o|k|ke)\s+([\w ěščřžýáíéúůďťňó-]{2,45}?)\s*[?.!]?$", re.IGNORECASE)
+
+
+def _tema_ze_zdrojoveho_dotazu(raw: str) -> str:
+    """Téma z dotazu na zdroj — „…o hradu Trosky?" → „hradu trosky".
+
+    ⚠️ ZÁMĚRNĚ JEN TADY, ne v `hans_recall._extract_topic`. Ta funkce je
+    SDÍLENÁ (používá ji i vybavování četby) a táž úprava v ní by na korpusu
+    758 replik vytáhla 108 nových „témat", z velké části šum — „o čem jsme
+    se bavili" → „cem jsme se bavili", „co o sobě dokážeš říci" → „sobe
+    dokayes rici". Uvnitř `/zdroje` je kontext známý (věta prošla vzory na
+    dotaz po zdroji), takže stačí úzké pravidlo.
+    📏 Změřeno na produkční cestě PŘED zásahem: +7 témat, 0 chybných,
+    0 změněných stávajících.
+    """
+    try:
+        m = _ZDROJ_TEMA_PAT.search((raw or "").strip())
+        if not m:
+            return ""
+        slova = m.group(1).split()
+        # ⚠️ Strop 4 slov je kvůli anglickým souslovím („Icon of the Seas");
+        # delší úsek už bývá zbytek věty i se slovesem, ne téma.
+        if not slova or len(slova) > 4:
+            return ""
+        if any(w.lower().strip(",.?!") in _ZDROJ_STOP for w in slova):
+            return ""
+        return " ".join(slova).lower()
+    except Exception:
+        return ""
+
+
 def _cmd_zdroje(handler, name, args) -> str:
     """Vypíše odkazy na to, co Hans četl. Deterministicky z deníku.
 
@@ -3040,6 +3084,8 @@ def _cmd_zdroje(handler, name, args) -> str:
         pass
     if not q and raw and len(raw.split()) <= 3 and "?" not in raw:
         q = raw.lower()          # slash forma: /zdroje vrak
+    if not q and raw:
+        q = _tema_ze_zdrojoveho_dotazu(raw)
     try:
         cx = _sq.connect("file:%s?mode=ro" % db, uri=True, timeout=5.0)
         if q:
@@ -3058,21 +3104,39 @@ def _cmd_zdroje(handler, name, args) -> str:
             # Skloňování mění KONEC slova, ne začátek → shoda musí začínat
             # na hranici slova (začátek textu nebo běžný oddělovač).
             _predpony = ("", " ", "„", "(", "\"", "\n")
-            _casti, _args = [], []
+            # HANS_SOURCES_BODY_V1 (9. 9.) — hledat i v `data`.
+            # `web_read` má obsah v `note` (3024 řádků), ale `reading_takeaway`
+            # (2209) a `study_note` (70) ho mají v `data` a `note` prázdné —
+            # tělo 43 % záznamů tedy bylo pro filtr NEVIDITELNÉ. Přesně past
+            # popsaná v CLAUDE.md („obsah bývá ve sloupci data, ne note").
+            # 📏 Změřeno na 19 reálných tématech: +53 % shod.
+            # ⚠️ SHODA V TITULU MÁ PŘEDNOST. Bez toho je to ZHORŠENÍ, ne
+            # zlepšení: změřeno, že samotné rozšíření vytlačí 4–7 z osmi
+            # dnešních výsledků — slabá zmínka v těle by přebila silnou shodu
+            # v názvu. S přednostním řazením se špička naopak vyčistí
+            # („Design" → „User experience design" místo „Skotská whisky").
+            # [[corpus-measurement-misses-regressions]]
+            _casti, _args = [], []          # tělo i titul
+            _t_casti, _t_args = [], []      # JEN titul (pro řazení)
             for _s in _stems:
                 _sl = _s.lower()
                 for _p in _predpony:
                     _vzor = ("%s%%" % _sl) if _p == "" else ("%%%s%s%%" % (_p, _sl))
-                    _casti.append("lower(title) LIKE ?")
-                    _args.append(_vzor)
-                    _casti.append("lower(COALESCE(note,'')) LIKE ?")
-                    _args.append(_vzor)
+                    for _col in ("title", "COALESCE(note,'')",
+                                 "COALESCE(data,'')"):
+                        _casti.append("lower(%s) LIKE ?" % _col)
+                        _args.append(_vzor)
+                    _t_casti.append("lower(title) LIKE ?")
+                    _t_args.append(_vzor)
             _kde = " OR ".join(_casti)
+            _kde_t = " OR ".join(_t_casti)
             rows = cx.execute(
-                "SELECT ts, title, source_url, COALESCE(note,'') FROM diary "
+                "SELECT ts, title, source_url, "
+                "COALESCE(NULLIF(note,''), data, '') FROM diary "
                 "WHERE event_type IN ('web_read','reading_takeaway','study_note') "
                 "AND (" + _kde + ") "
-                "ORDER BY ts DESC LIMIT 12", _args).fetchall()
+                "ORDER BY (CASE WHEN (" + _kde_t + ") THEN 0 ELSE 1 END), "
+                "ts DESC LIMIT 12", _args + _t_args).fetchall()
             # HANS_TOPIC_ENTITY_AWARE_V1 (21.8.) — je téma ZNÁMÁ OSOBA? Pak
             # nestačí pahýl jména: „svobod" sedne na „Svobodné zednářství"
             # i na „svobodou projevu". U osoby se žádá CELÉ jméno (změřeno:
@@ -3173,6 +3237,12 @@ register(
     # vsechny realne dotazy ("mas odkaz na clanek…", "muzes poslat odkazy
     # na clanky…") uz pokryvaji vzory s 2. osobou. Overeno na korpusu.
     nl_patterns=[
+        # HANS_SOURCES_BODY_V1 (9. 9.) — „odkud máš/máte INFORMACE o X".
+        # Tykací tvar kradlo `/studium` (`_ORIGIN_PAT`), vykací nechytal
+        # NIKDO a padal na LLM. Obě osoby schválně v jednom vzoru
+        # [[test-both-grammatical-persons]].
+        r"\bod[kK]ud\s+(m[áa][sš]|m[áa]te)\s+(ty\s+|tyhle\s+)?"
+        r"(informace|inform\w+|[úu]daje|poznatky)\b",
         r"\bodkud\s+(\w+\s+){0,2}(jsi|si|to|jste)\b.{0,18}"
         r"(čerpal|cerpal|m[áa][šs]|m[áa]te|vz[áa]l|v[íi][šs]|v[íi]te|[čc]etl|[čc]etla|dozv[ěe])",
         r"\bodkud\s+([čc]erp[áa][šs]|[čc]erp[áa]te)\b",
