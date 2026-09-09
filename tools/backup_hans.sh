@@ -110,12 +110,37 @@ fi
 # JEDNA kopie na Pi a nikdo se to nedozvedel.
 OFFSITE_FAIL=0
 if [ -n "$NAS_DEST" ]; then
-    if rsync -a "$UPLOAD" "$NAS_DEST/" 2>&1; then
-        echo "== NAS OK: $NAS_DEST =="
-    else
-        echo "!!! NAS push selhal ($NAS_DEST)"
-        OFFSITE_FAIL=1
+    # BACKUP_NAS_WAKE_V1 (9. 9.) — NAS SE USPAVA a disky se roztacej az na
+    # vyzadani (upresneni uzivatele). Zaloha bezi v 03:33, tedy do spiciho
+    # stroje: jeden pokus by selhal a po BACKUP_OFFSITE_LOUD_V1 by sluzba
+    # padala do `failed` KAZDOU NOC — hlaseni by se stalo sumem a prestalo
+    # by se cist, coz je presne ta vada, kterou mel loud rezim odstranit.
+    # Proto: (1) magic packet, kdyz je znamy MAC, (2) nekolik pokusu
+    # s prodlevou, at maji plotny cas se roztocit. Az kdyz selze i posledni,
+    # je to skutecne selhani.
+    # ⚠️ WOL sdili `pc_remote.wake` (HANS_WOL_SHARED_V1) — zadna druha
+    # implementace magic packetu.
+    if [ -n "${NAS_WOL_MAC:-}" ]; then
+        python3 -c "import sys; sys.path.insert(0,'.')
+from scripts.pc_remote import wake
+print('  WOL na NAS: %s' % ('odeslano' if wake(mac='${NAS_WOL_MAC}') else 'SELHALO'))" 2>/dev/null \
+            || echo "  (WOL nedostupny)"
     fi
+    NAS_TRIES="${NAS_TRIES:-6}"
+    NAS_WAIT="${NAS_WAIT:-20}"
+    OFFSITE_FAIL=1
+    for i in $(seq 1 "$NAS_TRIES"); do
+        if rsync -a --timeout=180 "$UPLOAD" "$NAS_DEST/" 2>&1; then
+            echo "== NAS OK: $NAS_DEST (pokus $i/$NAS_TRIES) =="
+            OFFSITE_FAIL=0
+            break
+        fi
+        if [ "$i" -lt "$NAS_TRIES" ]; then
+            echo "  NAS zatim neodpovida (pokus $i/$NAS_TRIES) — cekam ${NAS_WAIT}s (spici disky?)"
+            sleep "$NAS_WAIT"
+        fi
+    done
+    [ "$OFFSITE_FAIL" = 1 ] && echo "!!! NAS push selhal po $NAS_TRIES pokusech ($NAS_DEST)"
 fi
 
 # --- 5) Proton (rclone) push ---
