@@ -383,8 +383,20 @@ def base_model_batch(config: Optional[dict] = None, pause_s: float = 1800,
             # wait_s ZÁMĚRNĚ nižší než hold: čekání nesmí držet noční tick
             # déle, než trvá typická dávka. Po vypršení se běží bez slotu
             # (fail-open) — horší než stav před HANS_BASE_SLOT_V1 to není.
+            # HANS_BASE_SLOT_WAIT_CFG_V1 (9. 9.) — 300 s bylo na reálnou délku
+            # dávky málo: 9. 9. trvala studijní session 20,7 min a immune se
+            # slotu nedočkal (`se nedočkal … běžím bez výlučnosti`) — tedy
+            # přesně to, co měl slot odstranit. Klíč, ne natvrdo: strop se
+            # bude měnit s délkou dávek a pravidlo wait_s < hold má zůstat vidět.
+            _wait_s = 900.0
+            try:
+                _wait_s = float(((config or {}).get("ollama", {}) or {})
+                                .get("base_slot_wait_s", 900.0))
+            except Exception:
+                pass
+            _wait_s = max(0.0, min(_wait_s, float(pause_s)))
             _tok = acquire_base_slot(label or "base dávka", pause_s,
-                                     wait_s=300.0)
+                                     wait_s=_wait_s)
         except Exception as _se:
             _log.debug("base_model_batch slot: %s", _se)
         pause_warmup(pause_s)

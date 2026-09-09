@@ -1976,14 +1976,138 @@ class StudyStore:
         except Exception as e:
             _log.warning("study diary write selhal: %s", e)
 
+    # ── HANS_PAPER_TAKEAWAY_DEFERRED_V1 (9. 9.) ─────────────────────────────
+    # Fallback ,,radsi surovy abstrakt nez nic'' zapisoval do deniku i do RAG
+    # ANGLICKY ABSTRAKT jako Hansuv vypisek (3 radky za 8.-9. 9., 2 z nich i
+    # v RAG) — Hans si to pozdeji vybavi jako SVOU cetbu. Presne tuhle tridu
+    # uzavrel HANS_DEFERRED_SUMMARY_V1 (15. 7.) u `web_read`; jeho plosny audit
+    # tehdy rekl "web_reader._summarize byl JEDINY fabrikujici fallback" —
+    # o mesic pozdeji pribyl druhy. Navazuje, neduplikuje: tam `web_read` pres
+    # hans_curiosity, tady `reading_takeaway` z research tieru.
+    #
+    # Pending payload ZAMERNE NEJDE do deniku (na rozdil od `web_read`):
+    # `reading_takeaway` ma obsah v `data`, ale konzumenty maji OBA sloupce
+    # (chat_commands filtruje `note`, hans_idle zobrazuje `note`, zbytek cte
+    # `data`) — v obou variantach by pulhotovy zaznam nekomu prosakl jako
+    # Hansova znalost. Vlastni studijni tabulka deníkové konzumenty nema.
+    _PENDING_DDL = ("CREATE TABLE IF NOT EXISTS study_pending_papers ("
+                    "work_id TEXT PRIMARY KEY, topic TEXT, title TEXT, "
+                    "year TEXT, url TEXT, abstract TEXT, ts REAL)")
+
+    def _pending_conn(self):
+        conn = sqlite3.connect(self._diary_path, timeout=5.0)
+        conn.execute(self._PENDING_DDL)
+        return conn
+
+    def _park_pending_paper(self, topic, p):
+        """Mozek mlci -> praci PODRZ (lossless), ale NEVYDAVEJ za vypisek."""
+        ab = (p.get("abstract") or "").strip()
+        if len(ab) < 80:
+            return False
+        wid = (p.get("url") or p.get("title") or "").strip()
+        if not wid:
+            return False
+        try:
+            conn = self._pending_conn()
+            conn.execute(
+                "INSERT OR REPLACE INTO study_pending_papers "
+                "(work_id, topic, title, year, url, abstract, ts) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (wid, topic, (p.get("title") or "").strip(),
+                 str(p.get("year") or ""), (p.get("url") or ""),
+                 ab[:8000], time.time()))
+            conn.commit()
+            conn.close()
+            _log.info("study: prace ODLOZENA (mozek mimo) — %s", wid)
+            return True
+        except Exception as e:
+            _log.warning("park_pending_paper: %s", e)
+            return False
+
+    def _emit_paper_takeaway(self, config, topic, d_title, url, takeaway,
+                             knowledge=None):
+        """Jedna pravda pro zapis hotoveho vypisku — zivá cesta i dobeh."""
+        try:
+            conn = sqlite3.connect(self._diary_path)
+            conn.execute(
+                "INSERT INTO diary (ts, event_type, title, data, "
+                "source_url) VALUES (?,?,?,?,?)",
+                (time.time(), "reading_takeaway", d_title, takeaway, url))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            _log.warning("paper takeaway zapis selhal: %s", e)
+            return False
+        if knowledge is not None and getattr(knowledge, "enabled", False):
+            try:
+                coll = str(_cfg(config).get("rag_collection", "hans_cetba"))
+                knowledge.upload(
+                    collection_key=coll,
+                    doc_id="paper_" + hashlib.md5(
+                        (url or d_title).encode("utf-8")).hexdigest()[:16],
+                    title=d_title, text=takeaway,
+                    metadata={"koníček": topic, "zdroj": url or "openalex",
+                              "typ": "research_paper"})
+            except Exception as e:
+                _log.debug("paper takeaway RAG: %s", e)
+        return True
+
+    def _drain_pending_papers(self, config, knowledge=None, limit=12):
+        """Dobeh odlozenych praci. Bezi UVNITR studijniho kroku, tedy uvnitr
+        `base_model_batch` (slot uz drzi) — zadny novy kolider na `brain_up`.
+        Pri PRVNIM neuspechu koncí: mozek zas mlci, dalsi by selhaly taky."""
+        try:
+            conn = self._pending_conn()
+            rows = conn.execute(
+                "SELECT work_id, topic, title, year, url, abstract "
+                "FROM study_pending_papers ORDER BY ts ASC LIMIT ?",
+                (int(limit),)).fetchall()
+        except Exception as e:
+            _log.debug("drain_pending_papers query: %s", e)
+            return 0
+        done = 0
+        for wid, ptopic, ptitle, pyear, purl, pab in rows:
+            p = {"title": ptitle, "year": pyear, "url": purl,
+                 "abstract": pab, "authors": ""}
+            takeaway = _distill_paper(config, ptopic or "", p)
+            if not takeaway:
+                break
+            d_title = "%s (%s)" % (ptitle, pyear) if pyear else ptitle
+            if not self._emit_paper_takeaway(config, ptopic or "", d_title,
+                                             purl, takeaway, knowledge):
+                break
+            try:
+                conn.execute("DELETE FROM study_pending_papers WHERE work_id=?",
+                             (wid,))
+                conn.commit()
+            except Exception as e:
+                _log.debug("drain delete %s: %s", wid, e)
+            done += 1
+        try:
+            conn.close()
+        except Exception:
+            pass
+        if done:
+            _log.info("study: dobeh odlozenych praci — %d vypisku doplneno", done)
+        return done
+
     def _record_paper_takeaways(self, config, topic, papers, knowledge=None,
                                 diary_writer=None):
         """HANS_RESEARCH_PAPER_TAKEAWAY_V1 — z každé odborné práce použité v
         research tieru udělá TRVALÝ per-práce výpisek (reading_takeaway + URL +
         RAG). Dřív po práci zůstal jen titul v study_seen_works → konkrétní
-        vědecký přínos se ztrácel. Best-effort, nikdy neshodí studijní krok."""
+        vědecký přínos se ztrácel. Best-effort, nikdy neshodí studijní krok.
+        HANS_PAPER_TAKEAWAY_DEFERRED_V1: když mozek mlčí, práce se ODLOŽÍ
+        (podrží se abstrakt) a výpisek se dopíše při dalším studijním kroku —
+        surový abstrakt se NIKDY nevydá za Hansův výpisek."""
         rc = _cfg(config).get("research_tier", {}) or {}
-        if not papers or not rc.get("per_paper_takeaway", True):
+        if not rc.get("per_paper_takeaway", True):
+            return
+        try:
+            self._drain_pending_papers(config, knowledge)
+        except Exception as e:
+            _log.debug("drain_pending_papers: %s", e)
+        if not papers:
             return
         for p in papers:
             try:
@@ -1992,43 +2116,18 @@ class StudyStore:
                     continue
                 takeaway = _distill_paper(config, topic, p)
                 if not takeaway:
-                    # fallback bez LLM: samotný abstrakt (lossless), ať se přínos
-                    # neztratí ani když je mozek dole
-                    ab = (p.get("abstract") or "").strip()
-                    if len(ab) < 80:
-                        continue
-                    takeaway = ("Přečetl jsem odbornou práci a poznamenal si její "
-                                "obsah: " + ab[:500])
+                    # mozek mlci -> PODRZ, nefabrikuj (viz komentar vyse)
+                    self._park_pending_paper(topic, p)
+                    continue
                 year = p.get("year") or ""
                 d_title = f"{title} ({year})" if year else title
                 url = p.get("url") or ""
-                try:
-                    conn = sqlite3.connect(self._diary_path)
-                    conn.execute(
-                        "INSERT INTO diary (ts, event_type, title, data, "
-                        "source_url) VALUES (?,?,?,?,?)",
-                        (time.time(), "reading_takeaway", d_title, takeaway, url))
-                    conn.commit()
-                    conn.close()
-                except Exception as e:
-                    _log.warning("paper takeaway zápis selhal: %s", e)
+                if not self._emit_paper_takeaway(config, topic, d_title, url,
+                                                 takeaway, knowledge):
                     continue
-                if knowledge is not None and getattr(knowledge, "enabled", False):
-                    try:
-                        coll = str(_cfg(config).get("rag_collection", "hans_cetba"))
-                        knowledge.upload(
-                            collection_key=coll,
-                            doc_id="paper_" + hashlib.md5(
-                                (url or d_title).encode("utf-8")).hexdigest()[:16],
-                            title=d_title, text=takeaway,
-                            metadata={"koníček": topic, "zdroj": url or "openalex",
-                                      "typ": "research_paper"})
-                    except Exception as e:
-                        _log.debug("paper takeaway RAG: %s", e)
                 _log.info("study: per-práce výpisek — „%.50s“", title)
             except Exception as e:
                 _log.warning("_record_paper_takeaways položka selhala: %s", e)
-
     # ── dokončení + syntéza ────────────────────────────────────────────────
     def _complete_program(self, config: dict, prog: dict, knowledge=None,
                           diary_writer=None):
