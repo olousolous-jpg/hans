@@ -1325,7 +1325,7 @@
     ],
     "_test_persons_note": "HANS_TEST_PERSON_V1: jména, pod kterými se Hans testuje. Rozhovor s nimi se NEZAPISUJE do deníku (human_chat) ani do RAG — jinak vlastní testovací repliky skončí v paměti jako by to byly znalosti. Chat i historie vlákna fungují normálně.",
     "kolac_exam": {
-        "enabled": true,
+        "enabled": false,
         "_note": "KOLAC_EXAM_V1 — Koláč se místo debaty občas zeptá a odpověď se porovná s klíčem.",
         "kazdy_naty": 8,
         "_note_kazdy_naty": "Každý N-tý dialog je zkouška — jen ROZESTUP; strop drží max_denne.",
@@ -1350,7 +1350,8 @@
         "wiki_lang": "cs",
         "pamet_dnu": 60,
         "cti_nahlas": false,
-        "_note_cti_nahlas": "Zkouška se nečte nahlas — je to sebetest, ne hovor pro místnost."
+        "_note_cti_nahlas": "Zkouška se nečte nahlas — je to sebetest, ne hovor pro místnost.",
+        "_enabled_note": "VYPNUTO 9. 9. rozhodnutim uzivatele. Duvod: vytezek nestal za falesne poplachy. Zmereno na 36 zkouskach za 18 dni (28 posouzitelnych): dnesni logikou by se ohlasily 4 nalezy, a uzivatel z hlasek, ktere mu realne prisly, oznacil za skutecne spatne jen dve — a druhou jen proto, ze odpoved byla delsi nez jedna veta, ne ze byla nepravdiva. Doloženy falesny poplach: 9. 9. hrad Trosky, verdikt 'vymyslel' na vecne zcela spravne odpovedi (viz ZKOUSKA_TROSKY_09_09 v backlogu). Pricina je strukturalni: mira je POMER prekryvu vuci dvouvetemu klici, takze pravdiva znalost NAD ramec klice se pocita jako vymysl a rozpor (jiny letopocet, jine jmeno) se naopak nepozna vubec — zmereno, ze pridani cisel do _stems s tim nehne (0 zmen z 238 vet). ZAPNOUT ZPET: enabled=true. Mekci varianta je nechat enabled=true a dat hlasit=false — zkousky se pak porad zapisuji do kolac_exam a jsou videt v /zdravi, jen neotravuji. Vypnutim navic ubyl jeden nocni konzument LLM (souvisi se STAMPEDE_09_09)."
     },
     "subtitles": {
         "enabled": true,

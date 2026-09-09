@@ -526,6 +526,21 @@ def ohodnot(zdroj: str, odpoved: str, klic: str) -> dict:
             "detail": (zahozene[0][:200] if zahozene else "")}
 
 
+# KOLAC_EXAM_META_VETA_V1 (9. 9.) — věta O VLASTNÍCH ZÁZNAMECH není tvrzení
+# o světě, takže se nemá co posuzovat na oporu. Je to táž kategorie jako
+# `_ZDVORILOST` a `_ABSTINENCE`, jen chyběla.
+# Doloženo zkouškou na hrad Trosky (9. 9., nález uživatele: „mě se zdá odpověď
+# správná" — a měl pravdu, odpověď byla věcně bezchybná): úvodní „V paměti mám
+# záznamy o hradě Trosky." dostala překryv 0,25 a započítala se jako jedna ze
+# tří vět bez opory. Právě ta třetí posunula verdikt přes hranici na
+# „vymyslel" (`bez >= 3`).
+# 📏 Změřeno retroaktivně na 28 dvojicích odpověď+klíč: mění verdikt u 1 z 28.
+_META_ZAZNAM = re.compile(
+    r"(v\s+pam[ěe]ti\s+m[áa]m|podle\s+m[ýy]ch\s+z[áa]pisk"
+    r"|m[áa]m\s+zaps[áa]no|v\s+m[ýy]ch\s+z[áa]znamech"
+    r"|m[áa]m\s+z[áa]znamy|v\s+den[íi]ku\s+m[áa]m)", re.IGNORECASE)
+
+
 def _bez_opory(odpoved: str, klic: str):
     """Věty odpovědi, které v klíči oporu NEMAJÍ (+ počet posuzovaných vět).
 
@@ -548,6 +563,8 @@ def _bez_opory(odpoved: str, klic: str):
         v = veta.strip()
         if not v or _ZDVORILOST.search(v) or _ABSTINENCE.search(v):
             continue        # zdvořilost ani přiznání neznalosti není tvrzení
+        if _META_ZAZNAM.search(v):
+            continue        # KOLAC_EXAM_META_VETA_V1 — věta o vlastní paměti
         S = _stems(v)
         if len(S) < MIN_STEMS:
             continue
