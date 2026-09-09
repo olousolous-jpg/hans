@@ -1919,16 +1919,28 @@ def _cmd_zajmy(handler, name, args) -> str:
         conn.close()
     except Exception as e:
         return "Zájmy nedostupné: %s" % e
+    # HANS_ZAJMY_DISPLAY_NAME_V1 (9. 9.) — `person` je KLÍČ z configu
+    # (malým písmem, bez diakritiky), ne jméno k vyslovení. Doloženo reprodukčním
+    # rozhovorem: „O zájmech osoby **marek** zatím nic nevím." Táž třída,
+    # kterou u `/videl` řeší `HANS_LAST_SEEN_NAME_V1`; `cz_names.display_name`
+    # existuje, jen se tu nepoužívalo. ⚠️ U známé osoby by to vypsalo syrový
+    # klíč člena domácnosti.
+    def _jm(k):
+        try:
+            from scripts import cz_names as _czn
+            return _czn.display_name(k, cfg) or k
+        except Exception:
+            return k
     if not rows:
-        return (("O zájmech osoby %s zatím nic nevím, pane." % who) if who
+        return (("O zájmech osoby %s zatím nic nevím, pane." % _jm(who)) if who
                 else "Zatím neznám zájmy žádné osoby, pane.")
-    out = ["Zájmy%s:" % ((" — " + who) if who else "")]
+    out = ["Zájmy%s:" % ((" — " + _jm(who)) if who else "")]
     cur_p = None
     for r in rows:
         if r["person"] != cur_p:
             cur_p = r["person"]
             out.append("")
-            out.append("• %s:" % cur_p)
+            out.append("• %s:" % _jm(cur_p))
         out.append("   %s (×%d)" % (r["interest"], r["evidence_count"]))
     return NL_RUNTIME.join(out)
 
@@ -3022,6 +3034,18 @@ _ZDROJ_TEMA_PAT = re.compile(
     r"\b(?:o|k|ke)\s+([\w ěščřžýáíéúůďťňó-]{2,45}?)\s*[?.!]?$", re.IGNORECASE)
 
 
+# HANS_VIDEL_KOHO_V2 — věta MÍŘÍ NA TAZATELE („kdy jsi MĚ viděl").
+# ⚠️ JEN 4. PÁD. Dativ „mi"/„nám" tu ZÁMĚRNĚ NENÍ: je to zdvořilostní obrat
+# („Řekněte MI prosím…", „Povězte NÁM…"), který s předmětem vidění nemá nic
+# společného. S ním v sadě odpovídal Hans na „Řekněte mi prosím, vidíte teď
+# někoho?" větou „nemám záznam, že bych VÁS viděl" — tedy přesně ta vada,
+# kterou tohle má opravit.
+# 📌 Odhalil to až ŽIVÝ test: v simulaci jsem použil větu BEZ zdvořilostní
+# předložky a vyšlo 10/10. Na skutečných větách z přepisu dal starý tvar
+# 7/10, nový 10/10. Simulace je jen tak dobrá jako její vstupy.
+_NA_TAZATELE = re.compile(r"\b(m[ěe]|mne|n[áa]s)\b", re.IGNORECASE)
+
+
 def _tema_ze_zdrojoveho_dotazu(raw: str) -> str:
     """Téma z dotazu na zdroj — „…o hradu Trosky?" → „hradu trosky".
 
@@ -3380,8 +3404,33 @@ def _cmd_videl(handler, name, args) -> str:
     # ⚠️ MUSI byt PRED padem na `_thread_ctx` nize: ten do `q` vlozi CELOU
     # VETU (ne jmeno), takze pozdeji uz `not q` nikdy neplati a vetev by byla
     # mrtva. Doloženo 9. 9. — prvni pokus presne takhle nesepnul.
-    _syrova = _route_msg() or (args or "")
-    if not (args or "").strip() and re.search(r"\bkoho\b", _syrova, re.IGNORECASE):
+    # HANS_VIDEL_KOHO_V2 (9. 9.) — V1 klíčovala na SLOVO „koho" a byla tím
+    # příliš úzká: „vidíte teď někoho ve svém okolí?" je TÁŽ otázka a spadla
+    # zpět na tazatele („nemám záznam, že bych VÁS viděl"). Doloženo
+    # reprodukčním rozhovorem 9. 9. (tah 2 × 3 si přímo protiřečí) —
+    # to je třída C ze `ROZHOVORY_08_09`. 📏 Změřeno: V1 pokryla 2 z 9
+    # přirozených formulací.
+    # Rozhoduje se proto podle toho, KOHO věta určuje, ne jakým slovem:
+    #   1. míří na tazatele (mě|mne|nás|mi|nám) → o tazateli,
+    #   2. jmenuje osobu (i z vlákna) → o té osobě,
+    #   3. jinak nemá podmět → koho jsem dnes viděl (přes týž privacy gate).
+    # Simulace PŘED zásahem: 10/10 včetně navazujícího „a kdy naposledy?".
+    _syrova = (args or "").strip() or _route_msg() or ""
+    _miri_na_tazatele = bool(_NA_TAZATELE.search(_syrova))
+    _kdo_ve_vete = None
+    if not _miri_na_tazatele:
+        try:
+            from scripts.hans_recall import _resolve_person as _rp
+            # ⚠️ asker=None SCHVÁLNĚ — s tazatelem by `_resolve_person`
+            # spadl zpět na něj a vetev by nikdy nesepnula.
+            _kdo_ve_vete = _rp(_syrova, cfg, None)
+            if not _kdo_ve_vete:
+                _tc0 = getattr(handler, "_thread_ctx", None)
+                if _tc0 and _tc0[0]:
+                    _kdo_ve_vete = _rp(str(_tc0[0]), cfg, None)
+        except Exception:
+            _kdo_ve_vete = None
+    if not _miri_na_tazatele and not _kdo_ve_vete:
         from scripts.hans_recall import day_facts, day_fact_lines
         _f = day_facts(_recall_db(handler))
         _l = day_fact_lines(_f, cfg, asker=name)
