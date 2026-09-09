@@ -396,12 +396,30 @@ class HansSynthesis:
             "max_tokens": max_tokens,
             "temperature": 0.55,
         }
+        # HANS_LLM_TRACE_V1 (9. 9.) — tenhle kanál jde PŘÍMO na OpenWebUI
+        # (:8080), ne přes `ollama_client`, takže hrdlo v `_post_with_retry`
+        # ho NEVIDÍ. Bez tohohle by měření nočního souběhu přišlo právě
+        # o synthesis hooky — a ty jsou jedním z hlavních hans-czech
+        # konzumentů, kteří se studiu perou o VRAM.
+        _t0 = time.time()
         try:
             r = requests.post(url, headers=headers, json=payload,
                               timeout=self._timeout)
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout) as e:  # PENDING_THOUGHTS_V1
+            try:
+                from scripts.llm_trace import zapis as _z
+                _z(self._model, url, time.time() - _t0, type(e).__name__,
+                   volajici="hans_synthesis:_call")
+            except Exception:
+                pass
             raise LLMOffline(str(e)) from e
+        try:
+            from scripts.llm_trace import zapis as _z
+            _z(self._model, url, time.time() - _t0, "http_%d" % r.status_code,
+               volajici="hans_synthesis:_call")
+        except Exception:
+            pass
         if r.status_code != 200:
             _log.debug("synthesis HTTP %d: %s", r.status_code, r.text[:200])
             return None

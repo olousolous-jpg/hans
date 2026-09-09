@@ -1489,6 +1489,8 @@
     },
     "ollama": {
         "base_slot_wait_s": 900,
-        "_note_base_slot_wait_s": "HANS_BASE_SLOT_WAIT_CFG_V1 — jak dlouho base dávka (studium, maker, reflexe, immune, narrative) čeká na VRAM slot, než se rozjede BEZ výlučnosti (fail-open). 300 s bylo málo: 9. 9. trvala studijní session 20,7 min a immune se nedočkal. Strop je pause_s té dávky. Nikdy nevypínat na 0 — dvě base dávky si pak vyhazují model z VRAM."
+        "_note_base_slot_wait_s": "HANS_BASE_SLOT_WAIT_CFG_V1 — jak dlouho base dávka (studium, maker, reflexe, immune, narrative) čeká na VRAM slot, než se rozjede BEZ výlučnosti (fail-open). 300 s bylo málo: 9. 9. trvala studijní session 20,7 min a immune se nedočkal. Strop je pause_s té dávky. Nikdy nevypínat na 0 — dvě base dávky si pak vyhazují model z VRAM.",
+        "trace_calls": true,
+        "_note_trace_calls": "HANS_LLM_TRACE_V1 (9. 9.) — zapisuje KAŽDÉ volání LLM (model, volající, trvání) do data/mereni/llm_calls.log. Podklad pro #3 (noční souběh o VRAM): z system.logu se nedá zjistit, který krok vytáhl hans-czech doprostřed base-model dávky. Až se stampede vyřeší, dá se vypnout na false — soubor roste řádově stovky řádků za den."
     }
 }

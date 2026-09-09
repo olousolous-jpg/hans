@@ -182,6 +182,34 @@ class HansEveningReflection:
 
     # ── Public API ───────────────────────────────────────────────────────────
 
+    # ── HANS_REFLECTION_HANDOFF_FIRST_V1 — VRAM handoff jako par ────────────
+    # Zamerne NE context manager: `run()` ma mezi zabranim a uvolnenim
+    # `return text`, takze `with` by si vyzadal prestavbu celeho tela.
+    def _vram_handoff(self):
+        """Zaber VRAM slot + uvolni hans-czech. Idempotentni (reentrantni)."""
+        if getattr(self, "_slot_tok", None) is None:
+            self._slot_tok = None
+        try:
+            from scripts.ollama_client import (pause_warmup as _pause_warmup,
+                                               ollama_unload_all as _unload_all,
+                                               acquire_base_slot as _abs)
+            self._slot_tok = _abs("večerní reflexe", 1800)
+            _pause_warmup(1800)
+            _unload_all(config=self._config)
+        except Exception as _pwe:
+            _log.debug("VRAM handoff nedostupné: %s", _pwe)
+
+    def _vram_release(self):
+        """Pusti slot i keepalive pauzu. Bezpecne volat vickrat."""
+        try:
+            from scripts.ollama_client import (resume_warmup as _resume_warmup,
+                                               release_base_slot as _rbs)
+            _resume_warmup()
+            _rbs(getattr(self, "_slot_tok", None))
+            self._slot_tok = None
+        except Exception as _rwe:
+            _log.debug("resume_warmup nedostupné: %s", _rwe)
+
     def run(self, target_date: Optional[str] = None) -> Optional[str]:
         """Vygeneruje reflexi pro daný den (default: dnes).
 
@@ -202,6 +230,18 @@ class HansEveningReflection:
         _log.info("Reflexe %s: %d typů událostí, %d znaků faktů",
                   date_str, len(facts), len(facts_text))
 
+        # ── HANS_REFLECTION_HANDOFF_FIRST_V1 (9. 9.) ────────────────────────
+        # VRAM handoff byl AZ ZA timhle blokem, takze kryl jen naslednou
+        # analytiku (importance, lessons, commitments, book_mentions) — ne
+        # samotnou reflexi. Pritom `synthesize` i `_extract_stances` jedou na
+        # BASE modelu stejne jako ona. Dusledek 9. 9. 03:01:52: reflexe se
+        # rozjela do prave zabraneho slotu studia, `Synthesis vratila prazdnou
+        # reflexi`, retry. A protoze si o slot v te chvili nerekla, za tri noci
+        # nepadla ani jedna hlaska `VRAM slot: … ceka` mezi reflexi a studiem —
+        # kontence byla neviditelna. Pojistka existovala a sedela za tim, co
+        # mela chranit (tataz trida jako HANS_PAPER_TAKEAWAY_DEFERRED_V1).
+        self._vram_handoff()
+
         # Pošli do synthesis
         text = self._synthesis.synthesize(
             topic="můj den",
@@ -212,6 +252,9 @@ class HansEveningReflection:
         )
         if not text:
             _log.warning("Synthesis vrátila prázdnou reflexi pro %s", date_str)
+            # slot uz drzime — bez tohohle by ho prazdna reflexe drzela
+            # az do auto-expiry (30 min) a studium by cekalo nadarmo
+            self._vram_release()
             return None
 
         # Ulož do deníku
@@ -233,30 +276,14 @@ class HansEveningReflection:
             _tnd_snapshot(self._config, self._diary_path, date_str)
         except Exception as _te:
             _log.warning("tendency snapshot selhal (reflexe OK): %s", _te)
-
-        # HANS_BASE_MODEL_BATCH_V1 — od teď běží base-model analytika (importance,
-        # lessons, commitments, book_mentions) na OpenEuroLLM (8GB). Aktivní VRAM
-        # handoff: pause_warmup (oba keepalive přestanou re-pinovat) + AKTIVNÍ
-        # unload hans-czech. Samotná pauza nestačí — keep_alive=-1 nevyprší a
-        # Ollama ho neevictuje ani pro nový request → 8+8 > 16GB → 300s timeout.
-        # Auto-expiry pauzy 30 min; resume v finally níž.
-        # HANS_BASE_SLOT_V1 (8.9.) — i večerní reflexe je base-model dávka,
-        # takže patří do sdíleného slotu. ⚠️ `resume` níž NENÍ ve `finally`
-        # (mezi ním a tímhle místem je `return text`), takže při výjimce se
-        # pauza ani slot nepustí — obojí drží auto-expiry 30 min. To je
-        # dosavadní chování, jen se teď týká i slotu; proto má slot vlastní
-        # expiraci a čekající dávka fail-open, ne zaseknutí.
-        self._slot_tok = None
-        try:
-            from scripts.ollama_client import (pause_warmup as _pause_warmup,
-                                               ollama_unload_all as _unload_all,
-                                               acquire_base_slot as _abs)
-            self._slot_tok = _abs("večerní reflexe", 1800)
-            _pause_warmup(1800)
-            _unload_all(config=self._config)
-        except Exception as _pwe:
-            _log.debug("VRAM handoff nedostupné: %s", _pwe)
-
+        # HANS_BASE_MODEL_BATCH_V1 — base-model analytika (importance, lessons,
+        # commitments, book_mentions) na OpenEuroLLM (8GB).
+        # HANS_REFLECTION_HANDOFF_FIRST_V1 (9. 9.) — handoff se PRESUNUL NAHORU,
+        # pred `synthesize`. Tady uz jen dorovnavame pripad, kdy by se sem
+        # doslo bez nej; `acquire_base_slot` je reentrantni per vlakno, takze
+        # opakovane volani jen prodlouzi drzeni a odpocita se pri release.
+        if getattr(self, "_slot_tok", None) is None:
+            self._vram_handoff()
         # AUTOBIOGRAPHICAL_IMPORTANCE_V1 — oskóruj neoskórované epizody dne
         # (base model, WHERE importance IS NULL = self-healing catch-up).
         try:
@@ -405,13 +432,9 @@ class HansEveningReflection:
             _log.warning("routine_patterns rebuild selhal (reflexe OK): %s", _re)
 
         # HANS_WARMUP_PAUSE_V1 — base-dávka hotová, vrať keepalive warmup.
-        try:
-            from scripts.ollama_client import (resume_warmup as _resume_warmup,
-                                               release_base_slot as _rbs)
-            _resume_warmup()
-            _rbs(getattr(self, "_slot_tok", None))   # HANS_BASE_SLOT_V1
-        except Exception as _rwe:
-            _log.debug("resume_warmup nedostupné: %s", _rwe)
+        # HANS_REFLECTION_HANDOFF_FIRST_V1 — jedna pravda pro uvolneni, at se
+        # tahle a predcasna cesta (prazdna reflexe) nemuzou rozejit.
+        self._vram_release()
 
         return text
 

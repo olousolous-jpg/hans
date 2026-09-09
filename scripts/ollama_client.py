@@ -552,6 +552,35 @@ def ollama_warmup(
 
 def _post_with_retry(url: str, payload: dict, timeout: int,
                      extractor) -> Optional[str]:
+    """HANS_LLM_TRACE_V1 (9. 9.) — měřicí obal nad `_post_with_retry_impl`.
+
+    JEDINÉ hrdlo, kterým tečou `ollama_chat` i `ollama_generate`, takže sem
+    patří zápis „kdo si řekl o který model a jak dlouho čekal". Bez něj se
+    z logu nedá zjistit, který noční krok vytáhl hans-czech doprostřed
+    base-model dávky — hlášky nesou jen URL a mez timeoutu.
+    ⚠️ Nesmí změnit chování: měření je v `try/except` a výsledek se vrací
+    beze změny, výjimka se propaguje dál."""
+    _t0 = time.time()
+    try:
+        _out = _post_with_retry_impl(url, payload, timeout, extractor)
+    except BaseException as _e:
+        _trace_zapis(payload, url, time.time() - _t0, type(_e).__name__)
+        raise
+    _trace_zapis(payload, url, time.time() - _t0,
+                 "ok" if _out else "prazdno")
+    return _out
+
+
+def _trace_zapis(payload, url, trvani, vysledek):
+    try:
+        from scripts.llm_trace import zapis as _z
+        _z((payload or {}).get("model", "?"), url, trvani, vysledek)
+    except Exception:
+        pass
+
+
+def _post_with_retry_impl(url: str, payload: dict, timeout: int,
+                          extractor) -> Optional[str]:
     """POST s retry při timeout. LOG_CIRCUIT_V1: potlač spam z mrtvého endpointu."""
     br = _breaker_for(url)
     last_exc = None

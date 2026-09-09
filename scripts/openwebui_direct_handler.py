@@ -3046,12 +3046,18 @@ class OpenWebUIDirectHandler:
                         logging.getLogger(__name__).warning(
                             'G3B send grounding failed: %s', _g3e)
             msgs = self._build_messages(system, user, name, _grounding)
+            # HANS_LLM_TRACE_V1 (9. 9.) — přímý kanál na OpenWebUI mimo
+            # `ollama_client`, hrdlo v `_post_with_retry` ho nevidí. Tohle je
+            # HLAVNÍ spotřebitel hans-czech; bez něj by měření nočního souběhu
+            # mělo díru přesně tam, kde se model pinuje do VRAM.
+            _t0 = time.time()
             r = requests.post(
                 self.chat_endpoint,
                 headers=self._headers(),
                 json={"model": self.model_name, "messages": msgs, "stream": False},
                 timeout=self.timeout,
             )
+            self._trace(_t0, "send_message", r.status_code)
             if r.status_code == 200:
                 data = r.json()
                 if "choices" in data and data["choices"]:
@@ -3124,6 +3130,7 @@ class OpenWebUIDirectHandler:
                 pass
             # endregion
 
+            _t0 = time.time()          # HANS_LLM_TRACE_V1
             r = requests.post(
                 self.chat_endpoint,
                 headers=self._headers(),
@@ -3131,6 +3138,7 @@ class OpenWebUIDirectHandler:
                 timeout=self.timeout,
                 stream=True,
             )
+            self._trace(_t0, "_stream_message", r.status_code)
             if r.status_code != 200:
                 print(f"[Chat] Stream HTTP {r.status_code}")
                 # region agent log
@@ -4621,13 +4629,34 @@ class OpenWebUIDirectHandler:
             # Ollama /api/generate s keep_alive=10m — model zustane v VRAM
             base = self.config.get('openwebui_chat', {}).get(
                 'base_url', 'http://localhost:11434')
-            requests.post(
+            _t0 = time.time()          # HANS_LLM_TRACE_V1
+            _r = requests.post(
                 f'{base}/api/generate',
                 json={'model': self.model_name,
                       'prompt': '',
                       'keep_alive': '20m'},
                 timeout=10,
             )
+            # keepalive JE ten krok, co vraci hans-czech do VRAM — v mereni
+            # nocniho soubehu je to nejdulezitejsi radek vubec.
+            self._trace(_t0, "keepalive", getattr(_r, "status_code", 0),
+                        url=f'{base}/api/generate')
+        except Exception:
+            pass
+
+    def _trace(self, t0, volajici, status=0, url=None):
+        """HANS_LLM_TRACE_V1 — best-effort zápis do data/mereni/llm_calls.log.
+
+        `url` se predava VYSLOVNE: keepalive nejde na `chat_endpoint`, ale na
+        `{base}/api/generate`, a sloupec, ktery by hlasil neco jineho, nez kam
+        se opravdu slo, by pri diagnostice svedl stejne jako kdysi hlaska
+        o READ mezi u ConnectTimeoutu (OLLAMA_CONNECT_TIMEOUT_LOG_V1)."""
+        try:
+            from scripts.llm_trace import zapis as _z
+            _z(getattr(self, "model_name", "?"),
+               url if url is not None else getattr(self, "chat_endpoint", ""),
+               time.time() - t0, "http_%s" % status,
+               volajici="openwebui_direct_handler:%s" % volajici)
         except Exception:
             pass
 
