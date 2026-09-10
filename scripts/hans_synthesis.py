@@ -886,7 +886,8 @@ class HansSynthesisHooks:
         if self._knowledge and self._knowledge.enabled:
             try:
                 doc_id = self._build_doc_id(cfg, title, item["ts"])
-                _zanr = (self._zanr_knihy(self._config, title)
+                # HANS_RAG_ZANR_CONFIG_FIX_V1 - v teto tride je config v _g5b_config
+                _zanr = (self._zanr_knihy(self._g5b_config, title)
                          if evt in ("book_read", "book_completion_reflection")
                          else "")
                 rag_text = self._build_rag_text(evt, title, note, text,
