@@ -124,12 +124,25 @@ def search_library_ex(query: str, limit: int = 12,
         # (nemotron „70B", llama3.2-vision „11B", dolphin3 „8B"…), a protože
         # se podle pulls ŘADÍ, dostával přednost náhodný model.
         pm = _PULLS_RE.search(card)
+        # HANS_TOOLSCOUT_RELEVANCE_V1 — POPIS z karty. Bez nej nesel posoudit ucel
+        # modelu: navrh rikal jen velikost a popularitu, takze `cogito`
+        # ("hybrid reasoning models") vypadal stejne dobre jako hudebni nastroj.
+        # RELEVANCE_DESC_FIX — karta zacina ZBYTKEM atributu z rozdeleni
+        # (`href="/library/` se uz odriznulo), takze prvni `>` je konec te
+        # znacky; teprve za nim zacina viditelny text. Bez toho popis zacinal
+        # retezcem `class="group w-full">` a nesl HTML do oduvodneni.
+        _d = card.split(">", 1)[1] if ">" in card else card
+        _d = re.sub(r"<[^>]+>", " ", _d)
+        _d = re.sub(r"\s+", " ", _d).strip()
+        if _d.lower().startswith(name.lower()):
+            _d = _d[len(name):].strip()
         out.append({
             "name": name,
             "sizes": sizes,
             "sizes_b": [_param_to_b(s) for s in sizes],
             "pulls": pm.group(1) if pm else "?",
             "capabilities": [c.strip() for c in caps],
+            "desc": _d[:300],
             "url": _MODEL_URL % name,
         })
         if len(out) >= limit:
@@ -202,6 +215,7 @@ def scout_tools_for_topic(config: dict, topic: str,
             "name": r["name"], "size_tag": fit["size_tag"],
             "est_gb": fit["est_gb"], "fit": fit["fit"], "note": fit["note"],
             "pulls": r["pulls"], "capabilities": r["capabilities"],
+            "desc": r.get("desc", ""),          # HANS_TOOLSCOUT_RELEVANCE_V1
             "url": r["url"],
         })
     return {"topic": topic, "keyword": kw, "candidates": cands,
@@ -219,6 +233,35 @@ _KEYWORD_HINTS = {
     "vision": ("obraz", "vidění", "foto", "vizuál", "grafik"),
     "audio": ("hudb", "zvuk", "kompozic", "mid", "audio", "nota"),
 }
+
+
+# HANS_TOOLSCOUT_RELEVANCE_V1 — slova, ktera musi kandidat mit ve jmenu nebo popisu,
+# aby se pro dany klic pocital za relevantni. Klic, ktery tu NENI (napr. kdyz
+# se hleda rovnou nazev tematu), se ZAMERNE nefiltruje — fail-safe, at se
+# nezahodi vsechno kvuli chybejici rubrice.
+_RELEVANCE = {
+    "audio":  ("audio", "music", "sound", "speech", "midi", "voice", "song",
+               "acoustic"),
+    "coder":  ("code", "coder", "program", "developer", "software", "sql"),
+    "code":   ("3d", "mesh", "blender", "cad", "model"),
+    "math":   ("math", "reason", "logic", "proof", "calcul"),
+    "vision": ("vision", "image", "visual", "ocr", "picture", "diagram"),
+}
+
+
+def _je_relevantni(cand: dict, keyword: str) -> bool:
+    """HANS_TOOLSCOUT_RELEVANCE_V1 — souvisi kandidat vubec s domenou?
+
+    Rozhoduje jmeno + popis z karty. Neznamy klic => True (nefiltruje se).
+    ⚠️ Neresi rozdil mezi "rozumi zvuku" a "sklada hudbu" — na to je popis
+    z karty prilis hruby. Proto se popis nove PISE DO ODUVODNENI, aby si
+    uzivatel mohl ucel prectit sam (human-in-loop uz v toolscoutu je).
+    """
+    slova = _RELEVANCE.get((keyword or "").strip().lower())
+    if not slova:
+        return True
+    hay = ((cand.get("name") or "") + " " + (cand.get("desc") or "")).lower()
+    return any(s in hay for s in slova)
 
 
 def _keyword_hint(topic: str) -> str:
@@ -256,10 +299,21 @@ def _derive_keyword(config: dict, topic: str) -> str:
 def _rationale(config: dict, topic: str, cand: dict) -> str:
     """Groundované odůvodnění návrhu — LLM smí použít JEN skutečná metadata.
     Fallback = deterministická věta. ŽÁDNÉ vymyšlené benchmarky."""
+    # HANS_TOOLSCOUT_RELEVANCE_V1 — dedup schopnosti (u `nemotron3` se opakovaly ~30x
+    # dokola: "vision, tools, thinking, vision, embedding, tools, ...")
+    # a POPIS z karty, aby bylo z navrhu poznat, k cemu model vlastne je.
+    _caps, _vid = [], set()
+    for _c in cand.get("capabilities") or []:
+        _cl = str(_c).strip().lower()
+        if _cl and _cl not in _vid:
+            _vid.add(_cl)
+            _caps.append(str(_c).strip())
+    _popis = (cand.get("desc") or "").strip()
     facts = ("model=%s, velikost=%s (~%s GB), popularita=%s stažení, "
-             "schopnosti=%s, umístění=%s" % (
+             "schopnosti=%s, umístění=%s%s" % (
                  cand["name"], cand["size_tag"], cand["est_gb"], cand["pulls"],
-                 ", ".join(cand["capabilities"]) or "neuvedeno", cand["note"]))
+                 ", ".join(_caps) or "neuvedeno", cand["note"],
+                 (", popis z knihovny: " + _popis[:200]) if _popis else ""))
     try:
         from scripts.ollama_client import ollama_generate
         model = ((config.get("dialog", {}) or {}).get("model")
@@ -278,9 +332,10 @@ def _rationale(config: dict, topic: str, cand: dict) -> str:
             return raw.strip()
     except Exception as e:
         _log.debug("toolscout rationale: %s", e)
-    return ("Navrhuji %s (%s, ~%s GB, %s stažení, %s). %s." % (
+    return ("Navrhuji %s (%s, ~%s GB, %s stažení, %s). %s.%s" % (
         cand["name"], cand["size_tag"], cand["est_gb"], cand["pulls"],
-        ", ".join(cand["capabilities"]) or "obecný", cand["note"]))
+        ", ".join(_caps) or "obecný", cand["note"],
+        (" Knihovna o něm píše: " + _popis[:200]) if _popis else ""))
 
 
 # ── ToolStore (tabulka tool_proposals) ───────────────────────────────────────
@@ -451,6 +506,19 @@ def propose_tool(config: dict, db_path: str, topic: str,
             store.mark_none(topic, kw)
             return {"status": "none",
                     "reason": "vše vhodné pod „%s“ už mám nainstalované" % kw}
+    # HANS_TOOLSCOUT_RELEVANCE_V1 — vyhod kandidaty, kteri s domenou nesouvisi.
+    # Stejny vzor jako filtr "uz nainstalovano" vys: kdyz nezbude nic,
+    # je to POCTIVY vysledek "nic vhodneho nemam" (mark_none), ne chyba.
+    _pred = len(cands)
+    cands = [c for c in cands if _je_relevantni(c, kw)]
+    if _pred != len(cands):
+        _log.info("toolscout: %d z %d kandidatu vyrazeno jako nesouvisejici "
+                  "s domenou (klic '%s')", _pred - len(cands), _pred, kw)
+    if not cands:
+        store.mark_none(topic, kw)
+        return {"status": "none",
+                "reason": "pod „%s“ jsou jen obecné modely, nic pro tuhle "
+                          "doménu" % kw}
     cands.sort(key=lambda c: (-_pull_num(c), 0 if c["fit"] == "coexist" else 1))
     props = []
     for cand in cands[:max_props]:
