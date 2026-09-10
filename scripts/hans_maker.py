@@ -192,6 +192,96 @@ def _generate_images(config: dict, html: str, dest_dir: Path) -> str:
     return html
 
 
+# ── HANS_MAKER_MUSIC_V1 — notový příklad do podstránek ────────────────────────
+# Vzor je TÝŽ jako u obrázků (`GEN:`): šablona nechá marker, druhý průchod
+# ho naplní. Rozdíl: obrázky žádá coder v landingu, hudbu dává ŠABLONA
+# podstránky — proto je úvodní stránka bez hudby sama od sebe (pokyn
+# uživatele 10. 9.).
+# Kmeny, ne cela slova — cestina sklonuje ("opera" by netreflo "dejiny OPERY").
+# Porovnava se BEZ DIAKRITIKY (`_bez_diakritiky`), takze staci jeden tvar:
+# jinak by "operat" nesedelo na "operATor" a "pisn" na "pISNe".
+_HUDEBNI_SLOVA = ("hudb", "music", "skladb", "notac", "melodi", "harmoni",
+                  "rytm", "zpev", "oper", "symfon", "orchestr", "akord",
+                  "koncert", "kapel", "pisn", "tonin", "kontrapunkt")
+# Kratky kmen chytne i neco jineho: "oper" sedi na "operace" i "operator".
+_HUDEBNI_VYJIMKY = ("operac", "operat", "operativ", "notace dat")
+
+
+def _bez_diakritiky(s: str) -> str:
+    import unicodedata as _ud
+    return "".join(c for c in _ud.normalize("NFD", (s or "").lower())
+                   if not _ud.combining(c))
+
+_MUSIC_MARKER = "<!--HANS_MUSIC:%s-->"
+
+
+def _je_hudebni_tema(topic: str) -> bool:
+    """Má se do podstránek dávat notový příklad?"""
+    low = _bez_diakritiky(topic)
+    if any(v in low for v in _HUDEBNI_VYJIMKY):
+        return False
+    return any(s in low for s in _HUDEBNI_SLOVA)
+
+
+def _render_music(config: dict, pages: dict, dest_dir) -> int:
+    """Najdi `<!--HANS_MUSIC:<kapitola>-->` → slož ABC → nahraď HTML blokem.
+
+    Vrací počet naplněných markerů. Selhání JEDNÉ kapitoly nesmí shodit
+    dílo: marker se odstraní a jede se dál (vzor `_placeholder_svg`).
+    ⚠️ Tiché selhání se LOGUJE jako WARNING — bez toho by dílo vyšlo
+    „bez not" a nikdo by nevěděl proč (HANS_MAKER_IMG_SURFACE_V1).
+    """
+    import re as _re
+    import os as _os
+    import shutil as _sh          # ⚠️ hans_maker je nahoře NEIMPORTUJE
+    try:
+        from scripts import hans_music as _hm
+    except Exception as _e:
+        _log.warning("maker music: modul nedostupný: %s", _e)
+        return 0
+    if not _hm.enabled(config):
+        # I pri vypnute hudbe markery UKLID — jsou to sice HTML komentare
+        # (uzivatel je nevidi), ale nechavat v dile mrtve znacky je nepucher
+        # a pri pristim behu by se naplnily podruhe.
+        for _j, _h2 in list(pages.items()):
+            pages[_j] = _re.sub(r"<!--HANS_MUSIC:.*?-->", "", _h2)
+        return 0
+    hotovo = celkem = 0
+    for jmeno, html in list(pages.items()):
+        for kap in set(_re.findall(r"<!--HANS_MUSIC:(.*?)-->", html)):
+            celkem += 1
+            blok = ""
+            try:
+                zad = _hm.zadani_pro_kapitolu(config, kap)
+                abc = _hm.sloz(config, zad, titul=kap) if zad else None
+                if abc:
+                    blok = _hm.html_blok(abc, kap)
+                    hotovo += 1
+            except Exception as _e:
+                _log.debug("maker music '%s': %s", kap[:30], _e)
+            # lambda: ABC obsahuje \u escapy, re.sub by je bral jako escape
+            html = html.replace(_MUSIC_MARKER % kap, blok)
+        pages[jmeno] = html
+    if celkem and hotovo < celkem:
+        _log.warning("maker: notové příklady JEN %d/%d — zbytek bez not "
+                     "(mozek dole nebo model vrátil prózu)", hotovo, celkem)
+    elif celkem:
+        _log.info("maker: notové příklady %d/%d", hotovo, celkem)
+    # abcjs k dílu, ať artefakt nevisí na internetu
+    if hotovo:
+        try:
+            _src = _os.path.join(_os.path.dirname(_os.path.dirname(
+                _os.path.abspath(__file__))), "assets", "abcjs.js")
+            if _os.path.exists(_src):
+                _sh.copy2(_src, _os.path.join(str(dest_dir), "abcjs.js"))
+            else:
+                _log.warning("maker music: assets/abcjs.js CHYBÍ → noty se "
+                             "v prohlížeči nevykreslí")
+        except Exception as _e:
+            _log.warning("maker music: kopie abcjs selhala: %s", _e)
+    return hotovo
+
+
 # ── HANS_MAKER_MULTIPAGE_V1 — vícestránkové dílo (landing + podstránky) ──────
 
 _LANDING_SYSTEM = (
@@ -271,9 +361,12 @@ def _paragraphize(text: str) -> str:
 
 
 def _subpage_html(style: str, topic: str, sub: str, text: str,
-                  img_desc: str, home: str = "index.html") -> str:
+                  img_desc: str, home: str = "index.html",
+                  hudba: bool = False) -> str:
     import html as _h
     img_desc = (img_desc or "").replace("\"", " ").replace("'", " ").strip()
+    # HANS_MAKER_MUSIC_V1 — místo pro notový příklad; naplní `_render_music`
+    _music = (_MUSIC_MARKER % sub) if hudba else ""
     return (
         "<!DOCTYPE html>\n<html lang=\"cs\">\n<head>\n<meta charset=\"UTF-8\">\n"
         "<meta name=\"viewport\" content=\"width=device-width, "
@@ -282,11 +375,11 @@ def _subpage_html(style: str, topic: str, sub: str, text: str,
         "<p class=\"back\"><a href=\"%s\">← zpět na přehled</a></p>\n"
         "<h1>%s</h1>\n"
         "<img class=\"detail-img\" src=\"GEN:%s\" alt=\"%s\">\n"
-        "%s\n"
+        "%s\n%s\n"
         "<p class=\"back\"><a href=\"%s\">← zpět na přehled</a></p>\n"
         "</article>\n</body>\n</html>"
         % (_h.escape(sub), _h.escape(topic), style, home, _h.escape(sub),
-           img_desc, _h.escape(sub), _paragraphize(text), home)
+           img_desc, _h.escape(sub), _paragraphize(text), _music, home)
     )
 
 
@@ -658,7 +751,8 @@ def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
         for (slug, sub), n in zip(subs, notes):
             desc = img_prompts.get(sub) or ("historical illustration, %s" % sub)
             pages["detail-%s.html" % slug] = _subpage_html(
-                style, topic, sub, n["text"], desc)
+                style, topic, sub, n["text"], desc,
+                hudba=_je_hudebni_tema(topic))   # HANS_MAKER_MUSIC_V1
         # KARTY — deterministicky, STYLOVANĚ, VŽDY všechna pod-témata. Coder
         # nechává <!--HANS_CARDS-->; když ho vynechá, doplň stylované karty pro
         # NElinkovaná témata (dřív = ošklivý plain-ul seznam → „jen odkazy").
@@ -678,6 +772,13 @@ def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
         landing = (landing.replace("</head>", _CARD_CSS + "</head>", 1)
                    if "</head>" in landing else _CARD_CSS + landing)
         pages["index.html"] = landing
+        # HANS_MAKER_MUSIC_V1 — druhý průchod: naplň notové markery. Až ZA
+        # landingem, takže do index.html nic nepřidá (marker tam není).
+        if _je_hudebni_tema(topic):
+            try:
+                _render_music(config, pages, dest_dir)
+            except Exception as _e:
+                _log.warning("maker: notové příklady selhaly: %s", _e)
         cap = int(_cfg(config).get("site_max_images", len(subs) + 2))
         pages, rendered, total = _render_site_images(config, pages, dest_dir, cap)
         for name, html in pages.items():
