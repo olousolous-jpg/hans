@@ -71,6 +71,9 @@ def zadani_pro_kapitolu(config: dict, kapitola: str,
             "2) Uveď tóninu a takt (např. 'in D minor, 3/4 time').\n"
             "3) Uveď charakter nebo postup, který kapitolu vystihuje.\n"
             "4) Žádné vysvětlování, žádné 'that demonstrates'. Jen zadání.\n"
+            "5) NENÍ-LI kapitola o rytmu, metru nebo taktu, přidej na konec "
+            "'Keep a single time signature throughout.' — jinak model mění "
+            "takt uprostřed a u výkladové ukázky to jen plete.\n"
             "Odpověz POUZE tou jednou anglickou větou.")
         user = "Kapitola: %s" % kapitola
         if kontext:
