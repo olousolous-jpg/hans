@@ -106,8 +106,16 @@ def _cinnost(conn, since: float) -> list:
     return [(k, v) for k, v in d if v]
 
 
-def _odezva(conn, since: float) -> list:
-    """Odezva světa — co Hans nemohl napsat sám."""
+def _odezva(conn, since: float) -> tuple:
+    """HANS_BEHAVIOUR_EVIDENCE_V3 — vrací (zvenčí, vnitřní dialog, vlastní výsledky).
+
+    Dřív to byl JEDEN seznam pod nadpisem "tohle jsem si nenapsal sám",
+    jenže dva z jeho řádků si Hans napsal sám (Koláč + vlastní ověření
+    faktu) a jeden nebyl odezva vůbec (vlastní cíle). Severka to četla
+    jako hlas okolí a postavila na tom návrh identity.
+    ⛔ Koláč se NEVYHAZUJE — je to hlavní motor pohybu identity
+    (2170 replik proti 986 lidským). Mění se štítek, ne vstup.
+    """
     # `agent_action` nese výsledek v TITULKU za šipkou („… → accepted")
     def _agent(stav):
         return _q1(conn, "SELECT count(*) FROM diary WHERE event_type="
@@ -124,32 +132,64 @@ def _odezva(conn, since: float) -> list:
     # než kdekoli jinde. Drží se odděleně a s poctivými popisky.
     prijato, odmitnuto, minulo = (_agent("accepted"), _agent("rejected"),
                                   _agent("ignored"))
-    out = []
+    # HANS_BEHAVIOUR_EVIDENCE_V3 — tri skupiny misto jednoho seznamu.
+    ven, vnitr, vlastni = [], [], []
+
+    # ── ZVENCI: rozhodl o tom clovek ───────────────────────────────────
     if prijato or odmitnuto:
-        out.append(("na mé návrhy pán řekl ano / ne", "%d / %d"
+        ven.append(("na mé návrhy pán řekl ano / ne", "%d / %d"
                     % (prijato, odmitnuto)))
     if minulo:
-        out.append(("mých návrhů přišlo ve chvíli, kdy pán řešil něco jiného",
+        ven.append(("mých návrhů přišlo ve chvíli, kdy pán řešil něco jiného",
                     str(minulo)))
-    n = _q1(conn, "SELECT count(*) FROM diary WHERE event_type IN "
-            "('lesson_learned','fact_correction') AND ts>=?", (since,))
+    # V3: JEN lesson_learned. fact_correction je G5K = vlastni overeni faktu,
+    # ne oprava od uzivatele — patri do vnitrniho dialogu.
+    n = _q1(conn, "SELECT count(*) FROM diary WHERE "
+            "event_type='lesson_learned' AND ts>=?", (since,))
     if n:
-        out.append(("kolikrát mě pán opravil", str(n)))
+        ven.append(("kolikrát mě pán opravil", str(n)))
+    n = _q1(conn, "SELECT count(*) FROM deepen_proposals WHERE status IN "
+            "('rejected','expired') AND ts>=?", (since,))
+    if n:
+        ven.append(("kolikrát pán zamítl, abych šel v tématu hlouběji", str(n)))
+    # V3: merítko objemu — bez nej nejde poznat, ze lidskeho vstupu je malo.
+    n = _q1(conn, "SELECT count(*) FROM diary WHERE event_type='human_chat' "
+            "AND ts>=?", (since,))
+    if n:
+        ven.append(("rozhovorů s lidmi", str(n)))
+
+    # ── VNITRNI DIALOG: vyrobil si to sam ──────────────────────────────
     n = _q1(conn, "SELECT count(*) FROM stance_history WHERE event='contradict' "
             "AND ts>=?", (since,))
     if n:
-        out.append(("kolikrát jsem v rozepři ustoupil ze svého postoje", str(n)))
+        # Rozpad je ODHAD podle hodiny: vecerni reflexe bezi 00-06, Kolacovy
+        # debaty pres den. stance_history sloupec `source` nema — contradict()
+        # ho dostava, ale zahazuje. Presny rozpad by chtel ALTER TABLE.
+        _noc = _q1(conn, "SELECT count(*) FROM stance_history WHERE "
+                   "event='contradict' AND ts>=? AND CAST(strftime('%H',ts,"
+                   "'unixepoch','localtime') AS INT) BETWEEN 0 AND 6", (since,))
+        # V3_FMT — jeden radek; podradky delaly dvojitou pomlcku ("-     z toho")
+        vnitr.append(("kolikrát jsem v rozepři ustoupil ze svého postoje",
+                      "%d (odhadem ~%d v debatě s Koláčem, ~%d ve večerní "
+                      "reflexi)" % (n, n - _noc, _noc)))
+    n = _q1(conn, "SELECT count(*) FROM diary WHERE "
+            "event_type='fact_correction' AND ts>=?", (since,))
+    if n:
+        vnitr.append(("kolikrát jsem si sám ověřil a opravil fakt", str(n)))
+    n = _q1(conn, "SELECT count(*) FROM diary WHERE event_type='teddy_dialog' "
+            "AND ts>=?", (since,))
+    if n:
+        vnitr.append(("replik v dialogu s Koláčem", str(n)))
+
+    # ── VLASTNI VYSLEDKY: nikdy to nebyla odezva okoli ─────────────────
     hotovo = _q1(conn, "SELECT count(*) FROM hans_goals WHERE status='completed' "
                  "AND opened_at>=?", (since,))
     vzdano = _q1(conn, "SELECT count(*) FROM hans_goals WHERE status='abandoned' "
                  "AND opened_at>=?", (since,))
     if hotovo or vzdano:
-        out.append(("cílů dotažených / vzdaných", "%d / %d" % (hotovo, vzdano)))
-    n = _q1(conn, "SELECT count(*) FROM deepen_proposals WHERE status IN "
-            "('rejected','expired') AND ts>=?", (since,))
-    if n:
-        out.append(("kolikrát pán zamítl, abych šel v tématu hlouběji", str(n)))
-    return out
+        vlastni.append(("cílů dotažených / vzdaných", "%d / %d"
+                        % (hotovo, vzdano)))
+    return ven, vnitr, vlastni
 
 
 def block(config: dict, diary_db_path: str, window_days: int = None) -> str:
@@ -161,8 +201,8 @@ def block(config: dict, diary_db_path: str, window_days: int = None) -> str:
     conn = None
     try:
         conn = _ro(diary_db_path)
-        ins, cin, odz = (_insights(conn, since), _cinnost(conn, since),
-                         _odezva(conn, since))
+        ins, cin = _insights(conn, since), _cinnost(conn, since)
+        ven, vnitr, vlastni = _odezva(conn, since)   # HANS_BEHAVIOUR_EVIDENCE_V3
     except Exception as e:
         _log.debug("behaviour block failed: %s", e)
         return ""
@@ -172,16 +212,25 @@ def block(config: dict, diary_db_path: str, window_days: int = None) -> str:
                 conn.close()
             except Exception:
                 pass
-    if not (ins or cin or odz):
+    if not (ins or cin or ven or vnitr or vlastni):
         return ""
     p = []
     if cin:
         p.append("Čím jsem strávil posledních %d dní:" % window_days)
         p += ["- %s: %d" % (k, v) for k, v in cin]
-    if odz:
-        p.append("\nJak na mě reagovalo okolí za posledních %d dní "
-                 "(tohle jsem si nenapsal sám):" % window_days)
-        p += ["- %s: %s" % (k, v) for k, v in odz]
+    # V3_SEKCE — tri oddelene sekce s poctivymi popisky misto jedne.
+    if ven:
+        p.append("\nCo na mě doopravdy přišlo ZVENČÍ za posledních %d dní "
+                 "(rozhodl o tom člověk, ne já):" % window_days)
+        p += ["- %s: %s" % (k, v) for k, v in ven]
+    if vnitr:
+        p.append("\nCo vzešlo z mého VLASTNÍHO vnitřního dialogu za posledních "
+                 "%d dní (vyrobil jsem si to sám — druhou myslí nebo večerní "
+                 "reflexí, není to hlas okolí):" % window_days)
+        p += ["- %s: %s" % (k, v) for k, v in vnitr]
+    if vlastni:
+        p.append("\nCo jsem sám dokázal za posledních %d dní:" % window_days)
+        p += ["- %s: %s" % (k, v) for k, v in vlastni]
     if ins:
         p.append("\nCo jsem si sám všiml ve svých datech (vlastní rozbor):")
         p += ["- [%s] %s" % (l, t) for l, t in ins]
