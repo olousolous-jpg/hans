@@ -704,12 +704,22 @@ class HansSynthesisHooks:
 
     def _maybe_drain_pending(self, throttle_s: float = 60.0):
         """PENDING_THOUGHTS_DRAIN_V1 (B-3) — max 1x/throttle_s zkus
-        dohnat odlozene offline myslenky z disku."""
+        dohnat odlozene offline myslenky z disku.
+
+        HANS_DRAIN_BACKOFF_V1 — pri nedostupnem LLM se odstup zdvojnasobuje
+        (strop 900 s), po uspesnem drainu se resetuje. Bez toho se pri
+        nocnim vypnuti PC zkousela fronta 4 h po 60 s naprazdno.
+        Prazdna fronta backoff NEZVYSUJE — _drain_pending vraci None.
+        """
         now = time.time()
-        if now - self._last_drain_ts < throttle_s:
+        _odstup = max(throttle_s, getattr(self, "_drain_backoff", 0.0))
+        if now - self._last_drain_ts < _odstup:
             return
         self._last_drain_ts = now
-        self._drain_pending()
+        if self._drain_pending():          # True = LLM je porad dole
+            self._drain_backoff = min(max(_odstup * 2, throttle_s * 2), 900.0)
+        else:
+            self._drain_backoff = 0.0
 
     def _drain_pending(self):
         """Projde pending_thoughts/ a zkusi kazdy item znovu.
@@ -744,7 +754,7 @@ class HansSynthesisHooks:
                 if done:
                     _log.info("drain: doplneno %d, LLM zase offline, "
                               "zbytek pocka", done)
-                return  # PC zjevne spi — prerus
+                return True  # HANS_DRAIN_BACKOFF_V1: PC spi -> prodluz odstup
             except Exception as e:
                 _log.warning("drain: %s nezpracovatelny, mazu: %s", fname, e)
                 self._safe_unlink(path)
