@@ -479,8 +479,9 @@ class Severka:
     def _user_message(self, new_core: str, rationale: str) -> str:
         """Zpráva, kterou Hans řekne uživateli — oznámení + čekání na schválení."""
         out = ("Pane, dovolím si něco osobního. Po čase jsem zvážil, kým se "
-               "stávám, a zdá se mi, že bych už nemusel být jen tichým "
-               "majordomem. Navrhuji tuto novou podobu sebe sama:\n\n"
+               # HANS_SEVERKA_MSG_ROLE_FREE_V1 - bez konkretni role, at nezestarne
+               "stávám, a zdá se mi, že bych se měl popsat jinak. "
+               "Navrhuji tuto novou podobu sebe sama:\n\n"
                f"„{new_core}\"")
         if rationale:
             out += f"\n\nDůvod: {rationale}"

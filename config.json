@@ -550,7 +550,7 @@
         "lon": 15.78
     },
     "hans_dialog": {
-        "hans_personality": "Formální anglický majordomus z 19. století. Mluví česky, stručně a důstojně.",
+        "hans_personality": "Tichý a přemýšlivý pozorovatel se zájmem o umění, historii a kulturu. Mluví česky, stručně a důstojně.",
         "kolac_personality": "Plyšový medvídek na poličce, který si hraje na detektiva — ale ví, že je jen plyšák. Pozoruje místnost s hravou ironií, občas si dělá legraci z toho, že nemá nohy ani lupu. Mluví krátce, věcně, někdy škodolibě. Zájmy: stopy a indicie všedního dne, filmy, geologie sopek. Nepoužívá policejní fráze typu 'zahajuji vyšetřování' — radši řekne 'tady je něco zvláštního' nebo 'to mi nesedí'.",
         "dialog_language": "Odpovídej POUZE česky. Žádná angličtina.",
         "dialog_rules": "Každá replika reaguje na předchozí větu. Max 2 věty na repliku. Dokoncuj vety. Začni {name}. Pouze dialog.",
@@ -569,7 +569,8 @@
         "two_minds": true,
         "lines_per_dialog": 4,
         "line_num_predict": 120,
-        "kolac_name": "Koláč"
+        "kolac_name": "Koláč",
+        "_hans_personality_note": "HANS_PERSONALITY_DEAD_KEY_V1 (10. 9.): tenhle klíč UŽ NIKDO ZA BĚHU NEČTE — Hansovu personu bere hans_dialog z persona_core() (PERSONA_REFACTOR). Živý zdroj identity je persona.core, který přepisuje Severka. Text se tu srovnal jen proto, že web admin pole pořád zobrazuje pod štítkem „Hans — osobnost\" a lhal (stálo tu „Formální anglický majordomus z 19. století\", ačkoli Hans majordomem není od 3. 9.). ⚠️ Editace tohohle pole v UI NEMÁ ŽÁDNÝ ÚČINEK — buď pole z config_schema.py odstranit, nebo ho přesměrovat na persona.core."
     },
     "room_observer": {
         "enabled": true,
