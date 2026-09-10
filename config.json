@@ -1522,5 +1522,10 @@
         "num_predict": 1536,
         "keep_alive": "10m",
         "_note": "HANS_MUSIC_V1 (10. 9.) — Hans skládá notový příklad ke studované kapitole. `chatmusician` = m-a-p/ChatMusician (LLaMA2-7B doučený na ABC notaci, MIT), na PC jako ollama model z GGUF Q4_K_M. VRAM: KOEXISTUJE s rezidentním hans-czech (8,06 + 5,18 = 13,2 z 16 GB), takže NEPOTŘEBUJE base_slot ani handoff — změřeno naživo. ⚠️ `brief_model` (překlad kapitoly na anglické zadání) je ZÁMĚRNĚ hans-czech, ne base: base 8 GB se vedle těch dvou nevejde a vyrobil by přesně ten thrashing, který řeší HANS_HC_YIELD_TO_BASE_V1."
+    },
+    "art": {
+        "covered_days": 30,
+        "covered_min": 4,
+        "_covered_note": "HANS_ART_COVERED_ASPECTS_V1 (10. 9.) — art director dostane kromě 3 posledních ponaučení i PŘEHLED, které aspekty už jsou vytěžené a kde je mezera. Bez toho viděl jen ~37 h zpět a po čtvrtém obraze se vracel k témuž konceptu (změřeno: 224 ponaučení textově unikátních, ale poměry konceptů se 4 měsíce nehnuly). A/B 3+3: bez paměti model šel na light/colour (21-22x vytěžené), s pamětí na composition (10x = mezera). ⚠️ Verdikt má přednost — když Hans pojmenuje konkrétní problém, paměť ustoupí (ověřeno)."
     }
 }

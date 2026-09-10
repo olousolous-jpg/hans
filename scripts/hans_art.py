@@ -783,6 +783,51 @@ _LESSON_SYSTEM = (
 )
 
 
+# HANS_ART_COVERED_ASPECTS_V1 — aspekty malby, podle kterych se meri "uz probrano".
+# Klice jsou ANGLICKE: jdou primo do promptu (model pracuje anglicky).
+_ART_ASPEKTY = {
+    "depth / atmospheric perspective": ("depth", "atmospher", "perspective",
+                                        "recession", "distance"),
+    "foreground / background separation": ("foreground", "background",
+                                           "midground"),
+    "colour & saturation": ("colour", "color", "saturat", "hue", "palette"),
+    "light & shadow": ("light", "shadow", "illumin", "luminos", "contrast"),
+    "texture & detail": ("texture", "detail", "brush", "render", "surface"),
+    "composition & framing": ("composition", "framing", "balance", "focal",
+                              "weight"),
+    "narrative & mood": ("narrative", "mood", "emotion", "story"),
+}
+
+
+def _covered_aspects(db_path: str, days: int = 30, min_n: int = 4) -> list:
+    """HANS_ART_COVERED_ASPECTS_V1 — které aspekty už Hans řeší dokola.
+
+    Vrací [(aspekt, kolikrát)] sestupně, jen ty nad `min_n`. Slouží k tomu,
+    aby art director VĚDĚL, co už je vytěžené, a šel jinam — `_recent_lessons`
+    mu ukáže jen 3 poslední texty, což je ~37 h z osmi měsíců malování.
+    Fail-safe: chyba → prázdný seznam (radši bez přehledu než bez ponaučení).
+    """
+    if not db_path:
+        return []
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        rows = con.execute(
+            "SELECT note FROM diary WHERE event_type='art_lesson' "
+            "AND note IS NOT NULL AND note!='' AND ts>=?",
+            (time.time() - days * 86400,)).fetchall()
+        con.close()
+    except Exception:
+        return []
+    poc = {}
+    for (note,) in rows:
+        low = (note or "").lower()
+        for aspekt, slova in _ART_ASPEKTY.items():
+            if any(s in low for s in slova):
+                poc[aspekt] = poc.get(aspekt, 0) + 1
+    return sorted([(a, n) for a, n in poc.items() if n >= min_n],
+                  key=lambda x: -x[1])
+
+
 def _derive_art_lesson(config: dict, db_path: str, title: str,
                        vision_desc: str, verdict: str, store: bool = True) -> str:
     """Odvodí ponaučení pro příští render z vize + verdiktu. Běží na hans-czech
@@ -803,6 +848,33 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
         recent_block = ("Painter's recent guidance lines (do NOT repeat these — "
                         "build on them or move to a new aspect):\n"
                         + "\n".join("- %s" % r for r in recent) + "\n\n")
+    # HANS_ART_COVERED_ASPECTS_V1 — 3 posledni texty pokryvaji ~37 h; bez tohohle
+    # prehledu se model po ctvrtem obraze vrati k tomuze aspektu.
+    _covered = _covered_aspects(db_path,
+                                days=int(acfg.get("covered_days", 30)),
+                                min_n=int(acfg.get("covered_min", 4)))
+    if _covered:
+        # ⚠️ Nestaci rict "tohle uz mas" — zmereno 10. 9., ze nad prahem je
+        # VSECH SEDM aspektu (10-22x za 30 dni), takze "jdi jinam" nema kam.
+        # Proto se davaji OBA konce: nejvytezenejsi (vyhni se) i nejmene
+        # probrany (tam je prostor) — pozitivni smer misto samotneho zakazu.
+        _dny = int(acfg.get("covered_days", 30))
+        _nej = _covered[:3]
+        _mez = [x for x in _covered[-2:] if x not in _nej]
+        recent_block += (
+            "Aspects the painter has worked on MOST in the last %d days "
+            "(well covered — avoid unless the verdict names a real problem):\n"
+            % _dny
+            + "\n".join("- %s (%dx)" % (a, n) for a, n in _nej) + "\n")
+        if _mez:
+            recent_block += (
+                "LEAST explored lately — prefer one of these:\n"
+                + "\n".join("- %s (only %dx)" % (a, n) for a, n in _mez)
+                + "\n")
+        recent_block += "\n"
+        _log.info("art: lesson zná vytěžené aspekty (nej: %s, mezera: %s)",
+                  _nej[0][0] if _nej else "?",
+                  _mez[0][0] if _mez else "—")
     user = (recent_block
             + "Independent description of the rendered image:\n%s\n\n"
             "Painter's verdict:\n%s\n\nWrite the ONE-line guidance."
