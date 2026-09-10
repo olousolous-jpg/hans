@@ -359,6 +359,38 @@ def release_base_slot(token: Optional[int]) -> None:
             _base_slot_thread = None
 
 
+def base_slot_busy() -> bool:
+    """HANS_HC_YIELD_TO_BASE_V1 — drzi base slot JINE vlakno?
+
+    Pro hans-czech konzumenty, kteri se jinak vklini doprostred base davky
+    a vyhodi base model z VRAM. Zmereno v noci na 10. 9. (okno 03:00-04:23):
+    z 24 prepnuti modelu jich 8 zpusobily `hans_synthesis:_call` (5x)
+    a `hans_dialog:_one_line` (3x) — 7,6 z 11,6 min VRAM rezie.
+
+    ⚠️ REENTRANCE: vlaknu, ktere slot DRZI, vraci False — jinak by si base
+    davka zablokovala vlastni prubezna volani.
+    Fail-safe: pri jakekoli chybe False (radeji thrashing nez zastaveny hook).
+    """
+    try:
+        with _warmup_state_lock:
+            if time.time() >= _base_slot_until:
+                return False
+            if _base_slot_thread == threading.get_ident():
+                return False
+            return True
+    except Exception:
+        return False
+
+
+def base_slot_label() -> str:
+    """HANS_HC_YIELD_TO_BASE_V1 — cim je slot drzen (pro poctivou hlasku v logu)."""
+    try:
+        with _warmup_state_lock:
+            return _base_slot_label if time.time() < _base_slot_until else ""
+    except Exception:
+        return ""
+
+
 import contextlib as _contextlib
 
 

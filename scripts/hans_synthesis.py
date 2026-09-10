@@ -315,6 +315,24 @@ class HansSynthesis:
             if elapsed < self._min_gap_s:
                 time.sleep(self._min_gap_s - elapsed)
 
+            # HANS_HC_YIELD_TO_BASE_V1 / HANS_HC_YIELD_SCOPE (10. 9.) —
+            # kdyz bezi davka na BASE modelu, synthesis (hans-czech, :8080)
+            # by ji vyhodila z VRAM: 5 z 24 prepnuti v noci na 10. 9. = 231 s.
+            # ⚠️ Ustoupi JEN volajici s `raise_offline=True`, tedy hooky, ktere
+            # maji PENDING_THOUGHTS frontu a dozenou se drainem. Volajici bez
+            # ni (hans_memory encounter_summary, hans_relationships) by dostali
+            # None a jejich shrnuti by se TISE ZTRATILO — ti bezi dal.
+            if raise_offline:
+                try:
+                    from scripts.ollama_client import (base_slot_busy,
+                                                       base_slot_label)
+                    if base_slot_busy():
+                        raise LLMOffline("VRAM drzi base davka: %s"
+                                         % (base_slot_label() or "?"))
+                except LLMOffline:
+                    raise
+                except Exception:
+                    pass  # fail-safe: radeji thrashing nez zastaveny hook
             try:
                 text = self._call_llm(system_prompt, user_msg, max_tokens)
             except LLMOffline:  # PENDING_THOUGHTS_V1

@@ -640,8 +640,30 @@ class HansDialog:
                 _log.debug("Loop tick — teddy=%s last_dialog=%.0fs ago",
                            self._teddy_visible,
                            time.time() - self._last_dialog if self._last_dialog else 999)
+                # HANS_HC_YIELD_TO_BASE_V1 (10. 9.) — dialog jede na hans-czech;
+                # kdyz bezi davka na BASE modelu, vyhodil by ji z VRAM
+                # (3 z 24 prepnuti = 152 s v noci na 10. 9.). Tah se jen
+                # ODLOZI: `_last_dialog` se nemeni a smycka tika a 30 s,
+                # takze se dialog spusti hned po uvolneni slotu.
+                # ⛔ Kolace to NEUTLUMI — jen 194 z 2168 dialogu (9 %) padne
+                # do okna 02-06, kdy slot vubec nekdo drzi.
+                _base_busy = False
+                try:
+                    from scripts.ollama_client import (base_slot_busy,
+                                                       base_slot_label)
+                    _base_busy = base_slot_busy()
+                except Exception:
+                    _base_busy = False   # fail-safe: radeji tah nez ticho
+                if _base_busy:
+                    if not getattr(self, "_yield_logged", False):
+                        _log.info("dialog: ustupuji base dávce (%s) — tah počká",
+                                  base_slot_label() or "?")
+                        self._yield_logged = True
+                elif getattr(self, "_yield_logged", False):
+                    self._yield_logged = False
                 if (self._teddy_visible and
                         self._idle_active and
+                        not _base_busy and
                         time.time() - self._last_dialog >= self._dialog_interval):
                     self._run_dialog()
             except Exception as e:
