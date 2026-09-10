@@ -1514,5 +1514,13 @@
             "Motorcycle, Solo (Harley-Davidson Model WLA)": "fakta"
         },
         "_zanr_note": "HANS_RAG_ZANR_KNIHY_V1 (9. 9.) — zanr knihy pro hlavicku RAG chunku (beletrie | fakta). Kapitoly knih teci do TEZE kolekce hans_cetba jako Wikipedie a odborne prace (729 z 6047 dokumentu = 12 %), a chunk z romanu tam lezel pod obecnym '## Zaznam', tedy stejne jako vecny zdroj. ⚠️ Pausalni 'beletrie' NELZE: Meditations (Marcus Aurelius) ma 270 z 1258 kniznich zaznamu (21 %) a beletrie NENI. Kniha, ktera tu NENI, dostane neutralni '## Uryvek z knihy' — zanr se zamerne NEHADA. Novou knihu sem dopsat rucne (titul presne tak, jak je v hans_library.book_title, bez ' — kap. N'). ⚠️ Plati jen na NOVE nahravane chunky; 729 stavajicich ma porad obecnou hlavicku — backfill je samostatna prace."
+    },
+    "music": {
+        "enabled": true,
+        "model": "chatmusician:latest",
+        "timeout_s": 180,
+        "num_predict": 1536,
+        "keep_alive": "10m",
+        "_note": "HANS_MUSIC_V1 (10. 9.) — Hans skládá notový příklad ke studované kapitole. `chatmusician` = m-a-p/ChatMusician (LLaMA2-7B doučený na ABC notaci, MIT), na PC jako ollama model z GGUF Q4_K_M. VRAM: KOEXISTUJE s rezidentním hans-czech (8,06 + 5,18 = 13,2 z 16 GB), takže NEPOTŘEBUJE base_slot ani handoff — změřeno naživo. ⚠️ `brief_model` (překlad kapitoly na anglické zadání) je ZÁMĚRNĚ hans-czech, ne base: base 8 GB se vedle těch dvou nevejde a vyrobil by přesně ten thrashing, který řeší HANS_HC_YIELD_TO_BASE_V1."
     }
 }
