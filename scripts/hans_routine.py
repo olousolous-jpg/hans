@@ -2043,7 +2043,10 @@ class HansRoutine:
             # evaluate() drží, že navrhne jen při trvalé tendenci.
             # NIGHT_DEFERRAL_SAFE_V1 — guard NASTAV AŽ po ne-odloženém běhu
             # (dřív set-before → výpadek Ollamy zahodil check na CELÝ TÝDEN).
-            if self._severka is not None and self._severka_due(today):
+            # HANS_NIGHT_THROTTLE_REACH_V1 - bez throttle se pri mozku dole zkousela
+            # kazdy tick (60 s) = 138x za noc, vcetne obou avatar kroku uvnitr.
+            if (self._severka is not None and self._severka_due(today)
+                    and not self._night_throttled("severka", 1800)):
                 try:
                     _sv_deferred = self._run_severka_check(today)
                     if not _sv_deferred:
@@ -2166,9 +2169,12 @@ class HansRoutine:
             # dokončení kurikula mistrovská reflexe (grounduje vocational identitu).
             # Base LLM keep_alive=0 (VRAM tier), jen v noci. Deferral-safe:
             # 'deferred' (Ollama/wiki dole) → guard se NEnastaví, zkusí se znovu.
+            # HANS_NIGHT_THROTTLE_REACH_V1 - jen NOCNI tick; brain_up catchup zustava bez
+            # throttle, aby se studium po nabehnuti PC nezdrzelo o 30 min.
             if (self._last_study_date != today
                     and self._in_night_window()
-                    and self._chat_quiet_ok()):
+                    and self._chat_quiet_ok()
+                    and not self._night_throttled("study_night", 1800)):
                 _creative_busy = True
                 try:
                     from scripts.hans_study import (run_study_session,
