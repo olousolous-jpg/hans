@@ -429,15 +429,16 @@ def _sklonovany_tvar(a: str, b: str, minlen: int = 4) -> bool:
     """Jsou to tytéž tokeny, jen jeden ve skloněném tvaru?
 
     Rozhoduje STRIKTNÍ prefix: „isaac" < „isaaca", „jiri" < „jirim".
-    Naopak „babice" × „babicku" ani „hence" × „hencov" prefixem nejsou —
-    jen sdílejí začátek, a to jsou doloženě RŮZNÉ věci.
+    Naopak „babice" × „babicku" ani dvojice dvou různých obcí se shodným
+    začátkem prefixem nejsou — jen sdílejí začátek, a to jsou doloženě
+    RŮZNÉ věci.
 
     ⛔ ZÁMĚRNĚ NEPOUŽÍVÁ `web_reader._token_match`, ačkoli řeší totéž
     skloňování. Ten bere „prefix ≥4 znaky" oboustranně, což je správné
     pro HLEDÁNÍ článku (radši široká síť), ale tady by to VYPNULO
     varování i tam, kde patří. Změřeno 11. 9. na 30 dvojicích
     z `unverified_findings`: `_token_match` = 2 zisky a 2 ZTRÁTY
-    („Babicku" → „Babice (okres Třebíč)", „Hence" → „Henčov"),
+    („Babicku" → „Babice (okres Třebíč)" a jedna obdobná dvojice obcí),
     striktní prefix = 2 zisky a 0 ztrát. Sjednocovat je NENÍ zlepšení.
     """
     if a == b:
