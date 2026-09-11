@@ -450,13 +450,31 @@ def base_model_batch(config: Optional[dict] = None, pause_s: float = 1800,
 # OLLAMA_CLIENT_MARKER (idempotence)
 
 
+_localhost_hlaseno = False
+
+
 def _resolve_url(ollama_url: str | None, config: dict | None) -> str:
-    """Zjisti Ollama URL — explicitní arg > config > default."""
+    """Zjisti Ollama URL — explicitní arg > config > default.
+
+    HANS_CONFIG_WATCH_MERGED_V1 (11. 9.) — pád na `DEFAULT_URL` se HLÁSÍ.
+    Když v configu chybí `openwebui_chat.base_url`, ptal se Hans potichu
+    sám sebe (127.0.0.1) a navenek to vypadalo jako výpadek PC: počítač
+    byl online, Ollama odpovídala za 0,9 s, a přesto hlásil mozek offline.
+    Hlásí se jen jednou za běh — je to stav, ne událost.
+    """
+    global _localhost_hlaseno
     if ollama_url:
         return ollama_url.rstrip("/")
     if config:
-        return config.get("openwebui_chat", {}).get(
-            "base_url", DEFAULT_URL).rstrip("/")
+        base = (config.get("openwebui_chat", {}) or {}).get("base_url")
+        if base:
+            return base.rstrip("/")
+        if not _localhost_hlaseno:
+            _localhost_hlaseno = True
+            _log.error("openwebui_chat.base_url v configu CHYBI — ptam se "
+                       "%s, tedy sam sebe. Nejspis se config prepsal jen "
+                       "verejnou pulkou (viz HANS_CONFIG_WATCH_MERGED_V1).",
+                       DEFAULT_URL)
     return DEFAULT_URL
 
 

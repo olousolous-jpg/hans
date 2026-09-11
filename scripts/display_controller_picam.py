@@ -516,9 +516,18 @@ class PicamDisplayController:
                     _new_mtime = _config_path.stat().st_mtime
                     if _new_mtime != _config_mtime:
                         _config_mtime = _new_mtime
-                        import json as _cjson
-                        _new_cfg = _cjson.loads(
-                            _config_path.read_text(encoding='utf-8'))
+                        # HANS_CONFIG_WATCH_MERGED_V1 (11. 9.) — NACITAT PRES
+                        # config_io, ne cist config.json naprimo. Od rozdeleni
+                        # configu (8. 9.) je ve verejnem souboru jen pulka;
+                        # `self.config.update()` je MELKE slouceni, takze cela
+                        # sekce se nahradila verzi BEZ privatnich klicu a Hans
+                        # prisel o adresu Ollamy, Matrix, Kodi, pc_remote,
+                        # knowledge a API klice — 23 sekci. Navenek to vypadalo
+                        # jako vypadek PC. Soubor se hlida porad `config.json`
+                        # (to zapisuje webadmin); `load()` si privatni pulku
+                        # prilepi sam.
+                        from scripts.config_io import load as _cio_load
+                        _new_cfg = _cio_load()
                         self.config.update(_new_cfg)
                         self._on_settings_save(_new_cfg)  # ON_SETTINGS_SAVE_METHOD_V1
                         _syslog.info('Config reloaded from web admin')
