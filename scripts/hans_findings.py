@@ -425,9 +425,38 @@ def _render_provisional(row: dict, asker: Optional[str],
     }
 
 
+def _sklonovany_tvar(a: str, b: str, minlen: int = 4) -> bool:
+    """Jsou to tytéž tokeny, jen jeden ve skloněném tvaru?
+
+    Rozhoduje STRIKTNÍ prefix: „isaac" < „isaaca", „jiri" < „jirim".
+    Naopak „babice" × „babicku" ani „hence" × „hencov" prefixem nejsou —
+    jen sdílejí začátek, a to jsou doloženě RŮZNÉ věci.
+
+    ⛔ ZÁMĚRNĚ NEPOUŽÍVÁ `web_reader._token_match`, ačkoli řeší totéž
+    skloňování. Ten bere „prefix ≥4 znaky" oboustranně, což je správné
+    pro HLEDÁNÍ článku (radši široká síť), ale tady by to VYPNULO
+    varování i tam, kde patří. Změřeno 11. 9. na 30 dvojicích
+    z `unverified_findings`: `_token_match` = 2 zisky a 2 ZTRÁTY
+    („Babicku" → „Babice (okres Třebíč)", „Hence" → „Henčov"),
+    striktní prefix = 2 zisky a 0 ztrát. Sjednocovat je NENÍ zlepšení.
+    """
+    if a == b:
+        return True
+    kratsi, delsi = (a, b) if len(a) <= len(b) else (b, a)
+    if len(kratsi) < minlen:
+        return False
+    return delsi.startswith(kratsi)
+
+
 def _titles_align(topic: str, title: str) -> bool:
     """Sedí název hesla na dotaz aspoň hrubě? (jen pro varování v odpovědi —
-    o platnosti nálezu rozhoduje až noční ověření, viz docstring modulu.)"""
+    o platnosti nálezu rozhoduje až noční ověření, viz docstring modulu.)
+
+    HANS_WIKI_ALIGN_DECLENSION_V1 (11. 9.) — porovnání podřetězců neuznalo
+    skloněný dotaz: „Isaaca Asimova" není podřetězcem „Isaac Asimov" ani
+    naopak, takže Hans ke správně nalezenému heslu připsal, že „může jít
+    o něco úplně jiného". Proto se navíc zkouší shoda po TOKENECH.
+    """
     def _fold(s: str) -> str:
         import unicodedata
         s = unicodedata.normalize("NFKD", (s or "").lower())
@@ -435,7 +464,20 @@ def _titles_align(topic: str, title: str) -> bool:
     a, b = _fold(topic), _fold(title)
     if not a or not b:
         return True
-    return a in b or b in a
+    if a in b or b in a:
+        return True
+    # Tokenově: každé obsahové slovo TITULU musí mít protějšek v dotazu.
+    # Směr je podstatný — titul smí být kratší než dotaz („hrad Kost" →
+    # „Kost"), ale nesmí přinést slovo, o které nikdo nežádal.
+    try:
+        from scripts.web_reader import _title_tokens, _PAREN
+        tt = _title_tokens(_PAREN.sub("", title or ""))
+        qt = _title_tokens(topic)
+    except Exception:
+        return False
+    if not tt or not qt:
+        return False
+    return all(any(_sklonovany_tvar(q, x) for q in qt) for x in tt)
 
 
 def _summarize_for_user(config: dict, topic: str, art: dict) -> Optional[str]:
