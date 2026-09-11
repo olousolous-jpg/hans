@@ -521,6 +521,12 @@ class EntityStore:
                                     _PROPER_RATIO_DEFAULT))
 
         def _match_q(key_tok: str, q_tok: str) -> bool:
+            # HANS_ENTITY_SHORT_TOKEN_KEY_V1 — kratky token jen na PRESNOU
+            # shodu. `_tok_match` konci na `n >= 4`, takze tokeny pod 4 znaky
+            # nesparuje ANI SAMY SE SEBOU ('man' vs 'man' = False) — bez teto
+            # vetve by klice typu "iron man" prestaly resolvovat uplne.
+            if len(key_tok) < 4 or len(q_tok) < 4:
+                return key_tok == q_tok
             if not _tok_match(key_tok, q_tok):
                 return False
             if key_tok == q_tok or q_tok not in _q_upper:
@@ -530,7 +536,21 @@ class EntityStore:
         best_id, best_score = None, 0
         for _id, keys in self._all_keys():
             for k in keys:
-                kt = [t for t in _tokens(k) if len(t) >= 4]
+                # HANS_ENTITY_SHORT_TOKEN_KEY_V1 (11. 9.) — VICESLOVNY KLIC
+                # SE NESMI SCVRKNOUT NA JEDNO SLOVO. Filtr >=4 zahodil kratke
+                # slovo a z klice zbyl divoky znak: "nova ves" -> ['nova']
+                # chytalo Novaka, "sam doma" -> ['doma'] chytalo bezny
+                # dotaz "je nekdo doma?" (film Sam doma!), "cesky raj" -> ['cesky'] chytalo
+                # Cesko. Tyka se 54 z 594 entit.
+                # ⚠️ Prah je 3, ne "vsechna slova": klic "dr. strange" ma
+                # ZKRATKU `dr`, kterou dotaz pise celym slovem ("doktor
+                # Strange") — pri ponechani vsech by se ztratil. Zkratky
+                # (dr., sv.) se chovaji jinak nez kratka plnovyznamova
+                # slova (ves, raj, man, gun). Zmereno na druhe sade.
+                _vse = _tokens(k)
+                kt = [t for t in _vse if len(t) >= 4]
+                if len(_vse) >= 2 and len(kt) < 2:
+                    kt = [t for t in _vse if len(t) >= 3]
                 if not kt:
                     continue  # jen krátké tokeny → moc nejednoznačné
                 matched = [t for t in kt
