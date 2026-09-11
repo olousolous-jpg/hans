@@ -46,7 +46,7 @@ _SOURCE_TYPES = ("human_chat", "teddy_dialog")
 
 
 def _gather_hans_lines(db_path: str, since: float,
-                       persona: str = "Hans") -> list:
+                       persona: str = "Hans", limit: int = 200) -> list:
     """Hansovy vlastní repliky (řádky „{persona}: …") z dialogových eventů.
     Vrací list textů (bez prefixu jména). Read-only."""
     conn = None
@@ -59,8 +59,8 @@ def _gather_hans_lines(db_path: str, since: float,
         qmarks = ",".join("?" * len(_SOURCE_TYPES))
         rows = conn.execute(
             f"SELECT note FROM diary WHERE event_type IN ({qmarks}) "
-            f"AND ts > ? AND note IS NOT NULL ORDER BY ts DESC LIMIT 200",
-            (*_SOURCE_TYPES, since)).fetchall()
+            f"AND ts > ? AND note IS NOT NULL ORDER BY ts DESC LIMIT ?",
+            (*_SOURCE_TYPES, since, int(limit))).fetchall()
         for (note,) in rows:
             for line in str(note).splitlines():
                 m = pref.match(line)
@@ -148,8 +148,39 @@ def _verdict(config: dict, model: str, timeout: int,
 
 # ── dedup + zápis lekce ─────────────────────────────────────────────────────
 
+def _nove_entity(db_path: str, days: float) -> set:
+    """HANS_IMMUNE_NEW_ENTITY_BACKFILL_V1 — jména entit, které se ve znalostech
+    objevily za posledních `days` dní. Klíč k dohledu: o těchhle Hans mohl
+    tvrdit něco DŘÍV, než se o nich dočetl."""
+    out = set()
+    conn = None
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True,
+                               timeout=3.0)
+        rows = conn.execute(
+            "SELECT name FROM entities WHERE first_ts > ? "
+            "AND COALESCE(gloss,'') <> ''",
+            (time.time() - days * 86400,)).fetchall()
+        out = {(n or "").strip().lower() for n, in rows if (n or "").strip()}
+    except Exception as e:
+        _log.debug("immune: seznam nových entit nedostupný: %s", e)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return out
+
+
 def _recent_immune_entities(db_path: str, days: float = 14.0) -> set:
-    """Entity, ke kterým už imunitní lekce v okně existuje (ne 2× totéž)."""
+    """Entity, které už se v okně kontrolovaly — NEDĚLAT TOTÉŽ ZNOVU.
+
+    ⚠️ Do 11. 9. sem padaly jen entity s LEKCÍ (tedy nalezený rozpor).
+    Entita zkontrolovaná s verdiktem SHODA se nikam nezapsala, takže by
+    ji dohled nových entit ověřoval každou noc znovu. Proto se čte i
+    seznam ze souhrnného eventu `immune_check`
+    (HANS_IMMUNE_NEW_ENTITY_BACKFILL_V1)."""
     conn = None
     out = set()
     try:
@@ -162,6 +193,16 @@ def _recent_immune_entities(db_path: str, days: float = 14.0) -> set:
         for (d,) in rows:
             try:
                 out.add((json.loads(d or "{}").get("entity") or "").lower())
+            except Exception:
+                pass
+        # HANS_IMMUNE_NEW_ENTITY_BACKFILL_V1 — i ty, co dopadly jako SHODA
+        rows2 = conn.execute(
+            "SELECT data FROM diary WHERE event_type='immune_check' "
+            "AND ts > ?", (time.time() - days * 86400,)).fetchall()
+        for (d,) in rows2:
+            try:
+                for nm in (json.loads(d or "{}").get("entities") or []):
+                    out.add(str(nm).lower())
             except Exception:
                 pass
     except Exception:
@@ -327,12 +368,55 @@ def run_immune_check(config: dict, diary_db_path: str) -> str:
             seen_entities.add(key)
             candidates.append((name, gloss, sent))
 
+    # HANS_IMMUNE_NEW_ENTITY_BACKFILL_V1 — druhý průchod: tvrzení STARŠÍ než
+    # okno, ale o entitě, kterou Hans poznal až teď. Bez něj se tvrzení
+    # vyslovené dřív, než o věci četl, nezkontroluje NIKDY (změřeno: 6 z 21).
+    _bf_dny = float(cfg.get("backfill_days", 30))
+    _nove_dny = float(cfg.get("new_entity_days", 7))
+    if _bf_dny > 0 and _nove_dny > 0:
+        try:
+            nove = _nove_entity(diary_db_path, _nove_dny)
+            if nove:
+                staré = _gather_hans_lines(
+                    diary_db_path, time.time() - _bf_dny * 86400.0,
+                    persona=pname, limit=int(cfg.get("backfill_limit", 3000)))
+                pridano = 0
+                for text in staré:
+                    for ent_phrase, sent in extract_claims(text):
+                        try:
+                            ent = store.resolve(ent_phrase)
+                        except Exception:
+                            ent = None
+                        if not ent:
+                            ent = _podle_prijmeni(store, diary_db_path,
+                                                  ent_phrase)
+                        if not ent:
+                            continue
+                        name = (ent.get("name") or "").strip()
+                        gloss = (ent.get("gloss") or "").strip()
+                        key = name.lower()
+                        if not name or not gloss or key not in nove:
+                            continue
+                        if key in seen_entities or key in already:
+                            continue
+                        seen_entities.add(key)
+                        candidates.append((name, gloss, sent))
+                        pridano += 1
+                if pridano:
+                    _log.info("immune: dohled nových entit přidal %d tvrzení "
+                              "(%d nových entit, %d dní zpět)",
+                              pridano, len(nove), int(_bf_dny))
+        except Exception as _bfe:
+            _log.warning("immune: dohled nových entit selhal "
+                         "(běžná kontrola pokračuje): %s", _bfe)
+
     if not candidates:
         _log.info("immune: %d replik, žádné kontrolovatelné tvrzení", len(lines))
         return "idle"
 
     checked = 0
     contradictions = 0
+    zkontrolovane = []      # HANS_IMMUNE_NEW_ENTITY_BACKFILL_V1
     # HANS_IMMUNE_SLOT_LATE_V1 (11. 9.) — VRAM slot AZ TADY, ne kolem cele
     # funkce. Vse vyse je bez LLM, takze drivejsi zabrani slotu znamenalo
     # cekat az 600 s a odpojit hans-czech i v nocich, kdy neni co kontrolovat
@@ -355,6 +439,7 @@ def run_immune_check(config: dict, diary_db_path: str) -> str:
                     return "deferred"
                 break
             checked += 1
+            zkontrolovane.append(name)
             if v:
                 if _write_lesson(diary_db_path, name, gloss, sent):
                     contradictions += 1
@@ -363,8 +448,12 @@ def run_immune_check(config: dict, diary_db_path: str) -> str:
     try:
         db = sqlite3.connect(diary_db_path, timeout=5.0)
         db.execute(
-            "INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
+            "INSERT INTO diary (ts, event_type, title, data, note) "
+            "VALUES (?,?,?,?,?)",
             (time.time(), "immune_check", "",
+             # seznam čte `_recent_immune_entities`, aby se totéž tvrzení
+             # neověřovalo každou noc znovu (HANS_IMMUNE_NEW_ENTITY_BACKFILL_V1)
+             json.dumps({"entities": zkontrolovane}, ensure_ascii=False),
              f"Noční kontrola vlastních tvrzení: {checked} ověřeno, "
              f"{contradictions} rozporů opraveno lekcí."))
         db.commit()

@@ -1054,7 +1054,11 @@
         "window_hours": 48,
         "max_checks_per_night": 6,
         "model": "jobautomation/OpenEuroLLM-Czech:latest",
-        "llm_timeout": 300
+        "llm_timeout": 300,
+        "backfill_days": 30,
+        "new_entity_days": 7,
+        "backfill_limit": 3000,
+        "_backfill_note": "HANS_IMMUNE_NEW_ENTITY_BACKFILL_V1 (11.9.): vedle okna window_hours se projdou i tvrzeni STARSI nez okno, pokud jde o entitu, kterou Hans poznal az za poslednich new_entity_days. Duvod (namitka uzivatele): kdyz Hans neco tvrdi DRIV, nez se o tom docte, entita v dobe kontroly neexistuje a tvrzeni propadne NATRVALO. ZMERENO na cele historii: z 21 tvrzeni, jejichz entitu Hans dnes zna, jich 6 (29 %) vzniklo driv nez entita — napr. 'Asimova' 28.8., ale Isaac Asimov az 9.9. (12 dni). backfill_days 0 = dohled vypnuty. Zkontrolovane entity se zapisuji do data u eventu immune_check, aby se tatáz veta neoverovala kazdou noc znovu (drive se evidovaly jen ty s nalezenym rozporem)."
     },
     "rewriter": {
         "enabled": true,
