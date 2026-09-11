@@ -3163,6 +3163,17 @@ def _cmd_zdroje(handler, name, args) -> str:
                 _stems = _topic_stems(q) or [q]
             except Exception:
                 _stems = [q]
+            # HANS_SOURCES_STEM_MIN_V1 (11. 9.) — PAHYL POD 5 ZNAKU JE DIVOKY
+            # ZNAK. `_topic_stems` zkracuje az na 3 znaky, takze `ces`
+            # (z „ceskem raji“) sedlo na „Cesta do stredu Zeme“
+            # i na „nvrhuje vedec cestu k nove lecbe“ a Hans nabidl jako
+            # ZDROJ studii o rakovine. `sec` (ze „secesi“) na
+            # „Secret Service“. Ochrana `_predpony` brani jen shode
+            # UPROSTRED slova, ne kratkemu pahylu na ZACATKU.
+            # Kdyz je samo tema kratsi nez 5, bere se cele („Rip“).
+            # Zmereno na 10 realnych tematech: cizi nalezy zmizi u tri,
+            # „asimovovi“ i „designu“ se drzi.
+            _stems = [s for s in _stems if len(s) >= 5] or [q]
             # ⚠️ Volné `LIKE %pahýl%` je pro češtinu PAST: „Říp" → pahýl
             # „říp" sedne doprostřed slova „případ" → na dotaz o Řípu vyšel
             # Retrográdní pohyb a Rozsudky soudce Ooky (změřeno při stavbě).
@@ -3225,6 +3236,22 @@ def _cmd_zdroje(handler, name, args) -> str:
         cx.close()
     except Exception:
         return "Nepodařilo se mi teď nahlédnout do zápisků, pane."
+
+    if not rows and q:
+        # HANS_SOURCES_STEM_MIN_V1 — po zpřísnění pahýlů se může stát, že
+        # hledání v zápiscích nenajde nic, ačkoli zdroj EXISTUJE jako entita
+        # („Českém ráji“ → „Český ráj“ má u sebe `source`).
+        # Zkusit ji, ať se z přísnějšího filtru nestane falešné mlčení.
+        try:
+            from scripts.config_io import load as _cio_load
+            from scripts.hans_entities import EntityStore as _ES
+            _e = _ES(_cio_load(), db).resolve(q)
+            _src = (_e.get("source") or "").strip() if _e else ""
+            if _src:
+                return ("K tomuhle mám zapsaný zdroj, pane: %s — %s"
+                        % (_e.get("name"), _src))
+        except Exception:
+            pass
 
     if not rows:
         # HANS_SOURCES_TOPIC_V1 — u pojmenovaného tématu přiznat i to, co

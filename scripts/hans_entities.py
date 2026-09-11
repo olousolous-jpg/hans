@@ -526,7 +526,19 @@ class EntityStore:
             # nesparuje ANI SAMY SE SEBOU ('man' vs 'man' = False) — bez teto
             # vetve by klice typu "iron man" prestaly resolvovat uplne.
             if len(key_tok) < 4 or len(q_tok) < 4:
-                return key_tok == q_tok
+                # HANS_ENTITY_SHORT_TOKEN_DECL_V1 (11. 9.) — PRESNA shoda byla
+                # prilis prisna: klic „cesky raj" ma token `raj` a dotaz
+                # „o ceskem RAJI" tim prestal sedet, ackoli PRED dnesni
+                # opravou sedel. Staci prefix + nejvys 2 znaky (sklonovaci
+                # koncovka: raj/raji/raje/rajem). Zmereno: na 390 produkcnich
+                # dotazech 0 zmen, tedy zadna regrese; „doma"/„Novaka"
+                # zustavaji odmitnute, protoze tam chybi DRUHY token.
+                if key_tok == q_tok:
+                    return True
+                kr, dl = ((key_tok, q_tok) if len(key_tok) <= len(q_tok)
+                          else (q_tok, key_tok))
+                return (len(kr) >= 3 and dl.startswith(kr)
+                        and len(dl) - len(kr) <= 2)
             if not _tok_match(key_tok, q_tok):
                 return False
             if key_tok == q_tok or q_tok not in _q_upper:

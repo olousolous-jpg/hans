@@ -822,9 +822,20 @@ _CISLOVKY = {"sedm", "osm", "devet", "devět", "deset", "jedna", "dva", "tri",
              "tisic", "tisíc", "nula", "jeden", "dvacet", "třicet"}
 
 
-def _find_entity_in_text(db_path: str, text: str) -> Optional[tuple]:
+def _find_entity_in_text(db_path: str, text: str,
+                         vyzaduj_velke: bool = False) -> Optional[tuple]:
     """Najdi entity.name, která je zmíněna v textu (case insensitive, whole word).
-    Vrací (name, source_url) nebo None. Preferuje delší jméno (specifičtější)."""
+    Vrací (name, source_url) nebo None. Preferuje delší jméno (specifičtější).
+
+    HANS_SOURCE_PROPER_MENTION_V1 (11. 9.) — `vyzaduj_velke=True` uzná shodu
+    jen tam, kde je jméno psané VELKÝM písmenem. Ve store je 95 jednoslovných
+    obecných pojmů („Příležitost", „Secese", „Vývoj"…), takže běžné slovo
+    v běžné řeči se jinak chytne jako ZDROJ — a tvrzení o PROVENIENCI je to
+    poslední, co smí být vymyšlené.
+    ⛔ Zapínat JEN nad Hansovými replikami (píše korektně), NIKDY nad dotazem
+    uživatele — ten píše malá písmena bez diakritiky a pravidlo by vyplo vše.
+    📏 Změřeno na 25 reálných dotazech na zdroj: nálezů 12 → 10, odmítnuty
+    právě dvě falešné."""
     if not text:
         return None
     conn = None
@@ -856,6 +867,17 @@ def _find_entity_in_text(db_path: str, text: str) -> Optional[tuple]:
     #
     # Číslovky ven úplně: „Sedm" jako pojem sedne na kterékoli počítání dnů
     # a jako zdroj tvrzení nedává smysl v žádném kontextu.
+    def _psano_velkym(txt: str, jmeno: str) -> bool:
+        """Je jméno v textu aspoň jednou psané velkým písmenem?
+        Fail-open: při chybě True (radši nález než ticho)."""
+        try:
+            for m in re.finditer(re.escape(jmeno), txt, re.IGNORECASE):
+                if txt[m.start():m.start() + len(jmeno)][:1].isupper():
+                    return True
+        except Exception:
+            return True
+        return False
+
     t_lower = text.lower()
     best = None
     for r in rows:
@@ -865,6 +887,9 @@ def _find_entity_in_text(db_path: str, text: str) -> Optional[tuple]:
             continue
         if re.search(r"(?<![\w])" + re.escape(nl) + r"\w{0,3}(?![\w])",
                      t_lower):
+            # HANS_SOURCE_PROPER_MENTION_V1 — v replice jen vlastní jméno
+            if vyzaduj_velke and not _psano_velkym(text, name):
+                continue
             if best is None or len(name) > len(best[0]):
                 best = (name, r["source"])
     return best
@@ -1064,9 +1089,26 @@ def sources_answer(db_path: str, user_text: str,
 
     hit = _find_entity_in_text(db_path, user_text)
     if not hit:
+        # HANS_SOURCE_ENTITY_RESOLVE_V1 (11. 9.) — doslovné hledání neuzná
+        # skloněné víceslovné téma: „o ceskem raji" nenašlo „Český ráj",
+        # a Hans tvrdil, že zdroj nemá, ačkoli ho má. `EntityStore.resolve`
+        # to umí (token po tokenu, bez diakritiky). Jen ZÁLOHA za doslovným
+        # hledáním, takže se stávající chování nemění.
+        try:
+            from scripts.config_io import load as _cio_load
+            from scripts.hans_entities import EntityStore as _ES
+            _e = _ES(_cio_load(), db_path).resolve(user_text)
+            _src = (_e.get("source") or "").strip() if _e else ""
+            if _src:
+                hit = (_e.get("name"), _src)
+        except Exception:
+            pass
+    if not hit:
         # fallback z posledních Hansových replik (user řekl jen „a odkud to víš")
         for hans_reply in _last_hans_topics(db_path, limit=3, person=asker):
-            hit = _find_entity_in_text(db_path, hans_reply)
+            # HANS_SOURCE_PROPER_MENTION_V1 — nad REPLIKOU jen vlastní jméno
+            hit = _find_entity_in_text(db_path, hans_reply,
+                                       vyzaduj_velke=True)
             if hit:
                 break
 
@@ -1098,7 +1140,9 @@ def sources_reply(db_path: str, user_text: str = "", limit: int = 5,
     if not hit:
         # 2) entita v Hansově předchozí odpovědi (user: „a odkud to víš?")
         for hans_reply in _last_hans_topics(db_path, limit=3, person=asker):
-            hit = _find_entity_in_text(db_path, hans_reply)
+            # HANS_SOURCE_PROPER_MENTION_V1 — nad REPLIKOU jen vlastní jméno
+            hit = _find_entity_in_text(db_path, hans_reply,
+                                       vyzaduj_velke=True)
             if hit:
                 break
 
