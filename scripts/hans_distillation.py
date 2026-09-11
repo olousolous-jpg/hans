@@ -28,6 +28,12 @@ DEFAULT_DEDUP_SECONDS = 300
 DEFAULT_MIN_COUNT = 3
 DEFAULT_MIN_DAYS_SPREAD = 2
 DEFAULT_TOP_N = 5
+# HANS_GOAL_MATERIAL_GATE_V1 (11. 9.) — minimum nactene latky na téma.
+# Zmereno na vsech dosavadnich cilech: uspesne mely 3951-5434 znaku
+# v `hans_cetba`, jediny, ze ktereho vysla prazdna esej, mel 696.
+# Prah 2000 lezi v prazdnem pasmu mezi nimi.
+DEFAULT_MIN_MATERIAL_CHARS = 2000
+DEFAULT_MATERIAL_COLLECTION = "hans_cetba"
 DEFAULT_LLM_TIMEOUT = 300
 DEFAULT_MODEL = "hans-czech:latest"
 DEFAULT_KNOWLEDGE_COLLECTION = "hans_denik"
@@ -89,6 +95,11 @@ class HansDistillation:
         self._min_days_spread = int(cfg.get("min_days_spread",
                                              DEFAULT_MIN_DAYS_SPREAD))
         self._top_n = int(cfg.get("top_n", DEFAULT_TOP_N))
+        self._min_material = int(cfg.get("min_material_chars",
+                                         DEFAULT_MIN_MATERIAL_CHARS))
+        self._material_collection = str(cfg.get("material_collection",
+                                                DEFAULT_MATERIAL_COLLECTION))
+        self._study_source = bool(cfg.get("study_source", True))
         self._llm_timeout = int(cfg.get("llm_timeout", DEFAULT_LLM_TIMEOUT))
         self._model = str(cfg.get("model", DEFAULT_MODEL))
         self._knowledge_collection = str(cfg.get(
@@ -131,23 +142,37 @@ class HansDistillation:
             candidates = self._select_candidates()
             _log.info("Kandidáti: %d", len(candidates))
 
-            if not candidates:
+            # Zajmy a konicky se destiluji z PLNEHO seznamu — prah na latku
+            # nize plati jen pro zakladani CILE, ne pro personu. Kdyby se
+            # filtrovalo drive, tenka temata by prestala byt i zajmem,
+            # a to nikdo nechtel.
+            if candidates:
+                self._distill_interests(candidates)  # A2_AUTO_INTERESTS_V1
+                # HANS_HOBBIES_V1 (3d) — zobecni opakující se témata na koníčky
+                try:
+                    from scripts.hans_hobbies import distill_hobbies
+                    distill_hobbies(self._config, self._diary_db_path)
+                except Exception as _he:
+                    _log.warning("distill_hobbies selhal (distillation OK): %s", _he)
+
+            # HANS_GOAL_MATERIAL_GATE_V1 (A)
+            cile_kandidati = self._filtr_materialu(candidates)
+
+            if not cile_kandidati:
+                # HANS_GOAL_STUDY_SOURCE_V1 (B)
+                if self._zaloz_ze_studia():
+                    self._state_set("last_distillation_date", today)
+                    return True
                 self._write_diary(
                     "distillation_clean", "Žádný zásek dnes",
                     f"Žádné téma nepřekročilo práh "
-                    f"({self._min_count} výskytů / {self._min_days_spread} dnů spread).")
+                    f"({self._min_count} výskytů / {self._min_days_spread} dnů "
+                    f"spread, {self._min_material} znaků látky), "
+                    f"ani se nenašlo studijní téma.")
                 self._state_set("last_distillation_date", today)
                 return True
 
-            self._distill_interests(candidates)  # A2_AUTO_INTERESTS_V1
-            # HANS_HOBBIES_V1 (3d) — zobecni opakující se témata na koníčky
-            try:
-                from scripts.hans_hobbies import distill_hobbies
-                distill_hobbies(self._config, self._diary_db_path)
-            except Exception as _he:
-                _log.warning("distill_hobbies selhal (distillation OK): %s", _he)
-
-            llm_response = self._call_llm(candidates)
+            llm_response = self._call_llm(cile_kandidati)
             if llm_response is None:
                 _log.warning("LLM nedostupný/chyba, neukládám stav")
                 return False
@@ -156,16 +181,152 @@ class HansDistillation:
             if parsed is None:
                 self._write_diary(
                     "distillation_clean", "Bez závěru",
-                    f"LLM null. Kandidáti: {json.dumps(candidates, ensure_ascii=False)}")
+                    f"LLM null. Kandidáti: "
+                    f"{json.dumps(cile_kandidati, ensure_ascii=False)}")
                 self._state_set("last_distillation_date", today)
                 return True
 
-            self._handle_finding(parsed, candidates)
+            self._handle_finding(parsed, cile_kandidati)
             self._state_set("last_distillation_date", today)
             return True
         except Exception as exc:
             _log.error("run failed: %s", exc, exc_info=True)
             return False
+
+    def _latka(self, topic: str) -> int:
+        """HANS_GOAL_MATERIAL_GATE_V1 — kolik znaku nactene latky Hans
+        k tematu ma. -1 = NEVIM (RAG nedostupny nebo dotaz selhal).
+
+        ⚠️ Pri -1 se PROPOUSTI, ne odmita. Odmitani pri selhani mereni by
+        znamenalo, ze vypadek RAGu zastavi zakladani cilu uplne — tedy
+        vetsi skoda nez obcasny cil s tenkou latkou (ten stoji 5 dni).
+        Navic je -1 presne dnesni chovani, takze fail-open nic nezhorsuje.
+        Proto se to hlasi na WARNING: tise propustit se nesmi.
+        """
+        kn = self._knowledge
+        if kn is None or not getattr(kn, "enabled", False):
+            return -1
+        try:
+            res = kn.query(self._material_collection, topic, k=15)
+        except Exception as exc:
+            _log.warning("latka pro '%s' nezmerena (%s) — propoustim", topic, exc)
+            return -1
+        if not getattr(res, "found", False):
+            return 0
+        return len(getattr(res, "text", "") or "")
+
+    def _filtr_materialu(self, candidates: list) -> list:
+        """HANS_GOAL_MATERIAL_GATE_V1 — vyhodi kandidaty, ze kterych by
+        esej stejne nevznikla.
+
+        ⚠️ RAG je semanticky a na cokoli vrati `found=True`, takze
+        "nenalezeno" NENI to, co rozlisuje — rozlisuje MNOZSTVI.
+        """
+        if not candidates or self._min_material <= 0:
+            return list(candidates or [])
+        ven = []
+        for c in candidates:
+            t = (c.get("title") or "").strip()
+            n = self._latka(t)
+            if 0 <= n < self._min_material:
+                _log.info("HANS_GOAL_MATERIAL_GATE_V1: '%s' vynechan — "
+                          "jen %d znaku latky (< %d)", t, n, self._min_material)
+                continue
+            ven.append(c)
+        if len(ven) != len(candidates):
+            _log.info("HANS_GOAL_MATERIAL_GATE_V1: %d z %d kandidatu ma dost latky",
+                      len(ven), len(candidates))
+        return ven
+
+    def _studijni_temata(self) -> list:
+        """Temata, ktera Hans skutecne studuje — programy + aktivni konicky.
+        Vraci [(tema, kdy_naposled_byl_cilem_nebo_0)] bez duplicit."""
+        temata, videno = [], set()
+        conn = sqlite3.connect(self._diary_db_path, timeout=5.0)
+        try:
+            dotazy = ("SELECT topic FROM study_program ORDER BY id DESC",
+                      "SELECT name FROM hobbies WHERE status='active' "
+                      "ORDER BY evidence_count DESC")
+            for q in dotazy:
+                try:
+                    rows = conn.execute(q).fetchall()
+                except Exception as exc:
+                    _log.debug("studijni zdroj '%s' nedostupny: %s", q[:28], exc)
+                    continue
+                for (t,) in rows:
+                    t = (t or "").strip()
+                    if not t or t.lower() in videno:
+                        continue
+                    videno.add(t.lower())
+                    temata.append(t)
+        finally:
+            conn.close()
+        return temata
+
+    def _zaloz_ze_studia(self) -> bool:
+        """HANS_GOAL_STUDY_SOURCE_V1 — cil z toho, co Hans studuje.
+
+        Bezi az kdyz z opakovaneho cteni nevzejde nic (pool je prazdny
+        10 z 30 dni). Poradi: tema, ktere bylo cilem NEJDELE zpatky
+        (nikdy = prvni), pak vic latky. Diky tomu se temata stridaji
+        a nevznikne monopol jako drive u Designu.
+
+        ⛔ Neobchazi to HANS_GOAL_NO_REPEAT_V1 — 30denni okno plati stejne.
+        """
+        if not self._study_source or self._goals is None:
+            return False
+        try:
+            from scripts.hans_goals import TRIGGER_STUDY_TOPIC
+        except ImportError:
+            _log.warning("TRIGGER_STUDY_TOPIC chybi — studijni zdroj vynechan")
+            return False
+        temata = self._studijni_temata()
+        if not temata:
+            return False
+        posledni, mez = {}, time.time() - 30 * 86400
+        try:
+            for g in self._goals.all_goals(limit=200):
+                t = (getattr(g, "topic", "") or "").strip().lower()
+                oa = float(getattr(g, "opened_at", 0) or 0)
+                if t:
+                    posledni[t] = max(posledni.get(t, 0.0), oa)
+        except Exception as exc:
+            _log.warning("historie cilu nedostupna (%s) — studijni zdroj vynechan", exc)
+            return False
+        zbyle = []
+        for t in temata:
+            kdy = posledni.get(t.lower(), 0.0)
+            if kdy >= mez:
+                continue      # HANS_GOAL_NO_REPEAT_V1
+            n = self._latka(t)
+            if 0 <= n < self._min_material:
+                continue
+            zbyle.append((kdy, -max(n, 0), t))
+        if not zbyle:
+            _log.info("HANS_GOAL_STUDY_SOURCE_V1: zadne studijni tema "
+                      "(z %d bud cerstvy cil, nebo malo latky)", len(temata))
+            return False
+        zbyle.sort()
+        _kdy, _zaporna_latka, tema = zbyle[0]
+        try:
+            goal = self._goals.open_goal(topic=tema,
+                                         trigger_source=TRIGGER_STUDY_TOPIC)
+        except Exception as exc:
+            _log.error("HANS_GOAL_STUDY_SOURCE_V1: open_goal selhal: %s", exc)
+            return False
+        if goal is None:
+            _log.info("HANS_GOAL_STUDY_SOURCE_V1: '%s' nezalozen "
+                      "(uz bezi jiny cil)", tema)
+            return False
+        _log.info("HANS_GOAL_STUDY_SOURCE_V1: cil ze studia [%d]: '%s' "
+                  "(%d znaku latky, vybrano z %d temat)",
+                  goal.id, tema, -_zaporna_latka, len(zbyle))
+        self._write_diary(
+            "distillation_finding", "Téma ze studia: %s" % tema,
+            "Z opakovaného čtení dnes nevzešlo žádné téma, proto jsem si "
+            "za cíl vzal to, čemu se skutečně věnuji: %s. K tématu mám "
+            "dost nastudované látky, aby z něj mohlo vzniknout dílo." % tema)
+        return True
 
     def _distill_interests(self, candidates: list):
         """A2_AUTO_INTERESTS_V1 — opakující se web_read témata zapiš jako

@@ -29,6 +29,9 @@ STATUS_ABANDONED  = "abandoned"
 
 TRIGGER_MANUAL        = "manual"
 TRIGGER_STUCK_PATTERN = "stuck_pattern"
+# HANS_GOAL_STUDY_SOURCE_V1 (11. 9.) — cil z toho, co Hans STUDUJE, ne
+# z opakovaneho cteni. Zaklada se az kdyz `stuck_pattern` nic nenajde.
+TRIGGER_STUDY_TOPIC   = "study_topic"
 
 
 @dataclass
