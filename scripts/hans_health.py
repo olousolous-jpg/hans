@@ -60,6 +60,19 @@ def probe_ollama(config: dict) -> dict:
             return {"status": PAUSED, "detail": "herní mód", "latency_s": 0.0}
     except Exception:
         pass
+    # HANS_GPU_BUSY_SHARED_V1 (11. 9.) — při renderu / base dávce NEPROBOVAT.
+    # Probe volá `ollama_generate(..., keep_alive=-1)`, takže by hans-czech
+    # PŘIPNULA napořád (10,3 GB) přesně ve chvíli, kdy ComfyUI potřebuje VRAM
+    # — doloženo 8 zásahy do oken renderů. PAUSED je správný status: není to
+    # porucha a self-heal se na něj (stejně jako u herního módu) nespouští.
+    try:
+        from scripts.ollama_client import gpu_busy, gpu_busy_label
+        if gpu_busy():
+            return {"status": PAUSED,
+                    "detail": "VRAM drží %s" % (gpu_busy_label() or "těžká práce"),
+                    "latency_s": 0.0}
+    except Exception:
+        pass
     # 1) malá generace = reálný test, že engine odpovídá (ne jen HTTP server)
     raw = None
     try:

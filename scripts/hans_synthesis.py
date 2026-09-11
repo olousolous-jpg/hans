@@ -324,11 +324,12 @@ class HansSynthesis:
             # None a jejich shrnuti by se TISE ZTRATILO — ti bezi dal.
             if raise_offline:
                 try:
-                    from scripts.ollama_client import (base_slot_busy,
-                                                       base_slot_label)
-                    if base_slot_busy():
-                        raise LLMOffline("VRAM drzi base davka: %s"
-                                         % (base_slot_label() or "?"))
+                    # HANS_GPU_BUSY_SHARED_V1 — i render obrazu, nejen davka
+                    from scripts.ollama_client import (gpu_busy,
+                                                       gpu_busy_label)
+                    if gpu_busy():
+                        raise LLMOffline("VRAM drzi: %s"
+                                         % (gpu_busy_label() or "?"))
                 except LLMOffline:
                     raise
                 except Exception:

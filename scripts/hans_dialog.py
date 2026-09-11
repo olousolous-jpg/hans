@@ -647,17 +647,22 @@ class HansDialog:
                 # takze se dialog spusti hned po uvolneni slotu.
                 # ⛔ Kolace to NEUTLUMI — jen 194 z 2168 dialogu (9 %) padne
                 # do okna 02-06, kdy slot vubec nekdo drzi.
+                # HANS_GPU_BUSY_SHARED_V1 (11. 9.) — uz nejen NOCNI davce,
+                # ale i RENDERU OBRAZU. Dialog s Kolacem bezi a 30 s a byl
+                # doloženym spoustecem padu ComfyUI: 10. 9. ve 13:50:22 tah,
+                # v 13:50:28 `HIP out of memory`. Model se pri tahu napne
+                # (10,3 GB) a na SDXL uz nezbyde.
                 _base_busy = False
                 try:
-                    from scripts.ollama_client import (base_slot_busy,
-                                                       base_slot_label)
-                    _base_busy = base_slot_busy()
+                    from scripts.ollama_client import (gpu_busy,
+                                                       gpu_busy_label)
+                    _base_busy = gpu_busy()
                 except Exception:
                     _base_busy = False   # fail-safe: radeji tah nez ticho
                 if _base_busy:
                     if not getattr(self, "_yield_logged", False):
-                        _log.info("dialog: ustupuji base dávce (%s) — tah počká",
-                                  base_slot_label() or "?")
+                        _log.info("dialog: ustupuji (%s) — tah počká",
+                                  gpu_busy_label() or "?")
                         self._yield_logged = True
                 elif getattr(self, "_yield_logged", False):
                     self._yield_logged = False

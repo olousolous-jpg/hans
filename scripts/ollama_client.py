@@ -274,6 +274,42 @@ def warmup_paused() -> bool:
     return _warmup_pause_depth > 0 and time.time() < _warmup_pause_until
 
 
+def gpu_busy() -> bool:
+    """HANS_GPU_BUSY_SHARED_V1 (11. 9.) — bezi na GPU TEZKA prace?
+
+    Sjednocuje dva signaly, ktere dosud zily zvlast:
+      • `base_slot_busy()` — nocni base-model davka (studium, Severka, immune)
+      • `warmup_paused()`  — render obrazu (`_ollama_unload` ji nastavuje)
+    Automatika se ma ptat TOHOHLE, ne jednoho z nich. Do 11. 9. cetl
+    `hans_dialog` jen slot, takze do renderu klidne vlitl a hans-czech
+    (10,3 GB ve VRAM) vyhodil ComfyUI na `HIP out of memory` pri alokaci
+    36 MiB. Zmereno: 34 padu ComfyUI za 14 dni, cizi volani v okne
+    68 % renderu.
+
+    ⛔ NEPOUZIVAT na odpoved zivemu cloveku — chat musi jet i pri malovani.
+    ⚠️ `warmup_paused()` je globalni (nezna vlakno), takze vlakno, ktere
+    pauzu SAMO drzi, tu dostane True. Pro dnesni volajici to nevadi
+    (render si llava vola naprimo, ne pres ne), ale pri rozsirovani na
+    dalsi mista to overit.
+    Fail-safe: pri chybe False — radeji thrashing nez zastavena automatika.
+    """
+    try:
+        return bool(base_slot_busy() or warmup_paused())
+    except Exception:
+        return False
+
+
+def gpu_busy_label() -> str:
+    """Kdo tu tezkou praci drzi (pro log). Prazdno = nikdo/nevim."""
+    try:
+        lbl = base_slot_label()
+        if lbl:
+            return lbl
+        return "render obrazu" if warmup_paused() else ""
+    except Exception:
+        return ""
+
+
 # HANS_BASE_SLOT_V1 (8.9.) — VÝLUČNOST base-model dávek napříč cestami.
 # Samotný refcount výše brání předčasnému odemčení, ale nebrání tomu, aby
 # dvě base-model dávky (8 GB každá) běžely SOUČASNĚ. Doloženo 7.9.: studium
