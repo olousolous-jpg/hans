@@ -3,6 +3,7 @@
 HansDistillation — fáze 2a OODA: noční LLM destilace záseku.
 
 HANS_DISTILLATION_V1.
+HANS_DISTILL_PERSONA_V1 (11. 9.) — povaha v promptu z configu, ne natvrdo.
 
 Po aktivaci spánku (mezi 02:00-04:00) analyzuje opakované web_read titulky
 za posledních 7 dní. Detekuje fixaci (count ≥ 3, days_spread ≥ 2 po de-dup
@@ -48,7 +49,7 @@ PROMPT_SYSTEM = (
 )
 
 # HANS_DISTILLATION_V1_1 — prompt zpřísněn (jeden objekt, česky)
-PROMPT_USER_TEMPLATE = """{persona_name}, anglický majordomus, opakovaně čte články. Zde jsou kandidáti za posledních {window_days} dní:
+PROMPT_USER_TEMPLATE = """{persona_name} ({persona_brief}) opakovaně čte články. Zde jsou kandidáti za posledních {window_days} dní:
 
 {candidates_json}
 
@@ -66,9 +67,9 @@ Pole "reasoning" — neutrální analytické vysvětlení.
 Pole "hans_reflection" — text PSANÝ SAMOTNOU POSTAVOU jako deníkový zápis o sobě.
   - Postava píše SÁM o SOBĚ v 1. osobě jednotného čísla.
   - Mluvíš jako "já", ne "pan {persona_name}" nebo "on".
-  - Styl: formální anglický majordomus 19. století, 2-3 věty.
+  - Styl odpovídá jeho povaze: {persona_brief}. Formální, 2-3 věty.
   - Příklad správně: "Pozoroval jsem v posledních dnech, že se s nezvyklou
-    pravidelností vracím k tématu X. Jest to víc než pouhý zájem."
+    pravidelností vracím k tématu X. Je to víc než pouhý zájem."
   - Příklad ŠPATNĚ (3. osoba o sobě): "Pan {persona_name} se věnuje tématu X."
 
 Formát objektu (bez markdown, bez ```):
@@ -449,8 +450,16 @@ class HansDistillation:
         # PERSONA_NAME_CONFIGURABLE_V1 — jméno persony z configu (SSOT)
         from scripts.hans_persona import persona_name
         _pname = persona_name(self._config)
+        # HANS_DISTILL_PERSONA_V1 — povaha z configu, ne natvrdo v promptu.
+        # `persona_brief` je urcena pro CIZI prompt (popis ve 3. osobe), proto
+        # se sem hodi lip nez `persona_core`, ktere zacina "Jsi Hans." a
+        # kolidovalo by se systemovym "Jsi analytik".
+        from scripts.hans_persona import persona_brief
+        _pbrief = (persona_brief(self._config)
+                   or "pozorovatel, který si pečlivě dokumentuje své úvahy")
         prompt = PROMPT_USER_TEMPLATE.format(
             persona_name=_pname,
+            persona_brief=_pbrief,
             window_days=self._window_days,
             candidates_json=json.dumps(view, ensure_ascii=False, indent=2),
         )
