@@ -192,11 +192,22 @@ class ConfigManager:
                 print("Warning: Recognition threshold must be between 0.1 and 0.9")
         
         # Save modified config
+        # HANS_CONFIG_WRITE_SPLIT_V1 (11. 9.) — `system.config` je SLOUCENY
+        # config (verejna + privatni pulka). Primy `json.dump` do config.json
+        # by tedy zapsal hesla, tokeny a adresy do souboru VERZOVANEHO
+        # VE VEREJNEM REPU. `config_io.save` ho rozdeli zpatky a pri
+        # podezrele hodnote ve verejne casti zapis odmitne.
+        # ⛔ Pri neuspechu se NEPADA zpet na primy zapis — to by byl presne
+        # ten unik, ktery se tu odstranuje. Radeji neulozit a rict to.
         if config_modified:
             try:
-                with open('config.json', 'w') as f:
-                    json.dump(system.config, f, indent=4)
-                print("Configuration changes saved to config.json")
+                from scripts.config_io import save as _cio_save
+                if _cio_save(system.config):
+                    print("Configuration changes saved "
+                          "(config.json + config.private.json)")
+                else:
+                    print("Warning: config_io.save zapis ODMITL — "
+                          "zmeny NEULOZENY (viz log)")
             except Exception as e:
                 print(f"Warning: Could not save config changes: {e}")
         

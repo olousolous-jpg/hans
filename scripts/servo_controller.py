@@ -668,17 +668,13 @@ class ServoController:
     def save_calibration_to_config(self):
         """Save calibration results to config file"""
         try:
-            import json
-            from pathlib import Path
+            # HANS_CONFIG_WRITE_SPLIT_V1 (11. 9.) — pres config_io.
+            # Drive se cetl config.json naprimo a pri jeho absenci se do
+            # NEJ zapsal `self.config`, tedy SLOUCENY config i s hesly —
+            # a to do souboru verzovaneho ve verejnem repu.
+            from scripts.config_io import load as _cio_load, save as _cio_save
 
-            config_path = "config.json"
-
-            # Load current config
-            if Path(config_path).exists():
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-            else:
-                config = self.config
+            config = _cio_load()
 
             # Update with calibration data
             if 'servo_tracking' not in config:
@@ -692,11 +688,15 @@ class ServoController:
                 'calibrated_tilt_max': self.actual_tilt_max
             })
 
-            # Save updated config
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=4)
+            if not _cio_save(config):
+                conditional_print(self.config, "Calibration NOT saved — "
+                                  "config_io.save zapis odmitl (viz log)",
+                                  always_print=True)
+                return False
 
-            conditional_print(self.config, f"Calibration saved to {config_path}", always_print=True)
+            conditional_print(self.config, "Calibration saved "
+                              "(config.json + config.private.json)",
+                              always_print=True)
             return True
 
         except Exception as e:
