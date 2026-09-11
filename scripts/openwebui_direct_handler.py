@@ -976,7 +976,8 @@ class OpenWebUIDirectHandler:
                 _dbp_ra = (self.config.get("diary_db")
                            or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                            or "data/hans_diary.db")
-                _ra = recent_activity_answer(_dbp_ra, days=1)
+                # HANS_RECENT_ACTIVITY_YESTERDAY_V1 — text nese ČASOVÉ OKNO
+                _ra = recent_activity_answer(_dbp_ra, days=1, text=str(_text))
                 if _ra:
                     self._vysledek_groundingu('grounded', 'nedavna_aktivita')
                     return _ra

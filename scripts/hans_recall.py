@@ -2014,7 +2014,18 @@ _RECENT_QUERY_RE = re.compile(
     r"co\s+jsi\s+(?:d[ěe]lal|prov[áa]d[ěe]l)\s+(?:dnes\s+)?v\s+noci|"
     r"co\s+jsi\s+(?:d[ěe]lal|prov[áa]d[ěe]l)\s+p[řr]es\s+noc|"
     r"jak\s+jsi\s+str[áa]vil\s+(?:tu\s+)?noc|"
-    r"co\s+bylo\s+v\s+noci)",
+    r"co\s+bylo\s+v\s+noci|"
+    # HANS_RECENT_ACTIVITY_YESTERDAY_V1 (11. 9.) — VCEREJSEK je totez jako
+    # „dnes", jen jine okno. Bez teto vetve dotaz propadl modelu a ten
+    # vydal DNESNI zaznamy za vcerejsi (doloženo: „zopakoval jsem si
+    # zaznamy o filmu…", ktere vznikly 13 minut pred dotazem).
+    # ⚠️ Zamerne jen 2. osoba jednotneho cisla („co jsi delal"), takze
+    # „co jsme resili vcera" (nas rozhovor) ani „co rikas na to, ze jsem
+    # se vcera pustil do…" (uzivateluv vcerejsek) se nechytnou.
+    r"co\s+jsi\s+(?:se\s+)?v[čc]era\s+"
+    r"(?:d[ěe]lal|prov[áa]d[ěe]l|dozv[ěe]d[eě]l|nau[čc]il|zjistil|[čc]etl|studoval)|"
+    r"co\s+jsi\s+(?:d[ěe]lal|prov[áa]d[ěe]l)\s+v[čc]era(?:\s+v\s+noci)?|"
+    r"co\s+jsi\s+v[čc]era\s+v\s+noci)",
     re.I,
 )
 
@@ -2025,8 +2036,34 @@ def is_recent_activity_query(text: str) -> bool:
     return bool(_RECENT_QUERY_RE.search(_fold(text or "")))
 
 
+def _okno_aktivity(text: str, days: int):
+    """HANS_RECENT_ACTIVITY_YESTERDAY_V1 — z dotazu urci ČASOVÉ OKNO.
+
+    Vrací (od, do, popis). `do=None` = bez horní meze (dosavadní chování).
+    ⚠️ Horní mez je to podstatné: bez ní vrátí dotaz na VČEREJŠEK i dnešní
+    záznamy — tedy přesně tu záměnu, kvůli které to vzniklo."""
+    import datetime as _dt
+    f = _fold(text or "")
+    if re.search(r"\bv[čc]era\b", f):
+        dnes = _dt.datetime.now().replace(hour=0, minute=0, second=0,
+                                          microsecond=0)
+        vcera = dnes - _dt.timedelta(days=1)
+        # ⚠️ „VČERA V NOCI" NENÍ kalendářní včerejšek. Noc z 10. na 11. patří
+        # kalendářně z větší části na 11., ale mluvčí jí myslí „ta, co právě
+        # skončila". Doloženo daty: studium v tu noc má značku 11. 9. 03:04.
+        # Kalendářní okno by ji vyloučilo a Hans by o té noci neřekl NIC.
+        if re.search(r"\bnoc", f):
+            return ((vcera + _dt.timedelta(hours=18)).timestamp(),
+                    (dnes + _dt.timedelta(hours=9)).timestamp(),
+                    "Záznamy z noci na %s" % dnes.strftime("%d.%m.%Y"))
+        return (vcera.timestamp(), dnes.timestamp(),
+                "Záznamy z %s" % vcera.strftime("%d.%m.%Y"))
+    return (time.time() - days * 86400.0, None, "")
+
+
 def recent_activity_answer(db_path: str, days: int = 1,
-                           max_items_per_type: int = 3) -> Optional[str]:
+                           max_items_per_type: int = 3,
+                           text: str = "") -> Optional[str]:
     """HANS_RECENT_ACTIVITY_V1 — deterministický recall Hansovy vlastní
     aktivity za posledních N dní (default 1 = dnešek). Vrátí grounded blok
     z deníku (study_note, book_reflection, reading_takeaway, web_read,
@@ -2036,7 +2073,7 @@ def recent_activity_answer(db_path: str, days: int = 1,
     Účel: opravit false-negative anti-konfab („nemám záznam") na dotaz na
     dnešní aktivitu, když Hans REÁLNĚ dnes něco dělal a to je v deníku.
     """
-    since = time.time() - days * 86400.0
+    since, _do, _popis = _okno_aktivity(text, days)
     # kategorie k výpisu (label → event_type, kolik z každého)
     cats = [
         ("Studoval jsem", "study_note", max_items_per_type),
@@ -2062,10 +2099,13 @@ def recent_activity_answer(db_path: str, days: int = 1,
             rows = conn.execute(
                 "SELECT ts, title, note, data FROM diary "
                 "WHERE event_type=? AND ts >= ? "
+                # HANS_RECENT_ACTIVITY_YESTERDAY_V1 — HORNI MEZ
+                "AND (? < 0 OR ts < ?) "
                 "AND coalesce(note, data, '') != '' "
                 "AND coalesce(data,'') NOT LIKE '{\"template\":%' "
                 "ORDER BY ts DESC LIMIT ?",
-                (etype, since, lim)).fetchall()
+                (etype, since, (-1 if _do is None else _do),
+                 (0 if _do is None else _do), lim)).fetchall()
             if not rows:
                 continue
             lines.append(f"{label}:")
@@ -2086,7 +2126,7 @@ def recent_activity_answer(db_path: str, days: int = 1,
             conn.close()
     if total == 0:
         return None  # Hans dnes reálně nic nedělal → pusť anti-konfab
-    return ("SKUTEČNÉ zápisky z tvého deníku za dnešek (odpověz JEN z nich; "
+    return ("SKUTEČNÉ zápisky z tvého deníku (%s)" % (_popis or "za dnešek") + " (odpověz JEN z nich; "
             "shrň lidsky, nevymýšlej nic, co v nich není):\n\n"
             + "\n".join(lines))
 
