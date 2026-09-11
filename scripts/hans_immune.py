@@ -262,17 +262,31 @@ def run_immune_check(config: dict, diary_db_path: str) -> str:
 
     checked = 0
     contradictions = 0
-    for name, gloss, sent in candidates[:max_checks]:
-        v = _verdict(config, model, timeout, gloss, sent)
-        if v is None:
-            # LLM dole uprostřed běhu → co je hotové, je hotové; zbytek příště
-            if checked == 0:
-                return "deferred"
-            break
-        checked += 1
-        if v:
-            if _write_lesson(diary_db_path, name, gloss, sent):
-                contradictions += 1
+    # HANS_IMMUNE_SLOT_LATE_V1 (11. 9.) — VRAM slot AZ TADY, ne kolem cele
+    # funkce. Vse vyse je bez LLM, takze drivejsi zabrani slotu znamenalo
+    # cekat az 600 s a odpojit hans-czech i v nocich, kdy neni co kontrolovat
+    # — a to jsou zatim VSECHNY (0 lekci za celou historii, 0 volani LLM).
+    # Kontext se otevira az tady, kdyz uz jsou `candidates` neprazdne.
+    from contextlib import nullcontext as _nullcontext
+    try:
+        from scripts.ollama_client import base_model_batch as _bmb
+        _davka = _bmb(config, pause_s=600, label="immune")
+    except Exception as _be:
+        _log.warning("immune: base_model_batch nedostupny (%s) — "
+                     "bezim bez vylucnosti", _be)
+        _davka = _nullcontext()
+    with _davka:
+        for name, gloss, sent in candidates[:max_checks]:
+            v = _verdict(config, model, timeout, gloss, sent)
+            if v is None:
+                # LLM dole uprostřed běhu → co je hotové, je hotové; zbytek příště
+                if checked == 0:
+                    return "deferred"
+                break
+            checked += 1
+            if v:
+                if _write_lesson(diary_db_path, name, gloss, sent):
+                    contradictions += 1
 
     # observabilita: 1 souhrnný event za běh (jen když se reálně kontrolovalo)
     try:
