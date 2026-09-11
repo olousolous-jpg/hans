@@ -5010,6 +5010,28 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
         _log.info("HANS_NALEZ_NOT_KOLAC_TALK_V1: '%.40s' → /nalez ZAMÍTNUTO "
                   "(ptá se na Koláče, ne na jeho nálezy)", msg)
         return ""
+    # HANS_VIDEL_NOT_KOLAC_V1 (11. 9.) — TÝŽ VZOR PRO `/videl`.
+    # Doloženo živě: „kdy jsi naposledy videl Kolace?“ → Hans vrátil
+    # „O lidech z tohoto domu mluvím jen s těmi, koho znám.“ Koláč je
+    # přitom MEDVĚD, ne člen domácnosti — a k agentovi, který má správnou
+    # odpověď (`report_kolac_status`), se dotaz vůbec nedostal:
+    #     HANS_CMD_LLM_ROUTE_V1: '...videl Kolace?' → /videl
+    # `KOLAC_STATUS_GUARD_V1` v `hans_agent` tuhle třídu řeší, ale jen mezi
+    # agentními akcemi; na chatový příkaz nedosáhne.
+    # ⚠️ Podmínka „a ŽÁDNÁ ZNÁMÁ OSOBA ve větě“ je nutná: dotaz
+    # „kdy jsi viděl <osobu> s Koláčem?“ je legitimní dotaz na
+    # člověka a štítek si ponechat MÁ.
+    if cid == "videl" and _KOLAC_SLOVO.search(msg or ""):
+        _osoba = ""
+        try:
+            from scripts.cz_names import find_known_person
+            _osoba = find_known_person(msg or "", config or {})
+        except Exception:
+            _osoba = ""
+        if not _osoba:
+            _log.info("HANS_VIDEL_NOT_KOLAC_V1: '%.40s' → /videl ZAMÍTNUTO "
+                      "(ptá se na Koláče, ne na člověka)", msg)
+            return ""
     # HANS_THREAD_NO_LIST_V2 (30.8.) — výpis nedostane ani ÚVAHOVÁ otázka.
     # Doloženo dlouhým ověřovacím rozhovorem, tah 19: „kdybys mohl neco zmenit
     # na svem uspořádání, co by to bylo?" → /kritika, tedy výpis deseti
