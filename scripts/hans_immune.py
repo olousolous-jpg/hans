@@ -198,6 +198,75 @@ def _write_lesson(db_path: str, entity: str, gloss: str,
         return False
 
 
+def _podle_prijmeni(store, db_path: str, fraze: str):
+    """HANS_IMMUNE_SURNAME_UNIQUE_V1 — skloněné příjmení ZNÁMÉ osoby.
+
+    `resolve(loose=False)` záměrně neuzná samotné příjmení (riziko jmenovce)
+    a `loose=True` je pro fakta moc volné. Tohle je užší pravidlo:
+      (a) příjmení musí sednout na PRÁVĚ JEDNU osobu (`etype='osoba'`)
+          → jmenovec z principu nehrozí;
+      (b) poslední token musí být STRIKTNÍ PREFIX (tak vypadá skloňování),
+          ne jen sdílený začátek.
+
+    ⚠️ (b) není kosmetika. Bez něj projde „Svobodu" → „Václav Svoboda
+    (politik KSČ)", jenže to je skoro jistě pojem *svoboda* ve 4. pádě —
+    a immune by z toho napsalo FALEŠNOU lekci do paměti. Změřeno na 96
+    frázích celé historie: se (b) dvě správné shody a nula nebezpečných,
+    bez (b) tři správné a jedna nebezpečná. [[data-damage-first]]
+
+    Vrací dict entity (jako `resolve`) nebo None. Read-only, nikdy nevyhodí.
+    """
+    try:
+        from scripts.hans_entities import _tokens, _tok_match
+    except Exception:
+        return None
+    try:
+        qt = [t for t in _tokens(fraze) if len(t) >= 4]
+        if not qt:
+            return None
+        posledni = qt[-1]
+
+        def _striktni(a: str, b: str) -> bool:
+            if a == b:
+                return True
+            kratsi, delsi = (a, b) if len(a) <= len(b) else (b, a)
+            return len(kratsi) >= 4 and delsi.startswith(kratsi)
+
+        conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True,
+                               timeout=3.0)
+        try:
+            osoby = conn.execute(
+                "SELECT id, name FROM entities WHERE etype='osoba'").fetchall()
+        finally:
+            conn.close()
+        shody = []
+        for _id, nazev in osoby:
+            kt = [t for t in _tokens(nazev) if len(t) >= 4]
+            if len(kt) < 2:
+                continue          # jednoslovné jméno → příjmení nerozeznám
+            if _tok_match(kt[-1], posledni) and _striktni(kt[-1], posledni):
+                shody.append(_id)
+                if len(shody) > 1:
+                    return None   # dva jmenovci → radši nic
+        if len(shody) != 1:
+            return None
+        ent = store.by_id(shody[0]) if hasattr(store, "by_id") else None
+        if ent is None:
+            for _id, keys in store._all_keys():
+                if _id == shody[0] and keys:
+                    ent = store.resolve(keys[0])
+                    break
+        if ent and (ent.get("gloss") or "").strip():
+            _log.info("immune: „%s“ → „%s“ "
+                      "(jednoznačné příjmení)",
+                      fraze, ent.get("name"))
+            return ent
+        return None
+    except Exception as e:
+        _log.debug("immune: shoda podle příjmení selhala: %s", e)
+        return None
+
+
 # ── top-level ────────────────────────────────────────────────────────────────
 
 def run_immune_check(config: dict, diary_db_path: str) -> str:
@@ -244,6 +313,8 @@ def run_immune_check(config: dict, diary_db_path: str) -> str:
                 ent = store.resolve(ent_phrase)
             except Exception:
                 ent = None
+            if not ent:
+                ent = _podle_prijmeni(store, diary_db_path, ent_phrase)
             if not ent:
                 continue
             name = (ent.get("name") or "").strip()
