@@ -10,6 +10,7 @@ Gesture IDs:
 import socket
 from collections import deque, Counter
 import struct
+import math
 import threading
 import time
 import numpy as np
@@ -111,7 +112,12 @@ class GestureClient:
         self._tvar_ts            = 0.0
         self._wave_max_tvar_age  = float(cfg.get("wave_max_face_age_s", 1.0))
         self._stale_hlaseno      = 0.0
-        self._wave_track    = deque(maxlen=60)   # (t, cx) normalizovane
+        self._wave_track    = deque(maxlen=60)   # (t, cx, sirka, cy)
+        # HANS_GESTURE_HEAD_DIST_XY_V1 (11. 9.) — pomer stran zaberu.
+        # Souradnice jsou normalizovane PO OSACH zvlast (2304x1296), takze
+        # svisly rozdil 0,1 je v pixelech jiny nez vodorovny 0,1. Bez
+        # korekce by y vazilo 1,78x min a oprava by byla jen polovicni.
+        self._pomer_stran   = 16.0 / 9.0
         self._wave_last_fired = 0.0
         # HANS_GESTURE_DEBUG_V1 — `gesture.debug` zvedne diagnostiku na INFO.
         # Bez toho je cela cesta nema: chyby socketu jsou na DEBUG a vyjimka
@@ -144,6 +150,16 @@ class GestureClient:
         if not self.enabled or self._busy:
             return
         import cv2 as _cv2
+        # HANS_GESTURE_HEAD_DIST_XY_V1 — pomer stran PLNEHO zaberu. Musi se
+        # vzit tady, PRED orezem ROI: nize uz `frame` muze byt vyrez a jeho
+        # pomer je jiny nez pomer souradnicoveho ramce, ve kterem prijdou
+        # bboxy zpatky.
+        try:
+            _h0, _w0 = frame.shape[:2]
+            if _h0 > 0:
+                self._pomer_stran = float(_w0) / float(_h0)
+        except Exception:
+            pass
         vyrez = None
         if oblast is not None:
             try:
@@ -458,8 +474,22 @@ class GestureClient:
         # i na dva.
         _stred = getattr(self, "_stred_tvare", None)
         if self._wave_max_od_tvare > 0 and _stred and _tvar > 1e-6:
+            # HANS_GESTURE_HEAD_DIST_XY_V1 (11. 9.) — MER OBE OSY.
+            # Do 11. 9. se pocitalo jen `abs(_sx - _stred[0])`, takze
+            # halucinace primo pod hlavou (bricho, klin, postel, podlaha)
+            # mela vzdalenost ~0 a prosla. Presne to je slepa skvrna
+            # zapsana u HANS_GESTURE_HEAD_DIST_V2 ("nechyti halucinace
+            # na cloveku: rukav 0.3, hrud 0.7") — hrud je POD hlavou.
+            # Zmereno na 58 vystrelech z 10. 9.: dY 1,4-4,9 sirky tvare.
+            # Stare zaznamy stopy mohou mit 3 prvky (bez y) — `len(p) > 3`
+            # je drzi pri zivote misto vyjimky uprostred gesta.
             _sx = sum(p[1] for p in okno) / len(okno)
-            _vzd = abs(_sx - _stred[0]) / _tvar
+            _ys = [p[3] for p in okno if len(p) > 3]
+            _dx = (_sx - _stred[0]) * self._pomer_stran
+            _dy = 0.0
+            if _ys and len(_stred) > 1:
+                _dy = (sum(_ys) / len(_ys)) - _stred[1]
+            _vzd = math.hypot(_dx, _dy) / (_tvar * self._pomer_stran)
             if _vzd > self._wave_max_od_tvare:
                 self._proc_ne("dlan daleko od tvare: %.1f sirky tvare > %.1f"
                               % (_vzd, self._wave_max_od_tvare))
@@ -524,9 +554,14 @@ class GestureClient:
             try:
                 # HANS_GESTURE_WAVE_RELAMP_V1 — do stopy patri i SIRKA dlane:
                 # slouzi jako meritko vzdalenosti (viz _je_mavani).
+                # HANS_GESTURE_HEAD_DIST_XY_V1 (11. 9.) — a take SVISLA poloha.
+                # Ctvrty prvek se pridava na KONEC zamerne: `p[1]` (rozpeti)
+                # i `p[2]` (sirka) ctou stara mista dal beze zmeny.
                 _x1, _x2 = float(bbox[0]), float(bbox[2])
+                _y1, _y2 = float(bbox[1]), float(bbox[3])
                 self._wave_track.append(
-                    (now, (_x1 + _x2) / 2.0, max(_x2 - _x1, 1e-6)))
+                    (now, (_x1 + _x2) / 2.0, max(_x2 - _x1, 1e-6),
+                     (_y1 + _y2) / 2.0))
             except Exception:
                 pass
             self._dbg_open += 1

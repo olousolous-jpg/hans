@@ -1656,8 +1656,13 @@ class PicamDisplayController:
         self._snimek_zamavani(_bbox, _jmeno)
 
     def _snimek_zamavani(self, bbox, jmeno):  # HANS_GESTURE_WAVE_SNAP_V1
-        """Ulozi snimek v okamziku zachytu do data/gesta/ (cerveny ramecek
+        """Ulozi snimek v okamziku zachytu do data/gesta/ (MODRY ramecek
         = co bylo povazovano za dlan).
+
+        HANS_GESTURE_HEAD_DIST_XY_V1 (11. 9.) — ramecek je MODRY, ne cerveny:
+        kresli se (0,0,255) do RGB snimku a az potom jde RGB2BGR pred zapisem.
+        Docstring tvrdil cerveny a stalo to jedno kolo mereni (hledaly se
+        cervene pixely). Barva se nemeni zamerne — starsi snimky jsou modre.
 
         Duvod: falesne zachyty nejde resit prahy, dokud nevime, CO systém
         za dlan povazoval — 2,95 sirky dlane vypada jako poctive mavnuti
@@ -1678,7 +1683,13 @@ class PicamDisplayController:
                               (int(bbox[0] * _w), int(bbox[1] * _h)),
                               (int(bbox[2] * _w), int(bbox[3] * _h)),
                               (0, 0, 255), 2)
-            _cesta = _d / ("%s_%s.jpg" % (time.strftime("%H%M%S"), jmeno))
+            # HANS_GESTURE_HEAD_DIST_XY_V1 (11. 9.) — DATUM DO JMENA.
+            # Rotace nize razi lexikalne, a jmeno bez data znamena razeni
+            # podle DENNI DOBY: vecerni snimek ze starsiho dne prezil rani
+            # z dneska. Doloženo 11. 9.: ve slozce lezelo 14 snimku ze 7. 9.
+            # a 5 z 8. 9., zatimco 37 z 58 vcerejsich uz bylo smazanych —
+            # prisli jsme o dve tretiny dukazu prave k teto praci.
+            _cesta = _d / ("%s_%s.jpg" % (time.strftime("%Y%m%d_%H%M%S"), jmeno))
             cv2.imwrite(str(_cesta), cv2.cvtColor(_img, cv2.COLOR_RGB2BGR))
             for _old in sorted(_d.glob("*.jpg"))[:-40]:
                 try: _old.unlink()
