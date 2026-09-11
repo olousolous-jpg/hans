@@ -833,7 +833,12 @@ def _find_entity_in_text(db_path: str, text: str,
     v běžné řeči se jinak chytne jako ZDROJ — a tvrzení o PROVENIENCI je to
     poslední, co smí být vymyšlené.
     ⛔ Zapínat JEN nad Hansovými replikami (píše korektně), NIKDY nad dotazem
-    uživatele — ten píše malá písmena bez diakritiky a pravidlo by vyplo vše.
+    uživatele. ⚠️ Původní zdůvodnění znělo „uživatel píše malá písmena“ —
+    to podle něj samotného (11. 9.) platí JEN OBČAS, někdy píše i s velkými.
+    Závěr se tím nemění, ale důvod je jiný a silnější: na straně uživatele
+    není velké písmeno SPOLEHLIVÝ signál ani v jednom směru, takže se z něj
+    nesmí dělat podmínka. Kdyby se to chtělo zapnout i tam, potřebuje to
+    nejdřív měření na jeho skutečných větách, ne domněnku o jeho stylu.
     📏 Změřeno na 25 reálných dotazech na zdroj: nálezů 12 → 10, odmítnuty
     právě dvě falešné."""
     if not text:
