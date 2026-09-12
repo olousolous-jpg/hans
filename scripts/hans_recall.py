@@ -914,6 +914,22 @@ def _je_vycet(text: str) -> bool:
     return bool(_VYCET_PAT.search(text or ""))
 
 
+# HANS_SOURCE_READING_LIST_V1 (12. 9.) — VYPIS CETBY JE VYJIMKA.
+# `_je_vycet` vylucuje vypisy jako referent, protoze polozka seznamu
+# udalosti dne neni tema se zdrojem. U vypisu toho, co Hans CETL, to
+# ale neplati: polozky JSOU tituly, ktere maji `source_url`. Bez teto
+# vyjimky Hans na "a odkud to mas?" po vlastnim vypisu cetby popre,
+# ze zdroj ma (doloheno 12. 9. v tykani i vykani).
+# Zmereno: z 132 vypisu je 12 vypisu cetby; ostatnich 120 zustava skrytych.
+_CETBA_PAT = re.compile(r"\((?:\u010detba|cetba)\)|\u010de?tl\s+jsem|"
+                        r"do\u010detl\s+jsem", re.IGNORECASE)
+
+
+def _je_vypis_cetby(text: str) -> bool:
+    """Je to vypis toho, co Hans CETL (a tedy legitimni referent)?"""
+    return bool(_CETBA_PAT.search(text or ""))
+
+
 def _last_hans_topics(db_path: str, limit: int = 3,
                       person: Optional[str] = None,
                       okno_s: float = 3600.0) -> list:
@@ -969,8 +985,10 @@ def _last_hans_topics(db_path: str, limit: int = 3,
         idx = note.find("Hans:")
         if idx >= 0:
             _h = note[idx + 5:].strip()
-            if _je_vycet(_h):
+            if _je_vycet(_h) and not _je_vypis_cetby(_h):
                 continue                  # výpis není tvrzení
+                                          # (HANS_SOURCE_READING_LIST_V1:
+                                          # výpis ČETBY je výjimka)
             out.append(_h)
         if len(out) >= limit:
             break
