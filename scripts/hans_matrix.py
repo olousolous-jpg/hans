@@ -441,7 +441,11 @@ class MatrixBridge:
                 _log.warning("matrix: zpráva od neznámého %s — ignoruji", uid)
                 return
             person = self._person_for(uid)
-            _log.info("matrix ← %s: %.60s", person, text)
+            # HANS_ART_EXPLAIN_NOT_REQUEST_V1 (12. 9.) — orez 60 → 200 znaku.
+            # Pri 60 se u nalezu z 11. 9. usekavalo prave slovo "obrazem",
+            # takze se tahle trida chyb nedala z logu ZMERIT (korpus vracel
+            # 0 vyskytu u chyby, ktera se prokazatelne stala 4x).
+            _log.info("matrix ← %s: %.200s", person, text)
 
             # HANS_BRIDGE_COMMANDS_V1 — příkazy/intenty (jen role 'full'), stejné
             # co Telegram. Běží v EXECUTORU: ctx.send volá self.send, které blokuje

@@ -1588,6 +1588,16 @@ def _distill_paint_subject(config, name, handler, subj: str):
 
 # HANS_ART_NOT_PAST_QUESTION_V1 — minulý čas sloves malování. Otázka
 # „namaloval JSI něco?" je dotaz na hotové dílo, ne příkaz malovat.
+# HANS_ART_EXPLAIN_NOT_REQUEST_V1 (12. 9.) — VYSVETLUJICI veta nesmi spustit RENDER.
+# Doloheno 11. 9. 14:06: "tu je vysvetleni k te hromade malovani. upravuji
+# tvuj kod abys ses kazdym namalovanym obrazem zlepsoval" — slovo
+# "namalovanym" sedlo na `.*\bnama[kl]\w*` a Hans zacal malovat (FLUX drzi
+# GPU ~5 min). Tataz trida jako u `detect_intent` v bridge_commands.
+# Zmereno na 824 realnych vetach: 0 zmen = zadna regrese.
+_ART_VYSVETL = (r"(?:\bpro[cč]\b|\bjen\s+(?:abys|vysv[eě]tl|vysvetl)"
+        r"|\bnev[ií]m\s+jestli\b|\bnevim\s+jestli\b"
+        r"|\bupravuji\b|\btu\s+je\s+vysv[eě]tl)")
+
 _ART_MINULE = (r"(?:namaloval|namalovala|nakreslil|nakreslila"
                r"|vytvo[řr]il|vytvo[řr]ila)\w*")
 
@@ -1622,9 +1632,11 @@ register(
     # Dotazy v minulém čase spadnou na `/obrazy` — příkaz, který na to je.
     nl_patterns=[r"^(?!.*\b(?:jsi|jste)\b.*\b" + _ART_MINULE + r")"
                  r"(?!.*\b" + _ART_MINULE + r".*\b(?:jsi|jste)\b)"
+                 r"(?!.*" + _ART_VYSVETL + r")"          # HANS_ART_EXPLAIN_NOT_REQUEST_V1
                  r".*\bnama[kl]\w*",
                  r"^(?!.*\b(?:jsi|jste)\b.*\b" + _ART_MINULE + r")"
                  r"(?!.*\b" + _ART_MINULE + r".*\b(?:jsi|jste)\b)"
+                 r"(?!.*" + _ART_VYSVETL + r")"          # HANS_ART_EXPLAIN_NOT_REQUEST_V1
                  r".*\bnakresl\w*",
                  r"vytvoř\s+obr",
                  r"\bp[řr]ekresli", r"\bp[řr]emaluj",

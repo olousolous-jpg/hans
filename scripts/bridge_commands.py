@@ -232,13 +232,27 @@ _ASK = r"(pošl|posl|ukaž|ukaz|zobraz|poslat|uvid|vidět|videt|mrkn|dej|chci|" 
        r"můžeš|muzes|máš.*\bobraz|nějak)"
 
 
+# HANS_ART_EXPLAIN_NOT_REQUEST_V1 (12. 9.) — veta, ktera VYSVETLUJE, neni zadost.
+# Doloheno 4 falesnymi spustenimi z 30 v Matrixu 11. 9. (13 %).
+# — `_ASK` se ZAMERNE nezuzuje: je sdilene s `diary` a `musing`
+# a zmereno, ze zuzeni ztrati legitimni zadosti. Brana stoji VEDLE nej
+# a plati JEN na obrazove intenty.
+_VYSVETLUJE = re.compile(
+        r"(?:\bpro[cč]\b|\bjen\s+(?:abys|vysv[eě]tl|vysvetl)"
+        r"|\bnev[ií]m\s+jestli\b|\bnevim\s+jestli\b"
+        r"|\bupravuji\b|\btu\s+je\s+vysv[eě]tl)", re.IGNORECASE)
+
+
 def detect_intent(text: str):
     t = (text or "").lower()
     if not t:
         return None
-    if re.search(r"namaluj|nakresli|namalovat|nakreslit|vytvoř\w*\s+obr", t):
+    _vys = bool(_VYSVETLUJE.search(t))   # HANS_ART_EXPLAIN_NOT_REQUEST_V1
+    if re.search(r"namaluj|nakresli|namalovat|nakreslit|vytvoř\w*\s+obr", t) \
+            and not _vys:
         return "paint"
-    if re.search(r"obraz|obrázek|obrazek|namaloval|malb", t) and re.search(_ASK, t):
+    if re.search(r"obraz|obrázek|obrazek|namaloval|malb", t) and re.search(_ASK, t) \
+            and not _vys:
         return "artwork"
     if re.search(r"den[ií]k|deníč|zápis", t) and re.search(_ASK, t):
         return "diary"
