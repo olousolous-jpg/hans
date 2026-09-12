@@ -1675,7 +1675,15 @@ register(
         # HANS_ARTWORK_SHOW_V1 (30.8.) — „ukaž mi ten obraz" je dotaz, ne pokyn
         # malovat. Holé „ukaž mi to" tu ZÁMĚRNĚ není: bez předmětu může mířit
         # na cokoli (rozvrh, deník, nález) a únos by byl horší než dnešní stav.
-        r"uka[žz]\w*\s+(mi\s+)?(ten\s+|ty\s+|sv[ůu]j\s+)?(obraz|obr[áa]zk|galerii)",
+        # HANS_ARTWORK_ASK_WIDEN_V1 (12. 9.) — mezi slovesem a podstatnym jmenem
+        # smi byt 0-3 libovolna slova. Dosud tam smelo stat jen
+        # `mi` + `ten/ty/svuj`, takze "ukaz mi NEJAKY obraz" nesedlo
+        # a veta spadla do volneho hovoru, kde LLM tvrdil, ze Hans
+        # obrazy posilat neumi. Doplnena slovesa posli/poslat/videt.
+        # Zmereno: cil 10/10, 0 vet ukradenych na 758 realnych,
+        # 9 hranicnich pripadu nekrade `/namaluj`.
+        r"(uka[žz]\w*|po[šs]l\w*|poslat|vid[ěe]t|uvid[ěe]t)"
+        r"(\s+\w+){0,3}\s+(obraz|obr[áa]z|galeri)",
         r"m[ůu][žz]u\s+(to\s+)?vid[ěe]t\s+(ten\s+)?obraz",
     ],
     handler=_cmd_obrazy,
