@@ -124,6 +124,10 @@ class GestureClient:
         # v _loop se spolkne, takze mlceni klienta nejde odlisit od "nikdo
         # nemava". Slouzi i k ladeni prahu mavani.
         self._debug        = bool(cfg.get("debug", False))
+        # HANS_GESTURE_REJECT_LOG_V1 — merici rezim: duvody zamitnuti do
+        # data/mereni/gesta_ne.log. Default False — po vyhodnoceni
+        # zase vypnout (tyz rezim jako `wave_snapshot`).
+        self._proc_zapis   = bool(cfg.get("wave_reject_log", False))
         self._dbg_submits  = 0
         self._dbg_open     = 0
         self._dbg_frames   = 0
@@ -248,6 +252,8 @@ class GestureClient:
         self._wave_min_doba      = float(cfg.get("wave_min_duration_s", self._wave_min_doba))
         self._wave_max_od_tvare  = float(cfg.get("wave_max_face_widths", self._wave_max_od_tvare))
         self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", self._wave_min_palm_w))
+        self._proc_zapis         = bool(cfg.get("wave_reject_log",      # HANS_GESTURE_REJECT_LOG_V1
+                                                self._proc_zapis))
         self._wave_max_tvar_age  = float(cfg.get("wave_max_face_age_s",     # HANS_GESTURE_FACE_STALE_V1
                                                  self._wave_max_tvar_age))
 
@@ -362,12 +368,25 @@ class GestureClient:
         """Rekne, CO mavani chybelo. Bez toho se prahy ladi naslepo —
         'nesepnulo' muze znamenat tri ruzne veci. Hlasi se nejvys 1x za 2 s,
         aby to nezaplavilo log."""
-        if not self._debug:
-            return
+        # HANS_GESTURE_REJECT_LOG_V1 (12. 9.) — rate limit plati i pro zapis do
+        # souboru, ale `_debug` uz NENI podminkou: merit jde bez zaplaveni
+        # system.logu. Poradi je zamerne — drive se return kvuli
+        # `_debug` stal PRED limitem, takze `_proc_last` se neaktualizovalo.
         _t = time.time()
         if _t - getattr(self, "_proc_last", 0.0) < 2.0:
             return
         self._proc_last = _t
+        if getattr(self, "_proc_zapis", False):
+            try:
+                from pathlib import Path as _P
+                _d = _P("data/mereni"); _d.mkdir(parents=True, exist_ok=True)
+                with open(_d / "gesta_ne.log", "a", encoding="utf-8") as _f:
+                    _f.write("%s\t%s\n" % (
+                        time.strftime("%Y-%m-%d %H:%M:%S"), duvod))
+            except Exception:
+                pass
+        if not self._debug:
+            return
         _log.info("gesto[dbg]: mavani NE — %s", duvod)
 
     def _je_mavani(self, now: float) -> bool:
