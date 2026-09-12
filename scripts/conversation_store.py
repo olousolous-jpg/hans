@@ -156,10 +156,46 @@ class ConversationStore:
         if channel is not None:
             msgs = [m for m in msgs if m.get("ch") in (None, channel)]
         msgs = self._sbal_monolog(msgs)   # HANS_CONV_GREETING_ECHO_V1
+        msgs = self._orez_pozdravy(msgs)  # HANS_CONV_GREETING_DIALOG_V1
         return [{"role": m["role"],
                  "content": (dedup_address_g4d(m["content"], name, self.config)
                              if m["role"] == "assistant" else m["content"])}
                 for m in msgs]
+
+    _POZDRAV_RE = _re_g4d.compile(
+        r"^\s*(dobr[\u00fdy]\s+den|dobr[\u00e9e]\s+r[\u00e1a]no|"
+        r"dobr[\u00fdy]\s+ve[\u010dc]er|dobr[\u00e9e]\s+odpoledne)"
+        r"[\s,]*[^.!?]{0,24}[.!?]\s*", _re_g4d.IGNORECASE)
+
+    def _orez_pozdravy(self, msgs):
+        """HANS_CONV_GREETING_DIALOG_V1 (12. 9.) — pozdrav nech jen u NEJNOVEJSI
+        Hansovy repliky; u starsich uvodni pozdravovou frazi odrizni.
+
+        PROC: pozdrav je few-shot. Prvni je legitimni (novy clovek), model
+        ho zopakuje, podil v okne stoupne a od urciteho nasyceni uz Hans
+        zdravi v KAZDE odpovedi — vcetne odpovedi na rozlouceni.
+        Zmereno 12. 9.: 25 % pozdravu v historii -> 0/3 zdravi,
+        56 % -> 0/3, 73 % -> 2/2. Doloheno 7 z 10 tahu u ciziho mluvciho.
+
+        `_sbal_monolog` na to nedosahne — ten resi jen neprerusny beh
+        Hansovych replik, kdezto tyhle pozdravy jsou prolozene dialogem.
+
+        ⚠️ Meni JEN pohled do promptu, v ulozisti zustava vse.
+        Posledni replika si pozdrav nechava: clovek odpovida prave na ni.
+        """
+        posl = None
+        for i, m in enumerate(msgs or []):
+            if m.get("role") == "assistant":
+                posl = i
+        out = []
+        for i, m in enumerate(msgs or []):
+            if m.get("role") == "assistant" and i != posl:
+                _t = m.get("content") or ""
+                _n = self._POZDRAV_RE.sub("", _t, count=1)
+                if _n.strip() and _n != _t:
+                    m = dict(m); m["content"] = _n
+            out.append(m)
+        return out
 
     def get_history_scoped(self, name: str, channel: str) -> list:
         """PŘÍSNÝ režim: vrátí JEN zprávy s daným kanálem (netaggované zprávy
