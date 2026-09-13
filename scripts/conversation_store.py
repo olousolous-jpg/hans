@@ -157,6 +157,7 @@ class ConversationStore:
             msgs = [m for m in msgs if m.get("ch") in (None, channel)]
         msgs = self._sbal_monolog(msgs)   # HANS_CONV_GREETING_ECHO_V1
         msgs = self._orez_pozdravy(msgs)  # HANS_CONV_GREETING_DIALOG_V1
+        msgs = self._orez_pane(name, msgs)  # HANS_CONV_PANE_ECHO_V1
         return [{"role": m["role"],
                  "content": (dedup_address_g4d(m["content"], name, self.config)
                              if m["role"] == "assistant" else m["content"])}
@@ -193,6 +194,57 @@ class ConversationStore:
                 _t = m.get("content") or ""
                 _n = self._POZDRAV_RE.sub("", _t, count=1)
                 if _n.strip() and _n != _t:
+                    m = dict(m); m["content"] = _n
+            out.append(m)
+        return out
+
+    _PANE_RE = _re_g4d.compile(
+        r"(?:(?<=^)|(?<=,))(\s*)pane\b"
+        r"(?=\s*(?:[.,;:!?\u2026()\u201c\u00bb]|[\u2014\u2013-]|$))",
+        _re_g4d.IGNORECASE | _re_g4d.MULTILINE)
+
+    def _orez_pane(self, name, msgs):
+        """HANS_CONV_PANE_ECHO_V1 (13. 9.) — u STARSICH Hansovych replik
+        prepis osloveni \u201epane\u201c na jmeno.
+
+        PROC: majordomske \u201epane\u201c je few-shot uplne stejne jako pozdrav.
+        Hans od 3. 9. majordomus NENI (identity id=2 = \u201etichy a premyslivy
+        pozorovatel\u201c), ale okno historie ho ten registr ucilo dal.
+        Doloženo rozhovorem 13. 9.: 7 z 20 odpovedi, vcetne omluvy
+        \u201eOmlouvam se, pane. […] budu vas oslovovat jinak.\u201c
+
+        ZMERENO 13. 9. na vsech ulozenych konverzacich — v okne PO stavajicich
+        filtrech: pozdrav 0-13 % (ty filtry funguji), \u201epane\u201c 12-48 %
+        (nefiltrovalo se vubec). Simulace zasahu: 12-48 % -> 0 %, 56 zmenenych
+        replik, 0 ztrat (delkova kontrola: meni se jen osloveni).
+
+        ⚠️ Vystupni strana (`cz_names.fix_addressee`) se opravila tyz den, ale
+        na okno nedosahne: `max_turns` je **50**, takze stare repliky by model
+        krmily jeste dlouho. Tohle je vstupni strana teze veci.
+
+        ⚠️ Meni JEN pohled do promptu, v ulozisti zustava vse.
+        Posledni replika si \u201epane\u201c nechava — clovek odpovida prave na ni
+        (tyz kontrakt jako `_orez_pozdravy`).
+        """
+        try:
+            from scripts.cz_names import address as _addr
+            cil = (_addr(name, self.config) or "").strip()
+        except Exception:
+            return msgs
+        # Kdo nema vlastni osloveni, se preskoci — jinak by se \u201epane\u201c
+        # nahrazovalo \u201epane\u201c donekonecna.
+        if not cil or _fold_g4d(cil) in ("pane", "pani", "s dovolenim"):
+            return msgs
+        posl = None
+        for i, m in enumerate(msgs or []):
+            if m.get("role") == "assistant":
+                posl = i
+        out = []
+        for i, m in enumerate(msgs or []):
+            if m.get("role") == "assistant" and i != posl:
+                _t = m.get("content") or ""
+                _n, _c = self._PANE_RE.subn(lambda mm: mm.group(1) + cil, _t)
+                if _c and _n.strip():
                     m = dict(m); m["content"] = _n
             out.append(m)
         return out
