@@ -78,8 +78,17 @@ def main() -> int:
         if sk != skupina_teď:
             skupina_teď = sk
             print(f"\n── {sk}")
-        ok, got, duvod = _vysledek(p)
         popis = p.get("popis") or str(p.get("argumenty", [""])[0])[:60]
+        # REGRESE_PRESKOCIT_V1 (13. 9.) — případ, který měří ZÁMĚRNĚ VYPNUTÝ
+        # nebo zamítnutý mechanismus. Bez tohohle visí v sadě natrvalo jako
+        # CHYBA, a trvale červená sada přestane být signálem.
+        # ⚠️ Do `preskocit` patří JEN to, co je doložitelně rozhodnuté —
+        # nikdy zásah, který se nepovedl opravit. Důvod se píše do `puvod`.
+        if p.get("preskocit"):
+            preskoceno.append(p)
+            print(f"   ~     {popis}  (přeskočeno — {p.get('preskocit_duvod', 'záměrně vypnuto')})")
+            continue
+        ok, got, duvod = _vysledek(p)
         if ok:
             print(f"   OK    {popis}")
         elif p.get("llm") and got is None:

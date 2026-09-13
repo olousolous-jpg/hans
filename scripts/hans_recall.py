@@ -1028,11 +1028,17 @@ def sensor_source_answer(db_path: str, user_text: str,
     # samotné jméno: „odkud víš, že Jana ráda vaří?" je tvrzení ZE ZÁPISKŮ,
     # ne z čidla. Rozhoduje tedy DVOJICE: známá osoba + slovo o přítomnosti.
     try:
-        import json as _js
         import re as _re
         from scripts.cz_names import find_known_person
-        with open("config.json", encoding="utf-8") as _cf:
-            _cfg = _js.load(_cf)
+        # HANS_RECALL_CONFIG_IO_V1 (13. 9.) — SLOUCENY config.
+        # `find_known_person` potrebuje `known_persons`, ktere od rozdeleni
+        # configu 8. 9. (HANS_CONFIG_SPLIT_V1) sedi v `config.private.json`.
+        # Cteni `config.json` napřimo tedy vratilo config BEZ JMEN → tahle
+        # cidlova vetev od 8. 9. NESEPLA a na „odkud vis, ze tu je <osoba>?"
+        # Hans misto „vidim to kamerou" vypsal nesouvisejici zapisek.
+        # Doloženo regresni sadou 13. 9. (pripad „pritomnost -> cidlo“).
+        from scripts.config_io import load as _cio_load
+        _cfg = _cio_load()
         _pritomnost = _re.compile(
             r"\b(tu|tady|doma|p[řr][íi]toms?n|v\s+pokoji|v\s+m[íi]stnosti|"
             r"vid[íi][šs]|vid[íi]te)\b", _re.IGNORECASE)
@@ -1363,10 +1369,9 @@ def tema_entita(topic: str):
     if not t:
         return None
     try:
-        import json as _json
         from scripts.hans_entities import EntityStore
-        with open("config.json", encoding="utf-8") as f:
-            cfg = _json.load(f)
+        from scripts.config_io import load as _cio_load   # HANS_RECALL_CONFIG_IO_V1
+        cfg = _cio_load()
         es = EntityStore(cfg, cfg.get("diary_db") or "data/hans_diary.db")
         return es.resolve(t)
     except Exception:
@@ -1985,10 +1990,10 @@ def film_knowledge_answer(db_path: str, question: str = "") -> Optional[str]:
 
 # ── Smoke (python3 -m scripts.hans_recall) ───────────────────────────────────
 if __name__ == "__main__":
-    import json
     cfg = {}
     try:
-        cfg = json.load(open("config.json", encoding="utf-8"))
+        from scripts.config_io import load as _cio_load   # HANS_RECALL_CONFIG_IO_V1
+        cfg = _cio_load()
     except Exception:
         pass
     db = cfg.get("diary_db", "data/hans_diary.db")

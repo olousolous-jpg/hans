@@ -11,11 +11,32 @@ import json
 from functools import lru_cache
 
 
+# ── REGRESE_CONFIG_IO_V1 (13. 9.) — SLOUCENY config, ne jen verejny ────────
+# Sada cetla `config.json` NAPRIMO na sesti mistech. Od rozdeleni configu
+# 8. 9. (HANS_CONFIG_SPLIT_V1) tam ale `known_persons` NEJSOU — sedi
+# v `config.private.json`. Vysledek: predikaty, ktere potrebuji jmena
+# domacnosti, dostaly prazdno a testy hlasily FALESNE SELHANI.
+# Doloženo 13. 9.: `_asks_person_presence("je <jmeno> doma?")` vraci
+# False s verejnym configem a True se sloucenym → pravidlo
+# HANS_PRESENCE_ASK_V1 vypadalo rozbite, pritom fungovalo.
+# ⚠️ Tataz past chytla tyz den dvakrat i mimo sadu (fix_addressee,
+# _resolve_person). V testech VZDY `config_io.load()`.
+@lru_cache(maxsize=1)
+def _cfg() -> dict:
+    """Sloučený config (veřejný + privátní). Fallback na veřejný, kdyby
+    `config_io` nebyl k dispozici — sada nesmí spadnout kvůli importu."""
+    try:
+        from scripts import config_io
+        return config_io.load()
+    except Exception:
+        with open("config.json", encoding="utf-8") as f:
+            return json.load(f)
+
+
 @lru_cache(maxsize=1)
 def _router():
     from scripts.hans_agent import AgentRouter
-    with open("config.json", encoding="utf-8") as f:
-        return AgentRouter(json.load(f))
+    return AgentRouter(_cfg())
 
 
 def hint_match(text: str) -> bool:
@@ -138,8 +159,7 @@ def zdroje_odpoved(veta: str) -> str:
 
     class _H:
         def __init__(self):
-            with open("config.json", encoding="utf-8") as f:
-                self.config = json.load(f)
+            self.config = _cfg()          # REGRESE_CONFIG_IO_V1
 
     return _cmd_zdroje(_H(), "Uživatel", veta) or ""
 
@@ -347,8 +367,7 @@ def korpus_dedup_jen_vokativy() -> str:
                                             _fold_g4d, _vokativy_g4d)
     if not os.path.exists("config.json"):
         return "OK"
-    with open("config.json", encoding="utf-8") as fh:
-        cfg = json.load(fh)
+    cfg = _cfg()                      # REGRESE_CONFIG_IO_V1
     for f in sorted(glob.glob("data/conversations/*.json")):
         try:
             with open(f, encoding="utf-8") as fh:
@@ -397,8 +416,7 @@ def dedup_osloveni(text: str, jmeno: str) -> str:
     """
     import json
     from scripts.conversation_store import dedup_address_g4d
-    with open("config.json", encoding="utf-8") as fh:
-        cfg = json.load(fh)
+    cfg = _cfg()                      # REGRESE_CONFIG_IO_V1
     return dedup_address_g4d(text, jmeno, cfg)
 
 
@@ -441,7 +459,7 @@ def thread_guard(cid: str, veta: str) -> str:
     vlákně nestojí (jinak by test měřil něco jiného než rozhodnutí)."""
     import json
     from scripts.chat_commands import _thread_guard
-    cfg = json.load(open("config.json", encoding="utf-8"))
+    cfg = _cfg()                      # REGRESE_CONFIG_IO_V1
     return _thread_guard(cid, veta, cfg, turns=[])
 
 
@@ -460,6 +478,6 @@ def wiki_pokryti_ok(query: str, title: str) -> bool:
     Práh se čte z configu (default 0.4), ať test měří TOTÉŽ co běžící kód."""
     import json
     from scripts.web_reader import _title_coverage
-    cfg = json.load(open("config.json", encoding="utf-8"))
+    cfg = _cfg()                      # REGRESE_CONFIG_IO_V1
     prah = float((cfg.get("curiosity", {}) or {}).get("wiki_title_min_coverage", 0.4))
     return _title_coverage(query, title) >= prah
