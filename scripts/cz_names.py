@@ -500,7 +500,25 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
                  .get("gender", "")).strip().lower()
     except Exception:
         _g = ""
-    if _g in ("zena", "\u017eena", "z", "f", "female"):
+    # HANS_ADDRESSEE_PANE_ALL_V1 (13. 9.) — „pane“ PLATI I NA MUZE.
+    # V1/V2 (4. a 6. 9.) resily gramaticky rod: zene se „pane“ rikat nesmi.
+    # U muze bylo gramaticky spravne, tak zustalo — jenze to neni otazka rodu,
+    # ale REGISTRU: Hans od 3. 9. NENI majordomus (identity_versions id=2 je
+    # „tichy a premyslivy pozorovatel“), a majordomske „pane“ z nej dela
+    # sluhu bez ohledu na CORE personu.
+    # Dolozeno rozhovorem 13. 9.: 7 z 20 odpovedi muzi, vcetne omluvy
+    # „Omlouvam se, pane. […] budu vas oslovovat jinak.“
+    # Zmereno: 32 % Hansovych replik v okne historie (23 ze 72) neslo „pane“
+    # — historie je modelu few-shot [[conv-history-is-few-shot]], takze to je
+    # samoposilujici smycka, stejna jako u pozdravu 12. 9.
+    # ⛔ Sablony se NEPREPISUJI po jedne — to je vyslovne rozhodnuto 4. 9.
+    # (HANS_CMD_ADDRESSEE_V1) a tenhle zasah ho drzi: jedno misto pro celou
+    # tridu, pokryje i texty z modelu.
+    # ⚠️ Pojistka: kdyz osloveni NEZNAME osoby je samo „pane“, nedelej nic
+    # — jinak by se „pane“ nahrazovalo „pane“ donekonecna.
+    _je_zena = _g in ("zena", "\u017eena", "z", "f", "female")
+    if _je_zena or (target and target.strip().lower()
+                    not in ("pane", "pani", "pan\u00ed", "s dovolenim")):
         # HANS_ADDRESSEE_ZENA_PANE_V2 (6.9.) — puvodni trida terminatoru
         # [.,;:!?] pokryvala jen 190 z 262 natvrdo psanych osloveni v kodu;
         # zbylych 72 ma za oslovenim POMLCKU (59x, napr. hlaska o malovani

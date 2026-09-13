@@ -668,8 +668,33 @@ class OpenWebUIDirectHandler:
             hits = _kfts(str(text), limit=3, kind='knowledge')
             if not hits:
                 return ''
+            # HANS_KODI_GLOSS_LABEL_V1 (13. 9.) — GLOSA K PORADU NENI CETBA.
+            # `web_read` ma DVA puvody: Hansovo vlastni cteni a clanek, ktery
+            # si precetl, protoze v televizi bezel nejaky porad
+            # (MOVIE_GROUNDING_V1). Oboji sem doteka pod tymz labelem
+            # „Z mych zapisku“, takze model druhy druh prodava za vlastni
+            # cetbu. Dolozeno 13. 9.: „preceetl si take F. L. Vek od Aloise
+            # Jiraska“ — pritom to byla glosa k poradu z 11:08, knihu necetl.
+            # Zmereno: kodi glos je 1613 z 3078 vsech `web_read` (52 %).
+            # ⛔ NEFILTRUJI se pryc (to dela `HANS_READING_KODI_SPLIT_V1` ve
+            # VYPISU cetby, kam nepatri) — tady je ta znalost legitimni
+            # a Hans na ni ma umet ukazat zdroj. Meni se JEN popisek.
+            try:
+                from scripts.hans_recall import _kodi_tituly as _kt
+                import sqlite3 as _s3
+                _c = _s3.connect(self.diary_db_path if hasattr(self, 'diary_db_path')
+                                 else 'data/hans_diary.db')
+                _kodi = _kt(_c); _c.close()
+            except Exception:
+                _kodi = set()
+            def _label(t, s):
+                _n = (t or s or '')
+                if _kodi and str(_n).strip().lower() in _kodi:
+                    return ('[Cetl jsem si o tomhle clanek, kdyz v televizi bezel '
+                            '\u201e%s\u201c — NENI to moje cetba te knihy/filmu]' % _n)
+                return '[Z mých zápisků — %s]' % _n
             blk = '\n\n'.join(
-                '[Z mých zápisků — %s]\n%s' % ((t or s), (x or '')[:700])
+                '%s\n%s' % (_label(t, s), (x or '')[:700])
                 for _ts, s, _p, t, x in hits)
             logging.getLogger(__name__).info(
                 'HANS_KNOWLEDGE_FTS_V1: %d zápisků → grounding '
@@ -4171,7 +4196,22 @@ class OpenWebUIDirectHandler:
                     _hist = self.conv_store.get_history(name) or []
                 except Exception:
                     pass
-                _resp2 = append_retraction(response, _raw_message, _hist)
+                # CLAIM_RETRACT_GATE_V1 (13. 9.) — VYPINATELNE, default VYPNUTO.
+                # Zmereno na cele historii: mechanismus se spustil 3x a vsechny
+                # tri odvolane vety byly odvolane NEPRAVEM —
+                #   19. 8. doporuceni knihy („z doporuceni bych navrhl…“),
+                #   13. 9. nabidka („mohu si o tom neco precist“),
+                #   13. 9. DOSLOVNA CITACE z deniku (artwork id 151259).
+                # Presnost 0 ze 3. Jadro vady: abstinence na NOVOU otazku se
+                # bere jako dukaz, ze STARA odpoved byla vymysl — to jsou dve
+                # ruzne veci, a odvolavat dolozena data je horsi nez neodvolat
+                # nic. Puvodni zamer (CLAIM_RETRACT_V1, 6. 8.) je spravny, jen
+                # predikat neumi odlisit tvrzeni od nabidky ani overit oporu.
+                # ⚠️ Kod se NEMAZE — az to predikat umi, staci prepnout klic.
+                _resp2 = (append_retraction(response, _raw_message, _hist)
+                          if ((self.config.get('chat', {}) or {})
+                              .get('claim_retract_enabled', False))
+                          else response)
                 if _resp2 != response:
                     logging.getLogger(__name__).info(
                         'CLAIM_RETRACT_V1: beru zpět dřívější tvrzení '

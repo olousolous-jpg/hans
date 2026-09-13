@@ -1544,5 +1544,9 @@
         "material_collection": "hans_cetba",
         "study_source": true,
         "_study_source_note": "HANS_GOAL_STUDY_SOURCE_V1 (11.9.): kdyz z opakovaneho cteni nevzejde cil, vezme se tema z toho, co Hans studuje (study_program + aktivni konicky). ZMERENO 11.9.: pool z web_read je prazdny 10 z 30 dni, zatimco kazde studijni tema ma 3538-7995 znaku latky. Poradi: tema, ktere bylo cilem nejdele zpatky (nikdy = prvni), pak vic latky -> temata se stridaji (overeno: 6 kol = 6 ruznych temat). 30denni HANS_GOAL_NO_REPEAT_V1 plati i tady. Neni to navrat ke smycce, kterou resilo HANS_GOAL_SELF_EVIDENCE_V1 (28.8.) — tam si cil objednal cteni a tim si vyrobil vlastni dukaz; konicky a programy vznikaji na cilech nezavisle. false = vypnuto, chova se jako pred 11.9."
+    },
+    "chat": {
+        "claim_retract_enabled": false,
+        "_claim_retract_enabled_note": "CLAIM_RETRACT_GATE_V1 (13. 9.): odvolavani drivejsiho tvrzeni pri abstinenci. VYPNUTO — zmereno na cele historii, mechanismus se spustil 3x a vsechny tri vety odvolal NEPRAVEM (doporuceni knihy 19. 8., nabidka 13. 9., doslovna citace z deniku 13. 9.). Presnost 0 ze 3. Vada: abstinence na NOVOU otazku se bere jako dukaz, ze STARA odpoved byla vymysl. Zapnout az bude predikat umet odlisit tvrzeni od nabidky a overit oporu v deniku."
     }
 }
