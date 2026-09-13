@@ -713,6 +713,56 @@ class OpenWebUIDirectHandler:
         r"uc[íi]nk)|kdo\s+si\s+(tam\s+)?zahr[áa]l|obsazen[íi]|"
         r"kdo\s+to\s+(re[žz]|nato[čc])|kdo\s+hraje)", re.IGNORECASE)
 
+    _KNIHA_DOPORUC_PAT = re.compile(
+        r"(doporu[c\u010d]\w*)[^.?!]{0,40}?(?:k\s*(?:p[\u0159r]e)?[c\u010d]ten[i\u00ed]|"
+        r"[c\u010d][i\u00ed]st|knih|[c\u010d]etb|na\s+[c\u010d]ten[i\u00ed]|ke\s+[c\u010d]ten[i\u00ed])"
+        r"|(?:co|n[e\u011b]co)\s+(?:by\w{0,3}\s+)?(?:si\s+)?(?:\w+\s+){0,2}(?:p[\u0159r]e)?[c\u010d][i\u00ed]st"
+        r"|(?:m[a\u00e1][s\u0161]|m[a\u00e1]te)\s+\w{0,10}\s*tip\s+na\s+knih",
+        re.IGNORECASE)
+
+    def _knihovna_fact(self, text: str) -> str:
+        """HANS_BOOK_RECOMMEND_GROUNDED_V1 (13. 9.) — na zadost o doporuceni
+        cetby podstrc SKUTECNOU knihovnu.
+
+        Dolozeno 13. 9.: Hans doporucil tri knihy a ani jedna neexistuje.
+        Mechanismus: slepil tema z vlastniho cteni se jmenem z JINEHO clanku
+        (\u201eSchutz\u201c z hesla o barokni hudbe). Pritom ma 8 doctenych knih —
+        do promptu se ale nedostavaly vubec.
+
+        Vraci '' kdyz veta o doporuceni neni nebo je knihovna prazdna
+        → Hans se chova jako dosud, nic se nerozbije.
+        """
+        if not text or not self._KNIHA_DOPORUC_PAT.search(str(text)):
+            return ''
+        try:
+            import sqlite3 as _s3
+            _db = ((self.config.get("paths", {}) or {}).get("diary_db")
+                   or self.config.get("diary_db") or "data/hans_diary.db")
+            _c = _s3.connect(_db)
+            _r = _c.execute(
+                "SELECT book_title, author, status FROM hans_library "
+                "WHERE status IN ('finished','reading') "
+                "ORDER BY CASE status WHEN 'reading' THEN 0 ELSE 1 END, id DESC"
+            ).fetchall()
+            _c.close()
+        except Exception:
+            return ''
+        if not _r:
+            return ''
+        _radky = []
+        for _t, _a, _st in _r[:20]:
+            _kdo = (" — " + _a) if _a and _a != "nahr\u00e1no u\u017eivatelem" else ""
+            _stav = "prave ctu" if _st == "reading" else "docteno"
+            _radky.append("- %s%s (%s)" % (_t, _kdo, _stav))
+        return ("\n\nKNIHY, KTERE JSI SKUTECNE CETL (jen tyhle, nic jineho nemas):\n"
+                + "\n".join(_radky)
+                + "\n\nDOPORUC PRESNE JEDEN NAZEV Z TOHOHLE SEZNAMU, opsany "
+                  "SLOVO OD SLOVA i s autorem (i kdyz je anglicky). NEPREKLADEJ ho, "
+                  "NEZAMENUJ za jinou knihu tehoz autora a NEPRIDAVEJ nic, co v seznamu "
+                  "neni. Rekni, proc prave tu. Kdyz se nic nehodi, PRIZNEJ, ze jsi zatim "
+                  "nic vhodneho necetl. Slepit tema z jednoho zdroje se jmenem z jineho "
+                  "je VYMYSL — 13. 9. tak vznikly tri neexistujici knihy.")
+
     def _kodi_cast_fact(self, text: str) -> str:
         """Obsazení (a režie) toho, o čem je řeč — deterministicky z Kodi.
 
@@ -1109,6 +1159,23 @@ class OpenWebUIDirectHandler:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 818)",
                 "_build_grounding: blok kontextu selhal (ř. 818): %s", _tiche)
+
+        # HANS_BOOK_RECOMMEND_GROUNDED_V1 (13. 9.) — zadost o doporuceni cetby
+        # dostane SKUTECNOU knihovnu, ne fantazii.
+        # ⚠️ MUSI STAT PRED VETVI INTENTU: „co bys mi doporucil precist?" se
+        # klasifikuje jako NEfakticky dotaz O HANSOVI, takze blok `self_state`
+        # (HANS_SELF_STATE_V1) vratil driv a knihovna se nikdy nedostala ke slovu.
+        # Doloženo 13. 9. zive: prvni umisteni (vedle `_kodi_cast_fact`) NEZABRALO
+        # — v logu `GROUNDING: self_state ← self_state`. [[verify-it-actually-flows]]
+        try:
+            _kn = self._knihovna_fact(str(_text))
+            if _kn:
+                self._vysledek_groundingu('grounded', 'knihovna')
+                return _kn
+        except Exception as _tiche:
+            log_once(
+                logging.getLogger(__name__), "_build_grounding(knihovna)",
+                "_build_grounding: blok knihovny selhal: %s", _tiche)
 
         try:
             # 1) intent — je dotaz faktický?
