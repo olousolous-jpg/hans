@@ -1576,7 +1576,15 @@ class PicamDisplayController:
         - wave → pozdrav rozpoznané osoby (HANS_GESTURE_WAVE_GREET_V1)
         - open_hand → toggle Kodi play/pause (jen když gesture.open_hand_kodi)
         - fist → start/stop voice recording
-        Aktualizuje self._last_gesture* state pro main loop."""
+        Aktualizuje self._last_gesture* state pro main loop.
+
+        HANS_GESTURE_REJECT_SNAP_V1 (13. 9.) — "wave_ne" NENI gesto, ale
+        zadost o snimek k ODMITNUTEMU mavnuti. Vetev stoji uplne prvni,
+        pred zapisem do `_last_gesture`: main loop ten atribut cte a
+        odmitnuti by se mu tvarilo jako rozpoznane gesto."""
+        if gesture == "wave_ne":
+            self._snimek_zamavani(bbox, "ne", slozka="data/gesta_ne")
+            return
         self._last_gesture      = gesture
         self._last_gesture_time = time.time()
         self._last_gesture_bbox = bbox
@@ -1664,7 +1672,7 @@ class PicamDisplayController:
         self._zprava_o_zamavani(_jmeno)
         self._snimek_zamavani(_bbox, _jmeno)
 
-    def _snimek_zamavani(self, bbox, jmeno):  # HANS_GESTURE_WAVE_SNAP_V1
+    def _snimek_zamavani(self, bbox, jmeno, slozka="data/gesta"):  # HANS_GESTURE_WAVE_SNAP_V1
         """Ulozi snimek v okamziku zachytu do data/gesta/ (MODRY ramecek
         = co bylo povazovano za dlan).
 
@@ -1684,7 +1692,7 @@ class PicamDisplayController:
             return
         try:
             from pathlib import Path as _P
-            _d = _P("data/gesta"); _d.mkdir(parents=True, exist_ok=True)
+            _d = _P(slozka); _d.mkdir(parents=True, exist_ok=True)
             _img = _fr.copy()
             if bbox:
                 _h, _w = _img.shape[:2]

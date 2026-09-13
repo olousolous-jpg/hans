@@ -103,6 +103,11 @@ class GestureClient:
         self._wave_min_doba      = float(cfg.get("wave_min_duration_s", 0.0))
         self._wave_max_od_tvare  = float(cfg.get("wave_max_face_widths", 0.0))
         self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", 0.0))
+        # HANS_GESTURE_REJECT_SNAP_V1 (13. 9.) — snimek i u ODMITNUTI.
+        self._ne_snimek     = bool(cfg.get("wave_reject_snapshot", False))
+        self._ne_snimek_rel = float(cfg.get("wave_reject_snapshot_rel", 3.0))
+        self._wave_rel      = 0.0
+        self._wave_bbox     = None
         self._sirka_tvare        = 0.0
         self._stred_tvare        = None
         # HANS_GESTURE_FACE_STALE_V1 (9. 9.) — KDY byl udaj o tvari poslednI
@@ -252,6 +257,8 @@ class GestureClient:
         self._wave_min_doba      = float(cfg.get("wave_min_duration_s", self._wave_min_doba))
         self._wave_max_od_tvare  = float(cfg.get("wave_max_face_widths", self._wave_max_od_tvare))
         self._wave_min_palm_w    = float(cfg.get("wave_min_palm_width", self._wave_min_palm_w))
+        self._ne_snimek     = bool(cfg.get("wave_reject_snapshot", self._ne_snimek))
+        self._ne_snimek_rel = float(cfg.get("wave_reject_snapshot_rel", self._ne_snimek_rel))
         self._proc_zapis         = bool(cfg.get("wave_reject_log",      # HANS_GESTURE_REJECT_LOG_V1
                                                 self._proc_zapis))
         self._wave_max_tvar_age  = float(cfg.get("wave_max_face_age_s",     # HANS_GESTURE_FACE_STALE_V1
@@ -385,6 +392,18 @@ class GestureClient:
                         time.strftime("%Y-%m-%d %H:%M:%S"), duvod))
             except Exception:
                 pass
+        # HANS_GESTURE_REJECT_SNAP_V1 (13. 9.) — poslat snimek, kdyz melo
+        # odmitnuti PROFIL MAVNUTI. Stoji ZA rate limitem vyse zamerne:
+        # tim se dedi i omezeni 1x za 2 s. Jde pres existujici `on_gesture`
+        # (druhy kanal by znamenal druhou pravdu); prijemce ma vetev pro
+        # "wave_ne" jako uplne PRVNI, takze pozdrav nespusti.
+        if (self._ne_snimek and self.on_gesture and
+                self._ne_snimek_rel > 0 and
+                getattr(self, "_wave_rel", 0.0) >= self._ne_snimek_rel):
+            try:
+                self.on_gesture("wave_ne", getattr(self, "_wave_bbox", None))
+            except Exception:
+                pass
         if not self._debug:
             return
         _log.info("gesto[dbg]: mavani NE — %s", duvod)
@@ -397,6 +416,7 @@ class GestureClient:
         i ZMENA SMERU — to je jediny znak, ktery mavani od presunu odlisi.
         Drobny sum kolem klidne ruky se odfiltruje prahem _wave_eps.
         """
+        self._wave_rel = 0.0          # HANS_GESTURE_REJECT_SNAP_V1
         okno = [p for p in self._wave_track
                 if now - p[0] <= self._wave_window_s]
         if len(okno) < self._wave_min_samples:
@@ -416,6 +436,7 @@ class GestureClient:
         _sirky = sorted(p[2] for p in okno)
         _dlan  = _sirky[len(_sirky) // 2]          # median
         _rel   = rozpeti / _dlan
+        self._wave_rel = _rel         # HANS_GESTURE_REJECT_SNAP_V1
         if rozpeti < self._wave_min_amp or _rel < self._wave_min_amp_rel:
             self._proc_ne("male rozpeti: %.3f (=%.2f sirky dlane %.3f) "
                           "< abs %.3f / rel %.2f, vzorku %d"
@@ -583,6 +604,7 @@ class GestureClient:
                      (_y1 + _y2) / 2.0))
             except Exception:
                 pass
+            self._wave_bbox = bbox    # HANS_GESTURE_REJECT_SNAP_V1
             self._dbg_open += 1
             # POZOR: nejdriv si zapamatuj, kdy byla dlan videna NAPOSLED,
             # a teprve pak prepis. Kontrola odjisteni nize porovnava prave

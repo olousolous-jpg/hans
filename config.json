@@ -384,7 +384,11 @@
         "wave_max_face_age_s": 1.0,
         "_wave_max_face_age_s_note": "HANS_GESTURE_FACE_STALE_V1 (9. 9.) — jak stary smi byt udaj o tvari, aby se z nej smelo pocitat. `_stred_tvare` se prepisuje JEN kdyz se tvar najde, jinak drzel posledni znamou donekonecna a tri kriteria (wave_min/max_palm_vs_face, wave_max_face_widths) merila proti hlave, ktera v zaberu nebyla. Doloženo snimkem 8. 9. 22:37: zadny clovek v zaberu, a gate presto vydal '1.2 tvare od hlavy'. 0 = gate vypnuty (stare chovani). Zamitnuti se hlasi na INFO: grep -a 'tvar je stara' data/system.log",
         "wave_reject_log": true,
-        "_note_wave_reject_log": "HANS_GESTURE_REJECT_LOG_V1 (12. 9.) MERICI REZIM: duvody zamitnutych mavnuti do data/mereni/gesta_ne.log (mimo rotaci system.logu). Postaveno po zjisteni, ze z 33 zachytu 11. 9. byla jen 2 prava a nektera prava se nezachytila vubec - o propasnutych nebyl zadny zaznam. Po vyhodnoceni zase vypnout."
+        "_note_wave_reject_log": "HANS_GESTURE_REJECT_LOG_V1 (12. 9.) MERICI REZIM: duvody zamitnutych mavnuti do data/mereni/gesta_ne.log (mimo rotaci system.logu). Postaveno po zjisteni, ze z 33 zachytu 11. 9. byla jen 2 prava a nektera prava se nezachytila vubec - o propasnutych nebyl zadny zaznam. Po vyhodnoceni zase vypnout.",
+        "wave_reject_snapshot": true,
+        "_wave_reject_snapshot_note": "HANS_GESTURE_REJECT_SNAP_V1 (13. 9.) MERICI REZIM: ulozi snimek i k ODMITNUTEMU mavnuti do data/gesta_ne/. Duvod: ground truth existuje jen u prijatych zachytu, takze 1676 odmitnuti z 12. 9. nejde priradit ke skutku. Po vyhodnoceni VYPNOUT (tyz rezim jako wave_snapshot a wave_reject_log).",
+        "wave_reject_snapshot_rel": 3.0,
+        "_wave_reject_snapshot_rel_note": "Brana: rozpeti v nasobcich sirky dlane. Pri 3.0 by za 12. 9. vzniklo 13 snimku z 1676 odmitnuti. Nizsi cislo = vic snimku i vic sumu."
     },
     "matrix": {
         "enabled": true,
