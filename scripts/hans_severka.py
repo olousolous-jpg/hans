@@ -510,8 +510,13 @@ class Severka:
 if __name__ == "__main__":
     cfg = {}
     try:
-        with open("config.json", encoding="utf-8") as fh:
-            cfg = json.load(fh)
+        try:                                   # HANS_MAIN_CONFIG_IO_V1
+            from scripts.config_io import load as _cfg_load
+        except ImportError:                    # spusteno jako skript, root chybi
+            import sys as _s, os as _o
+            _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+            from scripts.config_io import load as _cfg_load
+        cfg = _cfg_load()
     except Exception as exc:  # noqa
         print("WARN: config.json nenačten (%s)" % exc)
     db = cfg.get("diary_db", "data/hans_diary.db")

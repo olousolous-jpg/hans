@@ -331,7 +331,13 @@ def maybe_update_descriptor(config: dict, diary_db_path: str) -> Optional[dict]:
 # ── Smoke (python3 -m scripts.avatar_descriptor) ────────────────────────────
 if __name__ == "__main__":
     import sys
-    cfg = json.load(open("config.json", encoding="utf-8"))
+    try:                                   # HANS_MAIN_CONFIG_IO_V1
+        from scripts.config_io import load as _cfg_load
+    except ImportError:                    # spusteno jako skript, root chybi
+        import sys as _s, os as _o
+        _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+        from scripts.config_io import load as _cfg_load
+    cfg = _cfg_load()
     db = cfg.get("diary_db", "data/hans_diary.db")
     print("=== charakter (ze Severky/tendencí/koníčků) ===")
     ch = derive_character(cfg, db)

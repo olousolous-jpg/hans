@@ -22,7 +22,13 @@ s_akci = random.sample([r for r in d if r["stary"]], N)
 s_null = random.sample([r for r in d if not r["stary"]], N)
 vzorek = s_akci + s_null
 
-cfg = json.load(open("config.json"))
+try:                                   # HANS_MAIN_CONFIG_IO_V1
+    from scripts.config_io import load as _cfg_load
+except ImportError:                    # spusteno jako skript, root chybi
+    import sys as _s, os as _o
+    _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+    from scripts.config_io import load as _cfg_load
+cfg = _cfg_load()
 r = AgentRouter(cfg); h = _Handler()
 out, t0 = [], time.time()
 for i, rec in enumerate(vzorek, 1):

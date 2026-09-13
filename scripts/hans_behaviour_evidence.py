@@ -239,5 +239,11 @@ def block(config: dict, diary_db_path: str, window_days: int = None) -> str:
 
 if __name__ == "__main__":
     import json
-    _c = json.load(open("config.json", encoding="utf-8"))
+    try:                                   # HANS_MAIN_CONFIG_IO_V1
+        from scripts.config_io import load as _cfg_load
+    except ImportError:                    # spusteno jako skript, root chybi
+        import sys as _s, os as _o
+        _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+        from scripts.config_io import load as _cfg_load
+    _c = _cfg_load()
     print(block(_c, _c.get("diary_db", "data/hans_diary.db")) or "(prázdné)")

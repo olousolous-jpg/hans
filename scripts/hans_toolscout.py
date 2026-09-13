@@ -607,7 +607,13 @@ def verify_approved(config: dict, db_path: str) -> int:
 
 if __name__ == "__main__":
     import sys
-    cfg = json.loads(open("config.json", encoding="utf-8").read())
+    try:                                   # HANS_MAIN_CONFIG_IO_V1
+        from scripts.config_io import load as _cfg_load
+    except ImportError:                    # spusteno jako skript, root chybi
+        import sys as _s, os as _o
+        _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+        from scripts.config_io import load as _cfg_load
+    cfg = _cfg_load()
     topic = sys.argv[1] if len(sys.argv) > 1 else "Design"
     print("=== scout '%s' ===" % topic)
     kw = _derive_keyword(cfg, topic)

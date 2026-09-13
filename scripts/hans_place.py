@@ -463,7 +463,13 @@ if __name__ == "__main__":
     import json
     import sys
     logging.basicConfig(level=logging.INFO)
-    cfg = json.load(open("config.json")) if os.path.exists("config.json") else {}
+    try:                                   # HANS_MAIN_CONFIG_IO_V1
+        from scripts.config_io import load as _cfg_load
+    except ImportError:                    # spusteno jako skript, root chybi
+        import sys as _s, os as _o
+        _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+        from scripts.config_io import load as _cfg_load
+    cfg = _cfg_load() if os.path.exists("config.json") else {}
     db = cfg.get("hans_idle", {}).get("diary_db", "data/hans_diary.db")
     store = PlaceStore(cfg, db)
     if len(sys.argv) > 1 and sys.argv[1] == "ingest":

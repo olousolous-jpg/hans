@@ -1219,7 +1219,13 @@ if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[2] == "run":
         lens = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_LENS
         import json as _j
-        cfg = _j.load(open("config.json"))
+        try:                                   # HANS_MAIN_CONFIG_IO_V1
+            from scripts.config_io import load as _cfg_load
+        except ImportError:                    # spusteno jako skript, root chybi
+            import sys as _s, os as _o
+            _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+            from scripts.config_io import load as _cfg_load
+        cfg = _cfg_load()
         cfg.setdefault("self_insight", {})["enabled"] = True
         insight = run_analysis(db, cfg, lens_id=lens, force=True)
         print(f"=== INSIGHT [{lens}] (CS, ULOŽENO) ===")

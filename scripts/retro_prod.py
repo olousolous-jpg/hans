@@ -11,50 +11,62 @@ sys.path.insert(0, os.path.abspath("."))
 from scripts.hans_agent import AgentRouter
 from scripts.retro_router_srovnani import _Handler
 
-cfg = json.load(open("config.json"))
-r = AgentRouter(cfg); h = _Handler()
-d = json.load(open("data/mereni/retro_vysledky.json"))
-cache, t0 = {}, time.time()
+try:                                   # HANS_MAIN_CONFIG_IO_V1
+    from scripts.config_io import load as _cfg_load
+except ImportError:                    # spusteno jako skript, root chybi
+    import sys as _s, os as _o
+    _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+    from scripts.config_io import load as _cfg_load
 
-def pres(aid, veta):
-    if not aid:
-        return None
-    k = (aid, veta)
-    if k not in cache:
-        try:
-            cache[k] = r._uplatni_pravidla(
-                aid, veta, {"action": aid, "args": {}, "confidence": 0.95}, h)
-        except Exception:
-            cache[k] = aid
-    return cache[k]
+# RETRO_MAIN_GUARD_V1 (13. 9.) — VYKONNY KOD AZ POD `__main__`.
+# Skript pisе do `data/mereni/*.json` (mimo jine do KORPUSU 758 replik,
+# na kterem se meri kazda oprava). Bez guardu ho spustil pouhy import —
+# 13. 9. to malem prepsalo korpus pri importnim testu; zachranil jen timeout.
+if __name__ == "__main__":
+    cfg = _cfg_load()
+    r = AgentRouter(cfg); h = _Handler()
+    d = json.load(open("data/mereni/retro_vysledky.json"))
+    cache, t0 = {}, time.time()
 
-zajimave = [x for x in d if x["stary"] or x["novy"]]
-print("radku k prepoctu: %d" % len(zajimave), flush=True)
-for i, x in enumerate(zajimave, 1):
-    x["stary_p"] = pres(x["stary"], x["veta"])
-    x["novy_p"] = pres(x["novy"], x["veta"])
-    if i % 50 == 0:
-        print("  %d/%d · %.0f s" % (i, len(zajimave), time.time() - t0), flush=True)
-for x in d:
-    x.setdefault("stary_p", None); x.setdefault("novy_p", None)
-json.dump(d, open("data/mereni/retro_produkcni.json", "w"), ensure_ascii=False, indent=1)
+    def pres(aid, veta):
+        if not aid:
+            return None
+        k = (aid, veta)
+        if k not in cache:
+            try:
+                cache[k] = r._uplatni_pravidla(
+                    aid, veta, {"action": aid, "args": {}, "confidence": 0.95}, h)
+            except Exception:
+                cache[k] = aid
+        return cache[k]
 
-n = len(d)
-def poc(f): return sum(1 for x in d if f(x))
-print("\nPRODUKCNI CESTA, %d vet\n" % n)
-print(f"{'':34} {'SYROVE':>12} {'PO PRAVIDLECH':>14}")
-for jm, fs, fp in (
-    ("shoda celkem", lambda x: x['stary']==x['novy'], lambda x: x['stary_p']==x['novy_p']),
-    ("  z toho oba NIC", lambda x: not x['stary'] and not x['novy'],
-                         lambda x: not x['stary_p'] and not x['novy_p']),
-    ("stary vybral, novy nic", lambda x: x['stary'] and not x['novy'],
-                               lambda x: x['stary_p'] and not x['novy_p']),
-    ("novy vybral, stary nic", lambda x: x['novy'] and not x['stary'],
-                               lambda x: x['novy_p'] and not x['stary_p']),
-    ("oba jinou", lambda x: x['stary'] and x['novy'] and x['stary']!=x['novy'],
-                  lambda x: x['stary_p'] and x['novy_p'] and x['stary_p']!=x['novy_p'])):
-    a, b = poc(fs), poc(fp)
-    print(f"{jm:34} {a:5} {100*a/n:5.1f}% {b:7} {100*b/n:5.1f}%")
-print("\npravidla potlacila volbu:")
-print("  staremu:", poc(lambda x: x['stary'] and not x['stary_p']))
-print("  novemu :", poc(lambda x: x['novy'] and not x['novy_p']))
+    zajimave = [x for x in d if x["stary"] or x["novy"]]
+    print("radku k prepoctu: %d" % len(zajimave), flush=True)
+    for i, x in enumerate(zajimave, 1):
+        x["stary_p"] = pres(x["stary"], x["veta"])
+        x["novy_p"] = pres(x["novy"], x["veta"])
+        if i % 50 == 0:
+            print("  %d/%d · %.0f s" % (i, len(zajimave), time.time() - t0), flush=True)
+    for x in d:
+        x.setdefault("stary_p", None); x.setdefault("novy_p", None)
+    json.dump(d, open("data/mereni/retro_produkcni.json", "w"), ensure_ascii=False, indent=1)
+
+    n = len(d)
+    def poc(f): return sum(1 for x in d if f(x))
+    print("\nPRODUKCNI CESTA, %d vet\n" % n)
+    print(f"{'':34} {'SYROVE':>12} {'PO PRAVIDLECH':>14}")
+    for jm, fs, fp in (
+        ("shoda celkem", lambda x: x['stary']==x['novy'], lambda x: x['stary_p']==x['novy_p']),
+        ("  z toho oba NIC", lambda x: not x['stary'] and not x['novy'],
+                             lambda x: not x['stary_p'] and not x['novy_p']),
+        ("stary vybral, novy nic", lambda x: x['stary'] and not x['novy'],
+                                   lambda x: x['stary_p'] and not x['novy_p']),
+        ("novy vybral, stary nic", lambda x: x['novy'] and not x['stary'],
+                                   lambda x: x['novy_p'] and not x['stary_p']),
+        ("oba jinou", lambda x: x['stary'] and x['novy'] and x['stary']!=x['novy'],
+                      lambda x: x['stary_p'] and x['novy_p'] and x['stary_p']!=x['novy_p'])):
+        a, b = poc(fs), poc(fp)
+        print(f"{jm:34} {a:5} {100*a/n:5.1f}% {b:7} {100*b/n:5.1f}%")
+    print("\npravidla potlacila volbu:")
+    print("  staremu:", poc(lambda x: x['stary'] and not x['stary_p']))
+    print("  novemu :", poc(lambda x: x['novy'] and not x['novy_p']))

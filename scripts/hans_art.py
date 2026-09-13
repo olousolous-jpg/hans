@@ -3022,7 +3022,13 @@ def paint_day(config: dict, diary_db_path: str) -> bool:
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.INFO)
-    cfg = json.load(open("config.json"))
+    try:                                   # HANS_MAIN_CONFIG_IO_V1
+        from scripts.config_io import load as _cfg_load
+    except ImportError:                    # spusteno jako skript, root chybi
+        import sys as _s, os as _o
+        _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+        from scripts.config_io import load as _cfg_load
+    cfg = _cfg_load()
     DB = "data/hans_diary.db"
     _title = " ".join(sys.argv[1:]).strip()
     if not _title:
