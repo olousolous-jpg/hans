@@ -1646,10 +1646,46 @@ register(
 )
 
 
+_KOLIK_RE = re.compile(r"\bkolik\b", re.IGNORECASE)
+
+
+def _pocet_obrazu(handler) -> str:
+    """HANS_COUNT_ANSWER_V1 (13. 9.) — na „kolik“ odpovez CISLEM, ne vypisem.
+
+    Dolozeno 12. i 13. 9.: spocitatelna otazka dostala bud falesnou abstinenci
+    („neumim rici“, pritom jich bylo 303), nebo vypis peti del misto poctu.
+    Vzor `/obrazy` slovo „kolik“ uz obsahuje — chybela jen tahle vetev.
+    """
+    try:
+        import sqlite3 as _s3
+        _c = _s3.connect(_recall_db(handler))
+        _n = _c.execute(
+            "SELECT COUNT(*) FROM diary WHERE event_type='artwork'").fetchone()[0]
+        _posl = _c.execute(
+            "SELECT title FROM diary WHERE event_type='artwork' "
+            "AND title IS NOT NULL AND title<>'' ORDER BY id DESC LIMIT 1").fetchone()
+        _c.close()
+    except Exception:
+        return ""
+    if not _n:
+        return ""
+    # cesky tvar podle poctu: 1 obraz / 2-4 obrazy / 5+ obrazu
+    _tv = "obraz" if _n == 1 else ("obrazy" if 2 <= _n <= 4 else "obraz\u016f")
+    _out = "Zat\u00edm jsem namaloval %d %s." % (_n, _tv)
+    if _posl and _posl[0]:
+        _out += " Naposledy \u201e%s\u201c." % _posl[0]
+    return _out
+
+
 def _cmd_obrazy(handler, name, args) -> str:  # HANS_ARTWORK_RECALL_V1
     from scripts.hans_recall import artwork_answer
+    # HANS_COUNT_ANSWER_V1 — „kolik“ chce POCET, ne vypis.
+    if _KOLIK_RE.search(str(args or "")):
+        _p = _pocet_obrazu(handler)
+        if _p:
+            return _p
     out = artwork_answer(_recall_db(handler), args or "")
-    return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
+    return out or "Nepoda\u0159ilo se mi te\u010f nahl\u00e9dnout do den\u00edku, pane."
 
 
 register(
@@ -1670,6 +1706,10 @@ register(
         r"\b" + _ART_MINULE + r"\s+(jsi|jste)\b",
         r"\b(co|jak[ée]|kolik)\b.*\b(jsi|jste)\b.*\b" + _ART_MINULE,
         r"(posledn[íi]|nov[ýy])\s+obraz\b",
+        # HANS_COUNT_ANSWER_V1 (13. 9.) — „kolik obrazu mas?“ nema sloveso
+        # v minulem case, takze na vzor s `(jsi|jste)` + minuly tvar nesedlo
+        # a propadlo do volneho hovoru → falesna abstinence (12. 9.).
+        r"\bkolik\b[^?.!]{0,20}\b(obraz\w*|d[ěe]l)\b",
         r"jak[ýy]\s+obraz\s+jsi",
         r"kreslil\s+(jsi|si)\b",
         # HANS_ARTWORK_SHOW_V1 (30.8.) — „ukaž mi ten obraz" je dotaz, ne pokyn
@@ -1915,11 +1955,53 @@ register(
 
 
 # ─── /zajmy — per-osoba zájmy (HANS_PERSON_INTERESTS_V1, frontier #4) ─────
+_ZAJMY_NA_HANSE = re.compile(
+    r"\b(?:tv[\u016fu]j|tvoje|tvoji|tv[\u00e1a]|tv[\u00e9e]|va[\u0161s]e|va[\u0161s]i|va[\u0161s]ich)\b[^?.!]{0,24}"
+    r"\b(?:z[\u00e1a]j(?:em|my|m[\u016fu])|kon[\u00edi][\u010dc]\w*|bav[\u00edi])"
+    r"|\bco\s+(?:t[\u011be]|v[\u00e1a]s)\s+(?:vlastn[\u011be]\s+)?zaj[\u00edi]m\w*",
+    re.IGNORECASE)
+
+
+def _hansovy_konicky(db: str) -> str:
+    """HANS_ZAJMY_O_HANSOVI_V1 (13. 9.) — Hansovy VLASTNI konicky z `hobbies`.
+
+    `person_interests` jsou zajmy LIDI; Hans v te tabulce neni a nikdy nebude.
+    Jeho vlastni zaujeti drzi `hobbies` (evidence_count = kolikrat se k tomu
+    vratil). Vraci '' kdyz tabulka nic nema → volajici se chova jako dosud.
+    """
+    try:
+        import sqlite3 as _s3
+        _c = _s3.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
+        _r = _c.execute(
+            "SELECT name, evidence_count FROM hobbies "
+            "WHERE COALESCE(status,'') <> 'dropped' "
+            "ORDER BY evidence_count DESC LIMIT 6").fetchall()
+        _c.close()
+    except Exception:
+        return ""
+    _r = [(n, e) for n, e in _r if n]
+    if not _r:
+        return ""
+    return ("Nejv\u00edc m\u011b posledn\u00ed dobou zam\u011bstn\u00e1v\u00e1: "
+            + ", ".join("%s" % n for n, _ in _r[:4])
+            + ". Nejd\u00e9le se vrac\u00edm k t\u00e9matu \u201e%s\u201c." % _r[0][0])
+
+
 def _cmd_zajmy(handler, name, args) -> str:
     """/zajmy [jméno] — co kterou osobu zajímá."""
     import sqlite3 as _s
     cfg = getattr(handler, "config", {}) or {}
     db = cfg.get("diary_db") or "data/hans_diary.db"
+    # HANS_ZAJMY_O_HANSOVI_V1 — „tvuj zajem“ miri na HANSE, ne na cloveka.
+    try:
+        _tc = getattr(handler, "_thread_ctx", None)
+        _veta = str(_tc[0]) if (_tc and _tc[0]) else str(args or "")
+    except Exception:
+        _veta = str(args or "")
+    if _veta and _ZAJMY_NA_HANSE.search(_veta):
+        _k = _hansovy_konicky(db)
+        if _k:
+            return _k
     who = (args or "").strip().lower()
     # HANS_LLM_ROUTE_ARGS_V2 — `zajmy` má nl_patterns=[] → chodí sem VÝHRADNĚ
     # přes LLM router, který dává args="" → „co zajímá Janu?" vypsalo VŠECHNY
