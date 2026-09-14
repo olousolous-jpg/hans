@@ -481,3 +481,18 @@ def wiki_pokryti_ok(query: str, title: str) -> bool:
     cfg = _cfg()                      # REGRESE_CONFIG_IO_V1
     prah = float((cfg.get("curiosity", {}) or {}).get("wiki_title_min_coverage", 0.4))
     return _title_coverage(query, title) >= prah
+
+
+def kniha_po_doporuceni(predchozi: str, veta: str) -> str:
+    """HANS_BOOK_RECOMMEND_FOLLOWUP_V1 (14. 9.) — dostane navazujici veta po
+    doporuceni cetby skutecnou knihovnu? Vraci "navaz" | "blok" | "nic".
+    Kazde volani ma cistou instanci, aby se pripady neovlivnovaly stavem."""
+    from scripts.openwebui_direct_handler import OpenWebUIDirectHandler as _H
+    h = _H.__new__(_H)
+    h.config = _cfg()
+    if predchozi:
+        h._knihovna_fact(predchozi, "regrese")
+    r = h._knihovna_fact(veta, "regrese")
+    if not r:
+        return "nic"
+    return "navaz" if r.startswith("\n\nUZIVATEL NAVAZUJE") else "blok"

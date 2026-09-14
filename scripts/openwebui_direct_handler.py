@@ -720,7 +720,40 @@ class OpenWebUIDirectHandler:
         r"|(?:m[a\u00e1][s\u0161]|m[a\u00e1]te)\s+\w{0,10}\s*tip\s+na\s+knih",
         re.IGNORECASE)
 
-    def _knihovna_fact(self, text: str) -> str:
+    # HANS_BOOK_RECOMMEND_FOLLOWUP_V1 (14. 9.) — kratky NAVAZUJICI dotaz po
+    # doporuceni cetby („a neco jineho?“, „a proc zrovna tohle?“)
+    # vzor doporuceni nesedne, takze Hans odpovidal z hlavy a vymyslel knihu.
+    # Dolozeno 19. 8. („a mas neco ceskeho?“ -> kniha, kterou necetl) a 13. 9.
+    # Sam o sobe je vzor siroky (sedne na 41 z 1 490 vet), proto plati JEN do
+    # 10 min po doporuceni TEZ osobe (okno jako hans_thread._THREAD_TTL_S).
+    # Zmereno na cele historii: 5 spravnych sepnuti, 0 falesnych; jina
+    # kategorie („a co film?“) se vylucuje.
+    _KNIHA_NAVAZ_PAT = re.compile(
+        r"^\s*(?:a|a\s+co|tak)\s+(?:n[eě]co|n[eě]jak\w*|co|m[aá][sš]|m[aá]te|jin\w*|"
+        r"dal[sš]\w*|je[sš]t[eě]|pro[cč]|kter[aáýy]?\w*)\b"
+        r"|\b(?:jin[eé]ho|jinou|dal[sš][ií]|je[sš]t[eě]\s+n[eě]co|[cč]esk[eé]ho|"
+        r"[cč]eskou|pro[cč]\s+(?:zrovna|pr[aá]v[eě]))\b", re.IGNORECASE)
+    _KNIHA_JINA_PAT = re.compile(
+        r"film|seri[aá]l|hudb|p[ií]s[eň]|p[ií]sn|obraz|maluj|hr[aá]t|hru\b|"
+        r"recept|j[ií]dl", re.IGNORECASE)
+
+    def _kniha_navazuje(self, text: str, klic: str, ted: float) -> bool:
+        """HANS_BOOK_RECOMMEND_FOLLOWUP_V1 — navazuje veta na doporuceni
+        cetby, ktere TEZ osobe padlo pred chvili?"""
+        try:
+            from scripts.hans_thread import _THREAD_TTL_S as _ttl
+        except Exception:
+            _ttl = 600.0
+        _kdy = (getattr(self, '_kniha_posledni', None) or {}).get(klic)
+        if not _kdy or ted - _kdy > _ttl:
+            return False
+        # rozresena veta z vlakna nese priveseny predmet — slova pocitej bez nej
+        _holy = re.sub(r"\s*\(k t[eé]matu:.*\)\s*$", "", text or "")
+        return (len(_holy.split()) <= 8
+                and bool(self._KNIHA_NAVAZ_PAT.search(_holy))
+                and not self._KNIHA_JINA_PAT.search(_holy))
+
+    def _knihovna_fact(self, text: str, name=None) -> str:
         """HANS_BOOK_RECOMMEND_GROUNDED_V1 (13. 9.) — na zadost o doporuceni
         cetby podstrc SKUTECNOU knihovnu.
 
@@ -732,8 +765,15 @@ class OpenWebUIDirectHandler:
         Vraci '' kdyz veta o doporuceni neni nebo je knihovna prazdna
         → Hans se chova jako dosud, nic se nerozbije.
         """
-        if not text or not self._KNIHA_DOPORUC_PAT.search(str(text)):
+        if not text:
             return ''
+        import time as _time          # HANS_BOOK_RECOMMEND_FOLLOWUP_V1
+        _klic, _ted = (name or ""), _time.time()
+        _navazuje = False
+        if not self._KNIHA_DOPORUC_PAT.search(str(text)):
+            if not self._kniha_navazuje(str(text), _klic, _ted):
+                return ''
+            _navazuje = True
         try:
             import sqlite3 as _s3
             _db = ((self.config.get("paths", {}) or {}).get("diary_db")
@@ -754,7 +794,16 @@ class OpenWebUIDirectHandler:
             _kdo = (" — " + _a) if _a and _a != "nahr\u00e1no u\u017eivatelem" else ""
             _stav = "prave ctu" if _st == "reading" else "docteno"
             _radky.append("- %s%s (%s)" % (_t, _kdo, _stav))
-        return ("\n\nKNIHY, KTERE JSI SKUTECNE CETL (jen tyhle, nic jineho nemas):\n"
+        # HANS_BOOK_RECOMMEND_FOLLOWUP_V1 — zapamatuj, ze TEHLE osobe padlo
+        # doporuceni (i navazujici dotaz okno prodlouzi).
+        if not isinstance(getattr(self, '_kniha_posledni', None), dict):
+            self._kniha_posledni = {}
+        self._kniha_posledni[_klic] = _ted
+        _navaz_veta = ("\n\nUZIVATEL NAVAZUJE NA TVE PREDCHOZI DOPORUCENI: kdyz chce "
+                       "jinou knihu, vyber JINOU ze seznamu; kdyz se pta proc, vysvetli "
+                       "to jen z toho, co o knize ze seznamu opravdu vis."
+                       if _navazuje else "")
+        return _navaz_veta + ("\n\nKNIHY, KTERE JSI SKUTECNE CETL (jen tyhle, nic jineho nemas):\n"
                 + "\n".join(_radky)
                 + "\n\nDOPORUC PRESNE JEDEN NAZEV Z TOHOHLE SEZNAMU, opsany "
                   "SLOVO OD SLOVA i s autorem (i kdyz je anglicky). NEPREKLADEJ ho, "
@@ -1168,7 +1217,7 @@ class OpenWebUIDirectHandler:
         # Doloženo 13. 9. zive: prvni umisteni (vedle `_kodi_cast_fact`) NEZABRALO
         # — v logu `GROUNDING: self_state ← self_state`. [[verify-it-actually-flows]]
         try:
-            _kn = self._knihovna_fact(str(_text))
+            _kn = self._knihovna_fact(str(_text), name)  # HANS_BOOK_RECOMMEND_FOLLOWUP_V1
             if _kn:
                 self._vysledek_groundingu('grounded', 'knihovna')
                 return _kn
