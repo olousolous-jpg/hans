@@ -2023,10 +2023,12 @@ register(
 
 
 # ─── /zajmy — per-osoba zájmy (HANS_PERSON_INTERESTS_V1, frontier #4) ─────
+# HANS_ZAJMY_O_HANSOVI_V2 (14. 9.) — mezi „co vás/tě“ a „zajímá“ smí být až 3 slova.
+# V1 znala jen „vlastně“; živě ověřeno: „a co vas ted nejvic zajima?“ → zájmy TAZATELE.
 _ZAJMY_NA_HANSE = re.compile(
     r"\b(?:tv[\u016fu]j|tvoje|tvoji|tv[\u00e1a]|tv[\u00e9e]|va[\u0161s]e|va[\u0161s]i|va[\u0161s]ich)\b[^?.!]{0,24}"
     r"\b(?:z[\u00e1a]j(?:em|my|m[\u016fu])|kon[\u00edi][\u010dc]\w*|bav[\u00edi])"
-    r"|\bco\s+(?:t[\u011be]|v[\u00e1a]s)\s+(?:vlastn[\u011be]\s+)?zaj[\u00edi]m\w*",
+    r"|\bco\s+(?:t[\u011be]|v[\u00e1a]s)\s+(?:\w+\s+){0,3}zaj[\u00edi]m\w*",  # HANS_ZAJMY_O_HANSOVI_V2
     re.IGNORECASE)
 
 

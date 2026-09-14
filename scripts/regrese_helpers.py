@@ -505,3 +505,9 @@ def orez_pozdravu(text: str, role: str = "assistant") -> str:
     from scripts.conversation_store import ConversationStore
     cs = ConversationStore.__new__(ConversationStore)
     return cs._orez_pozdravy([{"role": role, "content": text}])[0]["content"]
+
+
+def zajmy_na_hanse(veta: str) -> bool:
+    """HANS_ZAJMY_O_HANSOVI_V2 — mireji veta na HANSOVY zajmy (ne tazatele)?"""
+    from scripts.chat_commands import _ZAJMY_NA_HANSE
+    return bool(_ZAJMY_NA_HANSE.search(veta))
