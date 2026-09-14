@@ -182,15 +182,19 @@ class ConversationStore:
         Hansovych replik, kdezto tyhle pozdravy jsou prolozene dialogem.
 
         ⚠️ Meni JEN pohled do promptu, v ulozisti zustava vse.
-        Posledni replika si pozdrav nechava: clovek odpovida prave na ni.
+
+        HANS_CONV_GREETING_DIALOG_V2 (14. 9.) — pozdrav se odrizne i u
+        NEJNOVEJSI repliky. V1 ji nechavala („clovek odpovida prave na ni“),
+        jenze na zacatku rozhovoru je v okne JEN ta jedna replika — a model
+        ji zkopiroval. Zmereno z deniku 12.–13. 9.: 3 rozhovory, pokazde
+        pozdrav v prvni volne odpovedi a pak jeste v 1–2 dalsich (i na
+        „dekuji“), dokud retez nepreruisla odpoved prikazu. Obsah repliky
+        zustava, clovek odpovida na nej, ne na pozdravovou frazi.
+        Replika, ktera je CELA jen pozdrav, zustava beze zmeny.
         """
-        posl = None
-        for i, m in enumerate(msgs or []):
-            if m.get("role") == "assistant":
-                posl = i
         out = []
         for i, m in enumerate(msgs or []):
-            if m.get("role") == "assistant" and i != posl:
+            if m.get("role") == "assistant":
                 _t = m.get("content") or ""
                 _n = self._POZDRAV_RE.sub("", _t, count=1)
                 if _n.strip() and _n != _t:

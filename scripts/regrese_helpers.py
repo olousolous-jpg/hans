@@ -496,3 +496,12 @@ def kniha_po_doporuceni(predchozi: str, veta: str) -> str:
     if not r:
         return "nic"
     return "navaz" if r.startswith("\n\nUZIVATEL NAVAZUJE") else "blok"
+
+
+def orez_pozdravu(text: str, role: str = "assistant") -> str:
+    """HANS_CONV_GREETING_DIALOG_V2 (14. 9.) — co z repliky uvidi prompt,
+    kdyz je v okne historie JEDINA (nejnovejsi). Vola skutecnou metodu
+    `ConversationStore._orez_pozdravy`, bez zapisu do uloziste."""
+    from scripts.conversation_store import ConversationStore
+    cs = ConversationStore.__new__(ConversationStore)
+    return cs._orez_pozdravy([{"role": role, "content": text}])[0]["content"]
