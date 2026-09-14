@@ -1407,6 +1407,14 @@ class HansIdle:
         display_renderer). Dřív hard-coded na v1 → Kodi měl starou tvář, i
         když paint_self vyrobil v2, v3, …"""
         import os
+        # HANS_SEASONAL_AVATAR_V1 — o svatku (Halloween) sezonni podoba i na TV.
+        try:
+            from scripts.hans_seasonal import seasonal_avatar
+            _sez = seasonal_avatar(self.config)
+            if _sez:
+                return _sez
+        except Exception:
+            pass
         av = self.config.get("hans_avatar", {}) or {}
         img = av.get("face_image")
         if img:

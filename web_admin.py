@@ -1028,6 +1028,15 @@ async def get_log(lines: int = 100, filter: str = ""):
 def avatar_image():
     """Servíruje idle avatar PNG (nejnovější verze)."""
     import glob
+    # HANS_SEASONAL_AVATAR_V1 — o svatku sezonni podoba (tataz funkce jako displej a Kodi).
+    try:
+        from scripts.hans_seasonal import seasonal_avatar
+        _sez = seasonal_avatar()
+        if _sez:
+            return FileResponse(_sez, media_type="image/png",
+                                headers={"Cache-Control": "no-cache"})
+    except Exception:
+        pass
     vers = []
     for d in glob.glob("data/avatar/v*"):
         try:
@@ -1048,6 +1057,15 @@ def avatar_image():
 @app.get("/api/avatar.mp4")
 def avatar_video():
     """Servíruje idle loop klip pro animovaný avatar v sidebaru."""
+    # HANS_SEASONAL_AVATAR_V1 — o svatku zadne video bezne podoby.
+    try:
+        from scripts.hans_seasonal import seasonal_avatar
+        if seasonal_avatar():
+            raise HTTPException(status_code=404, detail="seasonal avatar")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     import glob
     cdir = Path("data/avatar/clips")
     for f in ("hans_idleloop_00001.mp4", "hlp_d9_00001.mp4",
@@ -1245,6 +1263,14 @@ async def get_musings(limit: int = 6):
 def avatar_state():
     """Aktuální stav avatara z Pi (zapisuje display_renderer.draw_avatar).
     {mode: talk|extra|idleanim|idle, clip: <basename.mp4>|null}."""
+    # HANS_SEASONAL_AVATAR_V1 — o svatku jen staticka podoba: web by jinak pustil
+    # klip bezne podoby (stav muze byt stary, kdyz je displej vypnuty).
+    try:
+        from scripts.hans_seasonal import seasonal_avatar
+        if seasonal_avatar():
+            return {"mode": "idle", "clip": None}
+    except Exception:
+        pass
     p = Path("data/avatar/avatar_state.json")
     if p.exists():
         try:

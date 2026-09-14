@@ -141,6 +141,10 @@ class DisplayRenderer:
                 než cizí obličej; zahojí se samo, až klipy doženou."""
                 if not p:
                     return False
+                # HANS_SEASONAL_AVATAR_V1 — o svatku (Halloween) zadne klipy:
+                # animace jsou z bezne podoby a hraly by pres sezonni tvar.
+                if self._av_seasonal(now):
+                    return False
                 try:
                     if now - getattr(self, "_av_face_mt_ts", 0.0) > 60.0:
                         import glob as _gg
@@ -309,12 +313,35 @@ class DisplayRenderer:
         self._av_clipcache[key] = out
         return out
 
+    def _av_seasonal(self, now):
+        """HANS_SEASONAL_AVATAR_V1 — cesta k sezonni podobe, nebo None.
+        Zjistuje se nejvys 1× za minutu (draw bezi desitkykrat za sekundu)."""
+        if now - getattr(self, "_av_sez_ts", 0.0) > 60.0:
+            self._av_sez_ts = now
+            try:
+                from scripts.hans_seasonal import seasonal_avatar
+                self._av_sez = seasonal_avatar(getattr(self.ctrl, "config", {}) or {})
+            except Exception:
+                self._av_sez = None
+        return getattr(self, "_av_sez", None)
+
     def _av_static_idle(self, size):
         """Fallback na statický idle.png nejnovější verze avataru."""
         import os, glob, cv2
         try:
-            if getattr(self, "_av_idle_size", None) == size and getattr(self, "_av_idle_img", None) is not None:
+            import time as _t
+            _sez = self._av_seasonal(_t.time())   # HANS_SEASONAL_AVATAR_V1
+            if (getattr(self, "_av_idle_size", None) == size
+                    and getattr(self, "_av_idle_img", None) is not None
+                    and getattr(self, "_av_idle_src", None) == _sez):
                 return self._av_idle_img
+            if _sez:
+                _img = cv2.imread(_sez)
+                if _img is not None:
+                    self._av_idle_img = cv2.resize(_img, (size, size), interpolation=cv2.INTER_AREA)
+                    self._av_idle_size = size
+                    self._av_idle_src = _sez
+                    return self._av_idle_img
             vers = []
             for d in glob.glob("data/avatar/v*"):
                 try:
@@ -328,6 +355,7 @@ class DisplayRenderer:
                 return None
             self._av_idle_img = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
             self._av_idle_size = size
+            self._av_idle_src = None              # HANS_SEASONAL_AVATAR_V1 — bezna podoba
             return self._av_idle_img
         except Exception:
             return None
