@@ -511,3 +511,11 @@ def zajmy_na_hanse(veta: str) -> bool:
     """HANS_ZAJMY_O_HANSOVI_V2 — mireji veta na HANSOVY zajmy (ne tazatele)?"""
     from scripts.chat_commands import _ZAJMY_NA_HANSE
     return bool(_ZAJMY_NA_HANSE.search(veta))
+
+
+def den_v_tydnu(veta: str) -> str:
+    """HANS_WEEKDAY_FIX_V1 — co z vety udela oprava dne v tydnu, kdyz je
+    pondeli 14. 9. 2026 (pevne datum, aby sada nezavisela na dni behu)."""
+    from datetime import datetime
+    from scripts.cz_names import fix_weekday
+    return fix_weekday(veta, datetime(2026, 9, 14, 10, 30))[0]

@@ -4628,6 +4628,17 @@ class OpenWebUIDirectHandler:
                         "(partner=%s)", _nfix, name)
             except Exception:
                 pass
+            # HANS_WEEKDAY_FIX_V1 (14. 9.) — den v tydnu vedle dneska opravi
+            # program, ne model (zive: „Dnes je ctvrtek" v pondeli). Bezi PRED
+            # zapisem do conv_store/deniku/RAG, stejne jako fix_addressee.
+            try:
+                from scripts.cz_names import fix_weekday
+                response, _nden = fix_weekday(response)
+                if _nden:
+                    logging.getLogger(__name__).info(
+                        "HANS_WEEKDAY_FIX_V1: opraven den v tydnu (%d×)", _nden)
+            except Exception:
+                pass
         if response:
             self.conv_store.add_exchange(name, _raw_message, response, channel=channel)
             # # HUMAN_CHAT_VIA_LOG_ENTRY

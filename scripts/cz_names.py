@@ -557,3 +557,90 @@ def greeting_for_hour(hour: int) -> str:
     if 18 <= h < 22:
         return "Dobrý večer"
     return "Dobrou noc"
+
+
+# ── HANS_WEEKDAY_FIX_V1 (14. 9.) — den v tydnu vedle DNESNIHO data ─────────
+# Dolozeno 14. 9. (pondeli) zive: „Dobry den, Marku. Dnes je ctvrtek, 14. zari
+# 2026" — datum spravne, den spatne, prestoze casovy blok promptu nese
+# „Ted je dopoledne, pondeli 14.9.2026" s pokynem neodhadovat. Tataz slabina
+# modelu jako HANS_DATE_WORDS_V1 (19. 8. „sobota" misto stredy): prompt ji
+# nespravi, proto deterministicky PO generovani (vzor fix_addressee).
+# ⚠️ UZCE SCHVALNE: sahne jen na den (a) primo pred DNESNIM datem nebo
+# (b) za „dnes/dneska/ted je|mame". „Ve ctvrtek jsem cetl…" nebo „ve stredu
+# 16. zari prijde navsteva" zustava — to je jiny den a model ho smi jmenovat.
+_DNY_TVARY = (
+    ("pond\u011bl\u00ed", "pond\u011bl\u00ed", "v"), ("\u00fater\u00fd", "\u00fater\u00fd", "v"),
+    ("st\u0159eda", "st\u0159edu", "ve"), ("\u010dtvrtek", "\u010dtvrtek", "ve"),
+    ("p\u00e1tek", "p\u00e1tek", "v"), ("sobota", "sobotu", "v"),
+    ("ned\u011ble", "ned\u011bli", "v"))
+_MESICE_GEN = ("ledna", "\u00fanora", "b\u0159ezna", "dubna", "kv\u011btna", "\u010dervna",
+               "\u010dervence", "srpna", "z\u00e1\u0159\u00ed", "\u0159\u00edjna", "listopadu", "prosince")
+
+
+def _bez_diakritiky(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", s)
+                   if not unicodedata.combining(c))
+
+
+def fix_weekday(text: str, now=None):
+    """Prepis den v tydnu, ktery model posadil vedle DNESKA. Vraci (text, pocet)."""
+    if not text:
+        return text, 0
+    from datetime import datetime
+    now = now or datetime.now()
+    spravny = _DNY_TVARY[now.weekday()]
+    _f = _bez_diakritiky
+    tvary = {t for d in _DNY_TVARY for t in (d[0], d[1])}
+    den_re = "|".join(sorted({re.escape(x) for x in tvary} | {re.escape(_f(x)) for x in tvary},
+                             key=len, reverse=True))
+    d, m = now.day, now.month
+    mesic = _MESICE_GEN[m - 1]
+    datum = [r"%d\.\s*%d\.?" % (d, m), r"%d\.\s*%s" % (d, re.escape(mesic)),
+             r"%d\.\s*%s" % (d, re.escape(_f(mesic)))]
+    try:
+        from scripts.cz_numbers import normalize as _cz_norm
+        _slova = _cz_norm("%d.%d.%d" % (d, m, now.year)).split()
+        if mesic in _slova:            # rez ZA mesicem — rok ma ruzny pocet slov
+            _slovy = " ".join(_slova[:_slova.index(mesic) + 1])
+            datum += [re.escape(_slovy), re.escape(_f(_slovy))]
+    except Exception:
+        pass
+    datum_re = "(?:" + "|".join(datum) + ")"
+    pocet = 0
+
+    def _tvar(nalezeny: str, predlozka) -> str:
+        fn = _f(nalezeny.lower())
+        akuz = any(fn == _f(x[1]) and x[0] != x[1] for x in _DNY_TVARY)
+        cil = spravny[1] if (predlozka or akuz) else spravny[0]
+        return (cil[:1].upper() + cil[1:]) if nalezeny[:1].isupper() else cil
+
+    def _pred_datem(mm):
+        nonlocal pocet
+        predl, den, zbytek = mm.group(1), mm.group(2), mm.group(3)
+        cil = _tvar(den, predl)
+        if _f(den.lower()) == _f(cil.lower()):
+            return mm.group(0)
+        pocet += 1
+        p = ""
+        if predl:
+            p = spravny[2] + " "
+            if predl[:1].isupper():
+                p = p[:1].upper() + p[1:]
+        return p + cil + zbytek
+
+    text = re.sub(r"\b(?:(ve|v)\s+)?(" + den_re + r")(\s*,?\s*" + datum_re + r")",
+                  _pred_datem, text, flags=re.IGNORECASE)
+
+    def _za_dnes(mm):
+        nonlocal pocet
+        den = mm.group(2)
+        cil = _tvar(den, None)
+        if _f(den.lower()) == _f(cil.lower()):
+            return mm.group(0)
+        pocet += 1
+        return mm.group(1) + cil
+
+    text = re.sub(r"(\b(?:dnes|dneska|te[d\u010f])\s+(?:je|m[a\u00e1]me)\s+)(" + den_re + r")\b",
+                  _za_dnes, text, flags=re.IGNORECASE)
+    return text, pocet
