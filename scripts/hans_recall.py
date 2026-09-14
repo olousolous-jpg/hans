@@ -1297,6 +1297,11 @@ _SUBJECT_PAT = re.compile(
     re.IGNORECASE)
 
 
+# HANS_TOPIC_CONNECTIVES_V1 — spojky a predlozky, ktere samy tema netvori.
+_TEMA_SPOJKY = {"nebo", "jen", "ale", "i", "a", "o", "na", "ze", "\u017ee", "v", "ve",
+                "k", "ke", "s", "se", "z", "u", "do", "od", "po", "pro", "za"}
+
+
 def _extract_topic(question: str) -> str:
     """Vytáhni téma z dotazu na čtení ('četl jsi o hradech?' → 'hradech').
     '' když dotaz téma nemá (obecné 'co jsi četl')."""
@@ -1315,6 +1320,13 @@ def _extract_topic(question: str) -> str:
     # (1-4 slova: „hradech", „Sherlock Holmes"). Delší = pahýl z ukecané věty,
     # ne téma → radši prázdno = obecný výpis „co jsem četl", ne bogus „o ‚…'".
     if len(words) > 4:
+        return _vytcene_tema(q)
+    # HANS_TOPIC_CONNECTIVES_V1 (14. 9.) — tema slozene jen ze spojek
+    # a predlozek neni tema. Dolozeno: „cetl jsi tu knihu nebo jen neco o ni?"
+    # -> „nebo jen o" a Hans odpovedel, ze o „nebo jen o" zaznam nema.
+    # ⚠️ Spojky se NEPRIDAVAJI do _STOPWORDS: „Na zapadni fronte klid" je titul.
+    # Zmereno na 1 170 realnych vetach: meni se jen dolozena veta.
+    if not any(len(w) >= 3 for w in words if w.lower() not in _TEMA_SPOJKY):
         return _vytcene_tema(q)
     return " ".join(words).strip() or _vytcene_tema(q)
 
