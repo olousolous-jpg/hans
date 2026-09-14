@@ -637,14 +637,19 @@ class HansRoutine:
         return False
 
     def _direction_due(self, today: str) -> bool:
-        """True když uplynul aspoň týden od poslední úvahy o směru."""
+        """True když od poslední úvahy o směru uplynul interval `direction.cadence_days`.
+
+        HANS_DIRECTION_CADENCE_V1 (14. 9.) — výchozí 14 dní místo týdne
+        (pokyn uživatele: „to týdenní je moc časté"). Směr je dlouhodobá
+        aspirace; týdenní návrhy ho přepisovaly dřív, než se stačil projevit."""
         last = self._last_direction_check
         if not last:
             return True
         try:
             d0 = datetime.strptime(last, "%Y-%m-%d").date()
             d1 = datetime.strptime(today, "%Y-%m-%d").date()
-            return (d1 - d0).days >= 7
+            _dni = int(((self.config.get("direction") or {}).get("cadence_days", 14)))
+            return (d1 - d0).days >= _dni
         except Exception:
             return True
 
