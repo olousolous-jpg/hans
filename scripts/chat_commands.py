@@ -1677,6 +1677,74 @@ def _pocet_obrazu(handler) -> str:
     return _out
 
 
+def _pocet_filmu(handler) -> str:
+    """HANS_COUNT_FILMS_BOOKS_V1 (14. 9.) — „kolik filmu jsi videl?“ → CISLO.
+
+    Dolozeno 13. 8.: otazka nesedla na zadny prikaz, propadla do volneho
+    hovoru a Hans odpovedel nesmyslem o „prime otazce“. Pocita se ze
+    stejneho zdroje jako `films_watched_answer` (denik `kodi_playing`), jen
+    rozdelene podle typu — „filmy“ nejsou dily serialu ani poradu z TV.
+    """
+    _tv = lambda n, a, b, c: a if n == 1 else (b if 2 <= n <= 4 else c)
+    try:
+        import sqlite3 as _s3
+        _c = _s3.connect(_recall_db(handler))
+        _r = dict(_c.execute(
+            "SELECT CASE WHEN note LIKE 'Typ: movie%' THEN 'film' "
+            "WHEN note LIKE 'Typ: episode%' THEN 'dil' "
+            "WHEN note LIKE 'Typ: channel%' THEN 'tv' ELSE 'jine' END, "
+            "COUNT(DISTINCT title) FROM diary WHERE event_type='kodi_playing' "
+            "AND title IS NOT NULL AND title<>'' GROUP BY 1").fetchall())
+        _posl = _c.execute(
+            "SELECT title FROM diary WHERE event_type='kodi_playing' "
+            "AND note LIKE 'Typ: movie%' AND title IS NOT NULL AND title<>'' "
+            "ORDER BY id DESC LIMIT 1").fetchone()
+        _c.close()
+    except Exception:
+        return ""
+    _f = int(_r.get("film") or 0)
+    if not _f:
+        return ""
+    _out = "Zat\u00edm jsem vid\u011bl %d %s" % (_f, _tv(_f, "film", "filmy", "film\u016f"))
+    _dalsi = []
+    _d = int(_r.get("dil") or 0)
+    if _d:
+        _dalsi.append("%d %s seri\u00e1l\u016f" % (_d, _tv(_d, "d\u00edl", "d\u00edly", "d\u00edl\u016f")))
+    _p = int(_r.get("tv") or 0)
+    if _p:
+        _dalsi.append("%d %s v televizi" % (_p, _tv(_p, "po\u0159ad", "po\u0159ady", "po\u0159ad\u016f")))
+    if _dalsi:
+        _out += ", k tomu " + " a ".join(_dalsi)
+    _out += "."
+    if _posl and _posl[0]:
+        _out += " Naposledy film \u201e%s\u201c." % _posl[0]
+    return _out
+
+
+def _pocet_knih(handler) -> str:
+    """HANS_COUNT_FILMS_BOOKS_V1 (14. 9.) — „kolik knih jsi precetl?“ → CISLO.
+    Zdroj je knihovna `hans_library` — tataz, ze ktere se doporucuje cetba
+    (HANS_BOOK_RECOMMEND_GROUNDED_V1), aby cislo a doporuceni nesly proti sobe."""
+    _tv = lambda n, a, b, c: a if n == 1 else (b if 2 <= n <= 4 else c)
+    try:
+        import sqlite3 as _s3
+        _c = _s3.connect(_recall_db(handler))
+        _n = _c.execute(
+            "SELECT COUNT(*) FROM hans_library WHERE status='finished'").fetchone()[0]
+        _ctu = _c.execute(
+            "SELECT book_title FROM hans_library WHERE status='reading' "
+            "ORDER BY id DESC LIMIT 1").fetchone()
+        _c.close()
+    except Exception:
+        return ""
+    if not _n and not _ctu:
+        return ""
+    _out = "Do\u010detl jsem %d %s" % (_n, _tv(_n, "knihu", "knihy", "knih"))
+    if _ctu and _ctu[0]:
+        _out += " a pr\u00e1v\u011b \u010dtu \u201e%s\u201c" % _ctu[0]
+    return _out + "."
+
+
 def _cmd_obrazy(handler, name, args) -> str:  # HANS_ARTWORK_RECALL_V1
     from scripts.hans_recall import artwork_answer
     # HANS_COUNT_ANSWER_V1 — „kolik“ chce POCET, ne vypis.
@@ -3099,6 +3167,11 @@ def _cmd_cetl(handler, name, args) -> str:
                 q = str(_tc[0])
         except Exception:
             pass
+    # HANS_COUNT_FILMS_BOOKS_V1 — „kolik knih“ chce POCET, ne posledni cteni.
+    if _KOLIK_RE.search(q):
+        _p = _pocet_knih(handler)
+        if _p:
+            return _p
     out = reading_answer(_recall_db(handler), q, asker=name)  # HANS_READING_ASKER_V1
     return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
 
@@ -3107,6 +3180,11 @@ register(
     "cetl",
     slash_aliases=["cetl", "četl", "cteni", "čtení"],
     nl_patterns=[
+        # HANS_COUNT_FILMS_BOOKS_V1 (14. 9.) — pocet prectenych knih (tykani
+        # i vykani, bez diakritiky). Na 2 248 realnych vetach 0 zasahu.
+        r"\bkolik\s+(?:\w+\s+){0,3}kn[i\u00ed](?:h|\u017eek|zek)\w*[^.?!]{0,30}(?:[\u010dc]etl|p[\u0159r]e[\u010dc]ten)",
+        r"\bkolik\s+(?:jsi|jste|sis)\s+(?:u[\u017ez]\s+)?(?:p[\u0159r]e)?[\u010dc]etl\w*\s+(?:\w+\s+)?kn[i\u00ed]",
+        r"\bkolik\s+(?:m[\u00e1a][\u0161s]|m[\u00e1a]te)\s+(?:u[\u017ez]\s+)?p[\u0159r]e[\u010dc]ten\w*\s+kn[i\u00ed]",
         r"\bco\s+(jsi|sis)\s+(dnes\w*\s+|včera\s+|naposledy\s+)?"
         r"(pře)?[čc]etl",
         r"\bcos?\s+(dnes\w*\s+|včera\s+|naposledy\s+)?[čc]etl",
@@ -3802,6 +3880,11 @@ register(
 
 def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
     from scripts.hans_recall import films_watched_answer
+    # HANS_COUNT_FILMS_BOOKS_V1 — „kolik“ chce POCET, ne vypis.
+    if _KOLIK_RE.search(str(args or "")):
+        _p = _pocet_filmu(handler)
+        if _p:
+            return _p
     out = films_watched_answer(_recall_db(handler), args or "")
     return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
 
@@ -3810,6 +3893,11 @@ register(
     "film",
     slash_aliases=["film", "filmy"],
     nl_patterns=[
+        # HANS_COUNT_FILMS_BOOKS_V1 (14. 9.) — pocet videnych filmu. SLOVESO je
+        # povinne: bez nej sedl vzor i na „kolik stoji ten film v kine?“.
+        # Na 2 248 realnych vetach chyti jen doložený dotaz z 13. 8.
+        r"\bkolik\s+(?:\w+\s+){0,3}film\w*[^.?!]{0,30}\b(?:vid[\u011be]l|koukal|sledoval|zhl[\u00e9e]dl)",
+        r"\bkolik\s+(?:jsi|jste|sis)\s+(?:u[\u017ez]\s+)?(?:vid[\u011be]l|koukal|sledoval|zhl[\u00e9e]dl)\w*\s+(?:\w+\s+)?film",
         r"posledn[ií].{0,10}film",
         # HANS_FILM_QUERY_BOUNDARY_V1 (2.9.) — `\b` je tu NUTNA, ne kosmetika:
         # bez ni „jak[ýy]" matchne uvnitr slova „NEjaky", takze dotazovy vzor
