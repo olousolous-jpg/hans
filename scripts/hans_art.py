@@ -433,7 +433,7 @@ def _translate_subject(config: dict, subject_cs: str) -> str:
 def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
                   system: str = None, source_intro: str = None,
                   en_fallback: str = None, prev: dict = None,
-                  cs_subject: str = "") -> Optional[str]:
+                  cs_subject: str = "", bez_zalohy: bool = False) -> Optional[str]:
     """LLM (levný, keep_alive=0) → anglický SDXL scene prompt. Fallback šablona.
     HANS_ART_LESSON_V1: když db_path, vloží do promptu ponaučení z minulých obrazů.
     HANS_DREAMS_V1: system+source_intro lze přepsat (snová varianta místo knižní)."""
@@ -489,6 +489,15 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     # HANS_ART_SAFE_FALLBACK_V1 — fallback (LLM dole) smí do FLUXu jen s
     # anglickým námětem; český → en_fallback od volajícího, jinak None = odlož.
     def _fb():
+        # HANS_DREAM_NO_BARE_FALLBACK_V1 (14. 9.) — u SNU zadny zalozni prompt
+        # neexistuje. Titul „Sen" se prelozil na „Dream", `_looks_english` ho
+        # pustil a FLUX dostal jen „Dream, <medium>" — namaloval obecny sen
+        # (14. 9.: zena v posteli misto zahrady s hodinami). Zmereno v galerii:
+        # 10 ze 74 snovych obrazu takhle vzniklo bez obsahu snu. Radsi odlozit.
+        if bez_zalohy:
+            _log.warning("art: scena se nesestavila a zalozni prompt tu nema "
+                         "smysl — render odlozen, retry priste")
+            return None
         # HANS_ART_CS_LEAK_V1 (5.8.) — `_looks_english` je DĚRAVÝ: pozná jen
         # diakritiku a seznam běžných českých slov, takže „zenskeho kentaura"
         # (uživatel psal bez háčků, ani jedno slovo v seznamu není) projde jako
@@ -1025,7 +1034,8 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
                   en_fallback: str = None,
                   scene_system: str = None, scene_intro: str = None,
                   series: str = "", cs_subject: str = "",
-                  ref_image: str = "", ref_weight: float = 0.0):
+                  ref_image: str = "", ref_weight: float = 0.0,
+                  bez_zalohy: bool = False):
     """Vyrenderuje 1 obraz přes ComfyUI/SDXL. Vrací (rel_path, prompt, vision_desc)
     nebo None. VRAM orchestrace uvnitř (unload LLM → render → _comfy_free →
     llava vize → warm hans-czech). vision_desc = llava popis renderu pro hodnocení
@@ -1061,7 +1071,8 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
                            system=scene_system, source_intro=scene_intro,
                            en_fallback=en_fallback,
                            prev=_last_in_series(db_path, series) if series else None,
-                           cs_subject=cs_subject)
+                           cs_subject=cs_subject,
+                           bez_zalohy=bez_zalohy)  # HANS_DREAM_NO_BARE_FALLBACK_V1
     # HANS_ART_SAFE_FALLBACK_V1 — _scene_prompt vrátí None, když LLM selhal a
     # není bezpečný anglický námět → ODLOŽ render (radši žádný obraz než garbage
     # z nepřeloženého českého námětu, doloženo 30.7. „domov" → muž na ulici).
@@ -2851,7 +2862,8 @@ def paint_dream(config: dict, diary_db_path: str) -> bool:
     res = _render_image(config, title, text, diary_db_path,
                         en_fallback="a surreal, dreamlike scene, soft and atmospheric",
                         scene_system=_sys, scene_intro=scene_intro,
-                        series="dream", ref_image=_ref, ref_weight=_wgt)
+                        series="dream", ref_image=_ref, ref_weight=_wgt,
+                        bez_zalohy=True)  # HANS_DREAM_NO_BARE_FALLBACK_V1
     if not res:
         _log.warning("art: sen se nevyrenderoval — retry příště")
         return False
