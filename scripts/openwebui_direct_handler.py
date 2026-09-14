@@ -753,6 +753,23 @@ class OpenWebUIDirectHandler:
                 and bool(self._KNIHA_NAVAZ_PAT.search(_holy))
                 and not self._KNIHA_JINA_PAT.search(_holy))
 
+    def _agent_oslov(self, text, name):
+        """HANS_AGENT_ADDRESSEE_V1 (14. 9.) — odpověď AGENTNÍ vrstvy šla uživateli
+        rovnou, bez `fix_addressee`, takže majordomské „pane" ze šablon (39× v
+        hans_agent) dorazilo i k cizímu člověku. Doloženo testem 14. 9.:
+        „Koláč a já jsme se před chvílí bavili o „fotbal", pane." Týž krok, jaký
+        dostává odpověď LLM (HANS_ADDRESSEE_V2) — žádná druhá pravda o oslovení."""
+        try:
+            from scripts.cz_names import fix_addressee
+            _t, _n = fix_addressee(text, name, self.config)
+            if _n:
+                logging.getLogger(__name__).info(
+                    "HANS_AGENT_ADDRESSEE_V1: opraveno %d oslovení v odpovědi agenta "
+                    "(partner=%s)", _n, name)
+            return _t
+        except Exception:
+            return text
+
     def _knihovna_fact(self, text: str, name=None) -> str:
         """HANS_BOOK_RECOMMEND_GROUNDED_V1 (13. 9.) — na zadost o doporuceni
         cetby podstrc SKUTECNOU knihovnu.
@@ -4171,6 +4188,7 @@ class OpenWebUIDirectHandler:
             if _agent is not None:
                 _conf = _agent.check_confirmation(self, name, user_message)
                 if _conf is not None:
+                    _conf = self._agent_oslov(_conf, name)   # HANS_AGENT_ADDRESSEE_V1
                     try:
                         self.conv_store.add_exchange(name, user_message, _conf, channel=channel)
                     except Exception:
@@ -4179,6 +4197,7 @@ class OpenWebUIDirectHandler:
                     return _conf
                 _prop = _agent.propose(self, name, user_message)
                 if _prop:
+                    _prop = self._agent_oslov(_prop, name)   # HANS_AGENT_ADDRESSEE_V1
                     try:
                         self.conv_store.add_exchange(name, user_message, _prop, channel=channel)
                     except Exception:
