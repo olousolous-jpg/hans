@@ -16,43 +16,53 @@ Z = "data/mereni/retro_vysledky.json"
 V = "data/mereni/retro_stabilita.json"
 N = int(os.environ.get("N", "40"))
 
-d = json.load(open(Z))
-random.seed(20260902)
-s_akci = random.sample([r for r in d if r["stary"]], N)
-s_null = random.sample([r for r in d if not r["stary"]], N)
-vzorek = s_akci + s_null
+# RETRO_STABILITA_MAIN_GUARD_V1 (14. 9.) — cely beh byl na urovni modulu,
+# takze pouhy `import` pustil router nad 80 vetami a PREPSAL `retro_stabilita.json`
+# (tataz past jako BACKFILL_MAIN_GUARD_V1 a RETRO_MAIN_GUARD_V1 13. 9.).
+# 13. 9. pokus o guard skoncil rollbackem na IndentationError — ted se telo
+# odsazuje po radcich a prazdne radky zustavaji prazdne.
+def main():
+    d = json.load(open(Z))
+    random.seed(20260902)
+    s_akci = random.sample([r for r in d if r["stary"]], N)
+    s_null = random.sample([r for r in d if not r["stary"]], N)
+    vzorek = s_akci + s_null
 
-try:                                   # HANS_MAIN_CONFIG_IO_V1
-    from scripts.config_io import load as _cfg_load
-except ImportError:                    # spusteno jako skript, root chybi
-    import sys as _s, os as _o
-    _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
-    from scripts.config_io import load as _cfg_load
-cfg = _cfg_load()
-r = AgentRouter(cfg); h = _Handler()
-out, t0 = [], time.time()
-for i, rec in enumerate(vzorek, 1):
-    if game_mode_on():
-        print("game/preklad — koncim na %d" % i, flush=True); break
-    try:
-        dd = r._route(h, rec["jmeno"], rec["veta"])
-    except Exception:
-        dd = None
-    a2 = (dd or {}).get("action")
-    k2 = float((dd or {}).get("confidence", 0) or 0)
-    if a2 and k2 < r.threshold:
-        a2 = None
-    out.append({"veta": rec["veta"], "beh1": rec["stary"], "beh2": a2,
-                "stejne": rec["stary"] == a2, "mel_akci": bool(rec["stary"])})
-    if i % 20 == 0:
-        print("  %d/%d · %.0f s" % (i, len(vzorek), time.time() - t0), flush=True)
-json.dump(out, open(V, "w"), ensure_ascii=False, indent=1)
+    try:                                   # HANS_MAIN_CONFIG_IO_V1
+        from scripts.config_io import load as _cfg_load
+    except ImportError:                    # spusteno jako skript, root chybi
+        import sys as _s, os as _o
+        _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+        from scripts.config_io import load as _cfg_load
+    cfg = _cfg_load()
+    r = AgentRouter(cfg); h = _Handler()
+    out, t0 = [], time.time()
+    for i, rec in enumerate(vzorek, 1):
+        if game_mode_on():
+            print("game/preklad — koncim na %d" % i, flush=True); break
+        try:
+            dd = r._route(h, rec["jmeno"], rec["veta"])
+        except Exception:
+            dd = None
+        a2 = (dd or {}).get("action")
+        k2 = float((dd or {}).get("confidence", 0) or 0)
+        if a2 and k2 < r.threshold:
+            a2 = None
+        out.append({"veta": rec["veta"], "beh1": rec["stary"], "beh2": a2,
+                    "stejne": rec["stary"] == a2, "mel_akci": bool(rec["stary"])})
+        if i % 20 == 0:
+            print("  %d/%d · %.0f s" % (i, len(vzorek), time.time() - t0), flush=True)
+    json.dump(out, open(V, "w"), ensure_ascii=False, indent=1)
 
-def pct(s):
-    return 100 * sum(1 for x in s if x["stejne"]) / max(1, len(s))
-sa = [x for x in out if x["mel_akci"]]
-sn = [x for x in out if not x["mel_akci"]]
-print("\nVLASTNI SHODA STAREHO ROUTERU (dva behy tehoz vstupu):")
-print("  kde v behu 1 vybral AKCI : %5.1f %%  (n=%d)" % (pct(sa), len(sa)))
-print("  kde v behu 1 vybral NIC  : %5.1f %%  (n=%d)" % (pct(sn), len(sn)))
-print("  celkem                   : %5.1f %%  (n=%d)" % (pct(out), len(out)))
+    def pct(s):
+        return 100 * sum(1 for x in s if x["stejne"]) / max(1, len(s))
+    sa = [x for x in out if x["mel_akci"]]
+    sn = [x for x in out if not x["mel_akci"]]
+    print("\nVLASTNI SHODA STAREHO ROUTERU (dva behy tehoz vstupu):")
+    print("  kde v behu 1 vybral AKCI : %5.1f %%  (n=%d)" % (pct(sa), len(sa)))
+    print("  kde v behu 1 vybral NIC  : %5.1f %%  (n=%d)" % (pct(sn), len(sn)))
+    print("  celkem                   : %5.1f %%  (n=%d)" % (pct(out), len(out)))
+
+
+if __name__ == "__main__":
+    main()
