@@ -162,6 +162,8 @@ def html_blok(abc: str, popis: str = "") -> str:
     # ⚠️ abcjs 6 vystavuje globalni objekt ABCJS — `renderAbc` samo o sobe
     # NEEXISTUJE. Vykresleni i prehrani jsou v try: kdyz selze zvuk,
     # nesmi to shodit noty, a kdyz chybi knihovna, rekne to stranka.
+    # HANS_MUSIC_SOUNDFONT_LOCAL_V1 — zvuky napred z ./soundfont/ u dila,
+    # pri selhani vychozi sada z internetu (tataz FluidR3_GM).
     # ⚠️ `options` v init() je POVINNE: bez nej prime() spadne na
     # options.swing. Zmereno 14. 9. v Chromiu — tlacitko do te doby nehralo
     # nikde, protoze chyba sla jen do console.log.
@@ -186,11 +188,17 @@ def html_blok(abc: str, popis: str = "") -> str:
         '    if (!vs_@@ID@@) { chyba("noty nejsou vykreslené"); return; }\n'
         '    if (!ABCJS.synth.supportsAudio()) { chyba("prohlížeč neumí přehrát zvuk"); return; }\n'
         '    var ac = new (window.AudioContext || window.webkitAudioContext)();\n'
-        '    var s = new ABCJS.synth.CreateSynth();\n'
         '    st.textContent = "načítám zvuky…";\n'
-        '    s.init({audioContext: ac, visualObj: vs_@@ID@@[0], options: {}})\n'
-        '     .then(function(){ return s.prime(); })\n'
-        '     .then(function(r){ syn_@@ID@@ = s; s.start(); b.textContent = "■ zastavit"; st.textContent = "";\n'
+        '    function spust(mistni){\n'
+        '      var s = new ABCJS.synth.CreateSynth();\n'
+        '      var o = mistni ? {soundFontUrl: "soundfont/", soundFontVolumeMultiplier: 3} : {};\n'
+        '      return s.init({audioContext: ac, visualObj: vs_@@ID@@[0], options: o})\n'
+        '        .then(function(){ return s.prime(); })\n'
+        '        .then(function(r){ return [s, r]; });\n'
+        '    }\n'
+        '    spust(true).catch(function(){ return spust(false); })\n'
+        '     .then(function(x){ var s = x[0], r = x[1];\n'
+        '       syn_@@ID@@ = s; s.start(); b.textContent = "■ zastavit"; st.textContent = "";\n'
         '       setTimeout(function(){ if (syn_@@ID@@ === s) { syn_@@ID@@ = null; b.textContent = "▶ přehrát"; } },\n'
         '                  ((r && r.duration) || 0) * 1000 + 500); })\n'
         '     .catch(chyba);\n'
@@ -218,6 +226,58 @@ def pridej_abcjs(html: str) -> str:
     if "</head>" in html:
         return html.replace("</head>", ABCJS_TAG + "\n</head>", 1)
     return ABCJS_TAG + "\n" + html
+
+
+# HANS_MUSIC_SOUNDFONT_LOCAL_V1 — tatáž sada, kterou abcjs bez nastavení
+# stahuje z GitHubu (FluidR3_GM, CC BY 3.0) → zvuk díla se nemění.
+SOUNDFONT_URL = "https://paulrosen.github.io/midi-js-soundfonts/FluidR3_GM/"
+_SF_NASTROJ = "acoustic_grand_piano-mp3"
+_SF_JMENA = ("C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B")
+_SF_LICENCE = (
+    "Zvuky klavíru: FluidR3_GM (Frank Wen), převod midi-js-soundfonts\n"
+    "(Benjamin Gleitzman, Paul Rosen). Licence Creative Commons Attribution 3.0\n"
+    "https://creativecommons.org/licenses/by/3.0/\n"
+)
+
+
+def pridej_soundfont(dest_dir) -> bool:
+    """Zkopíruj zvuky klavíru k dílu do `<dílo>/soundfont/`.
+
+    Zdroj je `data/soundfont/` (gitignored, 88 mp3 ≈ 2 MB); chybí-li tón,
+    stáhne se jednou. Selhání NENÍ fatální — stránka pak zvuky tahá
+    z internetu, noty se vykreslí tak jako tak. Vrací True, když dílo
+    kopii má.
+    """
+    import os as _os
+    import shutil as _sh
+    import urllib.request as _ur
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    sf = _os.path.join(root, "data", "soundfont")
+    src = _os.path.join(sf, _SF_NASTROJ)
+    try:
+        _os.makedirs(src, exist_ok=True)
+        for n in range(21, 109):                      # A0 … C8
+            jm = "%s%d.mp3" % (_SF_JMENA[n % 12], n // 12 - 1)
+            cil = _os.path.join(src, jm)
+            if not _os.path.exists(cil):
+                with _ur.urlopen(SOUNDFONT_URL + _SF_NASTROJ + "/" + jm,
+                                 timeout=20) as r:
+                    data = r.read()
+                with open(cil, "wb") as w:
+                    w.write(data)
+        lic = _os.path.join(sf, "LICENCE.txt")
+        if not _os.path.exists(lic):
+            with open(lic, "w", encoding="utf-8") as w:
+                w.write(_SF_LICENCE)
+        _sh.copytree(sf, _os.path.join(str(dest_dir), "soundfont"),
+                     dirs_exist_ok=True)
+        return True
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "hudba: zvuky k dílu se nepřidaly (%s) — přehrání půjde "
+            "z internetu", e)
+        return False
 
 
 def _js_string(s: str) -> str:

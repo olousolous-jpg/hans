@@ -281,6 +281,9 @@ def _render_music(config: dict, pages: dict, dest_dir) -> int:
                              "v prohlížeči nevykreslí")
         except Exception as _e:
             _log.warning("maker music: kopie abcjs selhala: %s", _e)
+        # HANS_MUSIC_SOUNDFONT_LOCAL_V1 — zvuky klavíru k dílu, ať ▶ hraje
+        # i bez internetu (selhání jen zaloguje hans_music)
+        _hm.pridej_soundfont(dest_dir)
     return hotovo
 
 
