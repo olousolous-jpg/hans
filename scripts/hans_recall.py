@@ -896,8 +896,22 @@ def _find_entity_in_text(db_path: str, text: str,
         nl = name.lower()
         if nl in _CISLOVKY:
             continue
-        if re.search(r"(?<![\w])" + re.escape(nl) + r"\w{0,3}(?![\w])",
-                     t_lower):
+        _shoda = re.search(r"(?<![\w])" + re.escape(nl) + r"\w{0,3}(?![\w])",
+                           t_lower)
+        # HANS_SOURCE_ENTITY_FOLD_V1 (14. 9.) — BEZ DIAKRITIKY, ale JEN nad
+        # dotazem UŽIVATELE (píše z většiny bez háčků). Doloženo 13.–14. 9.:
+        # „odkud vis o F. L. Vekovi?" nenašlo entitu „F. L. Věk", ačkoli ji
+        # store MÁ i s odkazem → „nemám uložený článek". Změřeno: dotazy na
+        # zdroj +2 (obě tahle věta), 0 jiných.
+        # ⛔ NIKDY nad Hansovou replikou (`vyzaduj_velke`): tam by bez diakritiky
+        # sedla 5× potvrzení malování („maluji obraz na téma ,Gustav Husak'")
+        # a Hans by tvrdil, že o námětu obrazu ČETL — falešná provenience.
+        if not _shoda and not vyzaduj_velke:
+            _fn = _fold(nl)
+            if _fn != nl:
+                _shoda = re.search(r"(?<![\w])" + re.escape(_fn) + r"\w{0,3}(?![\w])",
+                                   _fold(t_lower))
+        if _shoda:
             # HANS_SOURCE_PROPER_MENTION_V1 — v replice jen vlastní jméno
             if vyzaduj_velke and not _psano_velkym(text, name):
                 continue

@@ -519,3 +519,11 @@ def den_v_tydnu(veta: str) -> str:
     from datetime import datetime
     from scripts.cz_names import fix_weekday
     return fix_weekday(veta, datetime(2026, 9, 14, 10, 30))[0]
+
+
+def zdroj_entita(text: str, replika: bool):
+    """HANS_SOURCE_ENTITY_FOLD_V1 — jmeno entity, kterou `_find_entity_in_text`
+    v textu najde (nad replikou s `vyzaduj_velke`), nebo None. Cte ostry denik."""
+    from scripts.hans_recall import _find_entity_in_text
+    h = _find_entity_in_text("data/hans_diary.db", text, vyzaduj_velke=replika)
+    return h[0] if h else None
