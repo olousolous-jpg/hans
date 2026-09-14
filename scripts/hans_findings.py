@@ -58,6 +58,18 @@ _PROVISIONAL_TMPL = (
     "Udělám to v noci a kdyby to nesedělo, ráno se ozvu."
 )
 
+# HANS_LOOKUP_HAD_NOTES_V1 (14. 9.) — dohledání spuštěné POJISTKOU (zápisky
+# byly, ale neunesly odpověď). „V paměti jsem o tom nic neměl" tu byla NEPRAVDA:
+# 14. 9. tak Hans odpověděl 3× na hrady Českého ráje, ačkoli měl dokončené
+# studium „Český ráj a okolní hrady" a 11 studijních poznámek.
+_PROVISIONAL_TMPL_ZAPISKY = (
+    "Ve svých zápiscích jsem k tomu neměl dost, abych to řekl s jistotou, "
+    "%(oslov)s, tak jsem se právě podíval. "
+    "Podle toho, co jsem teď našel (%(source)s):\n\n%(summary)s\n\n"
+    "Berte to zatím s rezervou — ještě jsem si to neověřil a nezapsal do paměti. "
+    "Udělám to v noci a kdyby to nesedělo, ráno se ozvu."
+)
+
 _CORRECTION_TMPL = (
     "%(oslov)s, ještě k tomu, na co jste se ptal — „%(topic)s\". "
     "Odpověděl jsem tehdy z toho, co jsem narychlo našel, ale při nočním "
@@ -285,7 +297,8 @@ def correction_text(row: dict, asker: Optional[str] = None,
 # ── 1) OKAMŽITÉ DOHLEDÁNÍ ────────────────────────────────────────────────────
 
 def lookup_now(config: dict, db_path: str, topic: str, query: str,
-               asker: Optional[str] = None) -> Optional[str]:
+               asker: Optional[str] = None,
+               mel_zapisky: bool = False) -> Optional[str]:   # HANS_LOOKUP_HAD_NOTES_V1
     """Dohledej téma HNED a vrať PROVIZORNÍ odpověď (nebo None → volající
     použije poctivé „nemám záznam").
 
@@ -313,7 +326,7 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
     except Exception:
         prev = None
     if prev and (prev.get("summary") or "").strip():
-        return _render_provisional(prev, asker, config)
+        return _render_provisional(prev, asker, config, mel_zapisky)
 
     try:
         from scripts.web_reader import WebReader
@@ -392,11 +405,12 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
         return None
     _log.info("instant_lookup: '%s' → '%s' (provizorně, čeká na ověření)",
               topic, row["resolved_title"])
-    return _render_provisional(row, asker, config)
+    return _render_provisional(row, asker, config, mel_zapisky)
 
 
 def _render_provisional(row: dict, asker: Optional[str],
-                        config: Optional[dict] = None) -> str:
+                        config: Optional[dict] = None,
+                        mel_zapisky: bool = False) -> str:
     oslov = _oslov(asker, config)
     src = row.get("resolved_title") or "Wikipedie"
     summary = (row.get("summary") or "").strip()
@@ -418,7 +432,8 @@ def _render_provisional(row: dict, asker: Optional[str],
         summary += ("\n\n(Poznámka: heslo přesně na „%s\" jsem nenašel, tohle je "
                     "nejbližší nález „%s\" — může jít o něco úplně jiného.)"
                     % (row.get("topic") or "", src))
-    return _PROVISIONAL_TMPL % {
+    return (_PROVISIONAL_TMPL_ZAPISKY if mel_zapisky
+            else _PROVISIONAL_TMPL) % {   # HANS_LOOKUP_HAD_NOTES_V1
         "oslov": oslov,
         "source": "Wikipedie — heslo „%s\"" % src,
         "summary": summary,

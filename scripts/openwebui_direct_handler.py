@@ -928,7 +928,8 @@ class OpenWebUIDirectHandler:
             popis[:40], len(herci))
         return '\n\n' + ANTIKONFAB + '\n\n' + "\n".join(blok)
 
-    def _dohledej_kotvu(self, veta: str, name: str = None):
+    def _dohledej_kotvu(self, veta: str, name: str = None,
+                        mel_zapisky: bool = False):   # HANS_LOOKUP_HAD_NOTES_V1
         """HANS_ANCHOR_LOOKUP_V1 (22.8.) — dohledej PŘEDMĚT dotazu a vrať
         provizorní odpověď, nebo None (pak platí dosavadní chování).
 
@@ -952,7 +953,17 @@ class OpenWebUIDirectHandler:
                 _known += (str(_pn(self.config) or ""),)
             except Exception:
                 pass
-            tema = kotva_tematu(veta or "", vynech=_known)
+            # HANS_LOOKUP_ANCHOR_REWRITE_V1 (14. 9.) — (a) jméno TAZATELE taky
+            # není téma: „jmenuji se Marek…" → hledal se na Wikipedii „Marek";
+            # (b) kotva z PŘEPSANÉHO dotazu (F1 doplní předmět z vlákna),
+            # syrová věta až jako záloha: „…studoval Český ráj… proč má Trosky
+            # dvě věže?" dávalo „Český ráj", přepis „Proč má hrad Trosky dvě
+            # věže?" dá „hrad Trosky". Simulace na 3 větách z 14. 9.: 3/3.
+            if name:
+                _known += (str(name),)
+            _prepis = getattr(self, '_f1_query', None)
+            tema = (kotva_tematu(_prepis, vynech=_known) if _prepis else None) \
+                or kotva_tematu(veta or "", vynech=_known)
             if not tema:
                 # HANS_CONCEPT_ASK_V1 (7.9.) — ZÁLOHA pro OBECNÝ POJEM.
                 # `kotva_tematu` pozná téma podle VELKÉHO písmene, protože je
@@ -970,7 +981,8 @@ class OpenWebUIDirectHandler:
                 return None
             _dbp = (self.config.get("hans_idle", {}) or {}).get(
                 "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"
-            out = lookup_now(self.config, _dbp, tema, veta or "", asker=name)
+            out = lookup_now(self.config, _dbp, tema, veta or "", asker=name,
+                             mel_zapisky=mel_zapisky)
             logging.getLogger(__name__).info(
                 "HANS_ANCHOR_LOOKUP_V1: téma %r → %s", tema,
                 "dohledáno" if out else "nic (platí dosavadní odpověď)")
@@ -4554,8 +4566,13 @@ class OpenWebUIDirectHandler:
                             and len(_dropped) >= _prah):
                         logging.getLogger(__name__).info(
                             'GROUNDING_GUARD_ACTIVE_V2: ZASAHUJI — %d vět bez '
-                            'opory u tenkého podkladu (%s). První: %r',
-                            len(_dropped), _cesta, _dropped[0][:80])
+                            'opory u tenkého podkladu (%s). Věty: %s',
+                            len(_dropped), _cesta,
+                            # GROUNDING_GUARD_LOG_ALL_V1 (14. 9.) — VŠECHNY, ne
+                            # první. S jedinou větou nešlo poznat, jestli guard
+                            # zahodil výmysl, nebo omluvu a zdvořilost (14. 9.:
+                            # „Omlouvám se za mou zmatenost" jako první ze 7).
+                            ' | '.join(repr(_d[:60]) for _d in _dropped[:7]))
                         # HANS_ANCHOR_LOOKUP_V1 (22.8.) — vykuchaná odpověď
                         # NENÍ konec. Když se ukázalo, že podklad tvrzení
                         # neunese, je to totéž jako „nemám záznam" — a na to
@@ -4564,7 +4581,10 @@ class OpenWebUIDirectHandler:
                         # Kost se nikdy nespustilo právě proto, že ho předběhl
                         # tenký falešný podklad (odpověď se tvářila jako
                         # `grounded`), takže Hans k přiznání nedošel.
-                        _dohl = self._dohledej_kotvu(_raw_message, name)
+                        # HANS_LOOKUP_HAD_NOTES_V1 — sem se jde od ZÁPISKŮ,
+                        # které nestačily; „nic jsem neměl" by byla nepravda.
+                        _dohl = self._dohledej_kotvu(_raw_message, name,
+                                                     mel_zapisky=True)
                         _dohledano = True
                         response = _dohl or _clean
                     elif _dropped:
