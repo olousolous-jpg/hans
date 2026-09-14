@@ -812,6 +812,12 @@ def is_source_query(text: str) -> bool:
         r"\bm[ůu][žz]e[šs]\s+(to\s+)?dolo[žz]it",
         r"\bjak\s+v[íi][šs]\s*,?\s*[žz]e",
         r"\bm[áa][šs]\s+(na\s+to\s+)?(n[ěe]jak[ýy]\s+)?(zdroj|odkaz|pramen)",
+        # HANS_SOURCE_BARE_ODKUD_V1 (14. 9.) — holé „odkud VÍŠ/VÍTE/MÁTE" bez „to".
+        # 4. 9. odloženo s poznámkou „měřit zvlášť". Změřeno na 1 179 reálných
+        # větách: přidá PŘESNĚ 3 zásahy, všechny doložené chyby z 13. 9. —
+        # 2× „odkud vis o F. L. Vekovi?" (→ falešné „nemám záznam") a „odkud vis,
+        # ze tu nekdo je?" (→ „to nesdělím"). „odkud máš/jsi" už kryje vzor výš.
+        r"\bodkud\s+(v[íi][šs]|v[íi]te|m[áa]te)\b",
     )
     return any(re.search(p, t) for p in pats)
 
@@ -1045,6 +1051,20 @@ def sensor_source_answer(db_path: str, user_text: str,
         _o_pritomnosti = bool(
             find_known_person(user_text or "", _cfg)
             and _pritomnost.search(user_text or ""))
+        # HANS_SOURCE_BARE_ODKUD_V1 (14. 9.) — přítomnost BEZ JMÉNA: „že tu někdo
+        # je", „že tu jsem", „že nikdo není doma". Podmětem je neurčitá osoba
+        # nebo tazatel sám, takže `find_known_person` nic nenajde a dotaz
+        # propadl na výpis četby — doloženo 13. 9.: „a odkud to vis, ze tu jsem?"
+        # → „Četl jsem tohle: Pán prstenů…". Zdrojem je i tady kamera.
+        # Změřeno na 1 179 větách: sedne jen na 2 doložené; „že Jana ráda vaří"
+        # (bez slova o přítomnosti) dál NE.
+        if not _o_pritomnosti and _re.search(
+                r"\b[žz]e\s+(tu|tady|doma|v\s+pokoji)\s+(n[ěe]kdo|nikdo|jsem|jsme|nejsem|nejsme)\b"
+                r"|\b[žz]e\s+(n[ěe]kdo|nikdo)\s+(tu|tady|doma|v\s+pokoji)\b"
+                r"|\b[žz]e\s+(jsem|jsme|nejsem|nejsme)\s+(tu|tady|doma|v\s+pokoji)\b"
+                r"|\b(n[ěe]kdo|nikdo)\s+(je|nen[íi])\s+(tu|tady|doma|v\s+pokoji)\b",
+                user_text or "", _re.IGNORECASE):
+            _o_pritomnosti = True
         # Holé doptání („a odkud to víš?") jméno NEOBSAHUJE — předmětem je
         # POSLEDNÍ Hansova replika. Když ta hlásila, koho vidí, je zdrojem
         # kamera. Funkce si poslední repliky stejně tahá (fallback níž),
