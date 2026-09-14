@@ -151,35 +151,73 @@ def sloz(config: dict, zadani: str, titul: str = "") -> Optional[str]:
 
 
 def html_blok(abc: str, popis: str = "") -> str:
-    """ABC → HTML blok s vykreslenými notami + přehráním (abcjs, lokálně)."""
+    """ABC → HTML blok s vykreslenými notami + přehráním (abcjs, lokálně).
+
+    Stránka musí načíst `abcjs.js` — vloží ho `pridej_abcjs` (maker to dělá
+    sám). HANS_MUSIC_PLAY_V1 (14. 9.): přehrání opravdu hraje a chyby ukáže.
+    """
     import html as _h
     if not abc:
         return ""
     # ⚠️ abcjs 6 vystavuje globalni objekt ABCJS — `renderAbc` samo o sobe
-    # NEEXISTUJE. Prehrani je v try/catch: synth potrebuje AudioContext
-    # a gesto uzivatele, a kdyz selze, nesmi to shodit vykresleni not.
+    # NEEXISTUJE. Vykresleni i prehrani jsou v try: kdyz selze zvuk,
+    # nesmi to shodit noty, a kdyz chybi knihovna, rekne to stranka.
+    # ⚠️ `options` v init() je POVINNE: bez nej prime() spadne na
+    # options.swing. Zmereno 14. 9. v Chromiu — tlacitko do te doby nehralo
+    # nikde, protoze chyba sla jen do console.log.
     _id = "abc%d" % (abs(hash(abc)) % 100000)
-    return (
+    tpl = (
         '<figure class="hudebni-priklad">\n'
-        '<figcaption>Hansův notový příklad%s</figcaption>\n'
-        '<div id="%s" class="abc-noty"></div>\n'
-        '<button class="abc-play" onclick="prehraj_%s()">▶ přehrát</button>\n'
-        '<details><summary>zápis v ABC notaci</summary><pre>%s</pre></details>\n'
+        '<figcaption>Hansův notový příklad@@POPIS@@</figcaption>\n'
+        '<div id="@@ID@@" class="abc-noty"></div>\n'
+        '<button class="abc-play" id="btn_@@ID@@" onclick="prehraj_@@ID@@()">▶ přehrát</button>\n'
+        '<span class="abc-stav" id="stav_@@ID@@"></span>\n'
+        '<details><summary>zápis v ABC notaci</summary><pre>@@ABCTXT@@</pre></details>\n'
         '<script>\n'
-        'var vs_%s = ABCJS.renderAbc("%s", %s, {responsive:"resize"});\n'
-        'function prehraj_%s(){ try {\n'
-        '  if (!ABCJS.synth.supportsAudio()) { alert("Prohlížeč neumí přehrát zvuk."); return; }\n'
-        '  var ac = new (window.AudioContext || window.webkitAudioContext)();\n'
-        '  var s = new ABCJS.synth.CreateSynth();\n'
-        '  s.init({audioContext: ac, visualObj: vs_%s[0]})\n'
-        '   .then(function(){ return s.prime(); })\n'
-        '   .then(function(){ s.start(); });\n'
-        '} catch(e) { console.log("abc audio:", e); } }\n'
+        'var vs_@@ID@@ = null, syn_@@ID@@ = null;\n'
+        'try { vs_@@ID@@ = ABCJS.renderAbc("@@ID@@", @@ABCJS@@, {responsive:"resize"}); }\n'
+        'catch(e) { document.getElementById("stav_@@ID@@").textContent = "Noty se nenačetly (chybí abcjs.js)."; }\n'
+        'function prehraj_@@ID@@(){\n'
+        '  var b = document.getElementById("btn_@@ID@@"), st = document.getElementById("stav_@@ID@@");\n'
+        '  function chyba(e){ syn_@@ID@@ = null; b.textContent = "▶ přehrát";\n'
+        '    st.textContent = "Přehrání selhalo: " + ((e && (e.message || e.status)) || e); }\n'
+        '  try {\n'
+        '    if (syn_@@ID@@) { syn_@@ID@@.stop(); syn_@@ID@@ = null; b.textContent = "▶ přehrát"; st.textContent = ""; return; }\n'
+        '    if (!vs_@@ID@@) { chyba("noty nejsou vykreslené"); return; }\n'
+        '    if (!ABCJS.synth.supportsAudio()) { chyba("prohlížeč neumí přehrát zvuk"); return; }\n'
+        '    var ac = new (window.AudioContext || window.webkitAudioContext)();\n'
+        '    var s = new ABCJS.synth.CreateSynth();\n'
+        '    st.textContent = "načítám zvuky…";\n'
+        '    s.init({audioContext: ac, visualObj: vs_@@ID@@[0], options: {}})\n'
+        '     .then(function(){ return s.prime(); })\n'
+        '     .then(function(r){ syn_@@ID@@ = s; s.start(); b.textContent = "■ zastavit"; st.textContent = "";\n'
+        '       setTimeout(function(){ if (syn_@@ID@@ === s) { syn_@@ID@@ = null; b.textContent = "▶ přehrát"; } },\n'
+        '                  ((r && r.duration) || 0) * 1000 + 500); })\n'
+        '     .catch(chyba);\n'
+        '  } catch(e) { chyba(e); } }\n'
         '</script>\n'
         '</figure>'
-        % ((" — " + _h.escape(popis)) if popis else "", _id, _id,
-           _h.escape(abc), _id, _id, _js_string(abc), _id, _id)
     )
+    return (tpl.replace("@@POPIS@@", (" — " + _h.escape(popis)) if popis else "")
+               .replace("@@ABCTXT@@", _h.escape(abc))
+               .replace("@@ABCJS@@", _js_string(abc))
+               .replace("@@ID@@", _id))
+
+
+ABCJS_TAG = '<script src="abcjs.js"></script>'
+
+
+def pridej_abcjs(html: str) -> str:
+    """HANS_MUSIC_PLAY_V1 — stránka s notovým blokem načte abcjs.js (jednou).
+
+    Bez toho `ABCJS` neexistuje → noty se nevykreslí a ▶ nehraje. Dřív
+    maker knihovnu jen zkopíroval k dílu a značku čekal od kodéru.
+    """
+    if not html or "abc-noty" not in html or 'src="abcjs.js"' in html:
+        return html
+    if "</head>" in html:
+        return html.replace("</head>", ABCJS_TAG + "\n</head>", 1)
+    return ABCJS_TAG + "\n" + html
 
 
 def _js_string(s: str) -> str:

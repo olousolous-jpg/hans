@@ -261,7 +261,9 @@ def _render_music(config: dict, pages: dict, dest_dir) -> int:
                 _log.debug("maker music '%s': %s", kap[:30], _e)
             # lambda: ABC obsahuje \u escapy, re.sub by je bral jako escape
             html = html.replace(_MUSIC_MARKER % kap, blok)
-        pages[jmeno] = html
+        # HANS_MUSIC_PLAY_V1 — bez <script src> stránka abcjs nenačte:
+        # automatické dílo hudba/v1 (14. 9.) mělo 12 stránek bez not
+        pages[jmeno] = _hm.pridej_abcjs(html)
     if celkem and hotovo < celkem:
         _log.warning("maker: notové příklady JEN %d/%d — zbytek bez not "
                      "(mozek dole nebo model vrátil prózu)", hotovo, celkem)
