@@ -141,7 +141,9 @@ def search_library_ex(query: str, limit: int = 12,
             "sizes": sizes,
             "sizes_b": [_param_to_b(s) for s in sizes],
             "pulls": pm.group(1) if pm else "?",
-            "capabilities": [c.strip() for c in caps],
+            # HANS_TOOLSCOUT_REJECTED_V1 (14. 9.) — karta opakuje stitky u kazde
+            # velikosti, v DB pak lezelo `vision,tools,thinking,vision,...` 8x.
+            "capabilities": list(dict.fromkeys(c.strip() for c in caps)),
             "desc": _d[:300],
             "url": _MODEL_URL % name,
         })
@@ -380,6 +382,22 @@ class ToolStore:
         except Exception:
             return False
 
+    def rejected_names(self, topic: str) -> set:
+        """HANS_TOOLSCOUT_REJECTED_V1 (14. 9.) — nastroje, ktere uzivatel pro
+        tema UZ ZAMITL. `has_for_topic` rejected zamerne nepocita (Hans smi
+        nabidnout JINY), jenze vyber je nevyradil — 14. 9. prisel znovu tentyz
+        `nemotron3`, zamitnuty 9. 9."""
+        try:
+            c = self._conn()
+            r = c.execute(
+                "SELECT DISTINCT tool_name FROM tool_proposals WHERE topic=? "
+                "AND status='rejected' AND COALESCE(tool_name,'')<>''",
+                (topic,)).fetchall()
+            c.close()
+            return {x[0] for x in r}
+        except Exception:
+            return set()
+
     def add(self, topic: str, cand: dict, rationale: str) -> int:
         c = self._conn()
         cur = c.execute(
@@ -394,7 +412,7 @@ class ToolStore:
         c.close()
         return pid
 
-    def mark_none(self, topic: str, keyword: str) -> int:
+    def mark_none(self, topic: str, keyword: str, note: str = "") -> int:
         """HANS_TOOLSCOUT_NO_MATCH_V1 — zapiš, že pro téma nic vhodného není.
 
         ⛔ ZÁMĚRNĚ se neukládá žádný „náhradní" nástroj — vymyšlený návrh by
@@ -408,6 +426,7 @@ class ToolStore:
             "est_gb, fit, pulls, capabilities, rationale, url, status) VALUES "
             "(?,?,'','',0,'','','',?,'','none')",
             (time.time(), topic,
+             note or  # HANS_TOOLSCOUT_REJECTED_V1 — poctivy duvod, kdyz neni obecny
              "Hledal jsem v knihovně modelů pod klíčem „%s“ a nic vhodného "
              "jsem nenašel. Pro tohle téma nástroj nenavrhuji." % keyword))
         c.commit()
@@ -519,6 +538,21 @@ def propose_tool(config: dict, db_path: str, topic: str,
         return {"status": "none",
                 "reason": "pod „%s“ jsou jen obecné modely, nic pro tuhle "
                           "doménu" % kw}
+    # HANS_TOOLSCOUT_REJECTED_V1 (14. 9.) — co uzivatel pro tema zamitl, znovu
+    # nenavrhuj. Nezbude-li nic, je to uzavreny vysledek jako u filtru vys.
+    _zamitnute = store.rejected_names(topic)
+    if _zamitnute:
+        _pred = len(cands)
+        cands = [c for c in cands if c["name"] not in _zamitnute]
+        if _pred != len(cands):
+            _log.info("toolscout: %d kandidatu vynechano (uz zamitnuto pro '%s')",
+                      _pred - len(cands), topic)
+        if not cands:
+            store.mark_none(topic, kw, note=(
+                "Všechno vhodné pod klíčem „%s“ jsi už zamítl. Pro tohle "
+                "téma další nástroj nenavrhuji." % kw))
+            return {"status": "none",
+                    "reason": "vše vhodné pod „%s“ už bylo zamítnuto" % kw}
     cands.sort(key=lambda c: (-_pull_num(c), 0 if c["fit"] == "coexist" else 1))
     props = []
     for cand in cands[:max_props]:
