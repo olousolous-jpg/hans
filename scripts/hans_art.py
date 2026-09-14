@@ -2770,6 +2770,15 @@ def _last_dream_painting_ts(db_path: str) -> float:
     return 0.0
 
 
+def _sablony_snu() -> set:
+    """HANS_DREAM_DEFER_V1 — doslovne sablony snu (historicke zaznamy je nesou)."""
+    try:
+        from scripts.hans_routine import _DREAM_SEEDS
+        return {s.strip() for s in _DREAM_SEEDS}
+    except Exception:
+        return set()
+
+
 def _recent_unpainted_dream(db_path: str, days: int = 4) -> Optional[dict]:
     """Nejnovější sen (deník event_type='dream') za posledních `days` dní, který
     Hans ještě nenamaloval (jeho ts není v žádném artwork.data.dream_ts)."""
@@ -2793,6 +2802,11 @@ def _recent_unpainted_dream(db_path: str, days: int = 4) -> Optional[dict]:
             "ORDER BY ts DESC LIMIT 12", (cutoff,)).fetchall()
         con.close()
         for ts, text in rows:
+            # HANS_DREAM_DEFER_V1 (14. 9.) — sablonu z `_DREAM_SEEDS` nemaluj:
+            # neni to sen, ale nahradni veta z doby, kdy byl mozek dole
+            # (12. 9. se tak namaloval „Sen" z doslovne sablony).
+            if text and text.strip() in _sablony_snu():
+                continue
             if int(ts) not in painted and text and len(text.strip()) > 15:
                 return {"ts": float(ts), "text": text.strip()}
     except Exception as e:

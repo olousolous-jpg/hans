@@ -562,6 +562,7 @@ class HansRoutine:
             self._last_facts_date = s.get("last_facts_date", "")      # HANS_FACTS_NIGHTLY_V1
             self._last_pc_shutdown_date = s.get("last_pc_shutdown_date", "")  # HANS_PC_NIGHT_SHUTDOWN
             self._last_analytics_wake_date = s.get("last_analytics_wake_date", "")  # HANS_PC_NIGHT_ANALYTICS_WAKE
+            self._last_dream_date = s.get("last_dream_date", "")  # HANS_DREAM_DEFER_V1 — restart nepřidá sen
             # HANS_SLEEP_TS_PERSIST_V1 — restart v noci nesmí zkrátit ranní scan
             self._sleep_started_ts = s.get("sleep_started_ts") or None
         except FileNotFoundError:
@@ -595,6 +596,7 @@ class HansRoutine:
                     "last_facts_date": self._last_facts_date,      # HANS_FACTS_NIGHTLY_V1
                     "last_pc_shutdown_date": self._last_pc_shutdown_date,  # HANS_PC_NIGHT_SHUTDOWN
                     "last_analytics_wake_date": self._last_analytics_wake_date,  # HANS_PC_NIGHT_ANALYTICS_WAKE
+                    "last_dream_date": self._last_dream_date,  # HANS_DREAM_DEFER_V1
                     # HANS_SLEEP_TS_PERSIST_V1 — okno noci musí přežít restart
                     "sleep_started_ts": self._sleep_started_ts,
                 }, f)
@@ -1942,9 +1944,23 @@ class HansRoutine:
             if self._night_summary_enabled and self._last_summary_date != today:
                 self._last_summary_date = today
                 self._write_night_summary()
-            if self._night_dream_enabled and self._last_dream_date != today:
-                self._last_dream_date = today
-                self._write_dream()
+            # HANS_DREAM_DEFER_V1 (14. 9.) — JEDEN sen za NOC a jen SKUTECNY.
+            # Driv klic = kalendarni den: sen ve 22:0x a znovu po pulnoci, kdy uz
+            # je PC vypnute → misto snu doslovna sablona z `_DREAM_SEEDS`.
+            # Zmereno: od 7. 9. je sablona 7 z 8 pulnocnich snu a `paint_dream`
+            # ji namaloval jako skutecny sen. Klic je ted datum NOCI (cas − 6 h:
+            # 22:00 i 00:30 patri k tetaz noci) a razitko se zapise AZ PO uspechu,
+            # takze pri vypadku mozku se sen zkusi znovu (nejvys 1× za 15 min) —
+            # v praxi pri rannim WOL ve 3:00. Za 30 noci mel Hans mozek ve 22:00
+            # pokazde, zadna noc tedy o sen neprijde.
+            _noc = (datetime.now() - timedelta(hours=6)).strftime("%Y-%m-%d")
+            if (self._night_dream_enabled and self._last_dream_date != _noc
+                    and time.time() >= getattr(self, "_dream_next_try", 0.0)):
+                if self._write_dream():
+                    self._last_dream_date = _noc
+                    self._save_routine_state()
+                else:
+                    self._dream_next_try = time.time() + 900
 
             # Reflexe vztahových karet — 1× denně v nočním okně.
             # Spouští se po 22:30, ať to nepadne přesně se začátkem
@@ -2825,10 +2841,16 @@ class HansRoutine:
 
     def _write_dream(self):
         """DREAM_LLM_V1 — Hans 'sní' surreální sen GROUNDOVANÝ v dnešních zážitcích
-        (LLM, vysoká teplota → varieta). Fallback na seed když LLM/data selžou
-        (deferral-safe). Běží nočně 1×/den → hans-czech rezidentní (keep_alive def)."""
-        import random
+        (LLM, vysoká teplota → varieta). Běží nočně 1× za noc.
+
+        HANS_DREAM_DEFER_V1 (14. 9.) — Vraci True, kdyz sen vznikl. Pri vypadku
+        mozku, chybe LLM nebo prazdnem vystupu vrati False a NIC nezapise:
+        sablona z `_DREAM_SEEDS` by v deniku lhala, ze se Hansovi neco zdalo
+        ([[ollama-deferred-processing]] — vypadek LLM nesmi vyrobit nahradni data)."""
         dream = None
+        if not self._brain_up():
+            _log.debug("sen: mozek nedostupný — odloženo")
+            return False
         try:
             frags = self._dream_fragments()
             if frags:
@@ -2856,11 +2878,13 @@ class HansRoutine:
                 if out and len(out) > 15:
                     dream = out
         except Exception as e:
-            _log.warning("LLM sen selhal, fallback seed: %s", e)
+            _log.warning("LLM sen selhal, sen odložen: %s", e)
         if not dream:
-            dream = random.choice(_DREAM_SEEDS)
+            _log.info("sen: nevznikl (bez útržků nebo prázdná odpověď) — odloženo")
+            return False
         self._diary_write("dream", "Sen", dream)
         _log.info("Hans sní: %s", dream[:80])
+        return True
 
     # ── DB helper ────────────────────────────────────────────────────────────
 
