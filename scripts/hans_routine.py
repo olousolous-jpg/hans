@@ -2815,14 +2815,30 @@ class HansRoutine:
         bits = []
         try:
             db = _sql.connect(self._diary_path)
-            rows = db.execute(
-                "SELECT title, COALESCE(NULLIF(note,''), data) FROM diary "
-                "WHERE ts>=? "
-                "AND event_type IN ('movie_opinion','web_read','reading_takeaway',"
-                "'human_chat','case_opened','case_closed','room_description',"
-                "'introspection') "
-                "AND (title<>'' OR note<>'' OR data<>'') "
-                "ORDER BY RANDOM() LIMIT 6", (since,)).fetchall()
+            # HANS_DREAM_DAY_MIX_V1 (14. 9.) — sen ma vychazet z CELEHO dne:
+            # cetba, rozhovory, filmy, Hansova PRACE (obrazy, studium, psani)
+            # i Kolac. Driv jeden nahodny vyber ze 8 typu bez prace — a v tom
+            # by prehlusily caste zaznamy (7 dni: teddy_dialog 350, introspekce
+            # 319 × study_note 10, writing_section 4). Proto PO JEDNOM z kazde
+            # kategorie, ktera za 24 h neco ma (pokyn uzivatele 14. 9.).
+            _KATEGORIE = (
+                ("web_read", "reading_takeaway", "book_read", "book_reflection"),
+                ("human_chat", "chat_reflection"),
+                ("movie_opinion", "kodi_playing"),
+                ("artwork", "study_note", "writing_section", "art_lesson"),
+                ("teddy_dialog", "dialog_reflection", "case_opened", "case_closed"),
+                ("introspection", "room_description"),
+            )
+            rows = []
+            for _typy in _KATEGORIE:
+                _r = db.execute(
+                    "SELECT title, COALESCE(NULLIF(note,''), data) FROM diary "
+                    "WHERE ts>=? AND event_type IN (%s) "
+                    "AND (title<>'' OR note<>'' OR data<>'') "
+                    "ORDER BY RANDOM() LIMIT 1" % ",".join("?" * len(_typy)),
+                    (since, *_typy)).fetchone()
+                if _r:
+                    rows.append(_r)
             bk = db.execute(
                 "SELECT book_title, author FROM hans_library WHERE status='reading' "
                 "ORDER BY started_at DESC LIMIT 1").fetchone()
