@@ -1831,6 +1831,29 @@ class HansRoutine:
             # PC vzhůru? (rychlý ping — když dole, není co vypínat; guard NEnastavuj)
             if not self._pc_up():
                 return
+            # HANS_SHUTDOWN_WAIT_WORK_V1 (14. 9.) — i noční vypnutí čeká, až
+            # Hans dodělá práci, a to OPAKOVANĚ po sobě (klid ve chvíli kontroly
+            # bývá mezera mezi úlohami). Doloženo 14. 9.: PC vypnuto 04:06:21,
+            # toolscout 04:07:24 už na vypnutém stroji. Jedna pravda o „pracuje"
+            # s povelem uživatele: `pc_deferred_shutdown.pc_busy`.
+            _need = int(c.get("idle_checks", 3))
+            try:
+                from scripts.pc_deferred_shutdown import pc_busy as _pc_busy
+                _busy, _why = _pc_busy(self.config)
+            except Exception as _be:
+                _busy, _why = True, "stav nezjištěn (%s)" % _be
+            if _busy:
+                if (getattr(self, "_night_idle_hits", 0)
+                        or getattr(self, "_night_busy_logged", "") != today):
+                    self._night_busy_logged = today
+                    _log.info("PC night shutdown: čekám, až dodělám práci — %s",
+                              _why)
+                self._night_idle_hits = 0
+                return
+            self._night_idle_hits = getattr(self, "_night_idle_hits", 0) + 1
+            if self._night_idle_hits < _need:
+                return
+            self._night_idle_hits = 0
             # HANS_ART_NIGHT_RENDER_V1 — poslední spolehlivé PC-up okno v noci:
             # dorenderuj pending art PŘED vypnutím (jinak 3 noci sucho).
             try:

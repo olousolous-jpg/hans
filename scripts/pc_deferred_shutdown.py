@@ -31,12 +31,23 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import os
 import time
 
 log = logging.getLogger("pc_defer")
 
 STATE = "data/.pc_shutdown_pending"
+
+# HANS_SHUTDOWN_WAIT_WORK_V1 (14. 9.) — rozhodnutí uživatele: povel „vypni pc"
+# se neptá, Hans dodělá rozpracované a počítač vypne TIŠE. Jedno potvrzení
+# a jeden vzor zrušení pro všechny cesty (agent, /vypnipc, Matrix).
+ACK = ("Dobře, počítač vypnu, až dodělá rozpracovanou práci. Když ho mám "
+       "nechat běžet, napište „nevypínej“.")
+# Vzor převzat z bridge_commands (PC_SHUTDOWN_TYPO_TOLERANT_V1), teď sdílený.
+CANCEL_RE = re.compile(
+    r"nev[iy]p[íi]?n|zru[šs]\s+vyp|nech\s+(ho\s+)?(po[čc][íi]ta[čc]\s+)?"
+    r"b[ěe][žz]|nev[iy]pnout", re.IGNORECASE)
 
 
 # ── stav ─────────────────────────────────────────────────────────────────
@@ -139,6 +150,17 @@ def pc_busy(config: dict) -> tuple[bool, str]:
     except Exception:
         pass
 
+    # 2b) HANS_SHUTDOWN_WAIT_WORK_V1 — base-model dávka (studium, Severka,
+    #     immune) drží slot i v MEZERÁCH mezi voláními, kdy příkon spadne na klid
+    #     a telemetrie by práci minula.
+    try:
+        from scripts.ollama_client import base_slot_busy, base_slot_label
+        if base_slot_busy():
+            return True, ("ještě dokončuji noční práci (%s)"
+                          % (base_slot_label() or "dávka"))
+    except Exception:
+        pass
+
     # 3) TELEMETRIE PC (nevím ≠ klid → raději počkej)
     try:
         g, w, l, err = _sample()
@@ -218,6 +240,19 @@ def tick(handler) -> str | None:
                 "něčím zaměstnávat a nechtěl jsem ho vypnout jen tak. "
                 "Řekněte, až mám znovu." % max_wait_h)
 
+    # HANS_SHUTDOWN_WAIT_WORK_V1 — PC už neodpovídá (vypnuté ručně nebo nočním
+    # vypnutím) → záměr je splněný. Bez toho by `pc_busy` hlásil „neodpovídá"
+    # jako práci a po čtyřech hodinách by přišla zpráva, že vypnout nešlo.
+    # Chyba směrem k „nechat běžet" je ta bezpečná.
+    try:
+        from scripts.chat_commands import _pc_ping
+        if not _pc_ping(cfg):
+            cancel()
+            log.info("odložené vypnutí: PC už neodpovídá — záměr splněn")
+            return None
+    except Exception:
+        pass
+
     busy, why = pc_busy(cfg)
     if busy:
         if int(st.get("idle_hits", 0)):
@@ -237,4 +272,6 @@ def tick(handler) -> str | None:
         log.warning("odložené vypnutí selhalo: %s", e)
         return "Chtěl jsem počítač vypnout, ale nepovedlo se to, pane."
     log.info("odložené vypnutí PC provedeno")
-    return "Počítač dokončil, co měl rozpracované — vypnul jsem ho, pane."
+    # HANS_SHUTDOWN_WAIT_WORK_V1 — TIŠE: žádná zpráva (rozhodnutí uživatele).
+    # Záznam do deníku píše sám `_cmd_vypnipc`.
+    return None

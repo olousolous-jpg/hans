@@ -4130,6 +4130,27 @@ def _cmd_vypnipc(handler, name, args) -> str:
             "Možná se vypíná pomalu — nebo se něco vzpírá.")
 
 
+def _cmd_vypnipc_slash(handler, name, args) -> str:
+    """HANS_SHUTDOWN_WAIT_WORK_V1 (14. 9.) — `/vypnipc` počká, až PC dodělá
+    rozpracované, a vypne ho tiše; `/vypnipc hned` vypne okamžitě.
+    `_cmd_vypnipc` zůstává vykonavatelem OKAMŽITÉHO vypnutí — volá ho
+    i `pc_deferred_shutdown.tick`, až nastane klid."""
+    if "hned" in (args or "").lower():
+        return _cmd_vypnipc(handler, name, args)
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts import pc_remote
+        if not pc_remote.enabled(cfg):
+            return _cmd_vypnipc(handler, name, args)   # táž hláška o zákazu
+    except Exception:
+        return "Na počítač teď nedosáhnu."
+    if not _pc_ping(cfg):
+        return "Počítač je už teď vypnutý (neodpovídá). Nic nedělám."
+    from scripts.pc_deferred_shutdown import request, ACK
+    request(person=name or "", note="/vypnipc")
+    return ACK
+
+
 register(
     "vypnipc",
     slash_aliases=["vypnipc", "vypnipc", "shutdown", "pcoff", "vypnout"],
@@ -4139,8 +4160,8 @@ register(
     # okamžitý (výslovný povel = výslovný záměr). Ztráta při mozku dole = žádná
     # (PC dole ⇒ není co vypínat), slash funguje vždy.
     nl_patterns=[],
-    handler=_cmd_vypnipc,
-    help_text="Vypnu počítač (PC) — protějšek /wol",
+    handler=_cmd_vypnipc_slash,
+    help_text="Vypnu počítač, až dodělá práci (/vypnipc hned = okamžitě)",
 )
 
 

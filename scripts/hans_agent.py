@@ -1569,6 +1569,16 @@ class AgentRouter:
                            message: str) -> Optional[str]:
         """Má osoba čekající návrh a odpovídá ano/ne? → proveď/zruš, vrať text.
         Jinak None (žádný pending / nejednoznačné → nechá projít do chatu)."""
+        # HANS_SHUTDOWN_WAIT_WORK_V1 — „nevypínej" zruší čekající odklad i ve
+        # web chatu (Matrix to umí od PC_SHUTDOWN_DEFER_MATRIX_V1). Povel bez
+        # potvrzení musí mít zpáteční cestu.
+        try:
+            from scripts.pc_deferred_shutdown import CANCEL_RE, pending, cancel
+            if CANCEL_RE.search(message or "") and pending():
+                cancel()
+                return "Dobře, počítač nechám běžet."
+        except Exception as _ce:
+            log.debug("zrušení odkladu vypnutí: %s", _ce)
         pend = self._pending.get(name)
         if not pend:
             return None
@@ -2119,10 +2129,23 @@ class AgentRouter:
             # rozhodnutí padlo už dřív (HANS_SHUTDOWN_CONTEXT_V1); teď platí
             # obecně. Model si `propose_text` dál vrací (schéma se nemění),
             # jen se na potvrzovací cestě nepoužije.
+            # HANS_SHUTDOWN_WAIT_WORK_V1 (14. 9.) — „vypni pc" se NEPTÁ: uloží
+            # odklad, Hans dodělá rozpracované a PC vypne tiše
+            # (`pc_deferred_shutdown.tick`). Akce ZŮSTÁVÁ `needs_confirm=True`
+            # záměrně — jinak by na ni přestala platit pravidla `jen_confirm`.
             if action.id == "pc_shutdown":
-                text = _shutdown_confirm_text(handler)
-            else:
-                text = self._default_text(action, args).strip()
+                try:
+                    from scripts.pc_deferred_shutdown import (request as _defer,
+                                                              ACK as _ack)
+                    _defer(person=name or "", note=(message or "")[:120])
+                except Exception as _de:
+                    log.warning("odložené vypnutí neuloženo: %s", _de)
+                    return "Odložit vypnutí počítače se mi teď nepovedlo."
+                self._last_fire[h] = time.time()
+                self._log(handler, prop, "deferred")
+                log.info("agent: %s → odklad vypnutí pro %s", aid, name)
+                return _ack
+            text = self._default_text(action, args).strip()
             if not text.endswith(("?",)):
                 text += " Mám to udělat?"
             prop.text = text

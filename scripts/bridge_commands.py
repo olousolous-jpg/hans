@@ -97,7 +97,7 @@ def handle(text: str, ctx: BridgeCtx) -> bool:
         if intent == "wol":
             _cmd_wol(ctx); return True
         if intent == "pcoff":
-            _request_pcoff(ctx); return True
+            _defer_pcoff(ctx); return True
     return False
 
 
@@ -115,7 +115,12 @@ def handle_command(text: str, ctx: BridgeCtx) -> bool:
     if cmd in ("wol", "probudit", "wakeup", "probud", "probuď"):
         _cmd_wol(ctx); return True
     if cmd in ("vypnipc", "shutdown", "pcoff", "vypnout"):
-        _cmd_pcoff(ctx); return True
+        # HANS_SHUTDOWN_WAIT_WORK_V1 — bez „hned" počká na dokončení práce.
+        if "hned" in (text or "").lower():
+            _cmd_pcoff(ctx)
+        else:
+            _defer_pcoff(ctx)
+        return True
     if cmd in ("herni", "herní", "hra", "game", "hrani", "hraní"):
         _cmd_game(ctx, text); return True
     if _route_inspect_command(text, cmd, ctx):
@@ -438,9 +443,8 @@ def _wol_verify(ip: str, ctx: BridgeCtx):
 
 
 # PC_SHUTDOWN_TYPO_TOLERANT_V1 — tolerance překlepů i pro zrušení odkladu.
-_CANCEL_PCOFF_RE = re.compile(
-    r"nev[iy]p[íi]?n|zru[šs]\s+vyp|nech\s+(ho\s+)?(po[čc][íi]ta[čc]\s+)?"
-    r"b[ěe][žz]|nev[iy]pnout", re.IGNORECASE)
+# HANS_SHUTDOWN_WAIT_WORK_V1 — vzor žije v pc_deferred_shutdown (sdílí ho web chat).
+from scripts.pc_deferred_shutdown import CANCEL_RE as _CANCEL_PCOFF_RE
 
 
 def _cancel_pcoff_defer(text: str, ctx: BridgeCtx) -> bool:
@@ -458,31 +462,18 @@ def _cancel_pcoff_defer(text: str, ctx: BridgeCtx) -> bool:
     return False
 
 
-def _request_pcoff(ctx: BridgeCtx):
-    """PC_SHUTDOWN_DEFER_MATRIX_V1 — „vypni pc" přes Matrix: když PC PRACUJE,
-    rovnou ODLOŽ (Hans dotáhne sám přes pc_deferred_shutdown.tick á 60 s) místo
-    dřívějšího dvoukrokového ptaní, které umělo jen ano/ne a „počkej" zahazovalo.
-    Když je KLID, vypni hned. Sdílí pc_busy + request s agentní cestou = jedna
-    pravda. Běží v threadu — pc_busy jde přes SSH a nesmí blokovat chat."""
-    def _work():
-        try:
-            from scripts.pc_deferred_shutdown import pc_busy, request as _defer
-            busy, why = pc_busy(ctx.config)
-        except Exception:
-            busy, why = False, ""
-        if busy:
-            try:
-                _defer(person=ctx.person or "", note="")
-            except Exception as e:
-                ctx.send("Chtěl jsem vypnutí odložit, ale nepovedlo se to, "
-                         "pane: %s" % e)
-                return
-            ctx.send("Ještě něco dopočítávám, pane — %s. Vypnu ho, jakmile bude "
-                     "mít klid; dám vědět. (napište \u201enevypínej\u201c pro "
-                     "zrušení)" % why)
-        else:
-            _cmd_pcoff(ctx)
-    threading.Thread(target=_work, daemon=True).start()
+def _defer_pcoff(ctx: BridgeCtx):
+    """HANS_SHUTDOWN_WAIT_WORK_V1 (14. 9.) — „vypni pc" i `/vypnipc` přes Matrix
+    VŽDY odloží: Hans dodělá rozpracované a PC vypne tiše přes
+    `pc_deferred_shutdown.tick`. Nahrazuje `_request_pcoff`
+    (PC_SHUTDOWN_DEFER_MATRIX_V1), který při klidu vypínal hned — klid ve chvíli
+    povelu bývá jen mezera mezi úlohami (doloženo nocí 14. 9.)."""
+    try:
+        from scripts.pc_deferred_shutdown import request as _defer, ACK
+        _defer(person=ctx.person or "", note="matrix")
+        ctx.send(ACK)
+    except Exception as e:
+        ctx.send("Odložit vypnutí počítače se mi nepovedlo: %s" % e)
 
 
 def resolve_pending_pcoff(text: str, ctx: BridgeCtx) -> bool:
