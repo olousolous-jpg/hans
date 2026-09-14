@@ -233,8 +233,14 @@ def _route_inspect_command(text: str, cmd: str, ctx: BridgeCtx) -> bool:
 
 
 # ── NL intenty ───────────────────────────────────────────────────────────────
+# HANS_BRIDGE_ASK_ASCII_V1 (14. 9.) — dva tvary byly JEN s diakritikou
+# (`máš…obraz`, `nějak`), takze „mas nejaky novy obraz?“ neprosel, zatimco
+# „máš nějaký nový obraz?“ ano. Uzivatel pise z vetsiny bez hacku. Doplneny
+# JEN ASCII varianty tychz tvaru (zadne nove slovo) — `_ASK` se ZUZOVAT nesmi
+# (HANS_ART_EXPLAIN_NOT_REQUEST_V1). Zmereno na 2 248 vetach web chatu
+# a 32 z Matrixu: 0 zmen zameru.
 _ASK = r"(pošl|posl|ukaž|ukaz|zobraz|poslat|uvid|vidět|videt|mrkn|dej|chci|" \
-       r"můžeš|muzes|máš.*\bobraz|nějak)"
+       r"můžeš|muzes|máš.*\bobraz|mas.*\bobraz|nějak|nejak)"
 
 
 # HANS_ART_EXPLAIN_NOT_REQUEST_V1 (12. 9.) — veta, ktera VYSVETLUJE, neni zadost.
