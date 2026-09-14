@@ -694,7 +694,12 @@ class OpenWebUIDirectHandler:
                             '\u201e%s\u201c — NENI to moje cetba te knihy/filmu]' % _n)
                 return '[Z mých zápisků — %s]' % _n
             blk = '\n\n'.join(
-                '%s\n%s' % (_label(t, s), (x or '')[:700])
+                # HANS_NOTE_FULL_LENGTH_V1 (14. 9.) — 700 → 1800. Limit vznikl
+                # 6. 8. bez zdůvodnění; hans-czech má num_ctx 16384 a system
+                # prompt medián ~2 000 zn. Ořez usekl KAŽDOU studijní poznámku
+                # (75/75, 796–1712 zn) a mistrovskou reflexi (14/14, do 1761)
+                # zhruba v půlce — model i pojistka viděli jen úvod.
+                '%s\n%s' % (_label(t, s), (x or '')[:1800])
                 for _ts, s, _p, t, x in hits)
             logging.getLogger(__name__).info(
                 'HANS_KNOWLEDGE_FTS_V1: %d zápisků → grounding '
@@ -752,6 +757,67 @@ class OpenWebUIDirectHandler:
         return (len(_holy.split()) <= 8
                 and bool(self._KNIHA_NAVAZ_PAT.search(_holy))
                 and not self._KNIHA_JINA_PAT.search(_holy))
+
+    def _citace_ze_zapisku(self, podklad: str, dotaz: str):
+        """HANS_GUARD_QUOTE_NOTE_V1/V2 — věta z VLASTNÍHO zápisku, která obsahuje
+        VŠECHNO, na co se otázka ptá, nebo None.
+
+        V2 (14. 9.): V1 vážila slova součtem a s CELOU poznámkou (1800 zn)
+        vyhrála věta „uspořádání hradu mezi dvěma věžemi" místo „na dvou
+        skalních věžích – Panna a Baba" — rozhodla slova „hrad" a „Trosky",
+        která jsou v celé poznámce. V2 proto:
+          • vyřadí slova z TITULKU zápisku (o čem zápisek je, to nerozlišuje),
+          • chce POKRYTÍ: věta musí mít všechna zbylá slova otázky; při shodě
+            vyhraje DŘÍVĚJŠÍ věta (poznámka má klíčová fakta na začátku),
+          • když po vyřazení nezbude nic („co víš o hradu Kost?"), necituje.
+        Češtině odpovídá porovnání bez diakritiky a se společným začátkem
+        (≥ 3 znaky, ≥ 60 % kratšího slova): „věže" = „věžích".
+        Jen bloky „[Z mých zápisků — …]" (glosa k TV pořadu se necituje).
+        Změřeno 14. 9.: věže → Panna a Baba; nesouvisející zápisek → nic;
+        obecný dotaz → nic; dvojí otázka („…a kdo je postavil?") → nic.
+        """
+        try:
+            import unicodedata as _ud
+            _fold = lambda s: "".join(c for c in _ud.normalize("NFKD", (s or "").lower())
+                                      if not _ud.combining(c))
+            _nevyznam = {"proc", "jake", "jaky", "jaka", "jak", "co", "je", "ma",
+                         "mate", "mas", "znamo", "informace", "vite", "vis",
+                         "dozvedel", "prave", "vlastne", "duvodem", "existence",
+                         "ktery", "ktera", "nejvice", "zaujal", "muzete", "rict",
+                         "rekni", "rici", "neco", "tom", "nich", "nej",
+                         # číslovky — „dvě" z otázky jinak nesedne na „dvou"
+                         "dva", "dve", "dvou", "tri", "ctyri", "jeden", "jedna"}
+            _slova = lambda s: [w for w in re.findall(r"[a-z0-9]+", _fold(s))
+                                if len(w) >= 3 and w not in _nevyznam]
+
+            def _shoda(x, y):
+                k = 0
+                while k < min(len(x), len(y)) and x[k] == y[k]:
+                    k += 1
+                return k >= 3 and k >= 0.6 * min(len(x), len(y))
+
+            tituly = re.findall(r"\[Z mých zápisků — ([^\]]*)\]\n", podklad or "")
+            bloky = re.split(r"\[Z mých zápisků — [^\]]*\]\n", podklad or "")[1:]
+            _tw = [w for ti in tituly for w in _slova(ti)]
+            Q = [q for q in dict.fromkeys(_slova(dotaz))
+                 if not any(_shoda(q, w) for w in _tw)]
+            if not Q:
+                return None
+            nej, pokryti = None, 0.0
+            for bl in bloky:
+                for v in re.split(r"(?<=[.!?])\s+", bl.split("\n\n")[0].strip()):
+                    v = v.strip()
+                    if not (25 <= len(v) <= 400):
+                        continue
+                    s = _slova(v)
+                    c = sum(1 for q in Q if any(_shoda(q, w) for w in s)) / len(Q)
+                    if c > pokryti:
+                        nej, pokryti = v, c
+            prah = float((self.config.get("grounding_guard", {}) or {})
+                         .get("citace_min", 0.99))
+            return nej if (nej and pokryti >= prah) else None
+        except Exception:
+            return None
 
     def _agent_oslov(self, text, name):
         """HANS_AGENT_ADDRESSEE_V1 (14. 9.) — odpověď AGENTNÍ vrstvy šla uživateli
@@ -4583,8 +4649,26 @@ class OpenWebUIDirectHandler:
                         # `grounded`), takže Hans k přiznání nedošel.
                         # HANS_LOOKUP_HAD_NOTES_V1 — sem se jde od ZÁPISKŮ,
                         # které nestačily; „nic jsem neměl" by byla nepravda.
-                        _dohl = self._dohledej_kotvu(_raw_message, name,
-                                                     mel_zapisky=True)
+                        # HANS_GUARD_QUOTE_NOTE_V1 (14. 9.) — napřed CITACE
+                        # z vlastního zápisku, když věta na otázku sedí.
+                        # Doloženo 14. 9.: na „proč má Trosky dvě věže?" měl
+                        # Hans ve studijní poznámce „na dvou skalních věžích –
+                        # Panna a Baba", model přesto vymyslel „Ptačí…", guard
+                        # to správně zahodil a dohledané heslo o věžích mlčelo.
+                        # Citace je doslovná → nic se nedomýšlí; když žádná věta
+                        # nepřekročí práh, platí dohledání jako dosud.
+                        _cit = self._citace_ze_zapisku(
+                            _facts, getattr(self, '_f1_query', None) or _raw_message)
+                        if _cit:
+                            logging.getLogger(__name__).info(
+                                'HANS_GUARD_QUOTE_NOTE_V1: odpovídám citací ze '
+                                'zápisku místo dohledání (%.60s)', _cit)
+                            _dohl = ("Ve svých zápiscích k tomu mám tohle: "
+                                     "\u201e%s\u201c Víc podrobností tam nemám "
+                                     "a nerad bych si domýšlel." % _cit)
+                        else:
+                            _dohl = self._dohledej_kotvu(_raw_message, name,
+                                                         mel_zapisky=True)
                         _dohledano = True
                         response = _dohl or _clean
                     elif _dropped:
