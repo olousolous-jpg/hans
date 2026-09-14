@@ -97,6 +97,21 @@ class RoomObserver:
             with open(img_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
+            # HANS_GPU_BUSY_SHARED_V2 (14. 9.) — pri renderu obrazu nebo nocni
+            # davce na base modelu USTUP. Popis mistnosti si vyhodi chat model
+            # a nahraje vision (~14,7 GB), coz renderu sebere pamet: 11. 9. stal
+            # pohled do mistnosti 29 s pred padem ComfyUI (`HIP out of memory`).
+            # Tataz brana jako dialog/synteza/health (HANS_GPU_BUSY_SHARED_V1).
+            # Fail-safe: pri chybe False = popis probehne jako dosud.
+            try:
+                from scripts.ollama_client import gpu_busy, gpu_busy_label
+                if gpu_busy():
+                    _log.info("room: ustupuji (%s) — popis mistnosti "
+                              "preskocen do dalsiho intervalu",
+                              gpu_busy_label() or "?")
+                    return
+            except Exception:
+                pass
             # Posli na vision model (qwen2.5vl) — VRAM dance
             # ROOM_OBSERVER_VRAM_UNLOAD_V1: qwen-VL ~14.7G se nevejde vedle rezidentního
             # hans-czech (10.8G) → odlož chat → popiš → nahřej chat zpět (jako hodnocení obrazů).

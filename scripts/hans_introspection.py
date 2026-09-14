@@ -105,6 +105,18 @@ class HansIntrospection:
         from scripts.ollama_client import brain_available
         if not brain_available(self.config):
             return
+        # HANS_GPU_BUSY_SHARED_V2 (14. 9.) — vnitrni monolog nikomu neodpovida,
+        # takze pri renderu obrazu nebo nocni davce na base modelu pocka.
+        # Jeho volani hans-czech se jinak vklini do okna renderu (11. 9.: 3 ze
+        # 45 rusivych volani). Tataz brana jako dialog (HANS_GPU_BUSY_SHARED_V1);
+        # log jen DEBUG — introspekce bezi casto a ustoupeni neni udalost.
+        try:
+            from scripts.ollama_client import gpu_busy, gpu_busy_label
+            if gpu_busy():
+                _log.debug("introspekce: ustupuji (%s)", gpu_busy_label() or "?")
+                return
+        except Exception:
+            pass
         with self._lock:
             pass  # jen jeden najednou — lock jen pro log
 
