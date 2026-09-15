@@ -742,6 +742,12 @@ class OpenWebUIDirectHandler:
         r"film|seri[aá]l|hudb|p[ií]s[eň]|p[ií]sn|obraz|maluj|hr[aá]t|hru\b|"
         r"recept|j[ií]dl", re.IGNORECASE)
 
+    # HANS_BOOK_FOLLOWUP_DATIVE_V1 (15. 9.) — "A kdybych dal prednost necemu
+    # ceskemu, co byste doporucil?" (9 slov, 3. pad). Obecny strop 8 slov ZUSTAVA:
+    # zvednuti na 10 by pridalo 7 falesnych sepnuti na 837 vetach. Jen tvar
+    # "ceskemu" ma vlastni strop 12 — v korpusu 0 shod.
+    _KNIHA_CESKEMU_PAT = re.compile(r"[c\u010d]esk[e\u00e9]mu\b", re.IGNORECASE)
+
     def _kniha_navazuje(self, text: str, klic: str, ted: float) -> bool:
         """HANS_BOOK_RECOMMEND_FOLLOWUP_V1 — navazuje veta na doporuceni
         cetby, ktere TEZ osobe padlo pred chvili?"""
@@ -754,9 +760,10 @@ class OpenWebUIDirectHandler:
             return False
         # rozresena veta z vlakna nese priveseny predmet — slova pocitej bez nej
         _holy = re.sub(r"\s*\(k t[eé]matu:.*\)\s*$", "", text or "")
-        return (len(_holy.split()) <= 8
-                and bool(self._KNIHA_NAVAZ_PAT.search(_holy))
-                and not self._KNIHA_JINA_PAT.search(_holy))
+        _slov = len(_holy.split())
+        return (((_slov <= 8 and bool(self._KNIHA_NAVAZ_PAT.search(_holy)))
+                 or (_slov <= 12 and bool(self._KNIHA_CESKEMU_PAT.search(_holy))))
+                and not self._KNIHA_JINA_PAT.search(_holy))   # HANS_BOOK_FOLLOWUP_DATIVE_V1
 
     def _citace_ze_zapisku(self, podklad: str, dotaz: str):
         """HANS_GUARD_QUOTE_NOTE_V1/V2 — věta z VLASTNÍHO zápisku, která obsahuje
@@ -894,6 +901,58 @@ class OpenWebUIDirectHandler:
                   "neni. Rekni, proc prave tu. Kdyz se nic nehodi, PRIZNEJ, ze jsi zatim "
                   "nic vhodneho necetl. Slepit tema z jednoho zdroje se jmenem z jineho "
                   "je VYMYSL — 13. 9. tak vznikly tri neexistujici knihy.")
+
+    # HANS_ARTWORK_CONTENT_GROUNDED_V1 (15. 9.) — dotaz na OBSAH obrazu.
+    # Doloženo 15. 9.: "co bylo na tom obraze" → Hans popsal "dva muze u okna",
+    # ktere na obraze nejsou. Kazde dilo ma v deniku `vision` (popis hotoveho
+    # obrazu) i `prompt` — do chatu se ale nedostavaly vubec.
+    # Korpus 837 realnych vet: 0 takovych dotazu, takze se nic stavajiciho nemeni.
+    _OBRAZ_OBSAH_PAT = re.compile(
+        r"na\s+(?:tom|t[\u00e9e]m|posledn[\u00edi]m|tv[\u00e9e]m|va[\u0161s]em|sv[\u00e9e]m|nov[\u00e9e]m)\s+obraz"
+        r"|co\s+(?:je|bylo|zobrazuje|zachycuje)\b[^?.!]{0,25}\bobraz"
+        r"|popi[\u0161s]\w*\b[^?.!]{0,15}\bobraz"
+        r"|obraz\w*\b[^?.!]{0,15}\b(?:zobrazuje|zachycuje|je\s+vid[\u011be]t)",
+        re.IGNORECASE)
+
+    def _obraz_fact(self, text: str) -> str:
+        """Popis posledniho obrazu z deniku, nebo '' (Hans se chova jako dosud)."""
+        if not text or not self._OBRAZ_OBSAH_PAT.search(self._bez_tazatele(text)):
+            return ''
+        try:
+            import sqlite3 as _s3
+            import json as _js_o
+            _db = ((self.config.get("paths", {}) or {}).get("diary_db")
+                   or self.config.get("diary_db") or "data/hans_diary.db")
+            _c = _s3.connect(_db)
+            _r = _c.execute(
+                "SELECT ts, title, data FROM diary WHERE event_type='artwork' "
+                "ORDER BY ts DESC LIMIT 1").fetchone()
+            _c.close()
+        except Exception:
+            return ''
+        if not _r:
+            return ''
+        try:
+            _d = _js_o.loads(_r[2] or "{}") or {}
+        except Exception:
+            _d = {}
+        _vis = str(_d.get("vision") or "").strip()[:900]
+        _pr = str(_d.get("prompt") or "").strip()[:400]
+        if not (_vis or _pr):
+            return ''
+        try:
+            from scripts.hans_recall import _cz_when
+            _kdy = _cz_when(_r[0])
+        except Exception:
+            _kdy = ""
+        return ("\n\nOBRAZ, NA KTERY SE PTA — tvuj posledni obraz \u201e%s\u201c%s:\n"
+                "CO JE NA HOTOVEM OBRAZE (popis, anglicky): %s\n"
+                "ZADANI, PODLE KTEREHO VZNIKL (anglicky): %s\n\n"
+                "POPIS OBRAZ JEN Z TOHO, co je tu napsane, CESKY a vlastnimi slovy. "
+                "NEPRIDAVEJ postavy, predmety ani barvy, ktere tu nejsou. Kdyz se "
+                "popis a zadani lisi, plati POPIS HOTOVEHO OBRAZU."
+                % (_r[1] or "", (" (%s)" % _kdy) if _kdy else "",
+                   _vis or "(nemam)", _pr or "(nemam)"))
 
     def _kodi_cast_fact(self, text: str) -> str:
         """Obsazení (a režie) toho, o čem je řeč — deterministicky z Kodi.
@@ -1091,6 +1150,7 @@ class OpenWebUIDirectHandler:
         anti-konfab prompt + fakta. Volná zpráva / nic nenalezeno → ''.
         Defenzivní: cokoliv chybí/selže → '' (grounding se tiše přeskočí).
         """
+        self._tazatel_ted = name or ""   # HANS_ENTITY_NOT_ASKER_V1
         # user může být tuple (system,user) nebo string — vytáhni text
         _text = user
         if isinstance(user, tuple) and len(user) == 2:
@@ -1321,6 +1381,16 @@ class OpenWebUIDirectHandler:
                 logging.getLogger(__name__), "_build_grounding(knihovna)",
                 "_build_grounding: blok knihovny selhal: %s", _tiche)
 
+        try:   # HANS_ARTWORK_CONTENT_GROUNDED_V1
+            _ob = self._obraz_fact(str(_text))
+            if _ob:
+                self._vysledek_groundingu('grounded', 'obraz')
+                return _ob
+        except Exception as _tiche:
+            log_once(
+                logging.getLogger(__name__), "_build_grounding(obraz)",
+                "_build_grounding: blok obrazu selhal: %s", _tiche)
+
         try:
             # 1) intent — je dotaz faktický?
             res = _intent.classify(str(_text))
@@ -1376,6 +1446,19 @@ class OpenWebUIDirectHandler:
                         except Exception as _rse:
                             logging.getLogger(__name__).debug(
                                 'self_state runtime: %s', _rse)
+                        # HANS_SELF_STATE_ASKER_VISIBLE_V1 (15. 9.) — "vidite me na
+                        # kamere?" od cloveka v chatu: Hans rekl "vidim vas", ackoli
+                        # o tah driv "nikoho tu nevidim". Blok o sobe nerikal, kdo
+                        # pred kamerou stoji. Jen pri otazce na videni.
+                        try:
+                            if self._VIDIS_ME_PAT.search(str(_text)):
+                                _hi_pr = getattr(self, "_hans_idle", None)
+                                _pritomni = [str(x).strip().lower() for x in
+                                             (getattr(_hi_pr, "_present_names", None) or [])]
+                                _rt_state["asker_visible"] = bool(
+                                    name and str(name).strip().lower() in _pritomni)
+                        except Exception:
+                            pass
                         _ss = self_state_facts(_dbp_ss, mood=_mo, mood_reason=_mr,
                                                runtime=_rt_state or None)
                         if _ss:
@@ -1826,6 +1909,44 @@ class OpenWebUIDirectHandler:
     # osoby u „kdo jsem?") — proto se strhava az tady, ne u zdroje.
     _ASKER_PFX = re.compile(r"^\s*\S+\s+se\s+pt[áa]:\s*")
 
+    _VIDIS_ME_PAT = re.compile(   # HANS_SELF_STATE_ASKER_VISIBLE_V1
+        r"vid[\u00edi](?:\u0161|s|te)\s+m[\u011be]|kamer|z[\u00e1a]b[\u011be]r|"
+        r"pozoruje(?:\u0161|s|te)\s+m", re.IGNORECASE)
+
+    def _entita_je_tazatel(self, ent) -> bool:
+        """HANS_ENTITY_NOT_ASKER_V1 (15. 9.) — je entita JMENO TAZATELE?
+
+        HANS_ENTITY_STRIP_ASKER_V1 umaze jen uvod "X se pta:". F1 prepis ale
+        jmeno presune DOVNITR vety ("Co <Jmeno> mysli tim na tom obraze?")
+        a C1 pak jako entitu vybral tazatele → model z ni vymyslel obsah
+        obrazu (doloženo 15. 9.). Porovnava se CELE jmeno entity, takze
+        entita "Jmeno Prijmeni" se shodnym krestnim jmenem zustava.
+        """
+        try:
+            import unicodedata as _ud
+            _f = lambda s: "".join(
+                c for c in _ud.normalize("NFKD", str(s or "").strip().lower())
+                if not _ud.combining(c))
+            _kdo = getattr(self, "_tazatel_ted", "") or ""
+            _jm = _f((ent or {}).get("name"))
+            if not _kdo or not _jm:
+                return False
+            _formy = {_f(_kdo)}
+            try:
+                from scripts.cz_names import display_name
+                _formy.add(_f(display_name(_kdo, self.config)))
+            except Exception:
+                pass
+            if _jm in _formy:
+                logging.getLogger(__name__).info(
+                    "HANS_ENTITY_NOT_ASKER_V1: entita %r je jméno tazatele — "
+                    "nepoužiji", (ent or {}).get("name"))
+                return True
+        except Exception:
+            pass
+        return False
+
+
     def _bez_tazatele(self, text) -> str:
         return self._ASKER_PFX.sub("", str(text or ""))
 
@@ -1838,7 +1959,7 @@ class OpenWebUIDirectHandler:
             if _es is None:
                 return ''
             _ent = _es.resolve(self._bez_tazatele(text))
-            if not _ent:
+            if not _ent or self._entita_je_tazatel(_ent):   # HANS_ENTITY_NOT_ASKER_V1
                 return ''
             return _es._facts_line(_ent.get('id'))
         except Exception:
@@ -1854,7 +1975,7 @@ class OpenWebUIDirectHandler:
             if _es is None:
                 return ''
             _ent = _es.resolve(self._bez_tazatele(text))   # HANS_ENTITY_STRIP_ASKER_V1
-            if not _ent:
+            if not _ent or self._entita_je_tazatel(_ent):   # HANS_ENTITY_NOT_ASKER_V1
                 return ''
             logging.getLogger(__name__).info(
                 'C1: entita resolvována z dotazu → %r (ev=%s)',

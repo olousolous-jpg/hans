@@ -534,3 +534,50 @@ def osloveni_jednou(text: str) -> str:
     se ptala test persona `zkouška` (osloveni jen jednou za odpoved)."""
     from scripts.cz_names import fix_addressee
     return fix_addressee(text, "zkouška", _cfg())[0]
+
+
+def thread_guard_po(cid: str, veta: str, predchozi: str) -> str:
+    """HANS_KALENDAR_NOT_ELLIPSIS_V1 — `_thread_guard` s vlaknem, ve kterem
+    Hans naposledy odpovedel `predchozi`."""
+    from scripts.chat_commands import _thread_guard
+    return _thread_guard(cid, veta, _cfg(), turns=[("user", "x"), ("assistant", predchozi)])
+
+
+def dilo_odpoved_zacina(dotaz: str, zacatek: str) -> bool:
+    """HANS_WORK_RECALL_IN_ARTWORK_V1 — zacina odpoved /obrazy na `zacatek`?
+    Cte ostry denik (dila i obrazy tam jsou trvale)."""
+    from scripts.hans_recall import artwork_answer
+    return artwork_answer("data/hans_diary.db", dotaz).startswith(zacatek)
+
+
+def _handler_bez_initu():
+    from scripts.openwebui_direct_handler import OpenWebUIDirectHandler
+    h = OpenWebUIDirectHandler.__new__(OpenWebUIDirectHandler)
+    h.config = _cfg()
+    return h
+
+
+def entita_je_tazatel(tazatel: str, jmeno_entity: str) -> bool:
+    """HANS_ENTITY_NOT_ASKER_V1."""
+    h = _handler_bez_initu()
+    h._tazatel_ted = tazatel
+    return h._entita_je_tazatel({"name": jmeno_entity})
+
+
+def obraz_fakt_je(veta: str) -> bool:
+    """HANS_ARTWORK_CONTENT_GROUNDED_V1 — dostane veta blok s popisem obrazu?"""
+    return bool(_handler_bez_initu()._obraz_fact(veta))
+
+
+def kniha_navazuje(veta: str) -> bool:
+    """HANS_BOOK_FOLLOWUP_DATIVE_V1 — navazuje veta chvili po doporuceni?"""
+    import time as _t
+    h = _handler_bez_initu()
+    h._kniha_posledni = {"x": _t.time()}
+    return h._kniha_navazuje(veta, "x", _t.time())
+
+
+def self_state_vidi(videt) -> bool:
+    """HANS_SELF_STATE_ASKER_VISIBLE_V1 — rika blok o sobe, ze tazatele nevidi?"""
+    from scripts.hans_recall import self_state_facts
+    return "nevid\u00edm" in self_state_facts("data/hans_diary.db", runtime={"asker_visible": videt})

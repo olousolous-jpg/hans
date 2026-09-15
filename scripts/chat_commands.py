@@ -2033,6 +2033,29 @@ _ZAJMY_NA_HANSE = re.compile(
     re.IGNORECASE)
 
 
+# HANS_ZAJMY_ASKER_ONLY_V1 (15. 9.) — /zajmy chodi JEN pres LLM router
+# (nl_patterns=[]) a router si ho vzal i bez slova o zajmech ("proc zrovna
+# fotbal") a na vetu o HANSOVI ve 2. osobe ("Co vas na studiu fotbalu nejvic
+# bavi a proc?"). Hans pak tazateli odpovedel, ze o JEHO zajmech nic nevi.
+_ZAJEM_SLOVO = re.compile(
+    r"z[\u00e1a]j(?:em|my|m[\u016fu]|mu|m[e\u011b]|[\u00edi]m)|zaj[\u00edi]m|"
+    r"kon[\u00edi][\u010dc]|bav[\u00edi]|bavil|hobb|\br[\u00e1a]d[aoy]?\b|obl[\u00edi]b",
+    re.IGNORECASE)
+_DRUHA_OSOBA = re.compile(
+    r"\b(?:t[\u011be]|tob[\u011be]|ti|tv[\u016fu]j|tvoje|tvoji|tv[\u00e1a]|tv[\u00e9e]|"
+    r"v[\u00e1a]s|v[\u00e1a]m|va[\u0161s]e|va[\u0161s]i|va[\u0161s]eho|v[\u00e1a][\u0161s])\b",
+    re.IGNORECASE)
+# HANS_KALENDAR_NOT_ELLIPSIS_V1 (15. 9.) — kratka elipsa po predpovedi pocasi.
+_ELIPSA_KRATKA = re.compile(r"^\s*a\s+(?:\S+\s*){1,3}\??\s*$", re.IGNORECASE)
+_KALENDAR_SLOVO = re.compile(
+    r"kalend|napl[\u00e1a]n|ud[\u00e1a]lost|sch[\u016fu]z|term[\u00edi]n|program",
+    re.IGNORECASE)
+_POCASI_REPLIKA = re.compile(
+    r"\u00b0C|p[\u0159r]edpov[\u011be]|po[\u010dc]as[\u00edi]|p[\u0159r]eh[\u00e1a][\u0148n]k|"
+    r"sr[\u00e1a][\u017ez]k|d[e\u011b][\u0161s]t|sn[\u011be][\u017ez]",
+    re.IGNORECASE)
+
+
 def _hansovy_konicky(db: str) -> str:
     """HANS_ZAJMY_O_HANSOVI_V1 (13. 9.) — Hansovy VLASTNI konicky z `hobbies`.
 
@@ -5284,6 +5307,35 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
     #       a vetsina je LEGITIMNI (uvodni pozdrav vyrobi carku).
     # Oba predikaty niz jsou SDILENE (`hans_intent`) a zmerene na realnych
     # zpravach: `vytcene_tema` 6 shod z 1298, `je_fakt_o_mluvcim` 4 z 1294.
+    # HANS_ZAJMY_ASKER_ONLY_V1 — zmereno 15. 9. na 837 realnych vetach: slovo
+    # zajmu + 2. osoba ma 7 vet; pravidlo by z /zajmy vyradilo 6 a vsech 6 se pta
+    # na Hanse nebo na hovor. Jedina ponechana ("co je vlastne tvuj hlavni zajem?")
+    # projde pojistkou _ZAJMY_NA_HANSE a handler vypise Hansovy konicky.
+    if cid == "zajmy":
+        if not _ZAJEM_SLOVO.search(msg or ""):
+            _log.info("HANS_ZAJMY_ASKER_ONLY_V1: '%.40s' → /zajmy ZAMÍTNUTO "
+                      "(v dotazu nezaznělo nic o zájmech)", msg)
+            return ""
+        if (_DRUHA_OSOBA.search(msg or "")
+                and not _ZAJMY_NA_HANSE.search(msg or "")):
+            _log.info("HANS_ZAJMY_ASKER_ONLY_V1: '%.40s' → /zajmy ZAMÍTNUTO "
+                      "(ptá se na Hanse, ne na zájmy osoby)", msg)
+            return ""
+    # HANS_KALENDAR_NOT_ELLIPSIS_V1 (15. 9.) — "a o vikendu?" po predpovedi
+    # pocasi router poslal na /kalendar. Elipsa dedi predmet z PREDCHOZI repliky.
+    # Realne kalendarni vety (9 z 837) maji vyslovne slovo a chodi pres regexy.
+    if (cid == "kalendar" and turns
+            and _ELIPSA_KRATKA.match(msg or "")
+            and not _KALENDAR_SLOVO.search(msg or "")):
+        try:
+            from scripts.hans_thread import last_assistant_text
+            _pred = last_assistant_text(turns) or ""
+        except Exception:
+            _pred = ""
+        if _POCASI_REPLIKA.search(_pred):
+            _log.info("HANS_KALENDAR_NOT_ELLIPSIS_V1: '%.40s' → /kalendar "
+                      "ZAMÍTNUTO (navazuje na předpověď počasí)", msg)
+            return ""
     if cid == "zajmy":
         try:
             from scripts.hans_intent import vytcene_tema, je_fakt_o_mluvcim

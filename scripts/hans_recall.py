@@ -1853,6 +1853,41 @@ def artwork_answer(db_path: str, question: str = "", limit: int = 5) -> str:
         conn = _ro(db_path)
         q = (question or "").lower()
         dnes = "dnes" in q or "dneska" in q
+        # HANS_WORK_RECALL_IN_ARTWORK_V1 (15. 9.) — "vytvoril jste k tomu dilo?"
+        # sedne na vzor /obrazy (_ART_MINULE zna "vytvoril"), jenze DILO neni
+        # obraz: `work_artifact` (stranka k dostudovanemu tematu) sem nechodil.
+        # Doloženo 15. 9.: na dotaz na dilo k hudbe Hans ukazal obraz a pak
+        # tvrdil, ze skladby nevytvoril, ackoli "Dilo: hudba" existuje.
+        # Rozhoduje slovo v dotazu: dilo/skladba/web bez slova o malovani.
+        if (re.search(r"\bd[\u00edi]l(?:o|a|u|e|em)\b|skladb|\bweb|str[\u00e1a]nk", q)
+                and not re.search(r"obraz|malov|namal|kresl", q)):
+            import json as _json_d
+            _temata = []
+            for _ts, _tit, _dat in conn.execute(
+                    "SELECT ts, title, data FROM diary WHERE event_type='work_artifact' "
+                    "ORDER BY ts DESC LIMIT 40").fetchall():
+                try:
+                    _tp = (_json_d.loads(_dat or "{}") or {}).get("topic") or ""
+                except Exception:
+                    _tp = ""
+                _tp = _tp or re.sub(r"^D\u00edlo:\s*", "", _tit or "")
+                if _tp and _tp.lower() not in [x[1].lower() for x in _temata]:
+                    _temata.append((_ts, _tp))
+                if len(_temata) >= 3:
+                    break
+            if _temata:
+                _out = ("Naposledy jsem vytvo\u0159il d\u00edlo k t\u00e9matu \u201e%s\u201c (%s) \u2014 "
+                        "webovou str\u00e1nku, kterou sestav\u00edm, kdy\u017e t\u00e9ma dostuduji."
+                        % (_temata[0][1], _cz_when(_temata[0][0])))
+                if len(_temata) > 1:
+                    _out += " P\u0159edt\u00edm k t\u00e9mat\u016fm: %s." % ", ".join(
+                        "\u201e%s\u201c" % _t for _, _t in _temata[1:])
+                _obr = conn.execute(
+                    "SELECT title FROM diary WHERE event_type='artwork' "
+                    "ORDER BY ts DESC LIMIT 1").fetchone()
+                if _obr and _obr[0]:
+                    _out += " Obrazy maluji zvl\u00e1\u0161\u0165 \u2014 naposledy \u201e%s\u201c." % _obr[0]
+                return _out
         if dnes:
             midnight = datetime.now().replace(
                 hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -2567,6 +2602,13 @@ def self_state_facts(db_path: str, max_items: int = 6,
         if runtime.get("vision") is not None:
             _st.append("kamerou vidím" if runtime["vision"]
                        else "kameru mám vypnutou")
+        # HANS_SELF_STATE_ASKER_VISIBLE_V1 (15. 9.) — plni handler JEN u otazky
+        # na videni; stala zminka by byla semenko (HANS_SELF_STATE_NO_OFF_MODES_V1).
+        if runtime.get("asker_visible") is True:
+            _st.append("toho, kdo se m\u011b te\u010f pt\u00e1, vid\u00edm p\u0159ed kamerou")
+        elif runtime.get("asker_visible") is False:
+            _st.append("toho, kdo se m\u011b te\u010f pt\u00e1, p\u0159ed kamerou nevid\u00edm "
+                       "\u2014 mluv\u00edme spolu jen p\u0159es zpr\u00e1vy")
         # HANS_SELF_STATE_NO_OFF_MODES_V1 (20.8.) — VYPNUTÝ hlídací režim se
         # NEZMIŇUJE. Doloženo 20.8.: na „co jsi dělal v noci?" Hans odpověděl
         # „byl jsem v režimu hlídání domu", ačkoli tenhle blok měl v promptu
