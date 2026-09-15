@@ -124,6 +124,45 @@ class WeatherCHMU:
             _log.error("Tomorrow forecast error: %s", e)
             return ""
 
+    def get_days_string(self, dates) -> str:
+        """HANS_WEATHER_DAYS_V1 (15. 9.) — predpoved na KONKRETNI dny (do tydne).
+
+        Doloženo 15. 9.: "a o vikendu?" po predpovedi na zitrek vratilo AKTUALNI
+        pocasi — `get_tomorrow_string` umel jen zitrek. Open-Meteo da `daily`
+        az na 16 dni; bere se 8 (dnesek + tyden). Den mimo rozsah se vynecha,
+        nic se nedopocitava. Prazdny retezec = volajici to prizna.
+        """
+        _dny = ["Pondělí", "Úterý", "Středa", "Čtvrtek",
+                "Pátek", "Sobota", "Neděle"]
+        try:
+            url = (
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={self._lat}&longitude={self._lon}"
+                f"&daily=temperature_2m_max,temperature_2m_min,weathercode"
+                f"&timezone=Europe/Prague&forecast_days=8"
+            )
+            daily = (requests.get(url, timeout=10).json() or {}).get("daily", {}) or {}
+            poradi = {d: i for i, d in enumerate(daily.get("time") or [])}
+            codes = daily.get("weathercode") or []
+            tmins = daily.get("temperature_2m_min") or []
+            tmaxs = daily.get("temperature_2m_max") or []
+            casti = []
+            for d in dates:
+                i = poradi.get(d.strftime("%Y-%m-%d"))
+                if i is None:
+                    continue
+                desc = _WMO.get(codes[i] if i < len(codes) else 0, "proměnlivě")
+                cast = "%s (%s): %s" % (_dny[d.weekday()], d.strftime("%d.%m."), desc)
+                tmin = tmins[i] if i < len(tmins) else None
+                tmax = tmaxs[i] if i < len(tmaxs) else None
+                if tmin is not None and tmax is not None:
+                    cast += " %.0f–%.0f°C" % (tmin, tmax)
+                casti.append(cast)
+            return ("; ".join(casti) + ".") if casti else ""
+        except Exception as e:
+            _log.error("Days forecast error: %s", e)
+            return ""
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

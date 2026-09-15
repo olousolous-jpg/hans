@@ -581,3 +581,16 @@ def self_state_vidi(videt) -> bool:
     """HANS_SELF_STATE_ASKER_VISIBLE_V1 — rika blok o sobe, ze tazatele nevidi?"""
     from scripts.hans_recall import self_state_facts
     return "nevid\u00edm" in self_state_facts("data/hans_diary.db", runtime={"asker_visible": videt})
+
+
+def dny_pocasi(veta: str) -> str:
+    """HANS_WEATHER_DAYS_V1 — dny z vety pri pevnem dnesku (utery 15. 9. 2026)."""
+    from datetime import datetime
+    from scripts.hans_agent import _dny_z_vety
+    return ",".join(d.isoformat() for d in _dny_z_vety(veta, datetime(2026, 9, 15, 10, 0)))
+
+
+def proc_tema(veta: str) -> str:
+    """HANS_STUDY_WHY_TOPIC_V1 — tema studia z "proc zrovna X" (cte ostry denik)."""
+    from scripts.chat_commands import _puvod_tema_z_proc
+    return _puvod_tema_z_proc(veta, "data/hans_diary.db")

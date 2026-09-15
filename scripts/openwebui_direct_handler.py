@@ -954,6 +954,43 @@ class OpenWebUIDirectHandler:
                 % (_r[1] or "", (" (%s)" % _kdy) if _kdy else "",
                    _vis or "(nemam)", _pr or "(nemam)"))
 
+    def _puvod_studia_fact(self, text: str) -> str:
+        """HANS_STUDY_WHY_TOPIC_V1 — "proc zrovna X", kdyz X je tema studia.
+        Prazdne = Hans se chova jako dosud."""
+        try:
+            from scripts.chat_commands import _puvod_tema_z_proc, _studium_puvod
+        except Exception:
+            return ''
+        _holy = re.sub(r"\s*\(k t[eé]matu:.*\)\s*$", "", self._bez_tazatele(text or ""))
+        _db = ((self.config.get("paths", {}) or {}).get("diary_db")
+               or self.config.get("diary_db") or "data/hans_diary.db")
+        _tema = _puvod_tema_z_proc(_holy, _db)
+        if not _tema:
+            return ''
+        _puvod = re.sub(r",?\s*pane\b", "", _studium_puvod(None, _db, _tema) or "")
+        _stav = ""
+        try:
+            import sqlite3 as _s3
+            import json as _js_s
+            _c = _s3.connect(_db)
+            _r = _c.execute("SELECT status, current_index, curriculum FROM study_program "
+                            "WHERE topic=? ORDER BY id DESC LIMIT 1", (_tema,)).fetchone()
+            _c.close()
+            if _r:
+                _n = len(_js_s.loads(_r[2] or "[]") or [])
+                _stav = ("program „%s“: %s, pod-téma %d z %d"
+                         % (_tema, "právě ho studuji" if _r[0] == "active"
+                            else "mám ho dostudovaný", min(int(_r[1] or 0) + 1, _n or 1), _n))
+        except Exception:
+            _stav = ""
+        logging.getLogger(__name__).info(
+            "HANS_STUDY_WHY_TOPIC_V1: '%.40s' → původ tématu '%s'", _holy, _tema)
+        return ("\n\nPROC STUDUJES TEMA „%s“ — fakta z tveho deniku:\n- %s%s\n\n"
+                "ODPOVEZ JEN Z TECHTO FAKT, cesky, 2-3 vetami: ze tohle tema OPRAVDU "
+                "studujes a jak jsi k nemu prisel. Studium NEZAPIREJ a duvod, ktery "
+                "tu neni, si NEVYMYSLEJ."
+                % (_tema, _puvod, ("\n- " + _stav) if _stav else ""))
+
     def _kodi_cast_fact(self, text: str) -> str:
         """Obsazení (a režie) toho, o čem je řeč — deterministicky z Kodi.
 
@@ -1371,6 +1408,16 @@ class OpenWebUIDirectHandler:
         # (HANS_SELF_STATE_V1) vratil driv a knihovna se nikdy nedostala ke slovu.
         # Doloženo 13. 9. zive: prvni umisteni (vedle `_kodi_cast_fact`) NEZABRALO
         # — v logu `GROUNDING: self_state ← self_state`. [[verify-it-actually-flows]]
+        try:   # HANS_STUDY_WHY_TOPIC_V1
+            _pu = self._puvod_studia_fact(str(_text))
+            if _pu:
+                self._vysledek_groundingu('grounded', 'studium_puvod')
+                return _pu
+        except Exception as _tiche:
+            log_once(
+                logging.getLogger(__name__), "_build_grounding(studium_puvod)",
+                "_build_grounding: blok původu studia selhal: %s", _tiche)
+
         try:
             _kn = self._knihovna_fact(str(_text), name)  # HANS_BOOK_RECOMMEND_FOLLOWUP_V1
             if _kn:

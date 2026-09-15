@@ -2248,6 +2248,48 @@ _ORIGIN_PAT = re.compile(
     r"(t[ée]ma|n[áa]m[ěe]t|zad[áa]n[íi])\b", re.IGNORECASE)
 
 
+# HANS_STUDY_WHY_TOPIC_V1 (15. 9.) — "proc zrovna fotbal" na HANSOVO studium.
+# Doloženo 15. 9.: po "studuji historii fotbalu" se tazatel zeptal "proc zrovna
+# fotbal" a Hans odpovedel "Fotbal nebyl tema meho studia" — vyrok si vymyslel
+# na ceste bez faktu (factual_nofacts). `_studium_puvod` pritom deterministicky
+# vi, kdo tema vybral. Rozhoduje, zda text ZA "proc zrovna" je tema studijniho
+# programu v DB; samotne "proc zrovna" nestaci (korpus 837 vet: 4x, vsechny
+# o svete — rok 2021, po roce 1968, tohle, ono — a zadna tema nesedne).
+_PROC_TEMA_PAT = re.compile(
+    r"\bpro[čc]\s+(?:zrovna|pr[áa]v[ěe]|studuje(?:š|s|te)|"
+    r"ses\s+rozhodl\w*\s+pro|jste\s+se\s+rozhodl\w*\s+pro|sis\s+vybral|"
+    r"jste\s+si\s+vybral)\s+(.{2,40}?)\s*[?.!]*\s*$", re.IGNORECASE)
+
+
+def _puvod_tema_z_proc(text: str, db: str) -> str:
+    """Tema studijniho programu, na ktere se "proc zrovna X" pta, jinak ''."""
+    m = _PROC_TEMA_PAT.search((text or "").strip())
+    if not m:
+        return ""
+    import sqlite3 as _sq
+    import unicodedata as _ud
+    _f = lambda s: "".join(c for c in _ud.normalize("NFKD", (s or "").lower())
+                           if not _ud.combining(c))
+    slova = [w for w in re.findall(r"[a-z0-9]+", _f(m.group(1))) if len(w) >= 4]
+    if not slova:
+        return ""
+    try:
+        con = _sq.connect(db)
+        temata = [r[0] for r in con.execute("SELECT topic FROM study_program ORDER BY id DESC")]
+        con.close()
+    except Exception:
+        return ""
+    for t in temata:
+        for b in [w for w in re.findall(r"[a-z0-9]+", _f(t)) if len(w) >= 4]:
+            for a in slova:
+                k = 0
+                while k < min(len(a), len(b)) and a[k] == b[k]:
+                    k += 1
+                if k >= 4 and k >= 0.7 * min(len(a), len(b)):
+                    return t
+    return ""
+
+
 def _je_dotaz_na_puvod(text: str) -> bool:
     """HANS_STUDY_ORIGIN_V1 — ptá se věta, KDO téma vybral?"""
     return bool(_ORIGIN_PAT.search(text or ""))

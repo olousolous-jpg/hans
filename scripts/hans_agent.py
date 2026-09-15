@@ -655,6 +655,41 @@ _ZITRA_PAT = re.compile(
     r"\b(z[íi]tra|z[íi]tra?ej[šs][íi]|na\s+z[íi]t[řr]ek|z[íi]t[řr]ek)\b", re.I)
 
 
+# HANS_WEATHER_DAYS_V1 (15. 9.) — ktere dny veta chce. Cte se AZ uvnitr
+# `_run_weather`, tedy ZA rozhodnutim routeru (popis akce se NEMENI —
+# HANS_WEATHER_HINT_FIX_V2: slovo v popisu je zasah do routeru).
+_DNY_TYDNE = [
+    r"\bpond[ěe]l",
+    r"\b[úu]ter[ýy]",
+    r"\bst[řr]ed(?:a|u|y)\b",
+    r"\b[čc]tvrt(?:ek|ka)\b",
+    r"\bp[áa]t(?:ek|ku)\b",
+    r"\bsobot",
+    r"\bned[ěe]l",
+]
+
+
+def _dny_z_vety(veta: str, ted=None) -> list:
+    """Seznam dat (`date`), na ktere se veta pta; prazdny = zadny den."""
+    from datetime import datetime as _dt, timedelta as _td
+    dnes = (ted or _dt.now()).date()
+    v = (veta or "").lower()
+    if re.search(r"v[íi]kend", v):
+        wd = dnes.weekday()
+        if wd == 5:
+            return [dnes, dnes + _td(days=1)]
+        if wd == 6:
+            return [dnes]
+        sob = dnes + _td(days=(5 - wd) % 7)
+        return [sob, sob + _td(days=1)]
+    if re.search(r"\bpoz[íi]t[řr][íi]\b", v):
+        return [dnes + _td(days=2)]
+    for idx, pat in enumerate(_DNY_TYDNE):
+        if re.search(pat, v):
+            return [dnes + _td(days=(idx - dnes.weekday()) % 7)]
+    return []
+
+
 def _run_weather(handler, args) -> str:
     """HANS_WEATHER_TOMORROW_V1 — aktuální stav NEBO předpověď na zítřek.
 
@@ -693,6 +728,15 @@ def _run_weather(handler, args) -> str:
                 return t
             # předpověď nedostupná → PŘIZNAT, ne podstrčit dnešek
             return ("Předpověď na zítřek se mi teď nedaří zjistit, pane.")
+        # HANS_WEATHER_DAYS_V1 (15. 9.) — vikend / pozitri / den v tydnu.
+        _dny = [] if chce_zitra else _dny_z_vety(veta)
+        if _dny:
+            t = (wx.get_days_string(_dny) or "").strip()
+            if t:
+                log.info("HANS_WEATHER_DAYS_V1: dotaz na %s → předpověď",
+                         ", ".join(d.isoformat() for d in _dny))
+                return t
+            return ("Předpověď na ten den se mi teď nedaří zjistit, pane.")
         s = wx.get_context_string()
         return s.replace("Počasí:", "Za oknem:").strip() if s else \
             "Aktuální počasí se mi teď nedaří zjistit, pane."
