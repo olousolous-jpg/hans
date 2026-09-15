@@ -1708,7 +1708,14 @@ class PicamDisplayController:
             # prisli jsme o dve tretiny dukazu prave k teto praci.
             _cesta = _d / ("%s_%s.jpg" % (time.strftime("%Y%m%d_%H%M%S"), jmeno))
             cv2.imwrite(str(_cesta), cv2.cvtColor(_img, cv2.COLOR_RGB2BGR))
-            for _old in sorted(_d.glob("*.jpg"))[:-40]:
+            # HANS_GESTURE_REJECT_SNAP_CAP_V1 (15. 9.) — ODMITNUTI maji vlastni
+            # strop. Pri 40 smazala rotace 13. 9. 178 z 218 snimku vcetne
+            # jedine zajimave kategorie; odmitnuti je radove vic nez prijatych.
+            _strop = 40
+            if slozka != "data/gesta":
+                _strop = int(self.config.get("gesture", {}).get(
+                    "reject_snapshot_max", 300))
+            for _old in sorted(_d.glob("*.jpg"))[:-max(1, _strop)]:
                 try: _old.unlink()
                 except Exception: pass
             _syslog.info("gesto: snimek zachytu -> %s", _cesta)
