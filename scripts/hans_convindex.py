@@ -801,6 +801,49 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
     return None
 
 
+def _bez_sumu_relaxace(query: str, rows: list, relaxovano: bool) -> list:
+    """HANS_KNOWLEDGE_RELAX_NOISE_V1 (15. 9.) — z RELAXOVANEHO nalezu vyhod balast.
+
+    Doloženo 15. 9. (Matrix): „jaka je odpoved na otazku smyslu vesmiru, zivota
+    a vubec?" — presny i kmenovy dotaz nic, relaxace ubrala slova az na
+    `odpo* vesm* otaz*` a vedle spravne glosy ke Stoparovu pruvodci (Douglas
+    Adams, 42) pribrala SUROVOU kapitolu knihy Ja, robot (kap. 94), ktera ta tri
+    slova proste obsahuje. Model pak vzal jeji nadpis za zdroj: „jak jsem se
+    dozvedel z knihy Ja, robot Isaaca Asimova … 42".
+    HANS_CONVINDEX_ANCHOR_V1 (22. 8.) hlida jen vlastni jmena; tady zadne nebylo.
+
+    Dve pravidla, OBE jen u relaxovaneho nalezu (presna shoda se nemeni):
+      (A) `book_read` = surovy text kapitoly. Tri obecna slova v dlouhe kapitole
+          sednou skoro vzdy. Hansovo vlastni psani o knize (`book_reflection`)
+          zustava.
+      (B) nalez, ktery pokryva o VIC NEZ JEDNO slovo dotazu mene nez nejlepsi
+          nalez, je slabsi soused, ne odpoved.
+    Zmereno na 837 realnych vetach (index jen pro cteni): relaxace dava nalez
+    u 322 z 504 vet; (A) vyradi 156 nalezu a v zadnem se dotaz nepta na tu
+    knihu ani jejiho autora; (B) vyradi 13. Vsech nalezu prijde 74 vet — ve
+    vzorku 25 z nich cisty balast („ma pusteny nejaky film?" → Ja, robot
+    kap. 54). Ty ted dostanou poctive „nemam zapsano" misto cizi kapitoly.
+    """
+    if not relaxovano or not rows:
+        return rows
+    st = {_stem(_fold(t)) for t in _WORD.findall(query or "")
+          if len(_fold(t)) >= 3 and _fold(t) not in _STOP}
+
+    def _pokryti(r):
+        body = " " + _fold("%s %s" % (r[3] or "", r[4] or ""))
+        return sum(1 for s in st if re.search(r"\b" + re.escape(s), body))
+
+    pok = [_pokryti(r) for r in rows]
+    nej = max(pok) if pok else 0
+    out = [r for r, p in zip(rows, pok) if r[1] != "book_read" and p >= nej - 1]
+    if len(out) < len(rows):
+        _log.info("HANS_KNOWLEDGE_RELAX_NOISE_V1: relaxace — vyřazeno %d z %d "
+                  "nálezů (%s)", len(rows) - len(out), len(rows),
+                  "; ".join("%s:%s" % (r[1], str(r[3])[:40])
+                            for r in rows if r not in out))
+    return out
+
+
 def search(query: str, limit: int = 8, source: Optional[str] = None,
            partner: Optional[str] = None, index_path: str = INDEX_PATH,
            diary_path: str = "data/hans_diary.db",
@@ -868,9 +911,12 @@ def search(query: str, limit: int = 8, source: Optional[str] = None,
             attempts.extend(_kroky)
             narrow.extend(_uzky)
         rows = []
-        for e in attempts:
+        _relax = False   # HANS_KNOWLEDGE_RELAX_NOISE_V1 — prisel nalez z relaxace?
+        _zakladni = 2 if (expr_stem and expr_stem != expr) else 1
+        for _i, e in enumerate(attempts):
             rows = conn.execute(sql, [e] + args_tail + [limit]).fetchall()
             if rows:
+                _relax = _i >= _zakladni
                 break
         if not rows and narrow:
             # HANS_CONVINDEX_BOOKS_V1 (21.8.) — knižní reflexe patří mezi
@@ -889,7 +935,10 @@ def search(query: str, limit: int = 8, source: Optional[str] = None,
                 rows = conn.execute(
                     sql_n, [e] + list(curated) + [limit]).fetchall()
                 if rows:
+                    _relax = True
                     break
+        if kind == "knowledge" and rows:   # HANS_KNOWLEDGE_RELAX_NOISE_V1
+            rows = _bez_sumu_relaxace(query, [tuple(r) for r in rows], _relax)
         return [tuple(r) for r in rows]
     except Exception as e:
         _log.warning("convindex search selhal: %s", e)

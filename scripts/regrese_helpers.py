@@ -594,3 +594,16 @@ def proc_tema(veta: str) -> str:
     """HANS_STUDY_WHY_TOPIC_V1 — tema studia z "proc zrovna X" (cte ostry denik)."""
     from scripts.chat_commands import _puvod_tema_z_proc
     return _puvod_tema_z_proc(veta, "data/hans_diary.db")
+
+
+def relax_sum(query: str, relaxovano: bool) -> str:
+    """HANS_KNOWLEDGE_RELAX_NOISE_V1 — tituly, ktere filtr ponecha (umele radky)."""
+    from scripts.hans_convindex import _bez_sumu_relaxace
+    rows = [
+        (0, "web_read", "", "Stopařův průvodce po Galaxii",
+         "Zásadní jest informace o výpočtu odpovědi na základní otázku Života, "
+         "Vesmíru a vůbec, která dle Hlubiny Myšlení zněla 42."),
+        (0, "book_read", "", "Já robot — kap. 94",
+         "Průzor už nebyl vyplněn modří oblohy. Odpověď na tu otázku leží ve vesmíru."),
+    ]
+    return "|".join(r[3] for r in _bez_sumu_relaxace(query, rows, relaxovano))
