@@ -2370,6 +2370,22 @@ class AgentRouter:
 
     # ── deník ───────────────────────────────────────────────────────────────
     def _log(self, handler, prop: Proposal, outcome: str, result: str = ""):
+        # HANS_AGENT_LOG_TEST_PERSON_V1 (15. 9.) — test persona do deniku NE.
+        # HANS_TEST_PERSON_V1 hlidal jen zapis CHATU v handleru; agentni akce
+        # sly kolem. Zmereno 15. 9.: 34 z 264 `agent_action` (13 %) patrilo
+        # testovacim identitam — a `hans_provenance` je vede jako zazite.
+        # Predikat je handleru (jedna pravda); Matrix most ho nema -> config.
+        _kdo = str(getattr(prop, "person", "") or "")
+        try:
+            if hasattr(handler, "_is_test_person"):
+                if handler._is_test_person(_kdo):
+                    return
+            elif _kdo.strip().lower() in [
+                    str(x).strip().lower() for x in
+                    ((getattr(handler, "config", None) or {}).get("test_persons") or [])]:
+                return
+        except Exception:
+            pass
         try:
             hi = getattr(handler, "_hans_idle", None)
             if hi and hasattr(hi, "_log_entry"):

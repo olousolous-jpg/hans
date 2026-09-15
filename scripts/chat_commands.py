@@ -663,9 +663,10 @@ def _cmd_kalendar(handler, name, args) -> str:  # HANS_CALENDAR_V1
         return "/kalendar: modul nedostupný."
     person = (name or "").lower()
     if not is_enabled(cfg) or person not in people_map(cfg):
-        return ("Váš kalendář zatím nemám napojený, pane. Nasdílejte mi v Proton "
-                "Calendar odkaz („pro kohokoli\") a přidejte ho do "
-                "config.calendar.people.")
+        # HANS_CALENDAR_NO_CONFIG_HINT_V1 (15. 9.) — vetu o nastaveni dostaval
+        # KAZDY bez napojeneho kalendare, i cizi clovek ("přidejte ho do
+        # config.calendar.people"). Navod patri spravci, ne tazateli.
+        return "Váš kalendář zatím nemám napojený, pane."
     try:
         dbp = (cfg.get("diary", {}) or {}).get("db_path", "data/hans_diary.db")
         st = CalendarStore(cfg, dbp)

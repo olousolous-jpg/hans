@@ -536,6 +536,41 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
                            re.IGNORECASE | re.MULTILINE)
         text, cnt3 = _pane.subn(lambda m: m.group(1) + target, text)
         n += cnt3
+    # HANS_ADDRESSEE_ONCE_V1 (15. 9.) — OSLOVENI JEN JEDNOU za odpoved.
+    # Doloženo rozhovorem 15. 9.: jmeno az 6x v jedne odpovedi. Zmereno na
+    # skutecnych konverzacich: 13 odpovedi (~3 %) ma osloveni 2x a vic, u 9
+    # skoro v kazde vete — kratke odpovedi, pise to model. Historie je
+    # few-shot [[conv-history-is-few-shot]], takze se to samo posiluje.
+    # Prvni osloveni zustava, dalsi v OSLOVOVACI pozici (za carkou pred
+    # interpunkci, nebo na zacatku vety pred carkou) se vypusti. Simulace
+    # na 434 odpovedich: zmeneno 31, vety zustaly gramaticke.
+    # ⚠️ Velke pismeno se doplnuje JEN tam, kde osloveni zacinalo vetu —
+    # plosne za kazdou teckou by prepsalo zkratky ("napr. jak").
+    # ⚠️ "pane" se neslucuje: je to vychozi osloveni neznamych a pravidlo
+    # vys ho uz prepisuje; tady jde jen o JMENO.
+    try:
+        if (text and target and target.strip().lower() not in
+                ("pane", "pani", "pan\u00ed", "s dovolenim")):
+            _t = re.escape(target)
+            _pos = re.compile(
+                r"(,\s*" + _t + r")(?=\s*(?:[.,;:!?\u2026)\u201c\u00bb]"
+                r"|[\u2014\u2013-]|$))"
+                r"|((?:(?<=^)|(?<=[.!?]\s))" + _t + r",\s*)",
+                re.IGNORECASE | re.MULTILINE)
+            _videno = [0]
+            def _jednou(m):
+                _videno[0] += 1
+                if _videno[0] == 1:
+                    return m.group(0)
+                return "\x00" if m.group(2) else ""
+            _nove = _pos.sub(_jednou, text)
+            if _nove != text:
+                _nove = re.sub(r"\x00\s*(\w)", lambda m: m.group(1).upper(), _nove)
+                _nove = _nove.replace("\x00", "")
+                n += max(0, _videno[0] - 1)
+                text = _nove
+    except Exception:
+        pass
     return text, n
 
 

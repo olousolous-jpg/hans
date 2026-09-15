@@ -527,3 +527,10 @@ def zdroj_entita(text: str, replika: bool):
     from scripts.hans_recall import _find_entity_in_text
     h = _find_entity_in_text("data/hans_diary.db", text, vyzaduj_velke=replika)
     return h[0] if h else None
+
+
+def osloveni_jednou(text: str) -> str:
+    """HANS_ADDRESSEE_ONCE_V1 — co z odpovedi udela `fix_addressee`, kdyz
+    se ptala test persona `zkouška` (osloveni jen jednou za odpoved)."""
+    from scripts.cz_names import fix_addressee
+    return fix_addressee(text, "zkouška", _cfg())[0]
