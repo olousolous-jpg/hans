@@ -24,6 +24,7 @@ GESTURE_NONE      = 0
 GESTURE_FIST      = 1
 GESTURE_OPEN_HAND = 2
 GESTURE_THUMBS_UP = 3
+GESTURE_POSE      = 200   # HANS_GESTURE_POSE_V1 — server poslal body postavy
 GESTURE_NAMES     = {GESTURE_NONE: None,
                      GESTURE_FIST:      "fist",
                      GESTURE_OPEN_HAND: "open_hand",
@@ -124,6 +125,14 @@ class GestureClient:
         # korekce by y vazilo 1,78x min a oprava by byla jen polovicni.
         self._pomer_stran   = 16.0 / 9.0
         self._wave_last_fired = 0.0
+        # HANS_GESTURE_POSE_V1 (15. 9.) — `gesture.detector: pose` = mavnuti
+        # z bodu POSTAVY (server posila 17 bodu misto landmarku ruky).
+        # Prepnuti detektoru chce restart (server nacita model pri startu).
+        self._detector      = str(cfg.get("detector", "hand")).lower()
+        self._pose_stopa    = {"L": deque(maxlen=60), "P": deque(maxlen=60)}
+        self._pose_naposled = 0.0
+        self._pose          = None
+        self._pose_cfg(cfg)
         # HANS_GESTURE_DEBUG_V1 — `gesture.debug` zvedne diagnostiku na INFO.
         # Bez toho je cela cesta nema: chyby socketu jsou na DEBUG a vyjimka
         # v _loop se spolkne, takze mlceni klienta nejde odlisit od "nikdo
@@ -181,6 +190,19 @@ class GestureClient:
                 self._tvar_ts = time.time()   # HANS_GESTURE_FACE_STALE_V1
             except Exception:
                 pass
+        if self._detector == "pose":
+            # HANS_GESTURE_POSE_V1 — postava chce CELY zaber: vyrez kolem tvare
+            # by uriznul zdvizenou pazi. Bez CLAHE — offline test 14. 9. bezel
+            # na surovych snimcich. Tvar se vyse zapsala dal (pozdrav vybira
+            # osobu podle vzdalenosti tvare od mavajici ruky).
+            _hh, _ww = frame.shape[:2]
+            if _ww > 640:
+                frame = _cv2.resize(frame, (640, max(1, int(round(_hh * 640.0 / _ww)))),
+                                    interpolation=_cv2.INTER_AREA)
+            with self._lock:
+                self._pending = (np.ascontiguousarray(frame), None)
+            self._dbg_submits += 1
+            return
         if oblast is not None and self._roi_on:
             vyrez = self._spocti_vyrez(oblast)
         if vyrez is not None:
@@ -263,6 +285,7 @@ class GestureClient:
                                                 self._proc_zapis))
         self._wave_max_tvar_age  = float(cfg.get("wave_max_face_age_s",     # HANS_GESTURE_FACE_STALE_V1
                                                  self._wave_max_tvar_age))
+        self._pose_cfg(cfg)                 # HANS_GESTURE_POSE_V1
 
     def _recv_exact(self, sock, n):
         buf = b""
@@ -292,6 +315,9 @@ class GestureClient:
                 else:
                     gesture_id, bbox = result[0], result[1]
                     lm = result[2] if len(result) > 2 else None
+                    if gesture_id == GESTURE_POSE:   # HANS_GESTURE_POSE_V1
+                        self._update_pose(bbox, lm)
+                        continue
                     # HANS_GESTURE_ROI_V1 — zpet do souradnic CELEHO zaberu.
                     # Bez toho by posun vyrezu (clovek se pohne) sam vyrobil
                     # zdanlivy pohyb dlane = falesne mavani.
@@ -567,6 +593,141 @@ class GestureClient:
                              self._wave_popis))
             return False
         return True
+
+    def _pose_cfg(self, cfg):
+        """HANS_GESTURE_POSE_V1 — prahy mavnuti z postavy (i za tepla).
+        Jednotky: SIRKA RAMEN (nezavisle na vzdalenosti), vyska zaberu = 1.
+        Staticka cast z offline testu 14. 9. (63 snimku BEZ mavnuti, prosel
+        1 = oblekani s pazi nahore): zapesti nad ramenem >= 0.3, loket nad
+        ramenem >= -0.4, zapesti od nosu >= 0.5. Kmitani a pocty vzorku jsou
+        ODHAD — prave mavnuti zatim zmerene neni."""
+        d = {"pose_kp_conf": 0.3, "pose_min_shoulder_h": 0.05,
+             "pose_wrist_above_shoulder": 0.3, "pose_elbow_min": -0.4,
+             "pose_wrist_from_nose": 0.5, "pose_window_s": 2.0,
+             "pose_min_samples": 3, "pose_min_swing": 0.4,
+             "pose_min_reversals": 1, "pose_eps": 0.1}
+        p = self._pose or d
+        for k in d:
+            try:
+                p[k] = float(cfg.get(k, p.get(k, d[k])))
+            except Exception:
+                pass
+        self._pose = p
+
+    def _pose_je_mavani(self, st, now):
+        """Vrati (popis, None) pri mavnuti, jinak (None, (duvod, snimek))."""
+        p = self._pose
+        okno = [q for q in st if now - q[0] <= p["pose_window_s"]]
+        if len(okno) < p["pose_min_samples"]:
+            return None, ("malo vzorku se zdvizenou pazi: %d < %d"
+                          % (len(okno), p["pose_min_samples"]), False)
+        xs = [q[1] for q in okno]
+        rozpeti = max(xs) - min(xs)
+        if rozpeti < p["pose_min_swing"]:
+            return None, ("male rozpeti %.2f < %.2f sirky ramen, vzorku %d"
+                          % (rozpeti, p["pose_min_swing"], len(okno)), False)
+        obr, smer, kotva = 0, 0, xs[0]
+        for x in xs[1:]:
+            dx = x - kotva
+            if abs(dx) < p["pose_eps"]:
+                continue
+            s = 1 if dx > 0 else -1
+            if smer and s != smer:
+                obr += 1
+            smer, kotva = s, x
+        if obr < p["pose_min_reversals"]:
+            return None, ("malo obratu %d < %d (rozpeti %.2f, vzorku %d)"
+                          % (obr, p["pose_min_reversals"], rozpeti, len(okno)), True)
+        posl = okno[-1]
+        return ("postava: rozpeti %.2f sirky ramen, obratu %d, vzorku %d, %.1f s"
+                " | zapesti nad ramenem %.2f, loket %.2f, od nosu %.2f"
+                % (rozpeti, obr, len(okno), okno[-1][0] - okno[0][0],
+                   posl[2], posl[3], posl[4])), None
+
+    def _update_pose(self, bbox, lm):
+        """HANS_GESTURE_POSE_V1 (15. 9.) — mavnuti z bodu POSTAVY.
+
+        Mavnuti = zapesti NAD ramenem + loket zvednuty + zapesti mimo oblicej
+        (ruka u brady) + zapesti KMITA vodorovne vuci LOKTI. Merit vuci lokti,
+        ne v zaberu: posun cele postavy tak mavnuti nevyrobi.
+        Udalost, ne stav: po pozdravu se ceka, az ruka klesne (wave_rearm_s).
+        """
+        now = time.time()
+        if self._warmup_frames > 0:
+            self._warmup_frames -= 1
+            return
+        if lm is None or not (self._wave_only and self.on_gesture):
+            return
+        p = self._pose
+        try:
+            k = np.asarray(lm[:51], dtype=np.float32).reshape(17, 3)
+        except Exception:
+            return
+        ar = float(self._pomer_stran or (16.0 / 9.0))
+        X, Y, Cf = k[:, 0] * ar, k[:, 1], k[:, 2]
+        m = p["pose_kp_conf"]
+        if min(Cf[5], Cf[6]) < m:
+            return
+        sw = abs(float(X[5] - X[6]))
+        if sw < p["pose_min_shoulder_h"]:
+            return
+        zvednuto = []
+        for jm, sh, el, wr in (("L", 5, 7, 9), ("P", 6, 8, 10)):
+            if Cf[wr] < m or Cf[el] < m:
+                continue
+            nad = float(Y[sh] - Y[wr]) / sw
+            loket = float(Y[sh] - Y[el]) / sw
+            odnosu = abs(float(X[wr] - X[0])) / sw if Cf[0] >= m else 9.0
+            if (nad < p["pose_wrist_above_shoulder"] or
+                    loket < p["pose_elbow_min"] or
+                    odnosu < p["pose_wrist_from_nose"]):
+                continue
+            self._pose_stopa[jm].append(
+                (now, float(X[wr] - X[el]) / sw, nad, loket, odnosu,
+                 float(k[wr, 0]), float(k[wr, 1]), sw))
+            zvednuto.append(jm)
+        if not zvednuto:
+            return
+        _naposled = self._pose_naposled
+        self._pose_naposled = now
+        if not self._wave_armed:
+            if now - _naposled >= self._wave_rearm_s:
+                self._wave_armed = True
+                for _s in self._pose_stopa.values():
+                    _s.clear()
+            return
+        if now - self._wave_last_fired < self._wave_cooldown:
+            return
+        for jm in zvednuto:
+            st = self._pose_stopa[jm]
+            posl = st[-1]
+            _pw = 0.25 * posl[7]
+            wb = (posl[5] - _pw / ar, posl[6] - _pw, posl[5] + _pw / ar, posl[6] + _pw)
+            self._wave_bbox = wb
+            popis, ne = self._pose_je_mavani(st, now)
+            if popis is None:
+                self._wave_rel = self._ne_snimek_rel if ne[1] else 0.0
+                self._proc_ne("postava %s: %s" % (jm, ne[0]))
+                continue
+            self._wave_last_fired  = now
+            self._wave_armed       = False
+            for _s in self._pose_stopa.values():
+                _s.clear()
+            self._last_fired_name  = "wave"
+            self.last_gesture      = "wave"
+            self.last_gesture_time = now
+            self._wave_popis       = popis
+            _log.info("gesto: zamavani — %s", popis)
+            try:   # HANS_GESTURE_TRVALY_ZAPIS_V1 — mimo rotaci logu
+                from pathlib import Path as _P
+                _d = _P("data/mereni"); _d.mkdir(parents=True, exist_ok=True)
+                with open(_d / "gesta.log", "a", encoding="utf-8") as _f:
+                    _f.write("%s\t%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), popis))
+            except Exception:
+                pass
+            print("[Gesture] FIRED: wave (postava)", flush=True)
+            self.on_gesture("wave", wb)
+            return
 
     def _update_state(self, gesture_id: int, bbox=None, lm=None):
         now = time.time()

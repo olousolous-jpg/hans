@@ -388,7 +388,9 @@
         "wave_reject_snapshot": true,
         "_wave_reject_snapshot_note": "HANS_GESTURE_REJECT_SNAP_V1 (13. 9.) MERICI REZIM: ulozi snimek i k ODMITNUTEMU mavnuti do data/gesta_ne/. Duvod: ground truth existuje jen u prijatych zachytu, takze 1676 odmitnuti z 12. 9. nejde priradit ke skutku. Po vyhodnoceni VYPNOUT (tyz rezim jako wave_snapshot a wave_reject_log).",
         "wave_reject_snapshot_rel": 3.0,
-        "_wave_reject_snapshot_rel_note": "Brana: rozpeti v nasobcich sirky dlane. Pri 3.0 by za 12. 9. vzniklo 13 snimku z 1676 odmitnuti. Nizsi cislo = vic snimku i vic sumu."
+        "_wave_reject_snapshot_rel_note": "Brana: rozpeti v nasobcich sirky dlane. Pri 3.0 by za 12. 9. vzniklo 13 snimku z 1676 odmitnuti. Nizsi cislo = vic snimku i vic sumu.",
+        "detector": "pose",
+        "_detector_note": "HANS_GESTURE_POSE_V1 (15. 9.): pose = mavnuti z bodu POSTAVY (yolov8s_pose na Hailu, MISTO palm+landmark); hand = puvodni detektor dlane. Zmena chce restart Hanse (server nacita model pri startu). Kdyz se pose model nenacte, server sam spadne zpet na dlan. Prahy pose_* jsou v SIRKACH RAMEN; staticka cast z offline testu 14. 9. (63 snimku bez mavnuti, prosel 1), kmitani je ODHAD - ladit na pravem mavnuti."
     },
     "matrix": {
         "enabled": true,

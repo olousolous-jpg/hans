@@ -214,6 +214,19 @@ HAND_HEF           = _HAND.get("hand_landmark_hef",
 HAND_INPUT_SIZE    = 224
 HAND_PRESENCE_THRESH = float(_HAND.get("presence_threshold", 0.5))
 
+# HANS_GESTURE_POSE_V1 (15. 9.) — mavnuti z POSTAVY misto dlane.
+# `gesture.detector: pose` nacte yolov8s_pose MISTO palm+landmark (Hailo tim
+# nese 4 site misto 5). Kdyz se pose nenacte, server spadne zpet na dlan.
+# Odpoved na gesture socketu ma STEJNY format: id 200 = osoba, bbox osoby,
+# a do 63 floatu 17 bodu x 3 (x, y normalizovane k poslanemu snimku, jistota)
+# + skore osoby. Tech 63 floatu driv nesly landmarky ruky.
+GESTURE_DETECTOR  = str(_HAND.get("detector", "hand")).lower()
+POSE_HEF          = _HAND.get("pose_hef",
+                              "/usr/share/hailo-models/yolov8s_pose_h8l_pi.hef")
+POSE_SCORE_THRESH = float(_HAND.get("pose_score_threshold", 0.5))
+POSE_KP_MIN       = float(_HAND.get("pose_kp_conf", 0.3))
+GESTURE_POSE      = 200
+
 GESTURE_NONE      = 0
 GESTURE_FIST      = 1
 GESTURE_OPEN_HAND = 2  # 🖐 všechny prsty natažené
@@ -564,6 +577,82 @@ def decode_yolov8(out: dict, thresh: float, unletterbox: bool) -> list:
 
 
 # ── Hand gesture classification ───────────────────────────────────────────────
+def decode_pose(res, outs, conf_th=0.5):
+    """HANS_GESTURE_POSE_V1 — dekoder yolov8s_pose (Hailo, 3 mrizky 20/40/80).
+    Overeno offline 14. 9. na 63 snimcich: postava nalezena na 62.
+    Vraci [(skore, bbox[4], body (17,3))] v pixelech vstupu 640x640."""
+    def _sig(x):
+        return 1.0 / (1.0 + np.exp(-x))
+    dets = []
+    for grid in (20, 40, 80):
+        stride = 640 // grid
+        box = sco = kpt = None
+        for n, shp in outs.items():
+            if shp[0] != grid or n not in res:
+                continue
+            a = np.asarray(res[n]).reshape(grid, grid, -1)
+            c = a.shape[-1]
+            if c == 64:
+                box = a
+            elif c == 1:
+                sco = a
+            elif c == 51:
+                kpt = a
+        if box is None or sco is None or kpt is None:
+            continue
+        s = sco[..., 0]
+        if s.min() < 0 or s.max() > 1:
+            s = _sig(s)
+        ys, xs = np.where(s > conf_th)
+        for y, x in zip(ys, xs):
+            d = box[y, x].reshape(4, 16)
+            e = np.exp(d - d.max(1, keepdims=True)); e /= e.sum(1, keepdims=True)
+            dist = (e * np.arange(16)).sum(1)
+            cx, cy = x + 0.5, y + 0.5
+            b = np.array([cx - dist[0], cy - dist[1], cx + dist[2], cy + dist[3]]) * stride
+            k = kpt[y, x].reshape(17, 3).astype(np.float32).copy()
+            k[:, 0] = (k[:, 0] * 2 + x) * stride
+            k[:, 1] = (k[:, 1] * 2 + y) * stride
+            if k[:, 2].min() < 0 or k[:, 2].max() > 1:
+                k[:, 2] = _sig(k[:, 2])
+            dets.append((float(s[y, x]), b, k))
+    dets.sort(key=lambda t: -t[0])
+    keep = []
+    for d in dets:
+        ok = True
+        for q in keep:
+            xx1 = max(d[1][0], q[1][0]); yy1 = max(d[1][1], q[1][1])
+            xx2 = min(d[1][2], q[1][2]); yy2 = min(d[1][3], q[1][3])
+            inter = max(0, xx2 - xx1) * max(0, yy2 - yy1)
+            ua = ((d[1][2] - d[1][0]) * (d[1][3] - d[1][1]) +
+                  (q[1][2] - q[1][0]) * (q[1][3] - q[1][1]) - inter)
+            if ua > 0 and inter / ua > 0.5:
+                ok = False; break
+        if ok:
+            keep.append(d)
+    return keep
+
+
+def _vyber_osobu_pose(osoby, w, h, kp_min=0.3):
+    """HANS_GESTURE_POSE_V1 — po draze jde JEN jedna osoba: ta s nejvyse
+    zdvizenym zapestim (v sirkach ramen), jinak nejjistejsi. Mavajici clovek
+    ma zapesti nejvys ze vsech, takze vyber je mezi snimky stabilni."""
+    ar = float(w) / float(max(h, 1))
+    best, best_key = None, None
+    for s, b, k in osoby:
+        zdvih = -9.0
+        if min(k[5, 2], k[6, 2]) >= kp_min:
+            sw = abs(float(k[5, 0] - k[6, 0])) * ar
+            if sw > 1e-6:
+                for sh, wr in ((5, 9), (6, 10)):
+                    if k[wr, 2] >= kp_min:
+                        zdvih = max(zdvih, float(k[sh, 1] - k[wr, 1]) / sw)
+        key = (zdvih, s)
+        if best_key is None or key > best_key:
+            best, best_key = (s, b, k), key
+    return best
+
+
 def _lm_finger_curled(lm, tip, pip) -> bool:
     """Curled: tip.y > pip.y - práh (tip je níže než PIP kloub).
     Y roste dolů — ohnutý prst má tip níže než PIP.
@@ -702,22 +791,40 @@ class CombinedEngine:
         else:
             log.warning("YOLOv8s HEF not found — object detection disabled")
 
+        # HANS_GESTURE_POSE_V1 — pose MISTO palm+landmark (viz GESTURE_DETECTOR)
+        self.pose_ng = self.pose_in = self.pose_out = None
+        self._pose_pipe = None
+        self._pose_outs = {}
+        self._pose_lock = threading.Lock()
+        if GESTURE_DETECTOR == "pose":
+            if Path(POSE_HEF).exists():
+                try:
+                    log.info("Loading Pose: %s", POSE_HEF)
+                    self.pose_ng, self.pose_in, self.pose_out = _load(POSE_HEF)
+                    self._pose_outs = {i.name: tuple(i.shape) for i in
+                                       self.pose_ng.get_output_vstream_infos()}
+                except Exception as e:
+                    log.error("Pose HEF se nenacetl (%s) — gesta zpet na dlan", e)
+                    self.pose_ng = None
+            else:
+                log.error("Pose HEF chybi: %s — gesta zpet na dlan", POSE_HEF)
+
         # ── Palm detection (stage 1) ──────────────────────────────
-        palm_available = Path(PALM_HEF).exists()
+        palm_available = self.pose_ng is None and Path(PALM_HEF).exists()
         self.palm_ng = self.palm_in = self.palm_out = None
         self._palm_lock = threading.Lock()
         if palm_available:
             log.info('Loading PalmDetection: %s', PALM_HEF)
             self.palm_ng, self.palm_in, self.palm_out = _load(PALM_HEF)
-        else:
+        elif self.pose_ng is None:
             log.warning('Palm HEF not found — falling back to full-frame landmark')
 
-        hand_available = Path(HAND_HEF).exists()
+        hand_available = self.pose_ng is None and Path(HAND_HEF).exists()
         self.hand_ng = self.hand_in = self.hand_out = None
         if hand_available:
             log.info("Loading HandLandmark: %s", HAND_HEF)
             self.hand_ng, self.hand_in, self.hand_out = _load(HAND_HEF)
-        else:
+        elif self.pose_ng is None:
             log.warning("Hand landmark HEF not found — gesture disabled")
 
         self._hand_lock = threading.Lock()
@@ -740,6 +847,10 @@ class CombinedEngine:
         else:
             self._obj_pipe = None
 
+        if self.pose_ng:   # HANS_GESTURE_POSE_V1
+            self._pose_pipe = self._IVS(
+                self.pose_ng, self.pose_in, self.pose_out).__enter__()
+            log.info("Pose pipeline opened (gesta z postavy)")
         if self.hand_ng:
             self._hand_pipe = self._IVS(
                 self.hand_ng, self.hand_in, self.hand_out).__enter__()
@@ -985,6 +1096,30 @@ class CombinedEngine:
         if gid == GESTURE_OPEN_HAND:
             _GST["otevrena"] += 1       # HANS_GESTURE_STATS_V1
         return gid, best_lm, palm_bbox
+
+    def run_pose(self, frame: np.ndarray):
+        """HANS_GESTURE_POSE_V1 — frame RGB libovolne velikosti (letterbox 640).
+        Vraci [(skore, bbox, body (17,3))], souradnice normalizovane k frame."""
+        if self._pose_pipe is None:
+            return []
+        h, w = frame.shape[:2]
+        sc = 640.0 / max(h, w)
+        nw, nh = max(1, int(w * sc)), max(1, int(h * sc))
+        px, py = (640 - nw) // 2, (640 - nh) // 2
+        canvas = np.zeros((640, 640, 3), np.uint8)
+        canvas[py:py + nh, px:px + nw] = cv2.resize(
+            frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        name = self.pose_ng.get_input_vstream_infos()[0].name
+        with self._pose_lock:
+            res = self._pose_pipe.infer({name: canvas[np.newaxis]})
+        out = []
+        for s, b, k in decode_pose(res, self._pose_outs, POSE_SCORE_THRESH):
+            b = np.asarray(b, np.float32).copy(); k = k.copy()
+            b[[0, 2]] = (b[[0, 2]] - px) / nw; b[[1, 3]] = (b[[1, 3]] - py) / nh
+            k[:, 0] = (k[:, 0] - px) / nw;     k[:, 1] = (k[:, 1] - py) / nh
+            out.append((s, b, k))
+        return out
+
     def close(self):
         try: self.vdevice.release()
         except Exception: pass
@@ -1015,6 +1150,21 @@ def handle_gesture_client(conn, engine: CombinedEngine, lock: threading.Lock):
             w, h = struct.unpack('>HH', wh)
             print(f"[GESTURE_HANDLER] w={w} h={h}", flush=True)
             frame = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 3)
+            # HANS_GESTURE_POSE_V1 — pose rezim, format odpovedi beze zmeny
+            if engine._pose_pipe is not None:
+                osoby = engine.run_pose(frame)
+                vyber = _vyber_osobu_pose(osoby, w, h, POSE_KP_MIN) if osoby else None
+                if vyber is not None:
+                    _s, _b, _k = vyber
+                    conn.sendall(struct.pack('B', GESTURE_POSE))
+                    conn.sendall(struct.pack('>ffff', *[float(v) for v in _b[:4]]))
+                    _kf = [float(v) for v in _k.reshape(-1)[:51]] + [float(_s)] + [0.0] * 11
+                    conn.sendall(struct.pack('>63f', *_kf))
+                else:
+                    conn.sendall(struct.pack('B', GESTURE_NONE))
+                    conn.sendall(struct.pack('>ffff', 0.0, 0.0, 0.0, 0.0))
+                    conn.sendall(struct.pack('>63f', *([0.0] * 63)))
+                continue
             # run_hand now handles resize internally (two-stage pipeline)
             result = engine.run_hand(frame)
             gesture_id, lm = result[0], result[1]
