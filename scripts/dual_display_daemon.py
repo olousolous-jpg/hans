@@ -28,6 +28,9 @@ import numpy as np
 import spidev
 from PIL import Image
 
+# HANS_LOG_SINGLE_WRITER_V1 — Eye_sphere zapojí scripts.logger; bez tohohle
+# by daemon točil Hansův system.log (viz logger.py). Musí stát PŘED importem.
+os.environ.setdefault("HANS_LOG_FILE", "data/dual_display_daemon.log")
 from scripts.Eye_sphere import GC9A01, DC, CS1, CS2, RST1, RST2, W, H
 from scripts.attention_display import AttentionRenderer
 
@@ -113,6 +116,17 @@ class FaceSource:
         return self._idle
 
 
+def _config():
+    """DAEMON_CONFIG_IO_V1 (15. 9.) — sloučený config přes config_io.
+    Veřejný config.json nemá od 8. 9. sekci pc_remote, takže telemetrie PC
+    v herním módu mířila na výchozí adresu z kódu a každé 3 s selhala."""
+    try:
+        from scripts import config_io
+        return config_io.load(hlasit=False) or {}
+    except Exception:
+        return _read_json("config.json") or {}
+
+
 def _read_json(path):
     try:
         if os.path.exists(path):
@@ -138,7 +152,7 @@ def _is_sleeping():
     (sleep_start_hour..sleep_end_hour, přes půlnoc) = matchuje noční spánek."""
     if os.path.exists("data/.hans_sleeping"):
         return True
-    cfg = _read_json("config.json") or {}
+    cfg = _config()
     sh = int(cfg.get("sleep_start_hour", 23))
     eh = int(cfg.get("sleep_end_hour", 9))
     hr = time.localtime().tm_hour
@@ -174,7 +188,7 @@ def _pc_poller(poll_s: float):
         return
     while not _PC_STOP:
         if _game_mode():
-            cfg = _read_json("config.json") or {}
+            cfg = _config()
             try:
                 _PC_TEL["data"] = pcr.telemetry(cfg)
             except Exception:
@@ -221,7 +235,7 @@ def main():
     last_sleep_chk = 0.0
     attn_cache = None
     # ATTENTION_CYCLE_WIRING_V1 — rotace karet á cycle_s
-    _adcfg = (_read_json("config.json") or {}).get("attention_display", {})
+    _adcfg = (_config()).get("attention_display", {})
     cycle_s = float(_adcfg.get("cycle_s", 10))
     cycle_idx = 0
     last_switch = 0.0

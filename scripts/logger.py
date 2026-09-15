@@ -11,9 +11,16 @@ Usage:
 
 import logging
 import logging.handlers
+import os
 from pathlib import Path
 
-_LOG_PATH    = Path("data/system.log")
+# HANS_LOG_SINGLE_WRITER_V1 (15. 9.) — cestu smí přepsat samostatný proces.
+# RotatingFileHandler neumí víc zapisovatelů: kdo první přetočí, přejmenuje
+# soubor ostatním pod rukama. 14. 9. to ve 21:13 udělal dual_display_daemon
+# a celá noc Hanse skončila v system.log.2, zatímco ranní kontrola
+# i hans_health_check čtou system.log + .1. Soubor system.log točí JEN Hans;
+# jiný proces si nastaví HANS_LOG_FILE PŘED prvním importem scripts.logger.
+_LOG_PATH    = Path(os.environ.get("HANS_LOG_FILE") or "data/system.log")
 _MAX_BYTES   = 2 * 1024 * 1024   # 2 MB per file
 _BACKUP_COUNT = 3
 _initialized  = False

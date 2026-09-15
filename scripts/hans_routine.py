@@ -285,6 +285,7 @@ class HansRoutine:
         # Non-blocking guard: visí-li předchozí běh, další cyklus se přeskočí.
         self._night_lock = threading.Lock()
         self._state_lock = threading.Lock()   # ochrana zápisu routine_state
+        self._catchup_lock = threading.Lock()  # HANS_REFLECTION_CATCHUP_LOCK_V1
         self._night_check_interval = float(cfg.get('night_check_interval_s',
                                                    config.get('night_check_interval_s', 60)))
         threading.Thread(target=self._night_worker_loop, daemon=True).start()
@@ -1285,6 +1286,20 @@ class HansRoutine:
         Jen jeden den zpět — reflexe stará dva dny už nemá komu co říct.
         """
         from datetime import timedelta as _td
+        # HANS_REFLECTION_CATCHUP_LOCK_V1 (15. 9.) — catchup volají DVĚ cesty:
+        # brain_up callback (hans_idle, vlastní vlákno) a tick(). Po návratu
+        # mozku se potkají během vteřin, obě projdou `_reflection_written`
+        # (reflexe běží desítky minut a do deníku se zapíše až na konci)
+        # a za týž den vzniknou DVĚ reflexe — doloženo 10. 9. a 15. 9.
+        # Druhý volající nečeká, jen odejde: reflexi už dělá první.
+        if not self._catchup_lock.acquire(blocking=False):
+            return
+        try:
+            self._reflection_catchup_locked(_td)
+        finally:
+            self._catchup_lock.release()
+
+    def _reflection_catchup_locked(self, _td):
         try:
             if self._reflection is None:
                 return
