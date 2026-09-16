@@ -133,6 +133,17 @@ class GestureClient:
         self._pose_naposled = 0.0
         self._pose          = None
         self._pose_cfg(cfg)
+        # HANS_GESTURE_POSE_MERENI_V1 (16. 9.) — PROC se snimek ztratil drive,
+        # nez se vubec zapsal do stopy. Brany nize delaly `continue` potichu,
+        # takze 155 ze 157 odmitnuti za 15.-16. 9. hlasilo jen "malo vzorku:
+        # 1 < 3" a nebylo poznat, ktera podminka vzorky bere — prahy by se
+        # ladily naslepo. Souhrn jde do gesta_ne.log nejvyse jednou za 10 s,
+        # aby NEPRETLACIL hlasky z `_proc_ne` (ty maji vlastni limit 2 s).
+        # MERI, do rozhodovani nesaha.
+        self._pose_zahozeno = {"jistota": 0, "uzka_ramena": 0,
+                               "nad_ramenem": 0, "loket": 0, "od_nosu": 0}
+        self._pose_sw       = deque(maxlen=400)
+        self._pose_souhrn   = 0.0
         # HANS_GESTURE_DEBUG_V1 — `gesture.debug` zvedne diagnostiku na INFO.
         # Bez toho je cela cesta nema: chyby socketu jsou na DEBUG a vyjimka
         # v _loop se spolkne, takze mlceni klienta nejde odlisit od "nikdo
@@ -618,14 +629,18 @@ class GestureClient:
         """Vrati (popis, None) pri mavnuti, jinak (None, (duvod, snimek))."""
         p = self._pose
         okno = [q for q in st if now - q[0] <= p["pose_window_s"]]
+        _sw = float(st[-1][7]) if st else 0.0   # HANS_GESTURE_POSE_MERENI_V1
         if len(okno) < p["pose_min_samples"]:
             return None, ("malo vzorku se zdvizenou pazi: %d < %d"
-                          % (len(okno), p["pose_min_samples"]), False)
+                          " (sirka ramen %.3f)"
+                          % (len(okno), p["pose_min_samples"], _sw), False)
         xs = [q[1] for q in okno]
         rozpeti = max(xs) - min(xs)
         if rozpeti < p["pose_min_swing"]:
             return None, ("male rozpeti %.2f < %.2f sirky ramen, vzorku %d"
-                          % (rozpeti, p["pose_min_swing"], len(okno)), False)
+                          " (sirka ramen %.3f)"
+                          % (rozpeti, p["pose_min_swing"], len(okno), _sw),
+                          False)
         obr, smer, kotva = 0, 0, xs[0]
         for x in xs[1:]:
             dx = x - kotva
@@ -641,8 +656,41 @@ class GestureClient:
         posl = okno[-1]
         return ("postava: rozpeti %.2f sirky ramen, obratu %d, vzorku %d, %.1f s"
                 " | zapesti nad ramenem %.2f, loket %.2f, od nosu %.2f"
+                " | sirka ramen %.3f"          # HANS_GESTURE_POSE_MERENI_V1
                 % (rozpeti, obr, len(okno), okno[-1][0] - okno[0][0],
-                   posl[2], posl[3], posl[4])), None
+                   posl[2], posl[3], posl[4], posl[7])), None
+
+    def _pose_pocitej(self, duvod: str):
+        """HANS_GESTURE_POSE_MERENI_V1 — secti, kde se snimek ztratil, a jednou
+        za 10 s to zapis i se STREDNI SIRKOU RAMEN. Ta je klicova: vsechny pose
+        prahy jsou v nasobcich sirky ramen, takze u vzdalene postavy odpovida
+        prah jen par pixelum. Bez toho cisla nejde odlisit "prah je spatne"
+        od "clovek byl daleko"."""
+        try:
+            self._pose_zahozeno[duvod] = self._pose_zahozeno.get(duvod, 0) + 1
+        except Exception:
+            return
+        _t = time.time()
+        if _t - getattr(self, "_pose_souhrn", 0.0) < 10.0:
+            return
+        self._pose_souhrn = _t
+        if getattr(self, "_proc_zapis", False):
+            try:
+                _sw = sorted(self._pose_sw)
+                _med = _sw[len(_sw) // 2] if _sw else 0.0
+                _kus = ", ".join("%s %d" % (k, v) for k, v
+                                 in sorted(self._pose_zahozeno.items()) if v)
+                from pathlib import Path as _P
+                _d = _P("data/mereni")
+                _d.mkdir(parents=True, exist_ok=True)
+                with open(_d / "gesta_ne.log", "a", encoding="utf-8") as _f:
+                    _f.write("%s\tbrany za 10 s: %s | sirka ramen median "
+                             "%.3f z %d vzorku\n"
+                             % (time.strftime("%Y-%m-%d %H:%M:%S"), _kus,
+                                _med, len(_sw)))
+            except Exception:
+                pass
+        self._pose_zahozeno = dict.fromkeys(self._pose_zahozeno, 0)
 
     def _update_pose(self, bbox, lm):
         """HANS_GESTURE_POSE_V1 (15. 9.) — mavnuti z bodu POSTAVY.
@@ -667,13 +715,17 @@ class GestureClient:
         X, Y, Cf = k[:, 0] * ar, k[:, 1], k[:, 2]
         m = p["pose_kp_conf"]
         if min(Cf[5], Cf[6]) < m:
+            self._pose_pocitej("jistota")      # HANS_GESTURE_POSE_MERENI_V1
             return
         sw = abs(float(X[5] - X[6]))
+        self._pose_sw.append(sw)
         if sw < p["pose_min_shoulder_h"]:
+            self._pose_pocitej("uzka_ramena")
             return
         zvednuto = []
         for jm, sh, el, wr in (("L", 5, 7, 9), ("P", 6, 8, 10)):
             if Cf[wr] < m or Cf[el] < m:
+                self._pose_pocitej("jistota")
                 continue
             nad = float(Y[sh] - Y[wr]) / sw
             loket = float(Y[sh] - Y[el]) / sw
@@ -681,6 +733,10 @@ class GestureClient:
             if (nad < p["pose_wrist_above_shoulder"] or
                     loket < p["pose_elbow_min"] or
                     odnosu < p["pose_wrist_from_nose"]):
+                self._pose_pocitej(
+                    "nad_ramenem" if nad < p["pose_wrist_above_shoulder"]
+                    else ("loket" if loket < p["pose_elbow_min"]
+                          else "od_nosu"))
                 continue
             self._pose_stopa[jm].append(
                 (now, float(X[wr] - X[el]) / sw, nad, loket, odnosu,

@@ -650,7 +650,18 @@ class PicamDisplayController:
                         getattr(self.servo_controller, 'scanning_active', False))
 
             # ── Gesture recognition ───────────────────────────────
-            if frame_idx % DETECT_EVERY == 0 and not scanning:
+            # HANS_GESTURE_SLEEP_GATE_V1 (16. 9.) — ve spanku gesta
+            # NEVYHODNOCOVAT. Detekce tvari uz za branou `_vision_paused`
+            # stoji (SLEEP_VISION_OFF_V1 = nocni vypnuti videni jako fyzicke
+            # soukromi), gesta ale bezela dal. Zmereno 16. 9.: v 06:38 a 07:18
+            # (spanek do 9:00) vystrelila dve falesna mavnuti — obe nutne jako
+            # `host`, protoze rozpoznavani tvari je vypnute; kazde poslalo
+            # hlaseni na Matrix a ulozilo snimek pokoje. Pozdrav sam spadl do
+            # prazdna, protoze pocitac s modelem v noci spi.
+            # Pozn.: `/hlidej` obchazi nocni pauzu ZAMERNE a ma vlastni cestu
+            # (`_guard_tick` vyse), tahle brana se ho netyka.
+            if (frame_idx % DETECT_EVERY == 0 and not scanning
+                    and not self._vision_paused):
                 # HANS_GESTURE_ROI_V1 — posli okoli NEJVETSI (=nejblizsi)
                 # tvare, ne cely zaber: dlan tim ziska nekolikanasobek
                 # pixelu a gesta dosahnou dal. Bez tvare jde cely zaber

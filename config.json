@@ -390,7 +390,18 @@
         "wave_reject_snapshot_rel": 3.0,
         "_wave_reject_snapshot_rel_note": "Brana: rozpeti v nasobcich sirky dlane. Pri 3.0 by za 12. 9. vzniklo 13 snimku z 1676 odmitnuti. Nizsi cislo = vic snimku i vic sumu.",
         "detector": "pose",
-        "_detector_note": "HANS_GESTURE_POSE_V1 (15. 9.): pose = mavnuti z bodu POSTAVY (yolov8s_pose na Hailu, MISTO palm+landmark); hand = puvodni detektor dlane. Zmena chce restart Hanse (server nacita model pri startu). Kdyz se pose model nenacte, server sam spadne zpet na dlan. Prahy pose_* jsou v SIRKACH RAMEN; staticka cast z offline testu 14. 9. (63 snimku bez mavnuti, prosel 1), kmitani je ODHAD - ladit na pravem mavnuti."
+        "_detector_note": "HANS_GESTURE_POSE_V1 (15. 9.): pose = mavnuti z bodu POSTAVY (yolov8s_pose na Hailu, MISTO palm+landmark); hand = puvodni detektor dlane. Zmena chce restart Hanse (server nacita model pri startu). Kdyz se pose model nenacte, server sam spadne zpet na dlan. Prahy pose_* jsou v SIRKACH RAMEN; staticka cast z offline testu 14. 9. (63 snimku bez mavnuti, prosel 1), kmitani je ODHAD - ladit na pravem mavnuti.",
+        "pose_kp_conf": 0.3,
+        "pose_min_shoulder_h": 0.05,
+        "pose_wrist_above_shoulder": 0.3,
+        "pose_elbow_min": -0.4,
+        "pose_wrist_from_nose": 0.5,
+        "pose_window_s": 2.0,
+        "pose_min_samples": 3,
+        "pose_min_swing": 0.4,
+        "pose_min_reversals": 1,
+        "pose_eps": 0.1,
+        "_pose_note": "Prahy mavnuti z POSTAVY. Jednotky: SIRKA RAMEN (ne pixely), vyska zaberu = 1. Pozor na meritko: sirka ramen byla 16. 9. zmerena 0.04-0.08 u cloveka pres pokoj a 0.19 u cloveka zblizka, takze prah 0.3 znamena u vzdalene postavy jen ~6 px, ale u blizke ~21 px — gesto je pak prisnejsi na skutecne mavani nez na nahodny pohyb v pozadi. pose_min_shoulder_h je spodni mez vzdalenosti (obdoba wave_min_palm_width u dlane). Ladit az podle souhrnu 'brany za 10 s' v gesta_ne.log."
     },
     "matrix": {
         "enabled": true,
