@@ -73,17 +73,65 @@ def zacni(osoba: str) -> int:
     return 0
 
 
+def _zamek(ukaz: str) -> str:   # TAZATEL_RUNNER_LOCK_V1
+    """Soubor, ktery drzi PRAVE BEZICI tah."""
+    return ukaz + ".tah"
+
+
+def _zamkni(ukaz: str) -> None:
+    try:
+        with open(_zamek(ukaz), "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
+
+
+def _odemkni(ukaz: str) -> None:
+    try:
+        os.remove(_zamek(ukaz))
+    except Exception:
+        pass
+
+
+def _bezi_tah(ukaz: str) -> float:
+    """Kolik sekund uz bezi predchozi tah (0.0 = nic nebezi).
+    Starsi nez 310 s se ignoruje — to uz by stejne spadlo na timeout."""
+    try:
+        with open(_zamek(ukaz), encoding="utf-8") as f:
+            od = float(f.read().strip())
+    except Exception:
+        return 0.0
+    bezi = time.time() - od
+    if bezi < 0 or bezi > 310.0:
+        _odemkni(ukaz)
+        return 0.0
+    # Nikdy presnou 0.0: `rekni` se rozhoduje pravdivostne, takze cerstvy zamek
+    # (stary mene nez milisekundu) by se tvaril jako „nic nebezi“.
+    return max(bezi, 0.001)
+
+
 def rekni(osoba: str, veta: str) -> int:
     _, _, ukaz = _cesty(osoba)
     if not os.path.exists(ukaz):
         print("CHYBA: nejdřív --zacni.")
         return 2
     stav = json.load(open(ukaz, encoding="utf-8"))
+    # TAZATEL_RUNNER_LOCK_V1 — jeden tah po druhem. Most do Hansova procesu
+    # (`data/.web_chat_req.json`) je JEDEN soubor: druhy pozadavek prvni
+    # PREPISE a odpoved na nej uz nikdy nedojde. Doloženo 15. 9., tah 28:
+    # 301 s a prazdna odpoved. Radsi odmitnout, nez tise ztratit tah.
+    _bezi = _bezi_tah(ukaz)
+    if _bezi:
+        print("ODMITNUTO: predchozi tah jeste bezi (%.0f s). Pockej na jeho "
+              "odpoved a teprve pak posli dalsi vetu." % _bezi)
+        return 4
+    _zamkni(ukaz)
     od = time.strftime("%Y-%m-%d %H:%M:%S")
     t0 = time.time()
     try:
         rid = _api("/api/chat/send", {"person": osoba, "message": veta}).get("id")
     except Exception as e:
+        _odemkni(ukaz)          # TAZATEL_RUNNER_LOCK_V1
         print("CHYBA: Hans neodpovídá na API (%s)." % e)
         return 3
     odp = ""
@@ -108,6 +156,7 @@ def rekni(osoba: str, veta: str) -> int:
         f.write(json.dumps({"cas": od, "trvani_s": round(trvani), "veta": veta,
                             "odpoved": odp or "(TIMEOUT)", "log": radky[:15]},
                            ensure_ascii=False) + "\n")
+    _odemkni(ukaz)              # TAZATEL_RUNNER_LOCK_V1
     print("HANS (%.0f s): %s" % (trvani, odp or "(TIMEOUT — bez odpovědi do 300 s)"))
     for r in radky[:15]:
         print("  CESTA: " + r)
@@ -125,6 +174,7 @@ def konec(osoba: str) -> int:
         os.remove(zal)
     elif os.path.exists(konv):
         os.remove(konv)          # před testem konverzace nebyla
+    _odemkni(ukaz)              # TAZATEL_RUNNER_LOCK_V1
     os.remove(ukaz)
     n = sum(1 for _ in open(stav["prepis"], encoding="utf-8"))
     print("KONEC: konverzace '%s' vrácena, %d tahů v %s" % (osoba, n, stav["prepis"]))

@@ -1541,12 +1541,22 @@ class OpenWebUIDirectHandler:
                     _rw = _f1_rewrite(self.config, str(_text),
                                       history=_hist, name=name)
                     if _rw and _rw.strip() and _rw.strip() != str(_text).strip():
-                        logging.getLogger(__name__).info(
-                            'F1: rewrite %r -> %r',
-                            str(_text)[:60], _rw[:60])
-                        _q_for_retrieval = _rw.strip()
-                        # HANS_A1_THREAD_TEXT_V1 — schovej pro A1 gate
-                        self._f1_query = _q_for_retrieval
+                        # HANS_F1_NOT_ABOUT_ASKER_V1 (16. 9.) — prepis, ktery
+                        # prehodil podmet z Hanse na TAZATELE, je pro retrieval
+                        # k nicemu: FTS hleda, co vi tazatel, misto co delal
+                        # Hans → prazdny podklad → falesne zapreni (15. 9.,
+                        # „co si uz malovai?“ → „Co <tazatel> vi o obrazech?“).
+                        if self._f1_o_tazateli(_rw, name):
+                            logging.getLogger(__name__).info(
+                                'HANS_F1_NOT_ABOUT_ASKER_V1: prepis %r prehodil '
+                                'podmet na tazatele — drzim original', _rw[:60])
+                        else:
+                            logging.getLogger(__name__).info(
+                                'F1: rewrite %r -> %r',
+                                str(_text)[:60], _rw[:60])
+                            _q_for_retrieval = _rw.strip()
+                            # HANS_A1_THREAD_TEXT_V1 — schovej pro A1 gate
+                            self._f1_query = _q_for_retrieval
             except Exception as _f1e:
                 logging.getLogger(__name__).debug(
                     'F1: rewriter selhal (%s) — použit originál', _f1e)
@@ -1993,6 +2003,50 @@ class OpenWebUIDirectHandler:
             pass
         return False
 
+
+    # HANS_F1_NOT_ABOUT_ASKER_V1 — tvary 2. osoby (otazka porad miri na Hanse).
+    _F1_2OS = re.compile(
+        r"(?<![a-z])(jsi|jste|sis|sves|tvuj|tvoje|tve|tvych|tvym|tvemu|"
+        r"vas|vase|vasi|vasem|vasich)(?![a-z])")
+    _F1_2OS_SLOVESA = re.compile(
+        r"(?<![a-z])\w{2,}(?:ujes|ujete|es|is|as|ys|ite|ate|ete)(?![a-z])")
+
+    def _f1_o_tazateli(self, novy: str, kdo: str = "") -> bool:
+        """HANS_F1_NOT_ABOUT_ASKER_V1 (16. 9.) — prehodil prepis podmet na tazatele?
+
+        Vraci True jen kdyz prepis (a) jmenuje tazatele nebo mluvi o
+        „uzivateli“ a zaroven (b) NEOBSAHUJE zadny tvar 2. osoby. Druha
+        podminka je podstatna: „Jak dlouho uz PRACUJES pro X…“ jmeno obsahuje,
+        ale porad se pta Hanse — a ten prepis je spravny (zmereno na 35 vzorcich).
+        Pri jakekoli pochybnosti False = prepis se ponecha (dnesni chovani).
+        """
+        try:
+            import unicodedata as _ud
+            _f = lambda s: "".join(
+                c for c in _ud.normalize("NFKD", str(s or "").strip().lower())
+                if not _ud.combining(c))
+            _txt = _f(novy)
+            if not _txt:
+                return False
+            _kdo = _f(kdo or getattr(self, "_tazatel_ted", "") or "")
+            _formy = {x for x in (_kdo, "uzivatel") if x}
+            try:
+                from scripts.cz_names import display_name
+                if _kdo:
+                    _formy.add(_f(display_name(_kdo, self.config)))
+            except Exception:
+                pass
+            _jmenuje = any(
+                re.search(r"(?<![a-z])" + re.escape(x) + r"[a-z]{0,3}(?![a-z])",
+                          _txt)
+                for x in _formy if len(x) >= 4)
+            if not _jmenuje:
+                return False
+            if self._F1_2OS.search(_txt) or self._F1_2OS_SLOVESA.search(_txt):
+                return False        # porad se pta Hanse → prepis je v poradku
+            return True
+        except Exception:
+            return False
 
     def _bez_tazatele(self, text) -> str:
         return self._ASKER_PFX.sub("", str(text or ""))
@@ -2542,7 +2596,13 @@ class OpenWebUIDirectHandler:
                     or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                     or "data/hans_diary.db")
             _chap = latest_chapter(_dbp)
-            if _chap:
+            # HANS_PROMPT_HOUSEHOLD_PRIVACY_V2 (16. 9.) — autobiograficka
+            # kapitola (3 200+ zn) jde do KAZDEHO plneho promptu a 10 ze 14
+            # kapitol jmenuje cleny domacnosti; ta platna 15. 9. ve 14:43 taky
+            # (tah, kde Hans cizimu popsal „pohyby pani …“). Cizimu ji vynech:
+            # je to persona a kontinuita, ne doklad o svete — `_EVIDENCNI_BLOKY`
+            # ji zamerne nemaji, takze se timhle nic faktickeho neztrati.
+            if _chap and not _asker_cizi:
                 story_ctx = ("\n\nKdo se ze mě postupně stává (má poslední "
                              "autobiografická reflexe — vnitřní kontinuita, "
                              "necituj ji doslovně, jen z ní vychází tvůj tón): "
@@ -2822,7 +2882,8 @@ class OpenWebUIDirectHandler:
             # osoby, kterou Hans zrovna vidí (jinak ji osloví uprostřed
             # odpovědi partnerovi). V pozdravu se nefiltruje.
             _mp = _hi._mood.get_prompt_addition(
-                chat_partner=(name or "") if not for_greeting else "")
+                chat_partner=(name or "") if not for_greeting else "",
+                asker_cizi=_asker_cizi)   # HANS_MOOD_REASON_PRIVACY_V1
             if _mp:
                 mood_ctx = "\n\n" + _mp
 
@@ -2925,7 +2986,9 @@ class OpenWebUIDirectHandler:
             try:
                 from scripts.hans_lessons import lessons_for_topic as _lft
                 _topic_les = [_l for _l in _lft(_dbp_l, str(user_msg or ""),
-                                                limit=3) if _l not in _les]
+                                                limit=3,
+                                                bez_citace=_asker_cizi)
+                              if _l not in _les]   # ..._PRIVACY_V1
             except Exception as _lfte:
                 logging.getLogger(__name__).debug(
                     "lessons_for_topic (chat): %s", _lfte)

@@ -1794,6 +1794,19 @@ register(
         r"(uka[žz]\w*|po[šs]l\w*|poslat|vid[ěe]t|uvid[ěe]t)"
         r"(\s+\w+){0,3}\s+(obraz|obr[áa]z|galeri)",
         r"m[ůu][žz]u\s+(to\s+)?vid[ěe]t\s+(ten\s+)?obraz",
+        # HANS_ARTWORK_UNPREFIXED_V1 (16. 9.) — NEPREDPONOVE tvary.
+        # `_ART_MINULE` zna jen „namaloval/nakreslil/vytvoril“, takze
+        # „co jsi uz MALOVAL?“ propadlo do volneho hovoru — a tam Hans
+        # bud zapre, nebo si obrazy vymysli (oboji doloženo 15. a 16. 9.).
+        # `kreslil\s+(jsi|si)` uz vyse je, slo tedy o asymetrii.
+        # `malova[lit]` snese i preklep „malovai“ (tyz pristup jako
+        # `nama[kl]\w*` u `/namaluj`, HANS_ART_CMD_TYPO_V1).
+        # ⚠️ Oba vzory jsou UKOTVENE NA 2. OSOBU, takze rozkaz „namaluj“
+        # ani dotaz na schopnost („muzes malovat?“) nekradou.
+        # Zmereno pres `parse_command`: cil 6/6, kontroly 8/8 beze zmeny,
+        # korpus 758 -> 3 zmenena smerovani, vsechna spravne.
+        r"(?<![a-zá-ž])(malova[lit]\w*|kreslil\w*|tvo[řr]il\w*)\s+(jsi|jste|sis|si)(?![a-zá-ž])",
+        r"co\s+(jsi|jste|sis|si)\s+(u[žz]\s+|v[čc]era\s+|dnes\s+)?(malova[lit]\w*|kreslil\w*)",
     ],
     handler=_cmd_obrazy,
     help_text="Co jsem namaloval (přímo z deníku artwork): /obrazy [dnes]",

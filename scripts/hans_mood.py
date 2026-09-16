@@ -167,7 +167,29 @@ class HansMood:
     def intensity(self) -> float:
         return self._state.intensity
 
-    def get_prompt_addition(self, chat_partner: str = "") -> str:
+    def _duvod_do_promptu(self, asker_cizi: bool) -> bool:
+        """HANS_MOOD_REASON_PRIVACY_V1 (16. 9.) — smi duvod nalady do promptu?
+
+        Zmereno: 65 ze 178 duvodu nalady zni „<jmeno> prisel/prisla“, a protoze
+        duvod jde do system promptu KAZDY tah, cizi tazatel se tak dozvedel jmeno
+        z domacnosti. Doloženo 15. 9.: v 14:09 duvod „… prisla“, ve 14:11 to Hans
+        neznamemu zopakoval.
+
+        Zamerne NE plosne: vypousti se jen duvod, ktery skutecne jmenuje clena
+        domacnosti. „neznama tvar“, „sam 0.5h“ nebo „Ollama nedostupna“ zustavaji —
+        jinak by Hans cizimu prestal umet rict, PROC se tak citi.
+        Predikat je sdileny (`cz_names.find_known_person`, zvlada pady), ne novy.
+        """
+        if not asker_cizi:
+            return True
+        try:
+            from scripts.cz_names import find_known_person as _fkp
+            return not _fkp(self._state.shift_reason, self.config)
+        except Exception:
+            return False        # pri pochybnosti mlc
+
+    def get_prompt_addition(self, chat_partner: str = "",
+                            asker_cizi: bool = False) -> str:
         """Vrať doplněk do system promptu podle aktuální nálady.
 
         HANS_MOOD_HIDE_3RD_PARTY_V1 (4.8.) — `chat_partner` = s kým Hans právě
@@ -192,7 +214,7 @@ class HansMood:
             extras.append(f"Kodi hraje: {self._kodi_title}.")
         # HANS_MOOD_REASON_V1 — konkrétní důvod nálady patří do promptu.
         # Bez něj Hans neví, PROČ je (např.) worried, a musí mlčet.
-        if self._state.shift_reason:
+        if self._state.shift_reason and self._duvod_do_promptu(asker_cizi):
             extras.append(
                 f"Tvá nálada má konkrétní důvod: {self._state.shift_reason}. "
                 f"Když se tě někdo zeptá, proč se tak cítíš, uveď PRÁVĚ TENTO důvod "

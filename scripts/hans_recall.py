@@ -2129,7 +2129,29 @@ _RECENT_QUERY_RE = re.compile(
     r"co\s+jsi\s+(?:se\s+)?v[čc]era\s+"
     r"(?:d[ěe]lal|prov[áa]d[ěe]l|dozv[ěe]d[eě]l|nau[čc]il|zjistil|[čc]etl|studoval)|"
     r"co\s+jsi\s+(?:d[ěe]lal|prov[áa]d[ěe]l)\s+v[čc]era(?:\s+v\s+noci)?|"
-    r"co\s+jsi\s+v[čc]era\s+v\s+noci)",
+    r"co\s+jsi\s+v[čc]era\s+v\s+noci|"
+    # HANS_RECENT_ACTIVITY_FORMS_V1 (16. 9.) — tytez dotazy v dalsich tvarech:
+    # stazene „cos“ (= co jsi), VYKANI „co jste“ a podstatne jmeno
+    # „vcerejsek“. Slovesa zamerne TATAZ mnozina jako vyse.
+    r"cos\s+(?:v[čc]era\s+)?"
+    r"(?:d[ěe]lal|prov[áa]d[ěe]l|dozv[ěe]d[eě]l|nau[čc]il|zjistil|[čc]etl|studoval)"
+    r"(?:\s+v[čc]era)?|"
+    r"co\s+jste\s+(?:se\s+)?(?:v[čc]era\s+)?"
+    r"(?:d[ěe]lal|prov[áa]d[ěe]l|dozv[ěe]d[ěe]l|nau[čc]il|zjistil|[čc]etl|studoval)"
+    r"(?:\s+v[čc]era)?|"
+    r"jak\s+(?:jsi|jste)\s+str[áa]vil\s+v[čc]erej[šs]ek|"
+    r"co\s+bylo\s+v[čc]era)",
+    re.I,
+)
+
+# HANS_RECENT_ACTIVITY_FORMS_V1 — co NESMI projit, i kdyz tam slovo „vcera“ je.
+# Puvodni vzor to resil tim, ze byl uzky; po rozsireni to musi rict vylucne.
+#   „co jsme resili vcera“        = nas ROZHOVOR, ne Hansuv den
+#   „ze jsem se vcera pustil do…“ = UZIVATELUV den
+#   „rikal jsi vcera, ze…“        = odkaz na drivejsi repliku
+_RECENT_NOT_RE = re.compile(
+    r"(co\s+jsme|jsme\s+se\s+v[čc]era|jsem\s+se\s+v[čc]era|"
+    r"jsi\s+[řr][íi]kal|jsi\s+[řr][íi]kala)",
     re.I,
 )
 
@@ -2137,7 +2159,10 @@ _RECENT_QUERY_RE = re.compile(
 def is_recent_activity_query(text: str) -> bool:
     """Ptá se uživatel „co jsi se dnes dozvěděl / co sis zapsal / jaké
     zajímavosti dnes / co jsi dnes dělal"? Deterministický gate."""
-    return bool(_RECENT_QUERY_RE.search(_fold(text or "")))
+    f = _fold(text or "")
+    if _RECENT_NOT_RE.search(f):   # HANS_RECENT_ACTIVITY_FORMS_V1
+        return False
+    return bool(_RECENT_QUERY_RE.search(f))
 
 
 def _okno_aktivity(text: str, days: int):

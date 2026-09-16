@@ -238,8 +238,19 @@ _TOPIC_STOP_EXTRA = {
 }
 
 
+def _jmenuje_domacnost(text: str) -> bool:
+    """HANS_LESSON_TOPIC_PRIVACY_V1 — jmenuje text nekoho z domacnosti?
+    Predikat je SDILENY (`cz_names.find_known_person`, zvlada pady); pri
+    pochybnosti radsi True, tedy citaci nepustit."""
+    try:
+        from scripts.cz_names import find_known_person as _fkp
+        return bool(_fkp(text or ""))
+    except Exception:
+        return True
+
+
 def lessons_for_topic(diary_db_path: str, text: str, limit: int = 3,
-                      scan: int = 500) -> list:
+                      scan: int = 500, bez_citace: bool = False) -> list:
     """HANS_LESSON_BY_TOPIC_V1 — lekce k TÉMATU dotazu, BEZ časového okna.
 
     Proč to existuje: `recent_lessons` je čistě časové (48-72 h), takže oprava
@@ -342,6 +353,15 @@ def lessons_for_topic(diary_db_path: str, text: str, limit: int = 3,
         if best is None:
             continue
         _corr = str(d.get("correction", "") or "").strip()
+        # HANS_LESSON_TOPIC_PRIVACY_V1 (16. 9.) — `correction` je DOSLOVNA
+        # citace rozhovoru: 15 z 54 jich nese jmeno z domacnosti, jedna i cele
+        # slozeni rodiny (partner + deti). Obecne `note` nese jmen 0 z 54.
+        # ⚠️ ZUZENO tyz den: prvni verze brala cizimu citaci VZDY (53 z 54) a
+        # tim mu sebrala i uzitecnou opravu — „42 je Douglas Adams, ne Asimov“
+        # zeslo na „mel bych byt peclivejsi“, coz chybe nezabrani. Vypousti se
+        # tedy jen citace, ktera SKUTECNE jmenuje clena domacnosti.
+        if bez_citace and _corr and _jmenuje_domacnost(_corr):
+            _corr = ""
         scored.append((best, _i, _corr if len(_corr) >= 8 else note, note))
     scored.sort(key=lambda r: (r[0], r[1]))   # (přesnost, vzácnost), pak novost
     out, seen = [], set()
