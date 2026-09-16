@@ -693,7 +693,15 @@ register(
         r"kalend[áa]ř?",
         r"\bco.{0,8}m[áa]m.{0,12}(dnes|z[ií]tra|tento t[ýy]den|tenhle t[ýy]den)",
         r"\bmoje?\s+ud[áa]losti",
-        r"napl[áa]novan",  # co mám naplánováno / nemám něco naplánovaného
+        # HANS_CALENDAR_ANCHOR_V1 (16. 9.) — drive holy kmen `napl[áa]novan`,
+        # ktery se chytil kdekoli ve vete: „to se zda byt dobre naplanovane“
+        # nebo „peclive naplanovan harmonogram byl i v jinych letech“ skoncily
+        # vypisem kalendare misto odpovedi. Ukotveno na 1./2. osobu + „neco“
+        # (ne na otaznik — ten uzivatele vynechavaji). Koncovka `-v[áa]n` je
+        # tu schvalne: `napl[áa]novan` nesedlo na „naplánován/naplánováno“
+        # a zachranoval to jen slozeny dvojnik `nl_fold`.
+        r"\b(m[áa]m|nem[áa]m|m[áa][šs]|nem[áa][šs]|m[áa]te|nem[áa]te)\b"
+        r"[^?.!]{0,12}\bn[ěe]co\b[^?.!]{0,16}\bnapl[áa]nov[áa]n\w*",  # co mám naplánováno / nemám něco naplánovaného
         r"\bschůzk|\bschuzk",
     ],
     handler=_cmd_kalendar,

@@ -2042,8 +2042,13 @@ def film_knowledge_answer(db_path: str, question: str = "") -> Optional[str]:
             "AND COALESCE(NULLIF(data,''), note) IS NOT NULL "
             "ORDER BY ts DESC LIMIT 4", (best,)).fetchall()
         # kolikrát/kdy viděl
+        # HANS_FILM_FIRST_SEEN_V1 (16. 9.) — i MIN(ts): na dotaz \u201ekdy jsi ho
+        # videl poprve?\u201c blok dosud nabizel jen \u201enaposledy\u201c a model si prvni
+        # zhlednuti VYMYSLEL (16. 9.: \u201epred peti lety, v roce 2021\u201c, pritom
+        # nejstarsi zaznam v deniku je z dubna 2026).
         seen = conn.execute(
-            "SELECT COUNT(*), MAX(ts) FROM diary WHERE event_type='kodi_playing' "
+            "SELECT COUNT(*), MAX(ts), MIN(ts) FROM diary "
+            "WHERE event_type='kodi_playing' "
             "AND title=?", (best,)).fetchone()
         notes = [str(n).strip() for _, n in ops if n and str(n).strip()]
         if not notes and not (seen and seen[0]):
@@ -2056,7 +2061,18 @@ def film_knowledge_answer(db_path: str, question: str = "") -> Optional[str]:
         if seen and seen[0]:
             kdy = _cz_when(seen[1]) if seen[1] else "dříve"
             krat = "jednou" if seen[0] == 1 else f"{seen[0]}×"
-            parts.append(f"(V záznamu přehrávání: viděl jsi to {krat}, naposledy {kdy}.)")
+            # HANS_FILM_FIRST_SEEN_V1 — \u201epoprve\u201c jen kdyz se od \u201enaposledy\u201c
+            # lisi o vic nez den. Zmereno: z 483 vicekrat videnych titulu je to
+            # 205; u zbylych 278 jde o reprisu v tyz den, kde by to byl sum.
+            _prvni = ""
+            try:
+                if (len(seen) > 2 and seen[2] and seen[1]
+                        and (float(seen[1]) - float(seen[2])) > 86400.0):
+                    _prvni = ", poprvé %s" % _cz_when(seen[2])
+            except Exception:
+                _prvni = ""
+            parts.append(f"(V záznamu přehrávání: viděl jsi to {krat}{_prvni}, "
+                         f"naposledy {kdy}.)")
         return "\n\n" + "\n".join(parts)
     except Exception as e:
         _log.warning("film_knowledge_answer selhal: %s", e)
