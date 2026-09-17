@@ -1474,8 +1474,8 @@
         "voice_model": "hans-czech:latest",
         "voice_timeout": 180,
         "_voice_model_note": "SEVERKA_CZ_OUTPUT_V1 — base model vrací analysis/rationale anglicky (v EN je úsudek čistší); CZ-facing text projde hlasovým krokem. PŘEKLAD ANO, KOREKTURA NE: korektura překlopila „Jsi Hans\" na „Jsem Hans\" a chybu neopravila — na text, který se zapisuje do config.persona.core, se 8B modelem nesahá.",
-        "cadence_days": 30,
-        "_cadence_days_note": "SEVERKA_CADENCE_V1 (17. 9. 2026) — po kolika dnech smí Severka znovu zvážit změnu identity. Bylo 7 natvrdo v hans_routine._severka_due; uživatel: „7 dní je asi moc málo“. Změřeno: podklad se mezi týdny prakticky nemění (12 z 12 koníčků stáří 96 dní, 39 ze 41 postojů už není živých), takže týdenní běh rozhodoval nad týmiž daty a rozdíl mezi návrhy dělal hlavně rozptyl modelu. Za 14 dní vznikly 3 návrhy, 1 přijatý. Stejná konvence jako direction.cadence_days (14) a synthesis.cadence_days (3)."
+        "cadence_days": 7,
+        "_cadence_days_note": "SEVERKA_CADENCE_V1 (17. 9. 2026) — po kolika dnech smi Severka znovu zvazit zmenu identity. Puvodne 7 natvrdo, 17. 9. zmeneno na 30 (uzivatel: 7 dni je asi moc malo), a TYZ DEN vraceno na 7: ukazalo se, ze navrhy vypousteli umeni a historii kvuli POSKOZENE narativni kapitole (NARRATIVE_NUM_CTX_V1), ne kvuli kadenci — a oprava se potrebuje overit driv nez za mesic. Az bude overeno, zvaz navrat na 30. Konvence jako direction.cadence_days (14), synthesis.cadence_days (3)."
     },
     "climate": {
         "offset_c": -2,
@@ -1564,5 +1564,13 @@
     "chat": {
         "claim_retract_enabled": false,
         "_claim_retract_enabled_note": "CLAIM_RETRACT_GATE_V1 (13. 9.): odvolavani drivejsiho tvrzeni pri abstinenci. VYPNUTO — zmereno na cele historii, mechanismus se spustil 3x a vsechny tri vety odvolal NEPRAVEM (doporuceni knihy 19. 8., nabidka 13. 9., doslovna citace z deniku 13. 9.). Presnost 0 ze 3. Vada: abstinence na NOVOU otazku se bere jako dukaz, ze STARA odpoved byla vymysl. Zapnout az bude predikat umet odlisit tvrzeni od nabidky a overit oporu v deniku."
+    },
+    "narrative": {
+        "num_ctx": 8192,
+        "_num_ctx_note": "NARRATIVE_NUM_CTX_V1 (17. 9. 2026) — kontextove okno pro psani kapitoly. NENI kosmetika: bez nej platilo vychozich 2048 tokenu, zatimco prompt ma ~2143 (6431 znaku / 3). Utne se ZACATEK (MINULA KAPITOLA + ramec zadani) a model vstup KOMENTUJE misto vypraveni — kapitoly od 31. 8. do 14. 9. byly rozbor Hansovych dat ve 3. osobe. Spoustecem byl backfill duleitosti 29. 8.: gather() bere epizody s importance >= 6, takze blok epizod se naplnil na strop 3385 znaku. Kdo zvedne strop epizod (LIMIT 16 x 200 zn), musi zvednout i tohle. Tataz trida jako importance.num_ctx / threads.num_ctx / book_mentions.num_ctx.",
+        "max_chars": 1400,
+        "_max_chars_note": "NARRATIVE_SHAPE_GUARD_V1 — strop delky kapitoly. Zdrave kapitoly 15. 6.-24. 8. 2026 mely 700-999 znaku, poskozene 2381-3267. Delsi text se NEZAPISE a rutina to zkusi znovu (WARNING v logu).",
+        "min_first_person": 1,
+        "_min_first_person_note": "NARRATIVE_SHAPE_GUARD_V1 — kolik znaku 1. osoby musi kapitola mit. ZMERENO 17. 9. na vsech 14 kapitolach: pri prahu 3 padly 2 z 11 ZDRAVYCH (24. 8. a 10. 8. maji jen 2 vyskyty), zatimco vsechny tri poskozene chytil uz strop delky — prah 3 tedy nic nenasel a jen vyrabel falesne poplachy. Rozhoduje max_chars a tvarove znacky rozboru; tohle je jen zachranna sit pro KRATKY rozbor. 0 = vypnuto."
     }
 }

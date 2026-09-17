@@ -122,6 +122,47 @@ def _build_prompt(m: dict, name: str) -> str:
             f"POSTOJE:\n{st}\n\nKONÍČKY:\n{ho}\n\nLIDÉ:\n{pe}\n\nCÍLE:\n{go}")
 
 
+# NARRATIVE_SHAPE_GUARD_V1 (17. 9.) — kapitola ma byt KRATKE vypraveni
+# v 1. osobe. Kdyz se prompt utne, model misto toho vrati rozbor vstupu ve
+# 3. osobe ("Tento text je fascinujici mix recenzi...", "Na zaklade
+# poskytnutych dat jsem sestavil analyzu vasi osobnosti"). Dosud se takovy
+# artefakt ulozil TISE jako uspech a cetla ho Severka i kazdy chatovy prompt.
+_1OS_VZOR = (r"\b(jsem|jsem si|mne|mnou|m[ée]ho|m[ée]m|m[ýy]ch|m[ůu]j|sv[ůu]j"
+             r"|sv[ée]|sv[ée]m|zji[šs]tuji|zji[šs][ťt]uji|zaznamen[áa]v[áa]m"
+             r"|c[íi]t[íi]m|vn[íi]m[áa]m|uv[ěe]domuji|za[čc][íi]n[áa]m"
+             r"|poz[oó]ruji|pozoruji)\b")
+# Tvary, ktere se v Hansove kapitole objevit NEMAJI: rozbor, oslovovani
+# ctenare (vasi/vasem) a odrazky (system prompt je vyslovne zakazuje).
+_ROZBOR_VZOR = (r"(Tento text|Zde je (rozbor|analýza|shrnut)|Na z[áa]klad[ěe] "
+                r"poskytnut|charakteristik|va[šs][íi] osobnost|va[šs]em|va[šs]e "
+                r"osobnost|\*\*|^\s*\*\s|Analýza Textu|Interpretace a)")
+
+
+def _proc_neni_kapitola(text: str, config: dict) -> str:
+    """NARRATIVE_SHAPE_GUARD_V1 — vrati DUVOD zamitnuti, nebo '' kdyz je text OK.
+
+    Zdrave kapitoly 15. 6.-24. 8. mely 700-999 znaku a zacinaly 1. osobou
+    ("Zjistuji, ze..."). Poskozene od 31. 8. mely 2381-3267 znaku rozboru.
+    Prah je proto s rezervou nad zdravym maximem.
+    """
+    import re
+    cfg = (config.get("narrative", {}) or {})
+    max_zn = int(cfg.get("max_chars", 1400))
+    min_1os = int(cfg.get("min_first_person", 3))
+    if len(text) > max_zn:
+        return "kapitola ma %d znaku, strop je %d (rozbor misto vypraveni?)" % (
+            len(text), max_zn)
+    m = re.search(_ROZBOR_VZOR, text, re.I | re.M)
+    if m:
+        return "text ma tvar ROZBORU, ne vypraveni (nasel jsem %r)" % (
+            m.group(0)[:40],)
+    poc = len(re.findall(_1OS_VZOR, text, re.I))
+    if poc < min_1os:
+        return "jen %d znaku 1. osoby (min %d) — nevypada to, ze mluvi o sobe" % (
+            poc, min_1os)
+    return ""
+
+
 def consolidate(config: dict, db_path: str, model: str = None,
                 period_days: int = 7, timeout: int = 300) -> str:
     """Vytvoří a uloží narativní kapitolu. Vrací text (nebo '' při selhání).
@@ -154,13 +195,32 @@ def consolidate(config: dict, db_path: str, model: str = None,
             text = ollama_generate(
                 model=model, prompt=_build_prompt(m, name), system=system,
                 config=config, timeout=timeout, keep_alive=0,
-                options={"temperature": 0.4})
+                # NARRATIVE_NUM_CTX_V1 (17. 9.) — BEZ tohohle platilo
+                # vychozich 2048 tokenu, zatimco prompt ma ~2143 (6431 zn / 3).
+                # Utne se ZACATEK, tedy MINULA KAPITOLA a ramec zadani, a model
+                # vstup komentuje misto vypraveni. Tataz vada a tataz oprava
+                # jako IMPORTANCE_NUM_CTX_V1 / threads / book_mentions
+                # (29. 8.) — narativ tehdejsi audit minul.
+                # Spoustecem byl backfill duleitosti tehoz dne: gather() bere
+                # epizody s importance >= 6, takze blok epizod se z temer
+                # prazdneho naplnil na svuj strop 3385 zn.
+                options={"temperature": 0.4,
+                         "num_ctx": int((config.get("narrative", {}) or {})
+                                        .get("num_ctx", 8192))})
     except Exception as e:
         _log.warning("narrative: LLM selhal (zkusím příště): %s", e)
         return ""
     text = (text or "").strip()
     if not text or len(text) < 40:
         _log.warning("narrative: prázdná kapitola, skip")
+        return ""
+    # NARRATIVE_SHAPE_GUARD_V1 — radsi zadna kapitola nez rozbor ulozeny jako
+    # vzpominka. Prazdny navrat je deferral-safe: volajici nenastavi tydenni
+    # guard (hans_routine) a zkusi to znovu, throttle drzi retry na 2x/hod.
+    _spatne = _proc_neni_kapitola(text, config)
+    if _spatne:
+        _log.warning("narrative: NEZAPISUJI kapitolu — %s | zacatek: %.120s",
+                     _spatne, " ".join(text.split()))
         return ""
     # ulož do deníku
     try:
