@@ -554,7 +554,9 @@
         "merge_model": "qwen2.5:7b",
         "_merge_model_note": "Sémantický rozhodčí „je to totéž?“. Změřeno 4.9.: 14/14 správně a 3/3 stabilně, včetně pastí astronomie×gastronomie a historie×hysterie. Malý (4,7 GB) → vejde se vedle rezidentního chatu.",
         "max_merges_per_night": 5,
-        "_max_merges_per_night_note": "Strop sloučení za noc — pojistka proti hromadnému zásahu do dat. Nic se nemaže, prohraný řádek jde na status='merged' a vrací se jedním UPDATE."
+        "_max_merges_per_night_note": "Strop sloučení za noc — pojistka proti hromadnému zásahu do dat. Nic se nemaže, prohraný řádek jde na status='merged' a vrací se jedním UPDATE.",
+        "num_ctx": 8192,
+        "_num_ctx_note": "PERSON_INTERESTS_NUM_CTX_V1 (17. 9. 2026) — kontextove okno pro tri volani v hans_person_interests (extrakce zajmu + dve otazky). NENI kosmetika: bez nej platilo vychozich 2048 tokenu, zatimco prompt u extrakce je join(notes[-20:]) BEZ stropu. Zmereno na zivych datech: nejhorsi transcript 5 897 znaku = ~1 965 tokenu, tedy 96 % limitu — rezerva 4 %. Pri 8192 je rezerva ~4x. Kdo zvedne pocet replik nad 20 (window_hours 26), musi zvednout i tohle. Tataz trida jako importance.num_ctx, threads.num_ctx, book_mentions.num_ctx a narrative.num_ctx."
     },
     "gemini": {
         "model": "gemini-2.0-flash"

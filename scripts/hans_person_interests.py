@@ -471,10 +471,20 @@ def extract_person_interests(config: dict, diary_db_path: str,
         transcript = "\n---\n".join(notes[-20:])
         prompt = f"{known_block}PŘEPIS ROZHOVORŮ:\n{transcript}"
         try:
+            # PERSON_INTERESTS_NUM_CTX_V1 (17. 9.) — bez num_ctx platilo
+            # vychozich 2048 tokenu. `transcript` je join(notes[-20:]) BEZ
+            # stropu; zmereno na zivych datech 5 897 znaku = ~1 965 tokenu,
+            # tedy 96 % limitu. Jeden ukecanejsi den a prompt se utne od
+            # ZACATKU a model zacne vstup komentovat misto extrakce — presne
+            # jako nitky (16 576 zn) 29. 8. a narativ (NARRATIVE_NUM_CTX_V1).
+            # Kdo zvedne pocet replik nad 20, musi zvednout i tohle.
+            _okno = int((config.get("person_interests", {}) or {})
+                        .get("num_ctx", 8192))
             raw = ollama_generate(model=model, prompt=prompt, system=_system,
                                   config=config, timeout=timeout,
                                   keep_alive=0,  # MODEL_KEEPALIVE_TIERS_V1
-                                  options={"temperature": 0.2})
+                                  options={"temperature": 0.2,
+                                           "num_ctx": _okno})
         except Exception as e:
             _log.warning("extract_person_interests: LLM failed (%s): %s", person, e)
             continue
@@ -544,9 +554,13 @@ def generate_interest_questions(config: dict, diary_db_path: str,
                 "vřelou a přirozenou českou otázku, kterou se nenásilně zeptáš na "
                 "její zájmy. Žádný výslech, žádný akademický tón. Vrať jen tu otázku.")
         try:
+            _okno = int((config.get("person_interests", {}) or {})
+                        .get("num_ctx", 8192))
             out = ollama_generate(model=model, prompt=user, system=system,
                                   config=config, timeout=timeout,
-                                  keep_alive=0, options={"temperature": 0.5})
+                                  keep_alive=0,
+                                  options={"temperature": 0.5,
+                                           "num_ctx": _okno})
         except Exception as e:
             _log.warning("generate_interest_questions LLM (%s): %s", person, e)
             continue
@@ -609,9 +623,13 @@ def generate_personal_questions(config: dict, diary_db_path: str) -> int:
                 "ze svého života. Žádný výslech, nic dotěrného, žádné téma z četby. "
                 "Vrať jen tu jednu otázku.")
         try:
+            _okno = int((config.get("person_interests", {}) or {})
+                        .get("num_ctx", 8192))
             out = ollama_generate(model=model, prompt=user, system=system,
                                   config=config, timeout=timeout,
-                                  keep_alive=0, options={"temperature": 0.6})
+                                  keep_alive=0,
+                                  options={"temperature": 0.6,
+                                           "num_ctx": _okno})
         except Exception as e:
             _log.warning("generate_personal_questions LLM (%s): %s", person, e)
             continue
