@@ -612,16 +612,52 @@ class HansRoutine:
 
     # ── HANS_SEVERKA_V1 (3c) — týdenní sebereflexe identity ──────────────────
     def _severka_due(self, today: str) -> bool:
-        """True když uplynul aspoň týden od posledního checku (cadence guard)."""
+        """True když od poslední sebereflexe uplynul `severka.cadence_days`.
+
+        SEVERKA_CADENCE_V1 (17. 9.) — výchozí 30 dní místo týdne (pokyn
+        uživatele: „7 dní je asi moc málo“). Zrcadlí
+        HANS_DIRECTION_CADENCE_V1, který totéž udělal pro směr.
+        Důvod je měřený, ne dojmový: podklad se mezi týdny prakticky nemění
+        (koníčky 96 dní beze změny, 39 ze 41 postojů už není živých), takže
+        týdenní běh rozhodoval nad týmiž daty a rozdíl mezi návrhy dělal
+        hlavně rozptyl modelu. Za 14 dní vznikly 3 návrhy, z toho 1 přijatý.
+        ⚠️ Data-gate v `hans_severka` NENÍ brzda: projde 12 z 12 koníčků,
+        takže podmínka „aspoň něco trvalého“ je splněná vždy."""
         last = self._last_severka_check
         if not last:
             return True
         try:
             d0 = datetime.strptime(last, "%Y-%m-%d").date()
             d1 = datetime.strptime(today, "%Y-%m-%d").date()
-            return (d1 - d0).days >= 7
+            _dni = int(((self.config.get("severka") or {}).get("cadence_days", 30)))
+            return (d1 - d0).days >= _dni
         except Exception:
             return True
+
+    def _severka_pending_ceka(self) -> bool:
+        """SEVERKA_PENDING_GUARD_V1 (17. 9.) — True (= přeskoč běh), když už
+        čeká nevyřízený návrh identity.
+
+        `IdentityStore.propose` žádnou pojistku nemá a vkládá bezpodmínečně,
+        takže bez tohohle by se pendingy hromadily. A protože `pending()` řadí
+        `ts DESC` a `/severka schválit` bez čísla bere NEJNOVĚJŠÍ, dal by se
+        odklepnout návrh, který uživatel nikdy nečetl.
+        Guard `_last_severka_check` se přeskočením ZÁMĚRNĚ nenastavuje — po
+        rozhodnutí uživatele tak Severka naskočí hned příští noc.
+        Volá se až ZA `_night_throttled`, aby dotaz do DB nešel každý tik."""
+        try:
+            if self._identity is None:
+                return False
+            pend = self._identity.pending()
+            if not pend:
+                return False
+            _log.info("Severka: čeká nevyřízený návrh (pending id=%s) → "
+                      "nový nevytvářím, rozhodne uživatel (/severka stav).",
+                      ", ".join(str(p.id) for p in pend))
+            return True
+        except Exception as _e:
+            _log.warning("Severka pending guard selhal (%s) → běh nebrzdím", _e)
+            return False
 
     def _night_throttled(self, key: str, min_s: float) -> bool:
         """HANS_NIGHT_RETRY_THROTTLE_V1 — True (přeskoč) když se `key` pokoušel
@@ -2104,8 +2140,12 @@ class HansRoutine:
             # (dřív set-before → výpadek Ollamy zahodil check na CELÝ TÝDEN).
             # HANS_NIGHT_THROTTLE_REACH_V1 - bez throttle se pri mozku dole zkousela
             # kazdy tick (60 s) = 138x za noc, vcetne obou avatar kroku uvnitr.
+            # SEVERKA_PENDING_GUARD_V1 — pending check je ZÁMĚRNĚ až za
+            # throttlem: `_night_throttled` si pokus zaznamenává, takže se do
+            # DB sáhne nejvýš 2× za hodinu, ne každých 60 s.
             if (self._severka is not None and self._severka_due(today)
-                    and not self._night_throttled("severka", 1800)):
+                    and not self._night_throttled("severka", 1800)
+                    and not self._severka_pending_ceka()):
                 try:
                     _sv_deferred = self._run_severka_check(today)
                     if not _sv_deferred:
