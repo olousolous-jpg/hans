@@ -143,6 +143,13 @@ class GestureClient:
         self._pose_zahozeno = {"jistota": 0, "uzka_ramena": 0,
                                "nad_ramenem": 0, "loket": 0, "od_nosu": 0}
         self._pose_sw       = deque(maxlen=400)
+        # HANS_GESTURE_POSE_NAD_V1 (17. 9.) — namerene `nad` u ZAHOZENYCH
+        # snimku. Dosud se hodnota zapsala, jen kdyz branou PROSLA, takze
+        # nechycene mavnuti mlcelo: neslo poznat, jestli je tesne pod prahem,
+        # nebo hluboko zaporne (ruka u pasu). Ciste merici, prahy beze zmeny.
+        # Na rozdil od `_pose_sw` se NULUJE s kazdym souhrnem, aby median
+        # i maximum popisovaly PRAVE TECH 10 s, ne posledni pul minuty.
+        self._pose_nad      = deque(maxlen=400)
         self._pose_souhrn   = 0.0
         # HANS_GESTURE_DEBUG_V1 — `gesture.debug` zvedne diagnostiku na INFO.
         # Bez toho je cela cesta nema: chyby socketu jsou na DEBUG a vyjimka
@@ -660,7 +667,30 @@ class GestureClient:
                 % (rozpeti, obr, len(okno), okno[-1][0] - okno[0][0],
                    posl[2], posl[3], posl[4], posl[7])), None
 
-    def _pose_pocitej(self, duvod: str):
+    def _pose_syrove(self, duvod, v):
+        """HANS_GESTURE_POSE_RAW_V1 (17. 9.) — jeden radek na ZAHOZENY snimek.
+
+        Souhrn za 10 s rika jen median a maximum `nad`. K rozhodnuti o prazich
+        je potreba CELE rozlozeni a k otazce "byl by to vubec kmit" i vodorovna
+        vychylka zapesti vuci lokti — jinak by kazda dalsi brana znamenala novy
+        patch, restart a dalsi zadost o mavnuti. Format (tabulatory):
+        cas, strana, duvod, nad, loket, od nosu, sirka ramen, vychylka.
+        Visi na `wave_reject_log`, tedy se vypne spolu s ostatnim merenim.
+        """
+        if not getattr(self, "_proc_zapis", False):
+            return
+        try:
+            from pathlib import Path as _P
+            _d = _P("data/mereni")
+            _d.mkdir(parents=True, exist_ok=True)
+            with open(_d / "pose_raw.log", "a", encoding="utf-8") as _f:
+                _f.write("%.3f\t%s\t%s\t%.3f\t%.3f\t%.3f\t%.4f\t%.4f\n"
+                         % (time.time(), v[0], duvod, v[1], v[2], v[3],
+                            v[4], v[5]))
+        except Exception:
+            pass
+
+    def _pose_pocitej(self, duvod: str, nad=None, syrove=None):
         """HANS_GESTURE_POSE_MERENI_V1 — secti, kde se snimek ztratil, a jednou
         za 10 s to zapis i se STREDNI SIRKOU RAMEN. Ta je klicova: vsechny pose
         prahy jsou v nasobcich sirky ramen, takze u vzdalene postavy odpovida
@@ -668,6 +698,10 @@ class GestureClient:
         od "clovek byl daleko"."""
         try:
             self._pose_zahozeno[duvod] = self._pose_zahozeno.get(duvod, 0) + 1
+            if nad is not None:                    # HANS_GESTURE_POSE_NAD_V1
+                self._pose_nad.append(float(nad))
+            if syrove is not None:                 # HANS_GESTURE_POSE_RAW_V1
+                self._pose_syrove(duvod, syrove)
         except Exception:
             return
         _t = time.time()
@@ -678,6 +712,9 @@ class GestureClient:
             try:
                 _sw = sorted(self._pose_sw)
                 _med = _sw[len(_sw) // 2] if _sw else 0.0
+                _nd = sorted(self._pose_nad)       # HANS_GESTURE_POSE_NAD_V1
+                _nmed = _nd[len(_nd) // 2] if _nd else 0.0
+                _nmax = _nd[-1] if _nd else 0.0
                 _kus = ", ".join("%s %d" % (k, v) for k, v
                                  in sorted(self._pose_zahozeno.items()) if v)
                 from pathlib import Path as _P
@@ -685,12 +722,14 @@ class GestureClient:
                 _d.mkdir(parents=True, exist_ok=True)
                 with open(_d / "gesta_ne.log", "a", encoding="utf-8") as _f:
                     _f.write("%s\tbrany za 10 s: %s | sirka ramen median "
-                             "%.3f z %d vzorku\n"
+                             "%.3f z %d vzorku | nad median %.2f max %.2f "
+                             "z %d vzorku\n"
                              % (time.strftime("%Y-%m-%d %H:%M:%S"), _kus,
-                                _med, len(_sw)))
+                                _med, len(_sw), _nmed, _nmax, len(_nd)))
             except Exception:
                 pass
         self._pose_zahozeno = dict.fromkeys(self._pose_zahozeno, 0)
+        self._pose_nad.clear()                     # HANS_GESTURE_POSE_NAD_V1
 
     def _update_pose(self, bbox, lm):
         """HANS_GESTURE_POSE_V1 (15. 9.) — mavnuti z bodu POSTAVY.
@@ -736,11 +775,16 @@ class GestureClient:
                 self._pose_pocitej(
                     "nad_ramenem" if nad < p["pose_wrist_above_shoulder"]
                     else ("loket" if loket < p["pose_elbow_min"]
-                          else "od_nosu"))
+                          else "od_nosu"), nad,   # HANS_GESTURE_POSE_NAD_V1
+                    (jm, nad, loket, odnosu, sw,  # HANS_GESTURE_POSE_RAW_V1
+                     float(X[wr] - X[el]) / sw))
                 continue
             self._pose_stopa[jm].append(
                 (now, float(X[wr] - X[el]) / sw, nad, loket, odnosu,
                  float(k[wr, 0]), float(k[wr, 1]), sw))
+            self._pose_syrove("prosel",           # HANS_GESTURE_POSE_RAW_V1
+                              (jm, nad, loket, odnosu, sw,
+                               float(X[wr] - X[el]) / sw))
             zvednuto.append(jm)
         if not zvednuto:
             return
