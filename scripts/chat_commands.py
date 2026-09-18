@@ -5048,8 +5048,29 @@ _LLM_ROUTE_MAX_WORDS = 14      # delší věta = vyprávění, ne žádost o vý
 # jste…", „všiml sis něčeho divného?" i „stalo se dnes něco neobvyklého?" mají
 # `_je_navazujici_dotaz` = False — nejsou to navazující věty, ale samostatné
 # otázky. Rozšiřovat kvůli tomu predikát navazování by byl špatný nástroj.
+# HANS_ROUTE_RISKY_DILO_V1 (18. 9.) — `dilo` PATRI do rizikovych.
+# Dolozeno 15. 9.: "A ta knizka - co je to za dilo? Co se tam ctete?"
+# (dotaz na KNIHU, kterou Hans cte) -> /dilo, tedy vypis JEHO autorskeho
+# projektu vcetne vnitrni cesty k souborum. Slovo "dilo" si stitek pritahne,
+# protoze v katalogu je jedinou volbou, kde to slovo je.
+# ⛔ Popis stitku se ZAMERNE nemeni — to je zasah do rozhodovaciho prostoru
+#    celeho routeru [[action-description-is-router-change]] a zadal by
+#    premereni vsech voleb. Rozhoduje STRUKTURA, jako u `rozhovory`
+#    (20. 8.) a `anomalie` (1. 9.): tytez dve otazky maji TOTOZNY TVAR
+#    a lisi se jen predmetem — "co pises TY" x "co je to za dilo TAMTA kniha".
+# ⛔ Povolit `TYPO_V2` prepis stitku (rewriter na te vete spravne /cetl
+#    navrhl a pravidlo ho zahodilo) NELZE — to je vedome, zmerene
+#    rozhodnuti z 1. 9. (rewriter meni 13 ze 14 replik, prah podobnosti
+#    vyzkousen a zamitnut).
+# ZMERENO 18. 9., 3 behy na vetu, produkcni cestou:
+#    dolozena veta      /dilo 2 ze 3 behu -> None 3/3
+#    6 legitimnich      /dilo 3/3        -> /dilo 3/3 (nic se neztratilo)
+#    11 realnych voleb  beze zmeny v obou ramenech
+#    brana samotna: dotaz na knihu False 3/3, dotazy na dilo True 3/3
+# Cetnost vady: 0 realnych vet (ta jedna v logu je veta testovaciho tazatele),
+# proto se to opravuje jednim radkem a ne novou vrstvou.
 _LLM_ROUTE_RISKY = frozenset({"napad", "kritika", "vhledy", "smer", "cetl",
-                              "rozhovory", "anomalie"})
+                              "rozhovory", "anomalie", "dilo"})
 
 _OWN_RECORDS_SYSTEM = (
     "Uživatel se ptá domácího asistenta. Rozhodni, jestli se ptá na "
