@@ -311,6 +311,43 @@ class StanceStore:
             _log.warning("StanceStore.contradict failed: %s", e)
             return None
 
+    def durable_stances(self, limit: int = 8, min_confidence: float = 0.0,
+                        min_evidence: int = 3,
+                        fresh_days: int = 21) -> List[Stance]:
+        """HANS_KOLAC_CHALLENGE_DURABLE_V1 — READ-ONLY: TRVALÉ postoje.
+
+        Rozdíl proti `top_stances`: řadí podle EVIDENCE, ne podle confidence,
+        a filtruje přímo v SQL (ne až za LIMITem). Důvod: jediné pozorování
+        stačí na confidence 0,90, takže řazení podle confidence pustí nahoru
+        jednorázové postoje a trvalé (ev 47/23/22) se pod ně nikdy nedostanou.
+
+        ⚠️ Řadit podle confidence je tu navíc SEBEZAVÍRAJÍCÍ: kdo postoj
+        úspěšně zpochybní, srazí mu confidence o 15 % — a tím ho vyřadí
+        z příštího výběru. Řadit se smí jen podle veličiny, kterou volající
+        mechanismus sám nemění.
+
+        Týž gate už používá `hans_persona.recent_stances`
+        (HANS_PERSONA_STANCE_DURABLE_V1, 27. 8.) i Severčin
+        `durable_tendencies` — tohle je třetí konzument téže tabulky,
+        který si s nimi dosud protiřečil.
+        """
+        try:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM stances WHERE status='active' "
+                    "AND evidence_count >= ? AND last_seen >= ? "
+                    "AND confidence >= ? "
+                    "ORDER BY evidence_count DESC, confidence DESC LIMIT ?",
+                    (int(min_evidence), time.time() - fresh_days * 86400.0,
+                     min_confidence, int(limit))).fetchall()
+                return [Stance(r) for r in rows]
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.debug("durable_stances failed: %s", e)
+            return []
+
     def top_stances(self, limit: int = 5, min_confidence: float = 0.0) -> List[Stance]:
         """READ-ONLY: nejsilnější aktivní názory (pro personu)."""
         try:

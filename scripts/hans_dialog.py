@@ -1298,7 +1298,19 @@ class HansDialog:
             spk, rest = first.split(":", 1)
             if len(spk) <= 15:
                 first = rest.strip()
-        return (first[:300] or None)
+        # HANS_KOLAC_LINE_SEAM_V1 — dřív tvrdé `first[:300]`, což utínalo
+        # repliku uprostřed slova (159 ze 180 useknutých mělo přesně 300 zn).
+        # Strop se zvedl na 400 (živá sonda: repliky sahají do 376 zn, přes
+        # 400 žádná) a když i tak přeteče, šev padne na KONEC VĚTY — týž
+        # princip jako HANS_YT_SENTENCE_SEAM_V1 u slepování titulků.
+        # ⛔ `line_num_predict` (120) v tom NEVINNĚ nefiguruje: změřeno živě,
+        # že model při něm vrátí 255 zn a větu dokončí. Nezvedat.
+        _cap = int(dc.get("line_max_chars", 400))
+        if len(first) > _cap:
+            _cut = first[:_cap]
+            _poz = max(_cut.rfind(c) for c in ".!?")
+            first = _cut[:_poz + 1] if _poz >= _cap // 2 else _cut
+        return (first or None)
 
     def _generate_two_minds(self, topic, full_context: str,
                             history_block: str) -> str | None:
@@ -1382,8 +1394,18 @@ class HansDialog:
         try:
             from scripts.hans_stances import StanceStore
             store = StanceStore(self.config, self._diary_path)
-            return [s for s in store.top_stances(limit=8, min_confidence=min_conf)
-                    if getattr(s, "evidence_count", 0) >= 3 and (s.claim or "").strip()]
+            # HANS_KOLAC_CHALLENGE_DURABLE_V1 — dřív `top_stances(8, conf>=0.7)`
+            # + filtr ev>=3 AŽ ZA limitem. Od 5. 9. to vracelo 0 (top 8 zabraly
+            # postoje s ev=1–2 a conf 0,90 z večerní reflexe) a Koláč tím
+            # přestal zpochybňovat úplně: 0 ústupků za 14 dní. Navíc to byla
+            # sebezavírající se smyčka — ústupek srazí confidence o 15 %,
+            # čímž postoj vypadne z okna. Proto se řadí podle EVIDENCE a
+            # min_conf je už jen PODLAHA (nemlátit dohola sestřelený postoj).
+            return [s for s in store.durable_stances(
+                        limit=8, min_confidence=min_conf,
+                        min_evidence=int(dc.get("stance_challenge_min_ev", 3)),
+                        fresh_days=int(dc.get("stance_challenge_fresh_days", 21)))
+                    if (s.claim or "").strip()]
         except Exception as e:
             _log.debug("challengeable stances: %s", e)
             return []
