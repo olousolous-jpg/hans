@@ -623,7 +623,10 @@ class GestureClient:
              "pose_wrist_above_shoulder": 0.3, "pose_elbow_min": -0.4,
              "pose_wrist_from_nose": 0.5, "pose_window_s": 2.0,
              "pose_min_samples": 3, "pose_min_swing": 0.4,
-             "pose_min_reversals": 1, "pose_eps": 0.1}
+             "pose_min_reversals": 1, "pose_eps": 0.1,
+             # HANS_GESTURE_POSE_NAD_MAX_V1 — 99 = vypnuto,
+             # aby chybejici klic nezmenil chovani
+             "pose_wrist_above_max": 99.0}
         p = self._pose or d
         for k in d:
             try:
@@ -770,12 +773,17 @@ class GestureClient:
             loket = float(Y[sh] - Y[el]) / sw
             odnosu = abs(float(X[wr] - X[0])) / sw if Cf[0] >= m else 9.0
             if (nad < p["pose_wrist_above_shoulder"] or
+                    nad > p["pose_wrist_above_max"] or  # HANS_GESTURE_POSE_NAD_MAX_V1
                     loket < p["pose_elbow_min"] or
                     odnosu < p["pose_wrist_from_nose"]):
                 self._pose_pocitej(
                     "nad_ramenem" if nad < p["pose_wrist_above_shoulder"]
-                    else ("loket" if loket < p["pose_elbow_min"]
-                          else "od_nosu"), nad,   # HANS_GESTURE_POSE_NAD_V1
+                    # `pazi_nahore` je ZAMERNE jiny stitek nez `nad_ramenem`:
+                    # ten znaci zapesti prilis NIZKO. Bez rozliseni by se obe
+                    # strany brany slily do jednoho cisla v gesta_ne.log.
+                    else ("pazi_nahore" if nad > p["pose_wrist_above_max"]
+                          else ("loket" if loket < p["pose_elbow_min"]
+                                else "od_nosu")), nad,  # HANS_GESTURE_POSE_NAD_V1
                     (jm, nad, loket, odnosu, sw,  # HANS_GESTURE_POSE_RAW_V1
                      float(X[wr] - X[el]) / sw))
                 continue

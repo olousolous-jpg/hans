@@ -36,6 +36,11 @@ def produkcni():
     g = config_io.load().get("gesture") or {}
     return {
         "pose_wrist_above_shoulder": float(g.get("pose_wrist_above_shoulder", 0.3)),
+        # HANS_GESTURE_POSE_NAD_MAX_V1 — zrcadli produkcni branu.
+        # Radky v pose_raw.log vznikly pod PUVODNI mezi sirky
+        # ramen, takze se da prehravat i prisnejsi prah.
+        "pose_wrist_above_max": float(g.get("pose_wrist_above_max", 99.0)),
+        "pose_min_shoulder_h": float(g.get("pose_min_shoulder_h", 0.05)),
         "pose_elbow_min": float(g.get("pose_elbow_min", -0.4)),
         "pose_wrist_from_nose": float(g.get("pose_wrist_from_nose", 0.5)),
         "pose_window_s": float(g.get("pose_window_s", 2.0)),
@@ -72,6 +77,8 @@ def nacti(cesta, od=None, do=None):
 
 def projde(r, p):
     return (r["nad"] >= p["pose_wrist_above_shoulder"] and
+            r["nad"] <= p["pose_wrist_above_max"] and
+            r["sw"] >= p["pose_min_shoulder_h"] and
             r["loket"] >= p["pose_elbow_min"] and
             r["odnosu"] >= p["pose_wrist_from_nose"])
 
@@ -133,8 +140,10 @@ def vyhodnot(radky, p, nazev):
 
 
 def popis(p):
-    return ("nad>=%5.2f loket>=%5.2f vzorku>=%d rozpeti>=%.2f"
-            % (p["pose_wrist_above_shoulder"], p["pose_elbow_min"],
+    return ("nad %5.2f..%5.2f sw>=%.2f loket>=%5.2f vzorku>=%d "
+            "rozpeti>=%.2f"
+            % (p["pose_wrist_above_shoulder"], p["pose_wrist_above_max"],
+               p["pose_min_shoulder_h"], p["pose_elbow_min"],
                p["pose_min_samples"], p["pose_min_swing"]))
 
 

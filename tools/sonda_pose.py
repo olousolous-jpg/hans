@@ -39,6 +39,8 @@ G = cfg_load().get("gesture", {})
 KP_CONF = float(G.get("pose_kp_conf", 0.3))
 MIN_SW = float(G.get("pose_min_shoulder_h", 0.05))
 NAD_MIN = float(G.get("pose_wrist_above_shoulder", 0.3))
+# HANS_GESTURE_POSE_NAD_MAX_V1 — horni mez, 99 = vypnuto
+NAD_MAX = float(G.get("pose_wrist_above_max", 99.0))
 LOKET_MIN = float(G.get("pose_elbow_min", -0.4))
 NOSU_MIN = float(G.get("pose_wrist_from_nose", 0.5))
 
@@ -116,11 +118,13 @@ def sonda(cesta):
         # pozor: bez duveryhodneho nosu padne `odnosu` na 9.0 a branu TISE pusti
         odnosu = abs(float(X[wr] - X[0])) / sw if Cf[0] >= KP_CONF else 9.0
         duvod = ("nad_ramenem" if nad < NAD_MIN
-                 else ("loket" if loket < LOKET_MIN
-                       else ("od_nosu" if odnosu < NOSU_MIN else None)))
-        print("  paze %s: nad=%+.3f (prah %.2f) | loket=%+.3f (prah %.2f) | "
-              "od_nosu=%.3f (prah %.2f)  -> %s" % (
-                  jm, nad, NAD_MIN, loket, LOKET_MIN, odnosu, NOSU_MIN,
+                 else ("pazi_nahore" if nad > NAD_MAX
+                       else ("loket" if loket < LOKET_MIN
+                             else ("od_nosu" if odnosu < NOSU_MIN else None))))
+        print("  paze %s: nad=%+.3f (pasmo %.2f..%.2f) | loket=%+.3f "
+              "(prah %.2f) | od_nosu=%.3f (prah %.2f)  -> %s" % (
+                  jm, nad, NAD_MIN, NAD_MAX, loket, LOKET_MIN, odnosu,
+                  NOSU_MIN,
                   "PROJDE" if duvod is None else "ZAHOZENO `%s`" % duvod))
 
 
