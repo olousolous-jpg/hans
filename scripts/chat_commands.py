@@ -2820,9 +2820,21 @@ def _cmd_dilo(handler, name, args) -> str:
         projs = store.all_projects()
         if projs:
             last = projs[0]
-            return ("Právě nepíšu, pane. Naposledy: „%s\" (%s). Najdete ho "
-                    "v data/works/. Další dílo si vyberu z trvalého koníčku. "
-                    "(/dilo vše, /dilo teď)" % (last["title"], last["status"]))
+            # HANS_DILO_PATH_PRIVACY_V1 (18. 9.) — vnitrni cestu k souborum
+            # rikej jen ZNAME osobe. Doloženo 15. 9.: cizi tazatel dostal
+            # „Najdete ho v data/works/." Protahuje se hotovy predikat
+            # `cz_names.is_known_person` (tentyz, jaky uz pouziva
+            # `hans_recall` u karty osoby), ne novy mechanismus.
+            try:
+                from scripts.cz_names import is_known_person as _ikp
+                _znamy = bool(name) and _ikp(name, cfg)
+            except Exception:
+                _znamy = False      # fail-safe: radeji cestu neuvadet
+            _kde = "Najdete ho v data/works/. " if _znamy else ""
+            return ("Právě nepíšu, pane. Naposledy: „%s\" (%s). %s"
+                    "Další dílo si vyberu z trvalého koníčku. "
+                    "(/dilo vše, /dilo teď)"
+                    % (last["title"], last["status"], _kde))
         return ("Zatím jsem nezačal psát, pane — vyberu si trvalý koníček a "
                 "navrhnu dílo. (/dilo teď to spustí ručně)")
 

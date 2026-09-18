@@ -165,9 +165,19 @@ class DisplayRenderer:
                     if not getattr(self, "_av_stale_logged", False):
                         self._av_stale_logged = True
                         import logging
+                        # HANS_AVATAR_STALE_MSG_V2 (18. 9.) — hlaska tvrdila
+                        # „hraju statický obrázek", i kdyz animace BEZI a
+                        # propadl jen jeden klip z poolu (18. 9. je takovy
+                        # jediny: testovaci `hans_test_blink` z 25. 7., zbyle
+                        # ctyri jsou novejsi nez tvar). Cist se to dalo jako
+                        # „avatar je zamrzly" — stalo to pul hodiny hledani
+                        # rozporu mezi hlaskou a casy souboru. Rika teď KTERY
+                        # klip a nic netvrdi o zbytku.
                         logging.getLogger("display_renderer").warning(
-                            "avatar: klipy jsou starší než tvář — hraju statický "
-                            "obrázek. Regeneruj (hans_avatar.animate).")
+                            "avatar: klip %s je starší než tvář → tenhle "
+                            "nehraju (ostatní klipy tím nejsou dotčené). "
+                            "Regeneruj (hans_avatar.animate).",
+                            os.path.basename(p))
                     return False
                 except Exception:
                     return True
