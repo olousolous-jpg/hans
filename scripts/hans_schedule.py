@@ -110,7 +110,61 @@ _SEED = [
     # nastaveno 25h → hlásí až po celém dni ticha.
     ("catchup_drain", "periodic", None, None, 25 * 3600,
      "Deferred pending catchup (po brain_up dojede backlog)"),
+
+    # ── HANS_SCHEDULE_DERIVED_V1 (18. 9.) — rutiny hlídané PODLE DAT ──────
+    # Nepotřebují `mark()` v kódu: čerstvost se odvodí z `MAX(ts)` nad stopou,
+    # kterou mechanismus v databázi stejně zanechává (viz `_DERIVED` níž).
+    # Prahy = 2x historicke p95 mezery, min. 3 dny; v zavorce namerena p95.
+    ("stance_contradict", "derived", None, None, 6 * 24 * 3600,
+     "Oslabeni postoje (Kolac/reflexe zpochybnily nazor) [p95 2,8 d]"),
+    ("kolac_memory", "derived", None, None, 3 * 24 * 3600,
+     "Kolacova vlastni pamet pozic z dialogu [p95 0,6 d]"),
+    ("stance_new", "derived", None, None, 16 * 24 * 3600,
+     "Vznik noveho postoje [p95 8 d]"),
+    ("lesson_learned", "derived", None, None, 12 * 24 * 3600,
+     "Korekce / ponauceni [p95 5,8 d]"),
+    ("artwork", "derived", None, None, 3 * 24 * 3600,
+     "Namalovany obraz [p95 1 d]"),
+    ("dream", "derived", None, None, 3 * 24 * 3600,
+     "Sen [p95 1 d]"),
+    ("proactive", "derived", None, None, 35 * 24 * 3600,
+     "Proaktivni osloveni [p95 17,6 d]"),
+    ("study_note", "derived", None, None, 8 * 24 * 3600,
+     "Studijni poznamka [p95 4 d]"),
+    ("fact_correction", "derived", None, None, 32 * 24 * 3600,
+     "Overeni faktu (G5K) [p95 16 d]"),
+    ("night_summary", "derived", None, None, 3 * 24 * 3600,
+     "Nocni souhrn [p95 1 d]"),
+    ("book_read", "derived", None, None, 3 * 24 * 3600,
+     "Prectena kapitola [p95 0,6 d]"),
+    ("writing_section", "derived", None, None, 4 * 24 * 3600,
+     "Kapitola vlastniho dila [p95 2,1 d]"),
+    ("agent_action", "derived", None, None, 4 * 24 * 3600,
+     "Provedena agentni akce [p95 2 d]"),
+    ("teddy_dialog", "derived", None, None, 3 * 24 * 3600,
+     "Dialog s Kolacem [p95 0,2 d]"),
 ]
+
+# HANS_SCHEDULE_DERIVED_V1 — kde ma kazda odvozena rutina svou stopu.
+# VYHRADNE cteci SELECT MAX(...) bez parametru zvenci (zadny vstup uzivatele).
+# Tabulky lezi v teze DB jako `hans_schedule` (data/hans_diary.db).
+_DERIVED = {
+    "stance_contradict":
+        "SELECT MAX(ts) FROM stance_history WHERE event='contradict'",
+    "kolac_memory":      "SELECT MAX(ts) FROM kolac_memory",
+    "stance_new":        "SELECT MAX(first_seen) FROM stances",
+    "lesson_learned":    "SELECT MAX(ts) FROM diary WHERE event_type='lesson_learned'",
+    "artwork":           "SELECT MAX(ts) FROM diary WHERE event_type='artwork'",
+    "dream":             "SELECT MAX(ts) FROM diary WHERE event_type='dream'",
+    "proactive":         "SELECT MAX(ts) FROM diary WHERE event_type='proactive'",
+    "study_note":        "SELECT MAX(ts) FROM diary WHERE event_type='study_note'",
+    "fact_correction":   "SELECT MAX(ts) FROM diary WHERE event_type='fact_correction'",
+    "night_summary":     "SELECT MAX(ts) FROM diary WHERE event_type='night_summary'",
+    "book_read":         "SELECT MAX(ts) FROM diary WHERE event_type='book_read'",
+    "writing_section":   "SELECT MAX(ts) FROM diary WHERE event_type='writing_section'",
+    "agent_action":      "SELECT MAX(ts) FROM diary WHERE event_type='agent_action'",
+    "teddy_dialog":      "SELECT MAX(ts) FROM diary WHERE event_type='teddy_dialog'",
+}
 
 
 def _fresh_since(r: dict) -> float:
@@ -201,6 +255,44 @@ class ScheduleStore:
                     VALUES (?,?,?,?,?,0,0,?,1,'',1,?,?)
                 """, (name, kind, ps, hr, gap, now, note, now))
             db.commit()
+
+    # ── zápis (odvozené rutiny) ──────────────────────────────────────────────
+    def refresh_derived(self) -> int:
+        """HANS_SCHEDULE_DERIVED_V1 — dopočítej čerstvost rutin, které se
+        nehlásí samy: `last_ok_ts` = `MAX(ts)` nad jejich stopou v datech.
+
+        Vrací počet obnovených rutin. Nikdy nevyhazuje výjimku a nikdy
+        neposouvá čas ZPĚT (`MAX(sloupec, ?)`), aby chybějící/prázdná
+        tabulka nezpůsobila falešný poplach.
+
+        ⚠️ Čerstvost se plní do `last_ok_ts`, protože `_fresh_since` měří od
+        posledního ÚSPĚCHU — do `last_run_ts` by to rutinu nechalo vypadat
+        jako nikdy neúspěšnou (HANS_SCHEDULE_LAST_OK_V1).
+        """
+        obnoveno = 0
+        try:
+            with sqlite3.connect(self._path, timeout=5.0) as db:
+                for name, sql in _DERIVED.items():
+                    try:
+                        row = db.execute(sql).fetchone()
+                    except Exception as e:
+                        # Chybějící tabulka není důvod shodit celý audit.
+                        _log.debug("refresh_derived(%s): %s", name, e)
+                        continue
+                    ts = float(row[0]) if row and row[0] else 0.0
+                    if ts <= 0:
+                        continue
+                    db.execute(
+                        "UPDATE hans_schedule SET "
+                        "last_run_ts=MAX(last_run_ts, ?), "
+                        "last_ok_ts=MAX(last_ok_ts, ?), updated_ts=? "
+                        "WHERE name=? AND kind='derived'",
+                        (ts, ts, time.time(), name))
+                    obnoveno += 1
+                db.commit()
+        except Exception as e:
+            _log.warning("refresh_derived selhalo: %s", e)
+        return obnoveno
 
     # ── zápis (autonomní subsystémy) ─────────────────────────────────────────
     def mark(self, name: str, ok: bool = True,

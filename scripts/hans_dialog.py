@@ -18,6 +18,23 @@ _log = logging.getLogger("hans_dialog")
 
 from scripts.hans_kolac import kolac_name, localize_kolac  # KOLAC_NAME_CONFIGURABLE_V1
 
+def _kolac_prefixy(config) -> tuple:
+    """HANS_KOLAC_LABEL_MATCH_V1 — předpony, kterými začíná Koláčova replika.
+
+    Vrací ZVOLENÉ jméno z configu i legacy tvary („Kolač"/„kolac" bez
+    diakritiky), protože staré dialogy a jednopromptová záložní cesta
+    štítkují jinak než `two_minds`. Malými písmeny — porovnává se na
+    `l.lower().startswith(...)`, což bere i n-tici.
+
+    ⛔ NEPSAT zpátky natvrdo `startswith("kola")`: jméno je konfigurovatelné
+    (KOLAC_NAME_CONFIGURABLE_V1) a u výchozího „Koláč" ta předpona NESEDÍ
+    (`"koláč".startswith("kola")` je False) — stálo to Koláčovu paměť,
+    2 208 dialogů bez jediného zápisu.
+    """
+    kn = kolac_name(config).strip().lower()
+    return tuple({p for p in (kn, "kolač", "kolac") if p})
+
+
 # Plyšáci které YOLO zná jako "teddy_bear"
 _TEDDY_NAMES = [
     "pane Medvídku",
@@ -997,8 +1014,9 @@ class HansDialog:
                     # Kolačova poslední replika = nová stopa
                     _lines = [l.strip() for l in dialog.strip().split('\n')
                               if l.strip() and ':' in l]
+                    _kpre = _kolac_prefixy(self.config)  # HANS_KOLAC_LABEL_MATCH_V1
                     _kolac_lines = [l for l in _lines
-                                    if l.lower().startswith('kola')]
+                                    if l.lower().startswith(_kpre)]
                     if _kolac_lines:
                         _clue = _kolac_lines[-1].split(':', 1)[1].strip()
                         # jen KOMPLETNÍ replika — ne useknutá („S tím nemohu sou")
@@ -1010,8 +1028,9 @@ class HansDialog:
             try:
                 _km = self._kolac()
                 if _km:
+                    _kpre2 = _kolac_prefixy(self.config)  # HANS_KOLAC_LABEL_MATCH_V1
                     _kl = [l for l in dialog.strip().split("\n")
-                           if l.strip().lower().startswith("kola") and ":" in l]
+                           if l.strip().lower().startswith(_kpre2) and ":" in l]
                     if _kl:
                         _pos = _kl[-1].split(":", 1)[1].strip()
                         # neukládej do Koláčovy paměti useknuté/nekompletní pozice

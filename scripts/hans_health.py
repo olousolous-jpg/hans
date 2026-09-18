@@ -292,6 +292,10 @@ def probe_schedule(config: dict) -> dict:
         db = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "data", "hans_diary.db")
         st = ScheduleStore(db)
+        # HANS_SCHEDULE_DERIVED_V1 — rutiny bez instrumentace si čerstvost
+        # dopočítají z dat těsně před auditem, takže jsou vždy aktuální
+        # a nepotřebují vlastní tik.
+        st.refresh_derived()
         stale = st.stale_list()
         if not stale:
             return {"status": OK, "detail": "všechny rutiny běží podle plánu",
