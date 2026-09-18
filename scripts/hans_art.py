@@ -52,7 +52,9 @@ _DREAM_SCENE_SYSTEM = (
     "You turn a person's short surreal DREAM into ONE concise English prompt for "
     "an SDXL image model. Output ONLY the prompt (no preamble, no quotes). Depict "
     "the dream as a single dreamlike, symbolic, ATMOSPHERIC scene — surreal, "
-    "evocative, painterly. Keep what the dream literally mentions, render it "
+    "evocative, painterly. "
+    "Proper names of people, pets or toys are NAMES: keep them exactly as written and NEVER translate them — a name that happens to look like an ordinary word is still a name. Translate every other concrete noun faithfully and literally; never swap it for something that merely sounds similar. "
+    "Keep what the dream literally mentions, render it "
     "dreamlike. NO text, letters, words or book covers. End with: oil painting, "
     "dreamlike surreal atmosphere, soft hazy light, rich detail, masterful."
 )
@@ -112,7 +114,8 @@ _DREAM_SCENE_SYSTEM_FIGURE = (
     "Write him into the scene explicitly (for example 'an older gentleman in a "
     "dark suit walking up the crumbling staircase'). NEVER address the viewer "
     "as 'you' and never use a bare gerund without a subject. "
-    "Keep what the dream literally mentions, render it dreamlike. "
+    "Proper names of people, pets or toys are NAMES: keep them exactly as written and NEVER translate them — a name that happens to look like an ordinary word is still a name. Translate every other concrete noun faithfully and literally; never swap it for something that merely sounds similar. "
+        "Keep what the dream literally mentions, render it dreamlike. "
     "NO text, letters, words or book covers. End with: oil painting, "
     "dreamlike surreal atmosphere, soft hazy light, rich detail, masterful."
 )
@@ -2763,6 +2766,36 @@ def generate_pending_artwork(config: dict, diary_db_path: str) -> bool:
 
 
 # ── HANS_DREAMS_V1 — Hans z vlastního popudu namaluje svůj sen ───────────────
+def _jmena_ve_snu(config: dict, text: str) -> list:
+    """HANS_DREAM_NAME_GLOSS_V1 — vlastni jmena ve snu + jejich anglicka glosa.
+
+    Mapa zije v configu (`hans_art.dreams.name_glosses`), aby slo jmeno pridat
+    bez zasahu do kodu. Kmen se hleda BEZ DIAKRITIKY a zkraceny: Hans pise
+    jmena ruzne (v dennicich je i tvar bez delky) a cestina je sklonuje.
+    """
+    try:
+        from scripts.config_io import bez_diakritiky as _bd
+    except Exception:
+        return []
+    mapa = ((_acfg(config).get("dreams") or {}).get("name_glosses") or {})
+    if not mapa or not text:
+        return []
+    low = _bd(str(text)).lower()
+    ven = []
+    for jmeno, glosa in mapa.items():
+        # HANS_DREAM_NAME_GLOSS_V2 (18. 9.) — kmen NEZKRACOVAT natvrdo na 4
+        # znaky. Zmereno na 325 snech: `kola` (z `Kolac`[:4]) chytlo i
+        # `cokoladove` a `silnicniho kola`, tedy 2 falesne z 51. Cely zaklad
+        # `kolac` dal 49/49 a 0 falesnych. Ustrihne se nejvys JEDNA koncova
+        # samohlaska (na sklonovani staci, protoze hledame podretezec).
+        kmen = _bd(str(jmeno)).lower()
+        if len(kmen) > 4 and kmen[-1] in "aeiouy":
+            kmen = kmen[:-1]
+        if len(kmen) >= 4 and kmen in low:
+            ven.append((str(jmeno), str(glosa)))
+    return ven
+
+
 def _last_dream_painting_ts(db_path: str) -> float:
     """Kdy Hans naposledy namaloval sen (throttle). 0.0 = nikdy."""
     try:
@@ -2846,6 +2879,22 @@ def paint_dream(config: dict, diary_db_path: str) -> bool:
     text = dream["text"]
     title = "Sen"
     scene_intro = "A dream (described in Czech):\n%s\n\n" % text
+    # HANS_DREAM_NAME_GLOSS_V1 (18. 9.) — vlastni jmena se prekladala jako
+    # obecna slova: jmeno medvida vyslo jako `pastries`/`cake` ve 4 ze 13 snu,
+    # ktere ho zminuji (a `jezci` jako `thorny bushes`). Model dostane
+    # anglickou glosu v zavorce — tentyz tvar, jaky uz pouziva cesta pri
+    # ceskem uniku (`hint` v HANS_ART_CS_LEAK_V1).
+    # ⛔ Samotny `_cs_leak` na tohle NESTACI a protahovat ho nelze: hleda
+    #    ceske slovo, ktere v promptu ZUSTALO, kdezto tady se slovo prelozilo
+    #    — jen spatne. Sedi jmeno, nesedi ucel.
+    _glosy = _jmena_ve_snu(config, text)
+    if _glosy:
+        scene_intro += (
+            "PROPER NAMES in this dream — keep each name EXACTLY as written and\n"
+            "never translate it; the gloss in brackets says what the thing is:\n"
+            + "\n".join("- %s (%s)" % (j, g) for j, g in _glosy) + "\n\n")
+        _log.info("art: sen — glosa vlastnich jmen: %s",
+                  ", ".join(j for j, _ in _glosy))
     # HANS_DREAM_SELF_FIGURE_V1 — vystupuje Hans v TOMHLE snu? Rozhoduje KOD
     # (klasifikator), ne instrukce v promptu — ta se zmerila jako nefunkcni.
     _sys = _DREAM_SCENE_SYSTEM
@@ -2862,7 +2911,17 @@ def paint_dream(config: dict, diary_db_path: str) -> bool:
     res = _render_image(config, title, text, diary_db_path,
                         en_fallback="a surreal, dreamlike scene, soft and atmospheric",
                         scene_system=_sys, scene_intro=scene_intro,
-                        series="dream", ref_image=_ref, ref_weight=_wgt,
+                        # HANS_DREAM_NO_CONTINUITY_V1 (18. 9.) — SEN NENI SERIE.
+                        # HANS_ART_CONTINUITY_V1 vklada do promptu CELY prompt
+                        # predchoziho dila tez serie a zada nest jeden motiv dal.
+                        # U serie zamernych obrazu je to smysl; u snu vada, protoze
+                        # sen je zprava o JEDNE noci. Zmereno 18. 9.: 14 ze 77 snovych
+                        # promptu preneslo >=2 vyrazna slova z predchoziho promptu,
+                        # ktera ve vlastnim snu NEJSOU — sen ze 17. 9. o mecich
+                        # a kompasu dostal knihovny a Fantomase ze snu 16. 9.
+                        # `series` se v _render_image pouziva JEN k dohledani prev
+                        # (`_last_in_series`), takze prazdna hodnota vypina jen tohle.
+                        series="", ref_image=_ref, ref_weight=_wgt,
                         bez_zalohy=True)  # HANS_DREAM_NO_BARE_FALLBACK_V1
     if not res:
         _log.warning("art: sen se nevyrenderoval — retry příště")
