@@ -41,6 +41,9 @@ def produkcni():
         # ramen, takze se da prehravat i prisnejsi prah.
         "pose_wrist_above_max": float(g.get("pose_wrist_above_max", 99.0)),
         "pose_min_shoulder_h": float(g.get("pose_min_shoulder_h", 0.05)),
+        # HANS_GESTURE_POSE_NOSE_REQ_V1 — v syrovem logu se
+        # nedostupny nos pozna podle `odnosu` 9.0
+        "pose_nose_required": float(g.get("pose_nose_required", 0.0)),
         "pose_elbow_min": float(g.get("pose_elbow_min", -0.4)),
         "pose_wrist_from_nose": float(g.get("pose_wrist_from_nose", 0.5)),
         "pose_window_s": float(g.get("pose_window_s", 2.0)),
@@ -76,6 +79,8 @@ def nacti(cesta, od=None, do=None):
 
 
 def projde(r, p):
+    if p.get("pose_nose_required") and r["odnosu"] >= 8.0:
+        return False                      # HANS_GESTURE_POSE_NOSE_REQ_V1
     return (r["nad"] >= p["pose_wrist_above_shoulder"] and
             r["nad"] <= p["pose_wrist_above_max"] and
             r["sw"] >= p["pose_min_shoulder_h"] and
@@ -84,7 +89,16 @@ def projde(r, p):
 
 
 def useky(radky, jm, p):
-    """Souvisle useky proslych snimku jedne strany (neuspech stopu prerusi)."""
+    """Souvisle useky proslych snimku jedne strany (neuspech stopu prerusi).
+
+    🔴 POZOR — TOHLE NENI PRODUKCNI CHOVANI. Produkce drzi `_pose_stopa` jako
+    TRVALY deque a maze ji jen vystrel nebo rearm; neuspesny snimek stopu
+    NEPRERUSI. Tenhle nastroj ji prerusuje, takze v zasumenem okne PODPOCITA.
+    Zmereno 19. 9.: falesne okno 18. 9. 19:23-19:31 ma v produkci 6 vystrelu,
+    tenhle nastroj jich napocita 2. Na porovnani variant nad TYMZ korpusem to
+    staci, na absolutni pocty NE — na ty prehravej produkcni `_pose_je_mavani`
+    s vlastni trvalou stopou (postup v GESTA_NOS_19_09).
+    """
     ven, cur = [], []
     for r in radky:
         if r["jm"] != jm:

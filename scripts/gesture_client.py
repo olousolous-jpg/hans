@@ -141,7 +141,12 @@ class GestureClient:
         # aby NEPRETLACIL hlasky z `_proc_ne` (ty maji vlastni limit 2 s).
         # MERI, do rozhodovani nesaha.
         self._pose_zahozeno = {"jistota": 0, "uzka_ramena": 0,
-                               "nad_ramenem": 0, "loket": 0, "od_nosu": 0}
+                               "nad_ramenem": 0, "loket": 0, "od_nosu": 0,
+                               # HANS_GESTURE_POSE_NAD_MAX_V1 + _NOSE_REQ_V1:
+                               # bez seedu chybi duvod v souhrnu, dokud
+                               # poprve nesepne — a odecet pak nevi, jestli
+                               # mlci, nebo jeste nebyl.
+                               "pazi_nahore": 0, "bez_nosu": 0}
         self._pose_sw       = deque(maxlen=400)
         # HANS_GESTURE_POSE_NAD_V1 (17. 9.) — namerene `nad` u ZAHOZENYCH
         # snimku. Dosud se hodnota zapsala, jen kdyz branou PROSLA, takze
@@ -626,7 +631,9 @@ class GestureClient:
              "pose_min_reversals": 1, "pose_eps": 0.1,
              # HANS_GESTURE_POSE_NAD_MAX_V1 — 99 = vypnuto,
              # aby chybejici klic nezmenil chovani
-             "pose_wrist_above_max": 99.0}
+             "pose_wrist_above_max": 99.0,
+             # HANS_GESTURE_POSE_NOSE_REQ_V1 — 0 = vypnuto
+             "pose_nose_required": 0.0}
         p = self._pose or d
         for k in d:
             try:
@@ -771,6 +778,15 @@ class GestureClient:
                 continue
             nad = float(Y[sh] - Y[wr]) / sw
             loket = float(Y[sh] - Y[el]) / sw
+            # HANS_GESTURE_POSE_NOSE_REQ_V1 — bez duveryhodneho nosu spadne
+            # `odnosu` na 9.0 a brana "zapesti mimo oblicej" se TISE pusti
+            # (9.0 projde kazdy prah). Merena cena: zadna — v okne skutecneho
+            # mavani nebyl bez nosu ani jeden snimek, u falesnych 153 ze 443.
+            if p["pose_nose_required"] and Cf[0] < m:
+                self._pose_pocitej("bez_nosu", nad,
+                                   (jm, nad, loket, 9.0, sw,
+                                    float(X[wr] - X[el]) / sw))
+                continue
             odnosu = abs(float(X[wr] - X[0])) / sw if Cf[0] >= m else 9.0
             if (nad < p["pose_wrist_above_shoulder"] or
                     nad > p["pose_wrist_above_max"] or  # HANS_GESTURE_POSE_NAD_MAX_V1
