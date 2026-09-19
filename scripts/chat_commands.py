@@ -3237,8 +3237,19 @@ register(
         r"jak\s+dlouho\s+(u[žz]\s+)?(jsi|jste)\s+(tu|tady|zde|v\s+t)",
         r"od\s+kdy\s+(tu|tady|zde)\s+(jsi|jste)",
         r"jak\s+d[áa]vno\s+si\s+pamatuje[šs]",
-        r"jak\s+dlouho\s+(u[žz]\s+)?(si\s+)?(vede[šs]|p[íi][šs]e[šs]|m[áa][šs])"
+        # HANS_MEMORY_SPAN_V3 (19. 9.) — vzor byl jen v TYKANI, ackoli
+        # komentar u V2 se odvolava na obe osoby (to plati pro SLUZBU,
+        # ne pro DENIK). Doloženo testem cizim clovekem: "Jak dlouho si
+        # deník vedete?" propadlo do LLM a Hans odpovedel "od dětství"
+        # (skutecnost: 25. 4. 2026, 74 544 zaznamu). Druha dira byl
+        # SLOVOSLED — veta mela predmet pred slovesem ("si deník vedete").
+        # Zmereno: 5/5 cilovych formulaci chyceno, 0 falesnych poplachu
+        # na 758 realnych replikach. [[test-both-grammatical-persons]]
+        r"jak\s+dlouho\s+(u[žz]\s+)?(si\s+)?"
+        r"(vede[šs]|vedete|p[íi][šs]e[šs]|p[íi][šs]ete|m[áa][šs]|m[áa]te)"
         r"\s+(ten\s+)?den[íi]k",
+        r"jak\s+dlouho\s+(u[žz]\s+)?(si\s+)?(ten\s+)?den[íi]k\s+"
+        r"(vede[šs]|vedete|p[íi][šs]e[šs]|p[íi][šs]ete)",
         r"od\s+kdy\s+(si\s+)?(vede[šs]|p[íi][šs]e[šs]|m[áa][šs]|existuje[šs])",
         r"kolik\s+(toho\s+)?(m[áa][šs]|m[áa]te)\s+.{0,20}?(den[íi]k|zapsan|z[áa]znam)",
         # ⚠️ Tolerance musí být ŠIROKÁ: doložená věta zněla „…k tomu deníku:
