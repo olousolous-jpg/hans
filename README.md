@@ -79,7 +79,8 @@ svém datu. (`hans_threads`, `hans_person_interests`)
 
 📐 **[Interaktivní schéma architektury](docs/architektura.html)** — kde běží které
 procesy, kudy tečou data od kamery k odpovědi, co se děje v noci a kde stojí brány
-proti konfabulaci. (Stáhni a otevři v prohlížeči, nebo publikuj přes GitHub Pages.)
+proti konfabulaci. (Stáhni a otevři v prohlížeči, nebo publikuj přes GitHub Pages.
+Anglicky: [`docs/architecture.html`](docs/architecture.html).)
 
 ---
 

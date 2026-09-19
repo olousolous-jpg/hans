@@ -82,10 +82,10 @@ has an exam") and follows up on their next visit ("how did it go?"). Threads als
   (qwen-VL)  ┘   autobiographical   └ creativity           Kodi / WOL
 ```
 
-📐 **[Interactive architecture diagram](docs/architektura.html)** (in Czech) —
-which processes run where, how data flows from camera to answer, what happens at
-night, and where the anti-confabulation gates sit. (Download and open in a
-browser, or serve it via GitHub Pages.)
+📐 **[Interactive architecture diagram](docs/architecture.html)** — which
+processes run where, how data flows from camera to answer, what happens at night,
+and where the anti-confabulation gates sit. (Download and open it in a browser,
+or serve it via GitHub Pages. A Czech version is at `docs/architektura.html`.)
 
 ---
 
