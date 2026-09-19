@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architektura Hanse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+</head>
+<body>
+<!--ARTIFACT-BODY-START-->
+<style>
+:root{
+  --ground:#F3F4F1; --surface:#FFFFFF; --sunk:#EAECE6;
+  --ink:#17191C; --muted:#5E6560; --line:#D6D9D2;
+  --brass:#A87833; --teal:#2F6D68; --crimson:#9A3B34;
+  --shadow:0 1px 2px rgba(23,25,28,.06), 0 8px 24px rgba(23,25,28,.05);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#121419; --surface:#1A1D23; --sunk:#15181D;
+    --ink:#E8E4DA; --muted:#98A09E; --line:#2C313A;
+    --brass:#D6A455; --teal:#5AA9A2; --crimson:#D2756B;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121419; --surface:#1A1D23; --sunk:#15181D;
+  --ink:#E8E4DA; --muted:#98A09E; --line:#2C313A;
+  --brass:#D6A455; --teal:#5AA9A2; --crimson:#D2756B;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  font-size:16px; line-height:1.65; margin:0;
+  padding-block:0 4rem; padding-left:20px; padding-right:20px;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:900px; margin:0 auto}
+.prose{max-width:66ch}
+h1,h2,h3{font-family:Newsreader,Georgia,serif; font-weight:600; text-wrap:balance; line-height:1.15; margin:0}
+h1{font-size:clamp(2.1rem,5vw,3.1rem); letter-spacing:-.01em}
+h2{font-size:clamp(1.4rem,3vw,1.85rem); margin-top:3.5rem}
+h3{font-size:1.06rem; font-family:"IBM Plex Sans",sans-serif; font-weight:600; margin-top:1.6rem}
+p{margin:.85rem 0}
+a{color:var(--brass)}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.87em}
+code{background:var(--sunk); padding:.1em .35em; border-radius:3px}
+.eyebrow{
+  font-family:"IBM Plex Mono",monospace; font-size:.74rem; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--muted); margin:0 0 .6rem;
+}
+header.masthead{padding-block:3.5rem 0; border-bottom:1px solid var(--line); padding-bottom:2rem}
+.lede{font-family:Newsreader,Georgia,serif; font-size:1.2rem; color:var(--muted); max-width:58ch; margin-top:1rem}
+
+/* ── číselný pás ─────────────────────────────────────── */
+.stats{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
+  gap:0; margin-top:2rem; border:1px solid var(--line); border-radius:4px;
+  background:var(--surface); overflow:hidden;
+}
+.stat{padding:.85rem 1rem; border-right:1px solid var(--line)}
+.stat:last-child{border-right:0}
+.stat b{
+  display:block; font-family:"IBM Plex Mono",monospace; font-size:1.25rem;
+  font-weight:500; font-variant-numeric:tabular-nums; letter-spacing:-.02em;
+}
+.stat span{font-size:.76rem; color:var(--muted); letter-spacing:.02em}
+
+/* ── figury ──────────────────────────────────────────── */
+figure{margin:2rem 0 0; padding:0}
+.board{
+  background:var(--surface); border:1px solid var(--line); border-radius:4px;
+  padding:1.2rem; box-shadow:var(--shadow); overflow-x:auto;
+}
+svg.fig{display:block; width:100%; height:auto; max-width:100%; color:var(--ink)}
+figcaption{font-size:.87rem; color:var(--muted); margin-top:.7rem; max-width:64ch}
+
+/* ── filtr vrstev ────────────────────────────────────── */
+.filters{display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:1rem}
+.filters button{
+  font-family:"IBM Plex Mono",monospace; font-size:.76rem; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--muted); background:var(--surface);
+  border:1px solid var(--line); border-radius:3px; padding:.4rem .7rem; cursor:pointer;
+}
+.filters button:hover{color:var(--ink)}
+.filters button[aria-pressed="true"]{
+  color:var(--surface); background:var(--ink); border-color:var(--ink);
+}
+.filters button:focus-visible{outline:2px solid var(--brass); outline-offset:2px}
+.arch .n{transition:opacity .22s ease}
+.arch[data-layer="percept"] .n:not(.l-percept),
+.arch[data-layer="memory"]  .n:not(.l-memory),
+.arch[data-layer="cognition"] .n:not(.l-cognition),
+.arch[data-layer="express"] .n:not(.l-express){opacity:.16}
+@media (prefers-reduced-motion:reduce){.arch .n{transition:none}}
+
+/* ── SVG primitiva ───────────────────────────────────── */
+.box{fill:var(--surface); stroke:currentColor; stroke-width:1; opacity:.9}
+.box-sunk{fill:var(--sunk); stroke:var(--line); stroke-width:1}
+.hull{fill:none; stroke:var(--line); stroke-width:1; stroke-dasharray:4 4}
+.t{font-family:"IBM Plex Sans",sans-serif; font-size:12.5px; fill:currentColor}
+.t-mono{font-family:"IBM Plex Mono",monospace; font-size:11px; fill:var(--muted)}
+.t-lab{font-family:"IBM Plex Mono",monospace; font-size:10.5px; fill:var(--muted); letter-spacing:.06em}
+.t-head{font-family:"IBM Plex Mono",monospace; font-size:10.5px; fill:var(--muted); letter-spacing:.14em; text-transform:uppercase}
+.flow{fill:none; stroke:currentColor; stroke-width:1.2; opacity:.55}
+.flow-brass{fill:none; stroke:var(--brass); stroke-width:1.6}
+.flow-teal{fill:none; stroke:var(--teal); stroke-width:1.4}
+.flow-dash{stroke-dasharray:5 4}
+.gate{fill:none; stroke:var(--crimson); stroke-width:1.6}
+
+/* ── tabulka modelů ──────────────────────────────────── */
+table{border-collapse:collapse; width:100%; margin-top:1.2rem; font-size:.92rem}
+th,td{text-align:left; padding:.55rem .7rem; border-bottom:1px solid var(--line); vertical-align:top}
+th{font-family:"IBM Plex Mono",monospace; font-size:.72rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:500}
+td.m{font-family:"IBM Plex Mono",monospace; font-size:.83rem; white-space:nowrap}
+.tbl-wrap{overflow-x:auto}
+
+/* ── poznámka ────────────────────────────────────────── */
+.note{
+  border-left:2px solid var(--brass); padding:.2rem 0 .2rem 1rem;
+  margin:1.6rem 0; color:var(--muted); max-width:62ch;
+}
+.note strong{color:var(--ink)}
+footer{margin-top:4rem; padding-top:1.5rem; border-top:1px solid var(--line); color:var(--muted); font-size:.87rem}
+ul.tight{margin:.6rem 0; padding-left:1.1rem}
+ul.tight li{margin:.35rem 0}
+@media (max-width:560px){
+  .stat{border-right:0; border-bottom:1px solid var(--line)}
+  .board{padding:.7rem}
+}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Referenční architektura · Raspberry Pi 5 + Hailo-8L</p>
+  <h1>Architektura Hanse</h1>
+  <p class="lede">Hans je perzistentní postava, ne chatbot. Tahle stránka ukazuje,
+  čím se ta perzistence platí: kde běží které procesy, kudy tečou data od kamery
+  k odpovědi, co se děje v noci a kde stojí brány, které modelu nedovolí vydávat
+  domněnku za fakt.</p>
+
+  <div class="stats">
+    <div class="stat"><b>178</b><span>modulů v <span class="mono">scripts/</span></span></div>
+    <div class="stat"><b>107 473</b><span>řádků Pythonu</span></div>
+    <div class="stat"><b>8</b><span>databází SQLite</span></div>
+    <div class="stat"><b>47</b><span>tabulek deníku</span></div>
+    <div class="stat"><b>59</b><span>chatových příkazů</span></div>
+    <div class="stat"><b>23</b><span>agentních akcí</span></div>
+  </div>
+</header>
+
+<section class="prose">
+  <h2>Dva stroje, tři procesy</h2>
+  <p>Hans není jedna binárka. Na Raspberry Pi běží <strong>tři samostatné
+  procesy</strong>, které spolu mluví přes unixové sockety, a všechno, co
+  potřebuje GPU, je na PC za HTTP. Dělba je tvrdá: <strong>Pi vidí a rozhoduje,
+  PC mluví a maluje.</strong></p>
+  <p>Praktický důsledek, který je z kódu vidět až po chvíli: gesta, rozpoznávání
+  tváří i hlídací režim fungují <strong>i když je PC vypnuté</strong> — neprocházejí
+  přes žádný jazykový model.</p>
+</section>
+
+<figure>
+  <div class="board">
+    <svg class="fig" viewBox="0 0 880 330" role="img" aria-label="Schéma: na Raspberry Pi běží inferenční server, hlavní aplikace a webový admin; přes HTTP a SSH komunikují s PC, které hostí jazykové modely a generování obrazů.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <polygon points="0,1 10,5 0,9" fill="currentColor"></polygon>
+        </marker>
+        <marker id="ar-brass" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <polygon points="0,1 10,5 0,9" fill="var(--brass)"></polygon>
+        </marker>
+      </defs>
+
+      <!-- Pi -->
+      <rect class="hull" x="16" y="34" width="396" height="272" rx="5"></rect>
+      <text class="t-head" x="30" y="24">Raspberry Pi 5 · Hailo-8L</text>
+
+      <rect class="box-sunk" x="38" y="52" width="150" height="40" rx="3"></rect>
+      <text class="t" x="52" y="70">Pi kamera</text>
+      <text class="t-mono" x="52" y="85">picamera2</text>
+
+      <rect class="box" x="38" y="122" width="150" height="54" rx="3"></rect>
+      <text class="t" x="52" y="142">Inferenční server</text>
+      <text class="t-mono" x="52" y="158">hailo_inference_server</text>
+      <text class="t-mono" x="52" y="170">SCRFD · ArcFace · pose</text>
+
+      <rect class="box" x="236" y="122" width="158" height="54" rx="3"></rect>
+      <text class="t" x="250" y="142">Hlavní aplikace</text>
+      <text class="t-mono" x="250" y="158">main.py</text>
+      <text class="t-mono" x="250" y="170">system_manager</text>
+
+      <rect class="box" x="236" y="228" width="158" height="46" rx="3"></rect>
+      <text class="t" x="250" y="247">Webový admin</text>
+      <text class="t-mono" x="250" y="262">web_admin.py</text>
+
+      <rect class="box-sunk" x="38" y="228" width="150" height="46" rx="3"></rect>
+      <text class="t" x="52" y="247">Displeje · servo</text>
+      <text class="t-mono" x="52" y="262">oči · avatar · TTS</text>
+
+      <!-- šipky uvnitř Pi -->
+      <line class="flow" x1="113" y1="92" x2="113" y2="118" marker-end="url(#ar)"></line>
+      <line class="flow" x1="188" y1="140" x2="232" y2="140" marker-end="url(#ar)"></line>
+      <text class="t-lab" x="186" y="132">/tmp/hailo_scrfd.sock</text>
+      <line class="flow" x1="188" y1="162" x2="232" y2="162" marker-end="url(#ar)"></line>
+      <text class="t-lab" x="196" y="177">/tmp/gesture.sock</text>
+      <line class="flow" x1="236" y1="176" x2="150" y2="224" marker-end="url(#ar)"></line>
+      <line class="flow flow-dash" x1="315" y1="176" x2="315" y2="224" marker-end="url(#ar)"></line>
+      <text class="t-lab" x="322" y="205">čte stav</text>
+
+      <!-- PC -->
+      <rect class="hull" x="500" y="34" width="364" height="184" rx="5"></rect>
+      <text class="t-head" x="514" y="24">PC · GPU ~16 GB</text>
+
+      <rect class="box" x="522" y="52" width="150" height="54" rx="3"></rect>
+      <text class="t" x="536" y="72">Ollama / OpenWebUI</text>
+      <text class="t-mono" x="536" y="88">persona · analýza · RAG</text>
+
+      <rect class="box" x="700" y="52" width="142" height="54" rx="3"></rect>
+      <text class="t" x="714" y="72">ComfyUI</text>
+      <text class="t-mono" x="714" y="88">SDXL · obrazy</text>
+
+      <rect class="box-sunk" x="522" y="140" width="320" height="54" rx="3"></rect>
+      <text class="t" x="536" y="160">Soubory na NASu (namountované na PC)</text>
+      <text class="t-mono" x="536" y="176">video pro překlad · stažené filmy</text>
+
+      <!-- Pi ↔ PC -->
+      <line class="flow-brass" x1="394" y1="140" x2="518" y2="88" marker-end="url(#ar-brass)" marker-start="url(#ar-brass)"></line>
+      <text class="t-lab" x="404" y="106">HTTP · jazykové modely</text>
+      <line class="flow-brass" x1="394" y1="158" x2="518" y2="164" marker-end="url(#ar-brass)"></line>
+      <text class="t-lab" x="410" y="180">SSH · zdraví, překlad, herní mód</text>
+
+      <!-- Kodi -->
+      <rect class="box" x="522" y="252" width="150" height="46" rx="3"></rect>
+      <text class="t" x="536" y="271">Kodi / OSMC</text>
+      <text class="t-mono" x="536" y="286">média</text>
+      <line class="flow-teal" x1="394" y1="168" x2="518" y2="272" marker-end="url(#ar)"></line>
+      <text class="t-lab" x="404" y="243">JSON-RPC · co hraje</text>
+
+      <rect class="box" x="700" y="252" width="142" height="46" rx="3"></rect>
+      <text class="t" x="714" y="271">Matrix</text>
+      <text class="t-mono" x="714" y="286">šifrovaně, E2E</text>
+      <line class="flow" x1="672" y1="275" x2="696" y2="275" marker-end="url(#ar)"></line>
+    </svg>
+  </div>
+  <figcaption>Kamera nikdy nemluví s PC napřímo. Snímky jdou přes lokální
+  inferenční server na NPU (tváře, póza), a teprve rozhodnutí, která potřebují
+  jazyk, odcházejí přes HTTP. Displeje, servo a hlídání běží celé na Pi.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Denní smyčka: od snímku k odpovědi</h2>
+  <p>Čtyři vrstvy, které README popisuje slovy, mají v kódu konkrétní moduly.
+  Přepni vrstvu a uvidíš, co do ní patří a co z ní vede dál.</p>
+</section>
+
+<figure>
+  <div class="filters" role="group" aria-label="Zvýraznit vrstvu">
+    <button type="button" data-layer="all" aria-pressed="true">vše</button>
+    <button type="button" data-layer="percept" aria-pressed="false">vnímání</button>
+    <button type="button" data-layer="memory" aria-pressed="false">paměť</button>
+    <button type="button" data-layer="cognition" aria-pressed="false">kognice</button>
+    <button type="button" data-layer="express" aria-pressed="false">vyjádření</button>
+  </div>
+  <div class="board">
+    <svg id="arch" class="fig arch" data-layer="all" viewBox="0 0 880 440" role="img" aria-label="Schéma čtyř vrstev: vnímání (tváře, gesta, hlas, pozorování místnosti), paměť (deník, RAG, autobiografie), kognice (nálada, OODA, postoje, identita) a vyjádření (hlas, chat, avatar, Matrix, Kodi).">
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <polygon points="0,1 10,5 0,9" fill="currentColor"></polygon>
+        </marker>
+      </defs>
+
+      <text class="t-head" x="20" y="22">Vnímání</text>
+      <text class="t-head" x="242" y="22">Paměť</text>
+      <text class="t-head" x="470" y="22">Kognice</text>
+      <text class="t-head" x="700" y="22">Vyjádření</text>
+      <line class="hull" x1="222" y1="8" x2="222" y2="428"></line>
+      <line class="hull" x1="450" y1="8" x2="450" y2="428"></line>
+      <line class="hull" x1="678" y1="8" x2="678" y2="428"></line>
+
+      <!-- VNÍMÁNÍ -->
+      <g class="n l-percept">
+        <rect class="box" x="20" y="40" width="180" height="46" rx="3"></rect>
+        <text class="t" x="32" y="59">Tváře — kdo je tady</text>
+        <text class="t-mono" x="32" y="75">SCRFD + ArcFace (NPU)</text>
+      </g>
+      <g class="n l-percept">
+        <rect class="box" x="20" y="100" width="180" height="46" rx="3"></rect>
+        <text class="t" x="32" y="119">Gesta — zamávání</text>
+        <text class="t-mono" x="32" y="135">yolov8s_pose (NPU)</text>
+      </g>
+      <g class="n l-percept">
+        <rect class="box" x="20" y="160" width="180" height="46" rx="3"></rect>
+        <text class="t" x="32" y="179">Hlas</text>
+        <text class="t-mono" x="32" y="195">wake word → Whisper</text>
+      </g>
+      <g class="n l-percept">
+        <rect class="box" x="20" y="220" width="180" height="46" rx="3"></rect>
+        <text class="t" x="32" y="239">Pozorování místnosti</text>
+        <text class="t-mono" x="32" y="255">vision model, občas</text>
+      </g>
+      <g class="n l-percept">
+        <rect class="box" x="20" y="280" width="180" height="46" rx="3"></rect>
+        <text class="t" x="32" y="299">Hlídání (/hlidej)</text>
+        <text class="t-mono" x="32" y="315">pohyb · změna světla</text>
+      </g>
+
+      <!-- PAMĚŤ -->
+      <g class="n l-memory">
+        <rect class="box" x="242" y="40" width="190" height="52" rx="3"></rect>
+        <text class="t" x="254" y="60">Epizodická — deník</text>
+        <text class="t-mono" x="254" y="76">hans_diary.db · 47 tabulek</text>
+      </g>
+      <g class="n l-memory">
+        <rect class="box" x="242" y="106" width="190" height="52" rx="3"></rect>
+        <text class="t" x="254" y="126">Sémantická — RAG</text>
+        <text class="t-mono" x="254" y="142">bge-m3, podle významu</text>
+      </g>
+      <g class="n l-memory">
+        <rect class="box" x="242" y="172" width="190" height="52" rx="3"></rect>
+        <text class="t" x="254" y="192">Autobiografická</text>
+        <text class="t-mono" x="254" y="208">narativní kapitoly</text>
+      </g>
+      <g class="n l-memory">
+        <rect class="box-sunk" x="242" y="238" width="190" height="52" rx="3"></rect>
+        <text class="t" x="254" y="258">Důležitost 0–10</text>
+        <text class="t-mono" x="254" y="274">co vypovídá o tom, kdo jsem</text>
+      </g>
+      <g class="n l-memory">
+        <rect class="box-sunk" x="242" y="304" width="190" height="52" rx="3"></rect>
+        <text class="t" x="254" y="324">Provenience</text>
+        <text class="t-mono" x="254" y="340">zažil · četl · odvodil</text>
+      </g>
+
+      <!-- KOGNICE -->
+      <g class="n l-cognition">
+        <rect class="box" x="470" y="40" width="190" height="52" rx="3"></rect>
+        <text class="t" x="482" y="60">OODA — co teď dělat</text>
+        <text class="t-mono" x="482" y="76">vážená ruleta aktivit</text>
+      </g>
+      <g class="n l-cognition">
+        <rect class="box" x="470" y="106" width="190" height="52" rx="3"></rect>
+        <text class="t" x="482" y="126">Postoje (stances)</text>
+        <text class="t-mono" x="482" y="142">tvrzení + confidence</text>
+      </g>
+      <g class="n l-cognition">
+        <rect class="box" x="470" y="172" width="190" height="52" rx="3"></rect>
+        <text class="t" x="482" y="192">Identita (Severka)</text>
+        <text class="t-mono" x="482" y="208">verzovaná, se schválením</text>
+      </g>
+      <g class="n l-cognition">
+        <rect class="box" x="470" y="238" width="190" height="52" rx="3"></rect>
+        <text class="t" x="482" y="258">Nálada · 6 stavů</text>
+        <text class="t-mono" x="482" y="274">promítá se do tónu</text>
+      </g>
+      <g class="n l-cognition">
+        <rect class="box" x="470" y="304" width="190" height="52" rx="3"></rect>
+        <text class="t" x="482" y="324">Agentní router</text>
+        <text class="t-mono" x="482" y="340">23 akcí, whitelist</text>
+      </g>
+
+      <!-- VYJÁDŘENÍ -->
+      <g class="n l-express">
+        <rect class="box" x="698" y="40" width="164" height="46" rx="3"></rect>
+        <text class="t" x="710" y="59">Hlas (TTS)</text>
+        <text class="t-mono" x="710" y="75">po větách</text>
+      </g>
+      <g class="n l-express">
+        <rect class="box" x="698" y="100" width="164" height="46" rx="3"></rect>
+        <text class="t" x="710" y="119">Chat · popup</text>
+        <text class="t-mono" x="710" y="135">59 příkazů</text>
+      </g>
+      <g class="n l-express">
+        <rect class="box" x="698" y="160" width="164" height="46" rx="3"></rect>
+        <text class="t" x="710" y="179">Avatar · oči</text>
+        <text class="t-mono" x="710" y="195">animovaná tvář</text>
+      </g>
+      <g class="n l-express">
+        <rect class="box" x="698" y="220" width="164" height="46" rx="3"></rect>
+        <text class="t" x="710" y="239">Matrix</text>
+        <text class="t-mono" x="710" y="255">zprávy i mimo dům</text>
+      </g>
+      <g class="n l-express">
+        <rect class="box" x="698" y="280" width="164" height="46" rx="3"></rect>
+        <text class="t" x="710" y="299">Kodi · PC</text>
+        <text class="t-mono" x="710" y="315">film · WOL · vypnutí</text>
+      </g>
+
+      <!-- tok -->
+      <line class="flow-teal" x1="200" y1="63" x2="238" y2="63" marker-end="url(#ar2)"></line>
+      <line class="flow-teal" x1="200" y1="123" x2="238" y2="123" marker-end="url(#ar2)"></line>
+      <line class="flow-teal" x1="200" y1="183" x2="238" y2="183" marker-end="url(#ar2)"></line>
+      <line class="flow-teal" x1="200" y1="243" x2="238" y2="243" marker-end="url(#ar2)"></line>
+      <line class="flow" x1="432" y1="66" x2="466" y2="66" marker-end="url(#ar2)"></line>
+      <line class="flow" x1="432" y1="132" x2="466" y2="132" marker-end="url(#ar2)"></line>
+      <line class="flow" x1="432" y1="198" x2="466" y2="198" marker-end="url(#ar2)"></line>
+      <line class="flow-brass" x1="660" y1="63" x2="694" y2="63" marker-end="url(#ar2)"></line>
+      <line class="flow-brass" x1="660" y1="129" x2="694" y2="129" marker-end="url(#ar2)"></line>
+      <line class="flow-brass" x1="660" y1="327" x2="694" y2="303" marker-end="url(#ar2)"></line>
+
+      <!-- zpětná vazba -->
+      <path class="flow flow-dash" d="M 780 342 L 780 400 L 110 400 L 110 336" marker-end="url(#ar2)"></path>
+      <text class="t-lab" x="360" y="394">co Hans udělal a jak to dopadlo, se zapisuje zpátky do deníku</text>
+
+      <g class="n l-percept">
+        <line class="flow-teal flow-dash" x1="110" y1="326" x2="110" y2="340"></line>
+      </g>
+    </svg>
+  </div>
+  <figcaption>Vrstvy nejsou jen popisné — tečkovaná zpětná smyčka je to, čím se
+  Hans liší od chatbota: každá akce i reakce okolí se vrací do deníku, takže
+  zítřejší rozhodování stojí na dnešku.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Noc: kdy se z událostí stává charakter</h2>
+  <p>Přes den Hans sbírá. V noci, když je klid a nikdo nečeká na odpověď, běží
+  dávka, která ze syrových událostí vyrábí paměť, názory a nakonec identitu.
+  Každý krok je <strong>odolný vůči výpadku</strong> — když je „mozek“ dole,
+  práce se odloží a dožene se, místo aby se ztratila.</p>
+</section>
+
+<figure>
+  <div class="board">
+    <svg class="fig" viewBox="0 0 880 250" role="img" aria-label="Noční pipeline: večerní reflexe, skórování důležitosti, extrakce postojů, narativní kapitola, sen a obraz, a kontrola identity Severkou jednou za kadenci.">
+      <defs>
+        <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <polygon points="0,1 10,5 0,9" fill="currentColor"></polygon>
+        </marker>
+      </defs>
+      <line class="flow" x1="30" y1="96" x2="850" y2="96"></line>
+
+      <g><circle cx="76" cy="96" r="5" fill="currentColor"></circle>
+        <rect class="box" x="24" y="112" width="132" height="58" rx="3"></rect>
+        <text class="t" x="36" y="131">Večerní reflexe</text>
+        <text class="t-mono" x="36" y="147">co se dnes stalo</text>
+        <text class="t-mono" x="36" y="160">a co si o tom myslím</text></g>
+
+      <g><circle cx="244" cy="96" r="5" fill="currentColor"></circle>
+        <rect class="box" x="192" y="112" width="132" height="58" rx="3"></rect>
+        <text class="t" x="204" y="131">Důležitost</text>
+        <text class="t-mono" x="204" y="147">skóre 0–10</text>
+        <text class="t-mono" x="204" y="160">formující × šum</text></g>
+
+      <g><circle cx="412" cy="96" r="5" fill="var(--teal)"></circle>
+        <rect class="box" x="360" y="112" width="132" height="58" rx="3"></rect>
+        <text class="t" x="372" y="131">Postoje</text>
+        <text class="t-mono" x="372" y="147">extrakce z reflexe</text>
+        <text class="t-mono" x="372" y="160">confidence ± </text></g>
+
+      <g><circle cx="580" cy="96" r="5" fill="var(--teal)"></circle>
+        <rect class="box" x="528" y="112" width="132" height="58" rx="3"></rect>
+        <text class="t" x="540" y="131">Kapitola života</text>
+        <text class="t-mono" x="540" y="147">konsolidace epizod</text>
+        <text class="t-mono" x="540" y="160">do vyprávění</text></g>
+
+      <g><circle cx="748" cy="96" r="5" fill="var(--brass)"></circle>
+        <rect class="box" x="696" y="112" width="152" height="58" rx="3"></rect>
+        <text class="t" x="708" y="131">Sen → obraz</text>
+        <text class="t-mono" x="708" y="147">SDXL přes ComfyUI</text>
+        <text class="t-mono" x="708" y="160">Hans si ho ohodnotí</text></g>
+
+      <!-- Severka nad osou -->
+      <rect class="box" x="528" y="26" width="320" height="50" rx="3" stroke="var(--crimson)"></rect>
+      <text class="t" x="540" y="46">Severka — jednou za kadenci: „přerostly tendence roli?“</text>
+      <text class="t-mono" x="540" y="63">návrh nové identity → ČEKÁ NA SCHVÁLENÍ ČLOVĚKEM</text>
+      <line class="gate" x1="600" y1="90" x2="600" y2="80" marker-end="url(#ar3)"></line>
+      <line class="gate" x1="430" y1="90" x2="528" y2="58" marker-end="url(#ar3)"></line>
+
+      <text class="t-lab" x="30" y="212">tečkovaně = když je model nedostupný, krok se odloží a dožene, nic se nezahodí</text>
+      <line class="flow flow-dash" x1="30" y1="226" x2="850" y2="226"></line>
+    </svg>
+  </div>
+  <figcaption>Postoje i kapitola života vznikají z téhož textu reflexe — proto je
+  Severka až za nimi: rozhoduje se o identitě z toho, co Hans za den skutečně
+  dělal a jak na to okolí reagovalo, ne z toho, co má napsané v promptu.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Dva registry: proč si Hans nevymýšlí</h2>
+  <p>Generativní model si fakta rád domyslí. Hans to neřeší přemlouváním v promptu,
+  ale <strong>routingem</strong>: faktický dotaz jde jinou cestou než tvůrčí.
+  Faktický registr je grounded a <strong>defaultně abstinuje</strong> — odpoví
+  z dat, nebo přizná, že záznam nemá. Imaginativní registr (sny, obrazy, úvahy)
+  smí volně tvořit. Problém by nastal jen tam, kde imaginace začne tvrdit fakta.</p>
+</section>
+
+<figure>
+  <div class="board">
+    <svg class="fig" viewBox="0 0 880 300" role="img" aria-label="Rozhodovací schéma: dotaz se rozdělí na faktický a imaginativní. Faktický jde přes deterministické zkraty a RAG; při slabé opoře Hans abstinuje. Imaginativní jde rovnou do generování.">
+      <defs>
+        <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <polygon points="0,1 10,5 0,9" fill="currentColor"></polygon>
+        </marker>
+      </defs>
+
+      <rect class="box" x="24" y="124" width="140" height="46" rx="3"></rect>
+      <text class="t" x="36" y="143">Věta od člověka</text>
+      <text class="t-mono" x="36" y="159">chat · hlas · Matrix</text>
+
+      <path class="flow" d="M 164 140 L 214 140 L 214 60 L 258 60" marker-end="url(#ar4)"></path>
+      <text class="t-lab" x="200" y="46">faktický dotaz</text>
+      <path class="flow" d="M 164 154 L 214 154 L 214 240 L 258 240" marker-end="url(#ar4)"></path>
+      <text class="t-lab" x="200" y="262">tvůrčí / názorový</text>
+
+      <rect class="box" x="258" y="36" width="168" height="48" rx="3"></rect>
+      <text class="t" x="270" y="55">Deterministický zkrat</text>
+      <text class="t-mono" x="270" y="71">odpoví přímo z databáze</text>
+
+      <rect class="box" x="258" y="100" width="168" height="48" rx="3"></rect>
+      <text class="t" x="270" y="119">RAG-first</text>
+      <text class="t-mono" x="270" y="135">retrieval než generace</text>
+
+      <line class="flow" x1="342" y1="84" x2="342" y2="96" marker-end="url(#ar4)"></line>
+      <text class="t-lab" x="350" y="94">když zkrat nesedne</text>
+
+      <path class="flow" d="M 426 124 L 474 124" marker-end="url(#ar4)"></path>
+      <rect class="box" x="474" y="100" width="150" height="48" rx="3" stroke="var(--crimson)"></rect>
+      <text class="t" x="486" y="119">Dost opory?</text>
+      <text class="t-mono" x="486" y="135">síla shody · rozpor</text>
+
+      <path class="gate" d="M 624 112 L 690 112" marker-end="url(#ar4)"></path>
+      <text class="t-lab" x="632" y="104">ne</text>
+      <rect class="box" x="690" y="88" width="166" height="48" rx="3" stroke="var(--crimson)"></rect>
+      <text class="t" x="702" y="107">„Nemám záznam.“</text>
+      <text class="t-mono" x="702" y="123">model se na fakt nevolá</text>
+
+      <path class="flow-teal" d="M 549 148 L 549 186 L 690 186" marker-end="url(#ar4)"></path>
+      <text class="t-lab" x="560" y="178">ano</text>
+      <rect class="box" x="690" y="162" width="166" height="48" rx="3"></rect>
+      <text class="t" x="702" y="181">Odpověď z dat</text>
+      <text class="t-mono" x="702" y="197">s uvedením zdroje</text>
+
+      <rect class="box" x="258" y="216" width="168" height="48" rx="3" stroke="var(--brass)"></rect>
+      <text class="t" x="270" y="235">Imaginativní registr</text>
+      <text class="t-mono" x="270" y="251">sen · obraz · úvaha</text>
+      <path class="flow-brass" d="M 426 240 L 690 240 L 690 232" marker-end="url(#ar4)"></path>
+      <rect class="box" x="690" y="236" width="166" height="44" rx="3" stroke="var(--brass)"></rect>
+      <text class="t" x="702" y="255">Volná tvorba</text>
+      <text class="t-mono" x="702" y="270">označená jako představa</text>
+    </svg>
+  </div>
+  <figcaption>Nejnebezpečnější stav není „žádná opora“, ale <em>částečná</em>:
+  tenká shoda ve fulltextu se tváří jako doklad a abstinenční brzdu tím vypne.
+  Proto se u výčtů kontroluje, odkud opora přišla, ne jen jestli nějaká je.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Kde stojí člověk</h2>
+  <p>Tři místa, kde Hans z principu nerozhoduje sám. Není to opatrnost navíc —
+  jsou to přesně ty body, kde by chyba byla nevratná nebo by tiše změnila,
+  kdo Hans je.</p>
+  <ul class="tight">
+    <li><strong>Agentní akce</strong> — 23 akcí na whitelistu, nic mimo něj;
+      rizikové (vypnout PC, uspat se) se <strong>vždy</strong> potvrzují.</li>
+    <li><strong>Změna identity</strong> — Severka návrh jen <em>navrhne</em>;
+      dokud ho člověk neschválí, CORE se nezmění. Verzuje se kdo jsem byl → jsem → proč.</li>
+    <li><strong>Nový nástroj</strong> — když si Hans najde model pro své dílo,
+      předloží ho ke schválení; sám si nic nestahuje.</li>
+  </ul>
+
+  <h2>Modely a hospodaření s VRAM</h2>
+  <p>Na jednom GPU se dělí o paměť několik rolí. Chatový model je rezidentní,
+  ostatní se nahrávají on-demand a po použití VRAM uvolní — jinak by se praly.</p>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Role</th><th>Model</th><th>Pozn.</th></tr></thead>
+    <tbody>
+      <tr><td>Persona, chat, hlas</td><td class="m">hans-czech</td><td>finetune OpenEuroLLM, rezidentní</td></tr>
+      <tr><td>Analýza a extrakce</td><td class="m">OpenEuroLLM-Czech</td><td>nativní čeština, on-demand</td></tr>
+      <tr><td>Úsudek</td><td class="m">qwen3:30b</td><td>reasoning tier: úsudek anglicky → hlas česky</td></tr>
+      <tr><td>Drobná utilita</td><td class="m">qwen2.5:7b</td><td>prompty k obrazům, zájmy osob</td></tr>
+      <tr><td>Vidění</td><td class="m">qwen2.5vl / llava</td><td>místnost, hodnocení obrazů</td></tr>
+      <tr><td>Embeddingy</td><td class="m">bge-m3</td><td>sémantická paměť</td></tr>
+      <tr><td>Obrazy</td><td class="m">SDXL</td><td>přes ComfyUI, s orchestrací VRAM</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <strong>Herní mód.</strong> Když na PC naskočí hra, Hans sám uvolní VRAM
+    a přestane volat modely. Vnímání, gesta i hlídání běží dál — ta část na GPU
+    nestojí. Je to tvrdá pojistka: dokud hra běží, nic se nerestartuje.
+  </div>
+
+  <div class="note">
+    <strong>Soukromí.</strong> Deník, biometrie tváří, tokeny a adresy zůstávají
+    lokálně a v gitu nejsou. Veřejný je jen kód a laděné hodnoty; jména
+    domácnosti, klíče a IP žijí v odděleném souboru mimo repozitář.
+  </div>
+</section>
+
+<footer>
+  <p>Hans je referenční projekt vázaný na konkrétní hardware (Raspberry Pi 5
+  + Hailo-8L, Pi kamera, PC s Ollamou) — slouží spíš jako ukázka architektury
+  než jako plug-and-play software.</p>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var arch = document.getElementById('arch');
+  var btns = document.querySelectorAll('.filters button');
+  if (!arch || !btns.length) return;
+  Array.prototype.forEach.call(btns, function(b){
+    b.addEventListener('click', function(){
+      Array.prototype.forEach.call(btns, function(o){ o.setAttribute('aria-pressed','false'); });
+      b.setAttribute('aria-pressed','true');
+      arch.setAttribute('data-layer', b.getAttribute('data-layer'));
+    });
+  });
+})();
+</script>
+<!--ARTIFACT-BODY-END-->
+</body>
+</html>

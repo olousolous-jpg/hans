@@ -77,6 +77,10 @@ svém datu. (`hans_threads`, `hans_person_interests`)
   (qwen-VL)  ┘   autobiografická    └ tvorba               Kodi / WOL
 ```
 
+📐 **[Interaktivní schéma architektury](docs/architektura.html)** — kde běží které
+procesy, kudy tečou data od kamery k odpovědi, co se děje v noci a kde stojí brány
+proti konfabulaci. (Stáhni a otevři v prohlížeči, nebo publikuj přes GitHub Pages.)
+
 ---
 
 ## Co Hans umí (subsystémy)
@@ -84,6 +88,11 @@ svém datu. (`hans_threads`, `hans_person_interests`)
 ### Vnímání
 - **Rozpoznávání tváří** — Hailo-8L NPU: SCRFD detekce + ArcFace embeddingy,
   hlasování přes snímky, učení nových tváří (enrollment).
+- **Gesta** — zamávání z **bodů postavy** (`yolov8s_pose` na NPU, ne detektor
+  dlaně) → Hans pozdraví. Prahy jsou **změřené na skutečném mávání**, ne odhadnuté:
+  nad korpusem 300 tisíc vzorků pózy se ladí přehráním produkční logiky, a brána
+  má meze na **obě strany** — zvednutá paže ani nedůvěryhodná detekce nosu
+  neprojde. Běží celé na Pi, takže funguje i s vypnutým PC. (`gesture_client`)
 - **Hlas** — hands-free wake word (openWakeWord) → Whisper STT → odpověď → TTS,
   streamovaně po větách.
 - **Pozorování místnosti** — vision model (`qwen2.5-VL`) občas popíše, co kamera
@@ -135,9 +144,14 @@ Hans nezůstává u textu — z konverzace **odvodí akci** a **nabídne ji s po
 zastřešující vrstva: **whitelist akcí** (nic mimo něj), **vždy potvrzení**
 (human-in-the-loop), **grounding argumentů** (film jen z knihovny), práh jistoty,
 cooldown a anti-echo proti otravování. Router běží na rezidentním chat modelu
-(žádná latence navíc u běžného chatu díky předfiltru). V1 akce: pustit film,
-uspat se, přidat knihu na seznam — rozšíření (např. chytrá světla) = jeden
-adaptér navíc. (`hans_agent`)
+(žádná latence navíc u běžného chatu díky předfiltru). Dnes **23 akcí** —
+pustit film, vypnout PC, zapnout hlídání, uspat se, hlášení o osobě, počasí,
+zdraví PC… Rozšíření (např. chytrá světla) = jeden adaptér navíc. (`hans_agent`)
+
+> ⚖️ **Změřeno a rozhodnuto:** jestli tenhle router nahradit tool-callingem, se
+> testovalo na **758 reálných větách** produkční cestou. Výsledek: ani jeden
+> router nebyl lepší — přepnutí by byla jen **výměna chyb**. Proto se opravuje
+> ten stávající a tool-calling čeká na důvod, ne na dojem.
 
 ### Vztahy
 - **Vztahové karty** per osoba (charakterizace, kdy naposledy viděn), per-osoba
@@ -152,7 +166,21 @@ adaptér navíc. (`hans_agent`)
   (ne z paměti) a odpoví; když nic nejede, navrhne film podle diváka.
 - **Herní mód** — na povel (nebo automaticky přes launcher hry) uvolní grafickou
   paměť pro hru a přestane používat GPU; po hře se „mozek" vrátí. Web tlačítko
-  **ověří reálnou volnou VRAM** (`rocm-smi`/ComfyUI), než pustíš hru.
+  **ověří reálnou volnou VRAM** (`rocm-smi`/ComfyUI), než pustíš hru. Je to tvrdá
+  pojistka: dokud hra běží, Hans se nerestartuje ani nesahá na model.
+- **Hlídání prázdného domu** (`/hlidej`) — při pohybu nebo **náhlé změně světla**
+  pošle snímek a krátké video na Matrix. Stav žije v souboru, takže přežije
+  restart i watchdog (když jsi pryč týden, hlídání nesmí zmizet po jednom pádu).
+  Běží na framech, ne na rozpoznávání — a proto je **defaultně vypnuté**:
+  záměrně obchází noční pauzu vidění. (`hans_guard`)
+- **Česká zvuková stopa k cizojazyčnému dokumentu** — pustíš na Kodi cizí
+  dokument, řekneš Hansovi, ať ho přeloží, a on vedle originálu vyrobí nové MKV
+  s českým dabingem (hodina videa ≈ 6 minut práce). Dělba: Pi řídí a vyrábí zvuk,
+  těžká práce s videem běží přes SSH na PC, kde jsou soubory namountované.
+  (`hans_translate`)
+- **Film mimo knihovnu** — když film v Kodi není, Hans ho umí najít a stáhnout
+  (Webshare API: hledání, odhad kvality z názvu, stažení na Pi a přesun na PC).
+  (`hans_webshare`)
 - **Zdraví PC** — přes SSH vidí reálnou teplotu GPU/CPU, paměť a stav; za herního
   módu se telemetrie **cyklují na očních displejích**. (`pc_remote`)
 - **Sebeúdržba (watchdog)** — Hans hlídá zdraví vlastních závislostí (Ollama,
@@ -160,6 +188,13 @@ adaptér navíc. (`hans_agent`)
   zkušební inferencí** (ne jen pingem, který zásek neodhalí) a umí si Ollamu na
   PC **sám restartovat**; stav hlásí na dashboard i v chatu. (`hans_health`,
   `/zdravi`)
+- **Hlídač tichých selhání** — nejhorší chyba není pád, ale **mechanismus, který
+  přestane běžet a nikdo si toho nevšimne**. Hans proto sleduje vlastní stopy
+  v datech: u každé rutiny ví, jak často obvykle něco zapisuje, a když stopa
+  přestane přibývat, ozve se. Prahy jsou spočítané z historie (2× p95), ne
+  odhadnuté — na 145 dnech to dává jeden poplach za dva týdny. Svůj první nález
+  měl hned: jedna paměť mlčela 15 dní kvůli prefixu, který nesedl na diakritiku.
+  (`hans_schedule`)
 - **Návrh vlastní nástěnky** — po dostudování designu Hans napíše designovou
   kritiku + návrh své webové nástěnky a vyrenderuje mockup. (`hans_dashboard`)
 
@@ -195,7 +230,7 @@ ho postupně zlepšuje:
    toho, co mají zobrazovat). Verze se ukládají a jsou k vidění ve web adminu.
    (`hans_maker`, `/vytvor`)
 4. **Kritika a spirála** — po díle Hans **sám navrhne, co ještě prohloubit** (a
-   proč), a **zeptá se tě** (Telegram i chat). Můžeš schválit, **napsat vlastní
+   proč), a **zeptá se tě** (Matrix i chat). Můžeš schválit, **napsat vlastní
    kritiku** (podle ní se doučí hlubší specifika — bez opakování nastudovaného),
    nebo odmítnout. Po prohloubení vznikne **lepší verze**. Když Hans doménu
    dostuduje a vytvoří první dílo, **sám si zapíše novou schopnost** („umím
@@ -224,6 +259,13 @@ podle toho, co se mu zrovna honí hlavou:
 - **Kritizuje sám sebe** — ohlédne se za vlastními replikami a vezme si ponaučení,
   jak se příště vyjádřit líp. (`hans_selfcritique`)
 - **Píše úvahy** — krátké osobní zamyšlení nad postojem / knihou / zážitkem.
+- **Diskutuje s plyšovým medvědem** — když je sám doma, vede Hans dialog
+  s Koláčem: druhý hlas, který **zpochybňuje jeho zažité postoje**. Není to
+  kulisa — dialogy jdou do deníku a z nich se extrahují postoje, takže postava
+  má s kým nesouhlasit. Koláč si vede vlastní paměť i „případy". (`hans_dialog`)
+- **Skládá hudební příklady** — ke studované kapitole vymyslí notový příklad
+  (zadání anglicky → ABC notace přes `chatmusician` → HTML s vykreslenými notami,
+  které si jde přehrát). Hudba tak není ozdoba, ale výstup studia. (`hans_music`)
 - Obrazy hodnotí přes vision model (qwen-VL) + reaguje na **skutečnou kvalitu**;
   z verdiktu se **učí** (ponaučení ovlivní příští obraz). (`hans_art`,
   `hans_creations`)
@@ -242,7 +284,7 @@ Hans běží na **více modelech s rozdělenými rolemi** (na sdíleném GPU s ~
 |------|-------|-------|
 | Persona / chat / hlas | `hans-czech` (finetune OpenEuroLLM) | rezidentní v VRAM |
 | Analýza / extrakce | `OpenEuroLLM` (base) | nativní čeština, anti-konfabulace, on-demand |
-| Úsudek (synteze, sebekritika, postoje) | `deepseek-r1:14b` (reasoning) | 2-call: úsudek anglicky → hans-czech česky; běží v RAM/CPU (num_gpu:0), aby nešahal na VRAM |
+| Úsudek (synteze, sebekritika, postoje) | `qwen3:30b` (reasoning) | 2-call: úsudek anglicky → hans-czech česky; běží v RAM/CPU (num_gpu:0), aby nešahal na VRAM |
 | Vidění | `qwen2.5-VL` | tváře/místnost/hodnocení obrazů, on-demand |
 | Embeddingy (RAG) | `bge-m3` | drobný, rezidentní |
 | Obrazy | SDXL přes ComfyUI | render orchestruje VRAM (unload → render → warm) |

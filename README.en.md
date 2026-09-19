@@ -82,6 +82,11 @@ has an exam") and follows up on their next visit ("how did it go?"). Threads als
   (qwen-VL)  ┘   autobiographical   └ creativity           Kodi / WOL
 ```
 
+📐 **[Interactive architecture diagram](docs/architektura.html)** (in Czech) —
+which processes run where, how data flows from camera to answer, what happens at
+night, and where the anti-confabulation gates sit. (Download and open in a
+browser, or serve it via GitHub Pages.)
+
 ---
 
 ## What Hans can do (subsystems)
@@ -89,6 +94,12 @@ has an exam") and follows up on their next visit ("how did it go?"). Threads als
 ### Perception
 - **Face recognition** — Hailo-8L NPU: SCRFD detection + ArcFace embeddings,
   voting across frames, learning new faces (enrollment).
+- **Gestures** — a wave detected from **body keypoints** (`yolov8s_pose` on the
+  NPU, not a palm detector) → Hans greets you. The thresholds are **measured on
+  real waving**, not guessed: they are tuned by replaying production logic over a
+  corpus of 300k pose samples, and the gate has bounds on **both sides** — neither
+  a raised arm nor an untrustworthy nose detection gets through. It runs entirely
+  on the Pi, so it works with the PC powered off. (`gesture_client`)
 - **Voice** — hands-free wake word (openWakeWord) → Whisper STT → response → TTS,
   streamed sentence by sentence.
 - **Room observation** — a vision model (`qwen2.5-VL`) periodically describes what
@@ -145,8 +156,15 @@ it out once approved. One unifying layer: an **action whitelist** (nothing outsi
 it), **always confirm** (human-in-the-loop), **argument grounding** (a film only
 from the library), a confidence threshold, cooldown and anti-echo against nagging.
 The router runs on the resident chat model (no added latency in normal chat thanks
-to a pre-filter). V1 actions: play a film, put himself to sleep, add a book to the
-reading list — extending it (e.g. smart lights) is one more adapter. (`hans_agent`)
+to a pre-filter). Today **23 actions** — play a film, shut down the PC, arm guard
+mode, put himself to sleep, report on a person, weather, PC health… Extending it
+(e.g. smart lights) is one more adapter. (`hans_agent`)
+
+> ⚖️ **Measured and decided:** whether to replace this router with tool-calling was
+> tested on **758 real sentences** through the production path. Result: neither
+> router was better — switching would merely **trade one set of errors for
+> another**. So the existing one gets fixed, and tool-calling waits for a reason
+> rather than a hunch.
 
 ### Relationships
 - **Relationship cards** per person (characterization, last seen), per-person
@@ -162,6 +180,21 @@ reading list — extending it (e.g. smart lights) is one more adapter. (`hans_ag
 - **Game mode** — on command (or automatically via the game launcher) he frees GPU
   memory for the game and stops using the GPU; afterwards his "brain" returns. The
   web button **verifies real free VRAM** (`rocm-smi`/ComfyUI) before you launch.
+  It is a hard interlock: while a game runs, Hans never restarts or touches the model.
+- **Guarding an empty house** (`/hlidej`) — on motion or a **sudden light change**
+  he sends a snapshot and a short video to Matrix. The state lives in a file, so it
+  survives a restart and the watchdog (if you are away for a week, guarding must not
+  vanish after one crash). It runs on frames rather than recognition — and is
+  therefore **off by default**: it deliberately bypasses the night vision pause.
+  (`hans_guard`)
+- **A Czech audio track for a foreign documentary** — you play a foreign film on
+  Kodi, tell Hans to translate it, and he produces a new MKV with Czech dubbing
+  next to the original (an hour of video ≈ 6 minutes of work). Split: the Pi
+  orchestrates and makes the audio, the heavy video work runs over SSH on the PC
+  where the files are mounted. (`hans_translate`)
+- **A film outside the library** — when a film isn't in Kodi, Hans can find and
+  download it (Webshare API: search, quality estimated from the filename, download
+  to the Pi and move to the PC). (`hans_webshare`)
 - **PC health** — over SSH he sees real GPU/CPU temperature, memory and status;
   during game mode the telemetry **cycles on the eye displays**. (`pc_remote`)
 - **Self-maintenance (watchdog)** — Hans monitors the health of his own
@@ -169,6 +202,13 @@ reading list — extending it (e.g. smart lights) is one more adapter. (`hans_ag
   wedged "brain" with a **real trial inference** (not just a ping, which won't
   catch a hang) and can **restart Ollama on the PC by himself**; status is
   surfaced on the dashboard and in chat. (`hans_health`, `/zdravi`)
+- **Silent-failure watchdog** — the worst bug isn't a crash, it's a **mechanism
+  that stops running and nobody notices**. So Hans watches his own traces in the
+  data: for each routine he knows how often it normally writes something, and when
+  the trace stops growing he raises it. Thresholds are computed from history
+  (2× p95), not guessed — over 145 days that yields one alarm per fortnight. Its
+  very first find: one memory had been silent for 15 days because a prefix didn't
+  match a diacritic. (`hans_schedule`)
 - **Designs his own dashboard** — after studying design he writes a design critique
   and proposal for his web dashboard, and renders a mockup. (`hans_dashboard`)
 
@@ -205,7 +245,7 @@ and gradually improves it:
    they should depict). Versions are saved and viewable in the web admin.
    (`hans_maker`, `/vytvor`)
 4. **Critique and spiral** — after the work Hans **proposes what to deepen** (and
-   why) and **asks you** (Telegram and chat). You can approve, **give your own
+   why) and **asks you** (Matrix and chat). You can approve, **give your own
    critique** (he then studies deeper specifics — without repeating what he already
    knows), or decline. Deepening produces a **better version**. When he finishes a
    domain and makes his first work, he **records a new capability** himself ("I can
@@ -235,6 +275,15 @@ across forms, shaped by what's currently on his mind:
 - **Critiques himself** — reviews his own replies and takes a lesson on how to
   express himself better next time. (`hans_selfcritique`)
 - **Writes reflections** — short personal musings on a stance / book / experience.
+- **Argues with a teddy bear** — when home alone, Hans holds a dialogue with
+  Koláč: a second voice that **challenges his settled stances**. It isn't set
+  dressing — the dialogues go into the diary and stances are extracted from them,
+  so the character has someone to disagree with. Koláč keeps his own memory and
+  "cases". (`hans_dialog`)
+- **Composes musical examples** — for a studied chapter he writes a notated
+  example (brief in English → ABC notation via `chatmusician` → an HTML page with
+  rendered, playable notation). Music is an output of study, not an ornament.
+  (`hans_music`)
 - He evaluates the images via a vision model (qwen-VL) and reacts to the **real
   quality**; from the verdict he **learns** (the lesson shapes the next image).
   (`hans_art`, `hans_creations`)
@@ -253,7 +302,7 @@ Hans runs on **multiple models with split roles** (on a shared ~16 GB GPU):
 |------|-------|------|
 | Persona / chat / voice | `hans-czech` (OpenEuroLLM finetune) | resident in VRAM |
 | Analysis / extraction | `OpenEuroLLM` (base) | native Czech, anti-confabulation, on-demand |
-| Judgment (synthesis, self-critique, stances) | `deepseek-r1:14b` (reasoning) | 2-call: reason in English → voice in Czech via hans-czech; runs in RAM/CPU (num_gpu:0) so it never touches VRAM |
+| Judgment (synthesis, self-critique, stances) | `qwen3:30b` (reasoning) | 2-call: reason in English → voice in Czech via hans-czech; runs in RAM/CPU (num_gpu:0) so it never touches VRAM |
 | Vision | `qwen2.5-VL` | faces/room/image evaluation, on-demand |
 | Embeddings (RAG) | `bge-m3` | tiny, resident |
 | Images | SDXL via ComfyUI | render orchestrates VRAM (unload → render → warm) |
