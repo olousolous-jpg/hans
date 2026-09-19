@@ -1633,6 +1633,32 @@ class HansRoutine:
                 elif prev_bad:
                     _log.info('health: obnoveno — vše OK (bylo %s)', list(prev_bad))
                 self._health_last_bad = bad_key
+                # HANS_SCHEDULE_NOTIFY_V1 (19. 9.) — hlidac tichych selhani mel
+                # vetu pro uzivatele (`_schedule_sentence`), ale NIKDO ji
+                # nevolal: `summary_sentence` nema v produkci volajiciho, takze
+                # WARN skoncil v health_state.json a cekal, az se nekdo zepta
+                # (/zdravi za celou historii 1x). Hlasi se na HRANE, tymz
+                # vzorem jako log vys: jednou pri vzniku, pak ticho, dokud se
+                # mnozina zaostavajicich rutin nezmeni.
+                # ⚠️ `direct` se NEPREDAVA → callback pouzije `send_proactive`,
+                # takze v tichem okne (22-9) zprava pocka do rana. Zaostavajici
+                # rutina neni nic, kvuli cemu budit.
+                try:
+                    _sched = (health.get('schedule') or {}).get('stale') or []
+                    _sched_key = tuple(sorted(s['name'] for s in _sched))
+                    _sched_prev = getattr(self, '_health_last_sched', ())
+                    if _sched_key and _sched_key != _sched_prev:
+                        _veta = hans_health._schedule_sentence(health)
+                        if _veta and self._notifier:
+                            self._notifier(_veta)
+                            _log.info('health: rozvrh ohlasen uzivateli — %s',
+                                      _veta)
+                        elif _veta:
+                            _log.warning('health: rozvrh zaostava, ale most '
+                                         'chybi — NEODESLANO: %s', _veta)
+                    self._health_last_sched = _sched_key
+                except Exception as _se:
+                    _log.debug('health: hlaseni rozvrhu: %s', _se)
             except Exception as _e:
                 _log.debug('health watcher: %s', _e)
             # COMFY_RECLAIM_PERIODIC_V1 (14.8.) — pojistka na zaseklý runlist.
