@@ -94,6 +94,8 @@
         "enabled": true,
         "model_name": "bge-m3:latest",
         "greeting_mode": "once_per_session",
+        "greeting_trim_gap_s": 21600,
+        "_greeting_trim_gap_s_note": "HANS_GREETING_OUTPUT_TRIM_V1 (19. 9.) Jak dlouho po posledni zprave se rozhovor jeste povazuje za BEZICI — v navazujici replice se pak nadbytecny pozdrav orezava na vystupu. Pod timto prahem je pozdrav LEGITIMNI (85 z 92 prvnich replik ho ma) a nesaha se na nej. Zmereno 19. 9.: z 218 neprvnich replik s pozdravem bylo 213 (97,7 %) nadbytecnych; citlivost na prah je mala (3/6/12 h daly 33,8-42,9 %), proto 6 h. 0 = orez vypnuty.",
         "greeting_enabled": true,
         "popup_enabled": false,
         "request_timeout": 120,

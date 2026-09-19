@@ -73,6 +73,16 @@ ANTIKONFAB_NOFACTS = (
 # HANS_SELFCONSISTENCY_A1_V1 — sentinel: grounding nebyl předpočítán volajícím
 _GROUNDING_UNSET = object()
 
+# HANS_GREETING_OUTPUT_TRIM_V2 (19. 9.) — vzor pozdravu SDILENY.
+# Dosud zil jako lokalni promenna uvnitr `_collapse_repeated_greetings`,
+# takze ho vystupni orez nemohl pouzit a hrozila treti kopie vzoru.
+# Pouziva se na DVA ucely: (a) poznat filler-odstavec v degenerovane
+# odpovedi, (b) poznat, ze POZDRAVIL UZIVATEL — pak je pozdrav
+# v odpovedi legitimni a neorezava se.
+_POZDRAV_UZIVATEL_RE = re.compile(
+    r"^(dobr[ýé]\s+(ve[čc]er|den|r[áa]no)|ahoj|zdrav[ií]m|t[ěe]š[ií])",
+    re.I)
+
 # HANS_SELFCONSISTENCY_A1_V1 — deterministická abstinence u nestabilního
 # faktického dotazu (short-circuit místo volné generace persony).
 A1_ABSTAIN_TEXT = (
@@ -333,7 +343,9 @@ class OpenWebUIDirectHandler:
         paras = [p.strip() for p in _re.split(r"\n\s*\n", text) if p.strip()]
         if len(paras) <= 1:
             return text
-        _greet = _re.compile(r"^(dobr[ýé]\s+(ve[čc]er|den|r[áa]no)|ahoj|zdrav[ií]m|t[ěe]š[ií])", _re.I)
+        # HANS_GREETING_OUTPUT_TRIM_V2 — vzor je ted modulovy (sdileny
+        # s vystupnim orezem), aby nevznikla druha kopie.
+        _greet = _POZDRAV_UZIVATEL_RE
         is_filler = lambda p: bool(_greet.match(p)) and len(p) < 90
         substantive = [p for p in paras if not is_filler(p)]
         kept = substantive if substantive else paras[:1]
@@ -4993,6 +5005,37 @@ class OpenWebUIDirectHandler:
                         "HANS_WEEKDAY_FIX_V1: opraven den v tydnu (%d×)", _nden)
             except Exception:
                 pass
+            # HANS_GREETING_OUTPUT_TRIM_V1 (19. 9.) — nadbytecny pozdrav
+            # v NAVAZUJICI replice. Vstupni cisteni okna (`_orez_pozdravy`)
+            # na to NESTACI: meni jen pohled do promptu, ne odpoved —
+            # zmereno, ze cetnost nesnizilo (61 % -> 68,3 %).
+            # Bezi PRED zapisem do conv_store/deniku/RAG, jako sousedi vys.
+            # ⚠️ Prvni replika rozhovoru se NEDOTYKA (pozdrav je tam
+            # legitimni: 85 z 92 prvnich replik ho ma). Kdyz by po orezu
+            # zbylo prazdno, replika zustava beze zmeny (u 89 z 218 je
+            # pozdrav CELA replika — tam orez nema co delat).
+            try:
+                _gcfg = (self.config.get("openwebui_chat", {}) or {})
+                _mez = float(_gcfg.get("greeting_trim_gap_s", 21600))
+                _posl = self.conv_store.posledni_ts(name)
+                # HANS_GREETING_OUTPUT_TRIM_V2 — kdyz clovek SAM pozdravil,
+                # je pozdrav v odpovedi legitimni (zmereno: 5 z 218
+                # neprvnich replik; uzivatel zdravi ve 12 ze 149 zprav).
+                _clovek_pozdravil = bool(
+                    _POZDRAV_UZIVATEL_RE.search((_raw_message or "").strip()))
+                if (_posl and (time.time() - _posl) < _mez
+                        and not _clovek_pozdravil):
+                    from scripts.conversation_store import ConversationStore as _CS
+                    _bez = _CS._POZDRAV_RE.sub("", response, count=1)
+                    if _bez.strip() and _bez != response:
+                        logging.getLogger(__name__).info(
+                            "HANS_GREETING_OUTPUT_TRIM_V1: odriznut nadbytecny "
+                            "pozdrav (rozhovor bezi %.0f min)",
+                            (time.time() - _posl) / 60.0)
+                        response = _bez
+            except Exception as _gte:
+                logging.getLogger(__name__).debug(
+                    "HANS_GREETING_OUTPUT_TRIM_V1: %s", _gte)
         if response:
             self.conv_store.add_exchange(name, _raw_message, response, channel=channel)
             # # HUMAN_CHAT_VIA_LOG_ENTRY

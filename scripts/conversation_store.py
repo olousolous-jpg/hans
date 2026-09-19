@@ -163,8 +163,16 @@ class ConversationStore:
                              if m["role"] == "assistant" else m["content"])}
                 for m in msgs]
 
+    # HANS_GREETING_OUTPUT_TRIM_V1 (19. 9.) — pripousti VOLITELNY vokativ
+    # pred pozdravem. V datech ma pozdrav tvar "<osloveni>, dobry den.",
+    # takze vzor kotveny rovnou na pozdrav ho NEVIDEL — a prave proto
+    # opravy z 13. a 14. 9. cetnost nesnizily. Zmereno: minutych pripadu
+    # 90 -> 6; nove chycenych 100, odriznuto median 18 / max 20 znaku
+    # (tedy fraze, ne obsah). Vzor je SDILENY se vstupnim filtrem
+    # i vystupnim orezem — jeden zdroj pravdy, zadna druha kopie.
     _POZDRAV_RE = _re_g4d.compile(
-        r"^\s*(dobr[\u00fdy]\s+den|dobr[\u00e9e]\s+r[\u00e1a]no|"
+        r"^\s*(?:[^\s.,!?]{2,20},\s*){0,2}"
+        r"(dobr[\u00fdy]\s+den|dobr[\u00e9e]\s+r[\u00e1a]no|"
         r"dobr[\u00fdy]\s+ve[\u010dc]er|dobr[\u00e9e]\s+odpoledne)"
         r"[\s,]*[^.!?]{0,24}[.!?]\s*", _re_g4d.IGNORECASE)
 
@@ -310,6 +318,23 @@ class ConversationStore:
 
     def list_persons(self) -> list:
         return [f.stem for f in sorted(self._dir.glob("*.json"))]
+
+    def posledni_ts(self, name: str):
+        """HANS_GREETING_OUTPUT_TRIM_V1 — cas posledni zpravy, nebo None.
+
+        Vystupni orez potrebuje vedet, jestli rozhovor UZ BEZI: pozdrav
+        v prvni replice je legitimni (overeno: 85 z 92 prvnich replik
+        pozdrav ma), v navazujici uz ne. `get_history` vraci jen
+        {role, content} bez casu, proto tahle metoda — aby volajici
+        nemusel sahat na privatni `_load`.
+        """
+        try:
+            msgs = (self._load(name) or {}).get("messages") or []
+            casy = [m.get("ts") for m in msgs
+                    if isinstance(m.get("ts"), (int, float))]
+            return max(casy) if casy else None
+        except Exception:
+            return None
 
     def summary(self) -> str:
         persons = self.list_persons()
