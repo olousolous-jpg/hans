@@ -4626,6 +4626,44 @@ class OpenWebUIDirectHandler:
                             'HANS_A1_THREAD_TEXT_V1: A1 se rozhoduje z %r '
                             '(místo %r)', _a1_text[:60], _raw_message[:40])
                     _st = self_topic(_a1_text, self.config)
+                    # HANS_A1_PERSONA_NAME_IS_SELF_V1 (20. 9.) — JMÉNO PERSONY
+                    # JE „ON SÁM“. Doloženo 19. 9. 17:02: F1 přepsal větu
+                    # „na co se tebe nejvíc těšíme“ na „Na co se Hans těší
+                    # v následujících dnech?“ — a klasifikátor ji pak četl jako
+                    # dotaz na OSOBU (změřeno 3/3 běhy, deterministicky), takže
+                    # výjimka níž nesepnula, A1 rozhodla a Hans na obyčejnou
+                    # otázku odpověděl „K tomuhle nemám spolehlivý záznam“.
+                    # HANS_A1_THREAD_TEXT_V1 (21. 8.) přitom rozhoduje
+                    # z ROZŘEŠENÉ věty schválně — obě opravy si tím navzájem
+                    # braly účinek.
+                    # ⚠️ Text se NEPŘEPISUJE: náhrada jména zájmenem rozbije
+                    # shodu podmětu se slovesem („Na co se ty těší“).
+                    # ⚠️ A NEPATŘÍ to do `self_topic` — ten sdílí i grounding
+                    # guard (`_o_sobe`), kde by se tím ROZŠÍŘILA výjimka
+                    # HANS_GUARD_SELF_TOPIC_V1, tedy opačným směrem, než
+                    # ukazuje měření z 20. 9. rána.
+                    # 📏 Změřeno na 32 reálných přepisech F1 z logů a na 19
+                    # zprávách se jménem: překlopí 3 + 2 věty, všechny správně
+                    # a deterministicky, 0 falešných; kontrolní „kdo tam
+                    # hraje?“ zůstává `dum`, takže vada, kvůli které vznikl
+                    # HANS_A1_THREAD_TEXT_V1, se nevrací.
+                    if _st == 'osoba':
+                        try:
+                            from scripts.hans_persona import persona_name
+                            _jm = (persona_name(self.config) or '').strip()
+                            if _jm and re.search(
+                                    r"(?<![0-9A-Za-zá-žÁ-Ž])"
+                                    + re.escape(_jm)
+                                    + r"[a-zá-ž]{0,3}(?![0-9A-Za-zá-ž])",
+                                    _a1_text, re.IGNORECASE):
+                                logging.getLogger(__name__).info(
+                                    'HANS_A1_PERSONA_NAME_IS_SELF_V1: %r nese '
+                                    'jméno persony → čtu jako dotaz na sebe',
+                                    _a1_text[:60])
+                                _st = 'asistent'
+                        except Exception as _pne:
+                            logging.getLogger(__name__).debug(
+                                'HANS_A1_PERSONA_NAME_IS_SELF_V1: %s', _pne)
                     if _st in ('asistent', 'dum'):
                         _skip_a1 = True
                         logging.getLogger(__name__).info(
