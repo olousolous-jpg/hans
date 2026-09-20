@@ -1979,7 +1979,7 @@ class OpenWebUIDirectHandler:
     _ASKER_PFX = re.compile(r"^\s*\S+\s+se\s+pt[áa]:\s*")
 
     _VIDIS_ME_PAT = re.compile(   # HANS_SELF_STATE_ASKER_VISIBLE_V1
-        r"vid[\u00edi](?:\u0161|s|te)\s+m[\u011be]|kamer|z[\u00e1a]b[\u011be]r|"
+        r"vid[\u00edi](?:\u0161|s|te)\s+m[\u011be]|kame[r\u0159]|z[\u00e1a]b[\u011be]r|"
         r"pozoruje(?:\u0161|s|te)\s+m", re.IGNORECASE)
 
     def _entita_je_tazatel(self, ent) -> bool:
@@ -2112,10 +2112,32 @@ class OpenWebUIDirectHandler:
     # Chcete abych usnul?" a „Připravím systém na režim spánku"). Právě proto,
     # že je to faktický dotaz, se má odpovídat ze STAVU, ne z RAG.
     # Levný regex místo LLM klasifikátoru — faktická cesta jde na každou větu.
+    # HANS_SELF_RUNTIME_NARROW_V1 (20. 9.) — VZOR BYL SLEPÝ K VÝZNAMU SLOV.
+    # Změřeno na 1 556 skutečných zprávách z deníku: z 31 shod bylo
+    # 12 FALEŠNÝCH, a nejčastější viník nebyl „vidíš“, ale „spíš“ — české
+    # příslovce je totéž slovo jako sloveso, takže věta o knize („píše to
+    # spíš s posměchem“) vyrobila tvrdý blok o režimu spánku. Dál sem padal
+    # film „patema vzhůru nohama“ a citoslovce „no vidíš“.
+    # Doložený případ 19. 9.: na dotaz o OKOLÍ („co vidíš, co se děje
+    # v místnosti?“) se přilepil fakt o vlastním režimu, grounding tím
+    # přestal být prázdný, cesta se označila jako `grounded` a abstinence
+    # se nespustila → Hans vymyslel ulici, galerii i malíře a připsal to
+    # „místním zpravodajským zdrojům“.
+    # Ověřeno PRODUKČNÍ cestou, ne jen regexem: `_build_grounding` nad touž
+    # větou přešel z `grounded ← entita_c1` na `factual_nofacts`, tedy do
+    # větve, kde běží brzda A1 (a `self_topic` ji tam nepřeskočí).
+    # Bilance: −12 falešných · 0 ztracených legitimních (19 → 19) ·
+    # +5 nově chycených, mj. vykání „vidíte mě?“, které starý vzor míjel.
+    # ⚠️ Vidění a kamera se NEOPISUJÍ — sdílí se `_VIDIS_ME_PAT`
+    # (HANS_SELF_STATE_ASKER_VISIBLE_V1), ať nevzniknou dvě pravdy o tomtéž.
     _SELF_RUNTIME_PAT = re.compile(
-        r"(sp[íi][sš]|span[ke]|sp[áa]nk|vzh[uů]ru|bd[íi][sš]|"
-        r"hl[íi]d[áa][sš]|hl[íi]d[áa]n|kameru?\b|vid[íi][sš]\b|"
-        r"re[žz]im\w*)", re.IGNORECASE)
+        r"(re[žz]im\w*|sp[áa]nk|span[ke]|hl[íi]d[áa]n|bd[íi][sš]|"
+        r"hl[íi]d[áa][sš]|js[ie][sš]\s+vzh[uů]ru|vzh[uů]ru\s*\?)",
+        re.IGNORECASE)
+    # Holé „spíš“ je sloveso jen v KRÁTKÉ otázce („spíš?“, „už spíš?“).
+    # Hranice je změřená, ne odhadnutá: všech šest výskytů v korpusu, které
+    # jsou příslovce, stojí v dlouhém souvětí.
+    _SPIS_PAT = re.compile(r"sp[íi][sš]\b", re.IGNORECASE)
 
     def _self_runtime_fact(self, text: str) -> str:
         """Deterministický blok o Hansově vlastním režimu (spánek/kamera/hlídání).
@@ -2124,7 +2146,13 @@ class OpenWebUIDirectHandler:
         něco přepíná — sám to neumí, mění se to na povel (`/sleep`, `/hlidej`).
         """
         t = (text or "").strip()
-        if not t or not self._SELF_RUNTIME_PAT.search(t):
+        # HANS_SELF_RUNTIME_NARROW_V1 — tři cesty k témuž: pojmenovaný režim,
+        # vidění (SDÍLENÝ vzor, ne kopie) a holé „spíš“ v krátké otázce.
+        if not t:
+            return ''
+        if not (self._SELF_RUNTIME_PAT.search(t)
+                or self._VIDIS_ME_PAT.search(t)
+                or (self._SPIS_PAT.search(t) and len(t) <= 25 and "?" in t)):
             return ''
         st = self._runtime_state()
         if not st:
