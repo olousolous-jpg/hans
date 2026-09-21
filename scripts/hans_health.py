@@ -586,6 +586,26 @@ def read_state() -> Optional[dict]:
         return None
 
 
+def _late_fmt(late_s: float) -> str:
+    """HANS_SCHEDULE_LATE_FMT_V1 (21. 9.) — zpozdeni v jednotce, ktera neni
+    videt jako nula. Puvodni '%.0fh' udelalo z devitiminutoveho skluzu vetu
+    'zaostava o 0h' a uzivatel ji dostal na telefon (20. 9. 05:25, 21. 9.
+    01:38). Pod hodinu a pul se hlasi v minutach, vys v hodinach s desetinou."""
+    minuty = max(0.0, float(late_s or 0)) / 60.0
+    if minuty < 90:
+        return "%.0f min" % minuty
+    # HANS_SCHEDULE_LATE_CZ_V1 — vetu cte uzivatel na telefonu, takze desetinna
+    # CARKA, ne tecka.
+    return ("%.1f" % (minuty / 60.0)).replace(".", ",") + " h"
+
+
+def _tried_clause(s: dict) -> str:
+    """Rozdil 'nespousti se' x 'spousti se a pokazde selze' uz `stale_list`
+    MERI (`tried_recently`, HANS_SCHEDULE_LAST_OK_V1) — sem chybel jen prevod
+    do vety, kterou uzivatel skutecne cte. Jina diagnoza, jina oprava."""
+    return " (spouští se, ale nedaří se)" if s.get("tried_recently") else ""
+
+
 def _schedule_sentence(health: dict) -> str:
     """HANS_SCHEDULE_V1 — behaviorální varování (1. osoba, konkrétní)."""
     sch = (health or {}).get("schedule") or {}
@@ -594,10 +614,14 @@ def _schedule_sentence(health: dict) -> str:
         return ""
     if len(stale) == 1:
         s = stale[0]
-        return "Rozvrh: rutina '%s' zaostává o %.0fh." % (
-            s['name'], s['late_s'] / 3600)
-    return "Rozvrh: %d rutin zaostává (nejhůř '%s' o %.0fh)." % (
-        len(stale), stale[0]['name'], stale[0]['late_s'] / 3600)
+        return "Rozvrh: rutina '%s' zaostává o %s%s." % (
+            s['name'], _late_fmt(s['late_s']), _tried_clause(s))
+    # Shoda cisla: 2-4 rutiny zaostavaji, 5 a vic rutin zaostava.
+    pocet = len(stale)
+    tvar = "rutiny zaostávají" if pocet < 5 else "rutin zaostává"
+    return "Rozvrh: %d %s (nejhůř '%s' o %s%s)." % (
+        pocet, tvar, stale[0]['name'], _late_fmt(stale[0]['late_s']),
+        _tried_clause(stale[0]))
 
 
 def _reboot_sentence(health: dict) -> str:

@@ -1644,19 +1644,43 @@ class HansRoutine:
                 # takze v tichem okne (22-9) zprava pocka do rana. Zaostavajici
                 # rutina neni nic, kvuli cemu budit.
                 try:
+                    # HANS_SCHEDULE_NOTIFY_BRAIN_UP_V1 (21. 9.) — kdyz je mozek
+                    # dole, rutiny zavisle na LLM zaostavaji NUTNE a neni to
+                    # jejich vada: v noci spi PC a `curiosity_tick` (perioda
+                    # 4 h) pretece jeste pred svitanim. Hlidac na to poslal
+                    # zpravu 20. 9. 05:25 i 21. 9. 01:38 — obe do tiche fronty,
+                    # takze uzivateli prisly rano jako poplach na neco, co se
+                    # mezitim samo srovnalo. ZMERENO na historii hlaseni: obe
+                    # falesna maji mozek DOLE, jediny pravy poplach (19. 9.
+                    # 16:24, agent_action 50 h) ho ma NAHORE a projde dal.
+                    # 🔑 Hrana se schvalne NEKONZUMUJE — kdyz rutina visi
+                    # doopravdy, ohlasi se, jakmile je mozek zpatky. Tim se
+                    # poplach jen ODKLADA, nezahazuje.
+                    _brain_down = oll in (hans_health.DOWN, hans_health.WEDGED)
                     _sched = (health.get('schedule') or {}).get('stale') or []
                     _sched_key = tuple(sorted(s['name'] for s in _sched))
                     _sched_prev = getattr(self, '_health_last_sched', ())
-                    if _sched_key and _sched_key != _sched_prev:
-                        _veta = hans_health._schedule_sentence(health)
-                        if _veta and self._notifier:
-                            self._notifier(_veta)
-                            _log.info('health: rozvrh ohlasen uzivateli — %s',
-                                      _veta)
-                        elif _veta:
-                            _log.warning('health: rozvrh zaostava, ale most '
-                                         'chybi — NEODESLANO: %s', _veta)
-                    self._health_last_sched = _sched_key
+                    if _sched_key and _brain_down:
+                        # Stopa na HRANE (tyz vzor jako log degradovanych
+                        # sluzeb vys): jednou pri vzniku, pak ticho. Bez ni
+                        # by odlozeny poplach nesel dohledat — a prave to je
+                        # jediny zaznam o tom, ze hlidac nemlci kvuli vade.
+                        if _sched_key != getattr(self, '_health_sched_muted', ()):
+                            _log.info('health: rozvrh zaostava (%s), ale mozek '
+                                      'je dole — hlaseni ceka na mozek',
+                                      ', '.join(_sched_key))
+                        self._health_sched_muted = _sched_key
+                    else:
+                        if _sched_key and _sched_key != _sched_prev:
+                            _veta = hans_health._schedule_sentence(health)
+                            if _veta and self._notifier:
+                                self._notifier(_veta)
+                                _log.info('health: rozvrh ohlasen uzivateli — %s',
+                                          _veta)
+                            elif _veta:
+                                _log.warning('health: rozvrh zaostava, ale most '
+                                             'chybi — NEODESLANO: %s', _veta)
+                        self._health_last_sched = _sched_key
                 except Exception as _se:
                     _log.debug('health: hlaseni rozvrhu: %s', _se)
             except Exception as _e:
