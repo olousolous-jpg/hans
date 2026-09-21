@@ -1180,11 +1180,76 @@ def sources_answer(db_path: str, user_text: str,
         return ("Ano, %s. O tématu '%s' jsem se dočetl na Wikipedii. "
                 "Zde je odkaz: %s" % (oslov, name, url))
 
+    # ── HANS_SOURCE_FRESH_LOOKUP_V1 (21. 9.) — ČERSTVÉ DOHLEDÁNÍ JE ZDROJ ──
+    # Doloženo testovacím rozhovorem 21. 9. (tahy 5→6): Hans řekl „právě jsem
+    # se podíval (Wikipedie — heslo Icon of the Seas)" a na navazující otázku
+    # „na základě čeho to tvrdíte?" odpověděl, že zdroj nemá. Tazatel to vzal
+    # jako přiznání lži.
+    #
+    # PŘÍČINA není v téhle funkci, ale v dělbě práce: `lookup_now` ZÁMĚRNĚ
+    # nezapisuje do paměti nic (`instant-lookup-verify-loop` — provizorně
+    # hned, do deníku a entit až po nočním ověření), takže mezi dohledáním
+    # a nocí neexistuje entita s URL, po které tahle funkce sahá. Popření
+    # bylo doslova vzato pravdivé („v PAMĚTI to uloženo nemám") a jako
+    # odpověď přesto nepravdivé.
+    #
+    # Je to TÁŽ TŘÍDA jako `HANS_SOURCE_IS_SENSOR_V2` (4. 9.): další druh
+    # zdroje, o kterém popření nevědělo. Proto stejné řešení — vlastní větev
+    # PŘED přiznáním, ne rozšiřování hledání v entitách.
+    #
+    # ⚠️ Čerstvost se drží TÝMŽ oknem jako `_last_hans_topics` (1 h) a jen
+    # pro TÉHOŽ tazatele — referent anaforické otázky musí být z TOHOTO
+    # hovoru (HANS_SOURCE_REFERENT_SCOPE_V1). Bez obou mezí by Hans nabídl
+    # odkaz k tématu, o kterém s tímhle člověkem vůbec nemluvil.
+    # ⚠️ Odpověď MUSÍ říct, že to ještě není ověřené — jinak by se provizorní
+    # nález tvářil jako uložená znalost a obešel by tím noční ověření.
+    try:
+        _cerstve = _cerstve_dohledani(db_path, asker)
+        if _cerstve:
+            _tema, _url = _cerstve
+            return ("Ano, %s — to není ze zápisků. Dohledal jsem to během "
+                    "našeho hovoru k tématu '%s': %s Ještě si to musím "
+                    "ověřit, zatím to beru jako provizorní."
+                    % (oslov, _tema, _url))
+    except Exception:
+        pass
+
     # nic konkrétního — poctivé přiznání (bez konfabulace)
     return ("K tomu, o čem jsme mluvili, nemám v paměti uložený konkrétní "
             "článek s odkazem, %s. Zůstává mi jen obecná znalost, kterou "
             "jsem si osvojil — konkrétní zdroj Vám k tomu nabídnout nemohu, "
             "nechci si nic vymýšlet." % oslov)
+
+
+def _cerstve_dohledani(db_path: str, asker: Optional[str] = None,
+                       okno_s: float = 3600.0):
+    """HANS_SOURCE_FRESH_LOOKUP_V1 — poslední dohledání TOHOTO tazatele
+    z čekárny `unverified_findings`. Vrací (téma, url) nebo None.
+
+    Fail-safe je abstinence: když chybí url, téma nebo tazatel, vrací None
+    a volající spadne do dosavadního poctivého přiznání.
+    """
+    if not asker:
+        return None
+    conn = None
+    try:
+        conn = _ro(db_path)
+        row = conn.execute(
+            "SELECT topic, url FROM unverified_findings "
+            "WHERE asker = ? AND ts >= ? AND COALESCE(url,'') <> '' "
+            "ORDER BY ts DESC LIMIT 1",
+            (asker, time.time() - float(okno_s))).fetchone()
+        if row and row[0] and row[1]:
+            return str(row[0]), str(row[1])
+    except Exception:
+        return None
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+    return None
 
 
 def sources_reply(db_path: str, user_text: str = "", limit: int = 5,
@@ -2349,9 +2414,42 @@ def _extract_knowledge_topic(text: str) -> Optional[str]:
     # HANS_KNOWLEDGE_CHECK_V2 — skloněné tvary media-typu („o filmU/seriálU/
     # knizE X"), jinak „filmu Proud krve" nesedne na paměť → falešná nabídka
     # studia u filmu, který Hans zná.
-    x = re.sub(r"^(?:seri[áa]l\w*|film\w*|kn[ií]\w+|posta?v\w*|typ\w*)\s+",
+    # HANS_KNOWLEDGE_TOPIC_ANAFORA_V1 (21. 9.) — UKAZOVACÍ ZÁJMENO NENÍ TÉMA.
+    # Doloženo rozhovorem 21. 9. (A/15): „a odkud znas TEN PROJEKT?" (myšlen
+    # Hansův vlastní projekt) → téma 'ten projekt' → dohledání na Wikipedii →
+    # Hans odpověděl obecnou definicí z hesla „Řízení projektů" a připsal jí
+    # zdroj. To je tvrzení o světě s doloženým zdrojem, tedy nejdražší druh
+    # chyby — a přitom otázka mířila na něco, o čem se právě mluvilo.
+    #
+    # Zájmeno je ANAFORA: ukazuje do hovoru, ne na pojem. Řeší se TÝMŽ
+    # způsobem, jakým funkce už odstraňuje „film/seriál/kniha" — jen o řádek
+    # dřív. Táž třída jako zájmena v `_STOPWORDS` (15. 7., „četl jsi JI?").
+    #
+    # ⚠️ ZMĚŘENO na 1 565 skutečných zprávách, a měření OBRÁTILO první návrh:
+    # téma se zájmenem vznikne jen 3× a pokaždé je to LEGITIMNÍ „co vis o tom
+    # vraku u sicilie?". Plošná abstinence by zabila jediné reálné výskyty.
+    # Proto se zájmeno jen ODŘÍZNE (dotaz 'vraku u sicilie' je navíc lepší)
+    # a abstinuje se, teprve když po něm nezbude nic než holý kvalifikátor
+    # („projekt", „film", „kniha") — tedy když ve větě žádné téma nebylo.
+    # ⚠️ `(?:\s+|$)` a ne `\s+`: zájmeno i kvalifikátor stojí často NA KONCI
+    # („odkud znas TU KNIHU?", „a odkud znas TOHLE?"). S požadavkem na mezeru
+    # za slovem vzor na konci věty nesepne a zbude téma 'knihu' / 'tohle' —
+    # týž tvar chyby jako `kamer` × „kameře" (20. 9.).
+    x = re.sub(r"^(?:ten|ta|to|tu|toho|tom|tomu|t[ée]|ty|ti|t[ěe]ch|t[íi]m|"
+               r"tohle|tenhle|tahle|tamten|tamta|onen|ona)(?:\s+|$)",
                "", x, flags=re.I)
-    return x.strip() or None
+    x = re.sub(r"^(?:seri[áa]l\w*|film\w*|kn[ií]\w+|posta?v\w*|typ\w*)(?:\s+|$)",
+               "", x, flags=re.I)
+    x = x.strip()
+    # Zbyl holý kvalifikátor bez jména („projekt", „knihu") → ve větě žádné
+    # téma nebylo. Kontroluje se jak výčtem, tak týmž vzorem jako výš —
+    # výčet nemá všechny pády.
+    if x and " " not in x and (
+            x.lower() in _TOPIC_QUALIFIERS
+            or re.fullmatch(r"(?:seri[áa]l\w*|film\w*|kn[ií]\w+|posta?v\w*"
+                            r"|typ\w*)", x, flags=re.I)):
+        return None
+    return x or None
 
 
 # kvalifikátory, které v „co víš o jazyku X / o filmu X" nesou téma až za sebou

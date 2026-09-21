@@ -137,6 +137,37 @@ def _title_similarity(query: str, title: str) -> float:
 _PAREN = re.compile(r"\s*\([^)]*\)")
 
 
+# ── HANS_WIKI_PREFIX_GAP_V1 (21. 9.) — SLEPÉ MÍSTO EXACT_TOKEN GATE ─────────
+# `HANS_WIKI_EXACT_TOKEN_V1` (7. 9.) požaduje přesný token JEN při pokrytí
+# < 1.0. Jenže JEDNOSLOVNÝ titul dostane přes prefixovou shodu vždycky 1.00,
+# takže se ta kontrola u nejčastějšího tvaru špatné kotvy NIKDY nespustí:
+#     'Guin' → 'Guinea'     sim 1.00, pokrytí 1.00 → PROŠLO
+#     'Kost' → 'Kostnice'   sim 1.00, pokrytí 1.00 → PROŠLO
+# Doloženo 21. 9. u „Le Guin, to je zajimava autorka" — dohledání vrátilo
+# článek o Guineji. Zavřít to přísnější podmínkou „vždy přesný token" NELZE:
+# zabilo by to české skloňování, kvůli kterému `_token_match` prefix má.
+#
+# 🔑 Rozhoduje SMĚR a VELIKOST rozdílu. Skloňování dotaz PRODLUŽUJE nebo mu
+# mění koncovku („Karlštejna" × „Karlštejn"), kdežto cizí slovo je krátký
+# PREFIX delšího („Guin" × „Guinea"). Shoda, kde je dotazový token vlastním
+# prefixem titulního a ten je o 2+ znaky delší, se proto za pokrytí nepočítá.
+#
+# ZMĚŘENO (21. 9.), a je to oprava s nulovou cenou:
+#   • obě doložené vady padnou;
+#   • 603 skutečných entit se zdrojem z Wikipedie → **0 změněných verdiktů**;
+#   • týž korpus s dotazem v 8 pádech (4 816 dotazů) → **0 nově zamítnutých**;
+#   • kontrolní případy z HANS_WIKI_COVERAGE_V1 (Hrad Gutštejn, Hora Říp)
+#     i parafráze („architektonické" → „Architektura") drží.
+_PREFIX_MEZERA = 2
+
+
+def _kratky_prefix(q_tok: str, t_tok: str) -> bool:
+    """Je shoda POUZE tím, že dotaz je krátký prefix delšího slova v titulu?"""
+    a = _odstran_diakritiku(q_tok)
+    b = _odstran_diakritiku(t_tok)
+    return a != b and b.startswith(a) and len(b) - len(a) >= _PREFIX_MEZERA
+
+
 def _title_coverage(query: str, title: str) -> float:
     """Kolik tokenů TITULU je pokryto dotazem (0.0–1.0). Opak `_title_similarity`."""
     t = _PAREN.sub("", title or "")
@@ -144,7 +175,8 @@ def _title_coverage(query: str, title: str) -> float:
     if not tt:
         return 1.0
     return sum(1 for x in tt
-               if any(_token_match(y, x) for y in qt)) / len(tt)
+               if any(_token_match(y, x) and not _kratky_prefix(y, x)
+                      for y in qt)) / len(tt)
 
 
 # HANS_STUDY_DEEP_V1 — generické odkazy bez studijní hodnoty (vynech z pododkazů)
