@@ -1151,6 +1151,36 @@ class OpenWebUIDirectHandler:
                     tema = dotaz_na_pojem(veta or "") or None
                 except Exception:
                     tema = None
+            # HANS_ANCHOR_ENTITY_FIRST_V1 (20. 9.) — KDYŽ C1 ENTITU ZNÁ,
+            # MÁ PŘEDNOST PŘED KOTVOU. Doloženo 20. 9. 13:37: uživatel napsal
+            # „Grand Tour, to je zajimave…", entitní vrstva rozřešila
+            # „Grand Tour (cyklistika)" (ev=2) — a dohledání přesto šlo podle
+            # kotvy „Tour", protože `kotvy_ve_vete` bere velké písmeno UVNITŘ
+            # věty a víceslovnému názvu NA ZAČÁTKU tím uřízne první slovo.
+            # Týž tvar: „Icon of the Seas…" → kotva „Seas", „Le Guin…" → „Guin".
+            # ⛔ Poziční oprava (přilepit první slovo věty) byla ZMĚŘENA
+            # a zamítnuta: na 1 467 zprávách 8 změn, z toho 1 správná
+            # a 7 škodlivých („Hrad hrad Gutštejn", „Je <Jméno>", „A Koláč").
+            # 📏 Změřeno až na úrovni skutečného článku (`_wikipedia_search`):
+            #   'Tour' → None          × 'Grand Tour'       → Grand Tour
+            #   'Seas' → Oasis of the Seas × 'Icon of the Seas' → Icon of the Seas
+            # Tedy 2 ze 4 doložených případů opraveno, 0 poškozeno;
+            # „Ahoj Hansi" entitu nevrátí, takže se nic nemění.
+            try:
+                _es = self._entity_store()
+                if _es is not None:
+                    _e = _es.resolve(self._bez_tazatele(
+                        _prepis or veta or ""))
+                    _jm = str((_e or {}).get("name") or "").strip()
+                    if (_e and _jm and not self._entita_je_tazatel(_e)
+                            and _jm.lower() != str(tema or "").lower()):
+                        logging.getLogger(__name__).info(
+                            'HANS_ANCHOR_ENTITY_FIRST_V1: kotva %r → entita %r',
+                            tema, _jm)
+                        tema = _jm
+            except Exception as _efe:
+                logging.getLogger(__name__).debug(
+                    'HANS_ANCHOR_ENTITY_FIRST_V1: %s', _efe)
             if not tema:
                 return None
             _dbp = (self.config.get("hans_idle", {}) or {}).get(
@@ -4672,6 +4702,36 @@ class OpenWebUIDirectHandler:
                             _st, _raw_message)
                 except Exception as _ste:
                     logging.getLogger(__name__).debug('self_topic: %s', _ste)
+                # HANS_A1_ONLY_FOR_QUESTIONS_V1 (20. 9.) — ROZKAZ NENÍ DOTAZ.
+                # Doloženo 16. 9. 13:20: na pokyn „nemaluj stále dokola
+                # zapadající slunce." Hans odpověděl „K tomuhle nemám
+                # spolehlivý záznam a nerad bych si domýšlel" — A1 posoudila
+                # stabilitu odpovědi na větu, která se na nic neptá.
+                # Ze čtyř dnů provozu rozhodla A1 pětkrát a tohle byl
+                # jeden z nich; obě její abstinence byly falešné.
+                # ⛔ Predikát `_je_dotaz_ne_zadost` (ten, co chrání studium)
+                # sem NEJDE: změřeno, že „pověz mi něco o filmu X" označí
+                # jako NE-dotaz, takže by A1 vypnul přesně u faktické žádosti,
+                # kvůli které existuje.
+                # ✅ Proto sdílíme `_looks_like_request` z agentní vrstvy —
+                # ta zná i imperativy typu „pověz / popiš / zjisti / najdi"
+                # (`_REQUEST_OPENERS`). Změřeno: „nemaluj…" False, „pověz mi
+                # něco o filmu…" True, faktické otázky True.
+                # ⚠️ Rozhoduje se z RAW zprávy, ne z přepisu F1: jestli je
+                # věta rozkaz, je vlastnost toho, co člověk NAPSAL. Přepis
+                # (HANS_A1_THREAD_TEXT_V1) slouží ke klasifikaci TÉMATU.
+                if not _skip_a1:
+                    try:
+                        _ar = self._agent_router()
+                        if _ar is not None and not _ar._looks_like_request(
+                                _raw_message):
+                            _skip_a1 = True
+                            logging.getLogger(__name__).info(
+                                'HANS_A1_ONLY_FOR_QUESTIONS_V1: A1 přeskočena '
+                                '— věta se na nic neptá: %.50s', _raw_message)
+                    except Exception as _lre:
+                        logging.getLogger(__name__).debug(
+                            'HANS_A1_ONLY_FOR_QUESTIONS_V1: %s', _lre)
                 if not _skip_a1:
                     from scripts.hans_selfconsistency import is_unstable
                     if is_unstable(self.config, _raw_message) is True:
@@ -4866,8 +4926,29 @@ class OpenWebUIDirectHandler:
                     # „po JEDNÉ větě" a ty práh 2 dál propustí; a podmínka (a)
                     # `_tenky` beze změny drží guard mimo plnou RAG cestu, kde
                     # tamty poplachy vznikly.
+                    #
+                    # 🔴 GROUNDING_GUARD_ACTIVE_V4 (20. 9.) — PRÁH 2 → 5.
+                    # Tohle VĚDOMĚ mění rozhodnutí V3 výš. Změřeno na provozním
+                    # logu za 4 dny (`GUARD_MERENI_20_09`, ruční štítky
+                    # v `tools/mereni_guard_stitky.py`):
+                    #   • 16 zásahů na 162 chatových tahů = 10 %,
+                    #   • z 59 zahozených vět bylo tvrzením o světě jen 25 %;
+                    #     zbytek byly úvahy, řeč o vlastní činnosti, omluvy,
+                    #     upřesňující otázky — a 3 věty, kterými Hans PŘIZNÁVAL,
+                    #     že něco neví, tedy přímo ta anti-konfabulace,
+                    #     kvůli které guard existuje,
+                    #   • 9 z 16 zásahů bylo CELÝCH falešných (ani jedno
+                    #     tvrzení o světě mezi zahozenými větami).
+                    # Při prahu 5 klesnou falešné zásahy 9 → 1 a užitečné 7 → 4.
+                    # ⛔ Rozlišovač „věta o mluvčím / otázka se neposuzuje" byl
+                    # postaven a ZMĚŘEN jako slabší (ušetří 19 ze 44 falešných
+                    # vět, ale dvě tvrzení o světě nově pustí), a v kombinaci
+                    # s prahem vychází hůř než práh sám → nestaví se.
+                    # 💬 Rozhodnutí uživatele 20. 9.: „radši ukecaný" než uťatý.
+                    # CENA, kterou to platí: krátké výčty (2–4 věty bez opory)
+                    # guard pustí — přesně případ hradů z V3.
                     _prah = int((self.config.get("grounding_guard", {}) or {})
-                                .get("min_dropped_thin", 2))
+                                .get("min_dropped_thin", 5))
                     # HANS_REFLECTIVE_ASK_V1 (30.8.) — na ÚVAHOVOU otázku
                     # („kdybyste měl…", „co je pro vás nejtěžší") je odpověď
                     # bez opory v zápiscích NORMÁLNÍ: Hans odpovídá z osobnosti,

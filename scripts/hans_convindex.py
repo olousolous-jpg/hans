@@ -727,6 +727,23 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
             kmen = v[:-1] if v[-1:] in "aeiouy" else v
             if len(kmen) >= 3 and f.startswith(kmen) and len(f) - len(kmen) <= 3:
                 return True
+            # HANS_VYNECH_PALATALIZACE_V1 (20. 9.) — ČEŠTINA MĚKČÍ KONCOVKU
+            # KMENE. Doloženo z deníku: na „a co vis o Hence?" se jméno
+            # z domácnosti NEVYLOUČILO (kmen „henk" × tvar „henc") a Hans
+            # dohledal na Wikipedii heslo „Henčov" — tedy vesnici místo
+            # člověka. Je to i věc soukromí: jméno odešlo do webového dotazu.
+            # Po `_fold` (bez diakritiky) zbývají tři dvojice: k↔c, h↔z, g↔z.
+            # Porovnává se TÝŽ kmen na obou stranách, takže se tím okruh
+            # vyloučených nerozšiřuje na cizí slova — jen se dorovná pád.
+            # ⚠️ Týž jazykový jev jako `kamer` × „kameře" (r→ř) v gestech
+            # téhož dne; [[czech-pattern-word-shape-traps]].
+            if len(kmen) >= 3 and len(f) >= len(kmen):
+                _m = {"c": "k", "z": "h", "g": "h"}
+                _a = kmen[:-1] + _m.get(kmen[-1], kmen[-1])
+                _b = f[:len(kmen)]
+                _b = _b[:-1] + _m.get(_b[-1], _b[-1])
+                if _a == _b and len(f) - len(kmen) <= 3:
+                    return True
         return False
 
     preskoc_do = 0
