@@ -3350,7 +3350,31 @@ register(
         r"\bsnilo\s+se\s+(ti|v[áa]m)\b",
         r"\bo\s+[čc]em\s+(jsi|jste)\s+snila?\b",
         r"\bm[ěe]l(a)?\s+(jsi|jste)\s+.{0,20}\bsen\b",
-        r"\b(tv[ůu]j|v[áa][šs])\s+(posledn[íi]\s+|dne[šs]n[íi]\s+)?sen\b",
+        # ── HANS_DREAM_NOT_ASPIRATION_V1 (21. 9.) — `sen` JE HOMONYMUM ──────
+        # Nocni sen x TOUHA. Doloženo třikrát, a ve VŠECH TŘECH OSOBÁCH řeči:
+        #   „váš sen je ukotvený v konkrétní realitě"        (cizi, 20. 9.)
+        #   „co je ted tvuj sen, tvoje velka aspirace?"      (domaci, 21. 9.)
+        #   „váš sen – myslím tím spíš vaši aspiraci – je…"  (cizi, 21. 9.)
+        # Na vsechny tri Hans vypsal nocni sen o ledovych vlockach.
+        # A neni to jen vec testu — v korpusu je SKUTECNA zprava
+        # „popiš mi svůj sen do budoucna, o čem přemýšlíš".
+        #
+        # 🪤 PRVNI OPRAVA (tehoz dne rano) ZAKAZOVALA JEN SPONU za frazi
+        # („sen JE…") a padla hned v prvnim rozhovoru: v A/13 stoji za „sen"
+        # CARKA, v B/9 POMLCKA. Zakazovat dalsi a dalsi interpunkci je zavod,
+        # ktery se nevyhraje — rozhoduje NAOPAK pritomnost dukazu.
+        #
+        # 🔑 Nocni vyznam nese skoro vzdy EPIZODICKOU STOPU (zdalo, snilo,
+        # noc, spanek) nebo KVALIFIKATOR (posledni/dnesni sen). Holy tvar
+        # „tvuj sen" bez obojiho je statisticky touha → radsi nic.
+        # ⛔ Podminka „veta musi byt otazka" NESTACI — zabila by holy
+        # kvalifikovany tvar z help_textu („tvůj poslední sen").
+        # Zmereno na kontrolnim seznamu 8 vet: chybne verdikty 3 → 0;
+        # na 1 566 skutecnych zpravach ma tenhle vzor 0 vyskytu, takze
+        # zuzeni nestoji nic.
+        r"\b(tv[ůu]j|v[áa][šs])\s+(posledn[íi]|dne[šs]n[íi])\s+sen\b",
+        r"^(?=.*\b(zd[áa]l\w*|snilo|noc\w*|ve\s+sp[áa]nku|probudil))"
+        r".*\b(tv[ůu]j|v[áa][šs])\s+sen\b",
         r"\bco\s+se\s+(ti|v[áa]m)\s+zd[áa]lo\b",
         r"\bjak[ýy]\s+(jsi|jste)\s+m[ěe]l(a)?\s+sen\b",
     ],
@@ -4896,7 +4920,19 @@ def _cmd_anomalie(handler, name, args) -> str:
 register(
     "anomalie",
     slash_aliases=["anomalie", "anomaly", "odchylky"],
-    nl_patterns=[r"\bco.{0,10}je\s+jinak", r"\bco.{0,10}se\s+zm[ěe]nilo"],
+    # HANS_LIST_NOT_CLAIM_V1 (21. 9.) — dve vady najednou, obe zmerene:
+    #  (a) vzor sepnul na RELATIVNI VETE uprostred souveti: „všiml jste si
+    #      něčeho v sobě samém, co se změnilo?" → vypis tydennich odchylek
+    #      Hansova PROVOZU. Proto se vzor kotvi na zacatek vety/otazky.
+    #  (b) ve vzorech CHYBELO SAMO SLOVO „anomálie"/„odchylka", takze
+    #      „jsou nejake anomalie?" i „ukaz prosim anomalie a napady"
+    #      propadly do volneho hovoru. Popisny vzor byl, pojmenovani ne.
+    # Zmereno na 1 564 skutecnych zpravach: zuzeni nestoji ANI JEDNU
+    # (oba vzory tam dnes maji 0 vyskytu), slovo nove chyta 1 realnou zpravu,
+    # a na kontrolnim seznamu 11 vet klesnou chybne verdikty 7 → 0.
+    nl_patterns=[r"(?:^|[?!.]\s*)co\b.{0,12}\bje\s+jinak",
+                 r"(?:^|[?!.]\s*)co\b.{0,12}\bse\b.{0,12}\bzm[ěe]nilo",
+                 r"\banom[áa]li", r"\bodchyl"],
     handler=_cmd_anomalie,
     help_text="Týdenní odchylky ve tvém chování (algoritmicky) — /anomalie teď = spusť detekci",
 )
