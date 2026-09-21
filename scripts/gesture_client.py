@@ -140,7 +140,13 @@ class GestureClient:
         # ladily naslepo. Souhrn jde do gesta_ne.log nejvyse jednou za 10 s,
         # aby NEPRETLACIL hlasky z `_proc_ne` (ty maji vlastni limit 2 s).
         # MERI, do rozhodovani nesaha.
+        # HANS_GESTURE_POSE_TVAR_V1 — `bez_oci` (oci nejsou videt) a
+        # `odvraceny` (hlava natocena pryc) jsou ZAMERNE dva stitky: je to
+        # tataz past jako u `nad_ramenem` x `pazi_nahore` — slite do jednoho
+        # cisla by nebylo poznat, ktera strana brany bere vzorky.
+        self._pose_tvar = (-1.0, 9.0)      # (jistota oci, odklon hlavy)
         self._pose_zahozeno = {"jistota": 0, "uzka_ramena": 0,
+                               "bez_oci": 0, "odvraceny": 0,
                                "nad_ramenem": 0, "loket": 0, "od_nosu": 0,
                                # HANS_GESTURE_POSE_NAD_MAX_V1 + _NOSE_REQ_V1:
                                # bez seedu chybi duvod v souhrnu, dokud
@@ -633,7 +639,16 @@ class GestureClient:
              # aby chybejici klic nezmenil chovani
              "pose_wrist_above_max": 99.0,
              # HANS_GESTURE_POSE_NOSE_REQ_V1 — 0 = vypnuto
-             "pose_nose_required": 0.0}
+             "pose_nose_required": 0.0,
+             # HANS_GESTURE_POSE_SIROKA_RAMENA_V1 — 99 = vypnuto, aby
+             # chybějící klíč nezměnil chování (týž vzorec jako u
+             # `pose_wrist_above_max`)
+             "pose_max_shoulder_h": 99.0,
+             # HANS_GESTURE_POSE_TVAR_V1 — 0 / 99 = VYPNUTO (jen se meri),
+             # tyz vzorec jako u ostatnich pozdejsich bran, aby chybejici
+             # klic nikdy nezmenil chovani.
+             "pose_face_min_eye_conf": 0.0,
+             "pose_face_max_yaw": 99.0}
         p = self._pose or d
         for k in d:
             try:
@@ -670,12 +685,43 @@ class GestureClient:
         if obr < p["pose_min_reversals"]:
             return None, ("malo obratu %d < %d (rozpeti %.2f, vzorku %d)"
                           % (obr, p["pose_min_reversals"], rozpeti, len(okno)), True)
+        # HANS_GESTURE_POSE_SIROKA_RAMENA_V1 (20. 9.) — BRÁNA MĚLA JEN DOLNÍ MEZ.
+        # Potřetí týž tvar chyby: `pose_min_shoulder_h` odmítá vzdálenou
+        # postavu, ale blízkou nepouštěl nikdo. Uživatel nahlásil 20. 9. dva
+        # falešné výstřely (15:47 a 16:20) a proti dvěma pravým z téhož
+        # odpoledne se liší JEDINOU veličinou — šířkou ramen, a to 3×:
+        #     pravá   0,104 · 0,117          falešná  0,363 · 0,350
+        # Rozpětí, počet vzorků, loket ani odstup od nosu nerozlišují.
+        # Šířka ramen je proxy pro VZDÁLENOST: falešné vznikly, když někdo
+        # stál těsně u kamery.
+        # 📏 Změřeno přehráním celého korpusu PRODUKČNÍ logikou
+        # (`tools/prehraj_produkcne.py`, 653 070 vzorků 17.–20. 9., validace
+        # proti `gesta.log` prošla): doložená pravá mávnutí z kalibračních
+        # oken (16:44–16:45 a 17:09–17:11 včetně „blízké vzdálenosti")
+        # mají 0,091–0,259, oba falešné 0,350+. Mezi tím je čistá mezera.
+        # Strop 0,30 ubere 8 ze 45 výstřelů a ANI JEDEN z nich nepadá
+        # do kalibračního okna mávání.
+        # ⚠️ Cena: mávnutí z bezprostřední blízkosti (< ~0,3 šířky záběru
+        # na ramena) Hans přestane brát. Kalibrace to pokrývá po 0,259.
+        # Štítek je ZÁMĚRNĚ jiný než `uzka_ramena`, ať se obě strany brány
+        # neslijí do jednoho čísla v `gesta_ne.log` (poučení z `pazi_nahore`).
         posl = okno[-1]
+        if float(posl[7]) > p["pose_max_shoulder_h"]:
+            return None, ("sirka ramen %.3f nad stropem %.2f (rozpeti %.2f,"
+                          " vzorku %d)"
+                          % (float(posl[7]), p["pose_max_shoulder_h"],
+                             rozpeti, len(okno)), True)
+        # HANS_GESTURE_POSE_TVAR_V1 — cisla o tvari do TEZE hlasky. Bez toho
+        # by u prijateho vystrelu nebyl zaznam, jak na tom pozornost byla,
+        # a prah by se nedal nastavit proti dolozenym pravym mavnutim.
+        _tv = getattr(self, "_pose_tvar", (-1.0, 9.0))
         return ("postava: rozpeti %.2f sirky ramen, obratu %d, vzorku %d, %.1f s"
                 " | zapesti nad ramenem %.2f, loket %.2f, od nosu %.2f"
                 " | sirka ramen %.3f"          # HANS_GESTURE_POSE_MERENI_V1
+                " | oci %.2f, odklon %.2f"
                 % (rozpeti, obr, len(okno), okno[-1][0] - okno[0][0],
-                   posl[2], posl[3], posl[4], posl[7])), None
+                   posl[2], posl[3], posl[4], posl[7],
+                   _tv[0], _tv[1])), None
 
     def _pose_syrove(self, duvod, v):
         """HANS_GESTURE_POSE_RAW_V1 (17. 9.) — jeden radek na ZAHOZENY snimek.
@@ -693,10 +739,15 @@ class GestureClient:
             from pathlib import Path as _P
             _d = _P("data/mereni")
             _d.mkdir(parents=True, exist_ok=True)
+            # HANS_GESTURE_POSE_TVAR_V1 — dva sloupce NAVIC (jistota oci,
+            # odklon hlavy). Pripisuji se na KONEC, aby starsi radky zustaly
+            # citelne; `tools/prehraj_produkcne.py` bere 8 i 10 sloupcu.
+            _tv = getattr(self, "_pose_tvar", (-1.0, 9.0))
             with open(_d / "pose_raw.log", "a", encoding="utf-8") as _f:
-                _f.write("%.3f\t%s\t%s\t%.3f\t%.3f\t%.3f\t%.4f\t%.4f\n"
+                _f.write("%.3f\t%s\t%s\t%.3f\t%.3f\t%.3f\t%.4f\t%.4f"
+                         "\t%.3f\t%.3f\n"
                          % (time.time(), v[0], duvod, v[1], v[2], v[3],
-                            v[4], v[5]))
+                            v[4], v[5], _tv[0], _tv[1]))
         except Exception:
             pass
 
@@ -770,6 +821,39 @@ class GestureClient:
         self._pose_sw.append(sw)
         if sw < p["pose_min_shoulder_h"]:
             self._pose_pocitej("uzka_ramena")
+            return
+        # ── HANS_GESTURE_POSE_TVAR_V1 — DIVA SE NA MNE VUBEC? ────────────
+        # PROC prave tohle: 21. 9. bylo zmereno, ze ZADNA z osmi velicin
+        # stopy neodlisi prave mavnuti od falesneho (9 pravych x 19 falesnych,
+        # vsechny se prekryvaji). Devata velicina z teze stopy by byla jen
+        # dalsi prah nad tymz signalem. Pozornost je signal JINEHO DRUHU —
+        # a literatura ji u "Midas touch" uvadi jako prvni volbu.
+        # Pocita se z TYCHZ 17 bodu (nos 0, oci 1 a 2), takze to nestoji
+        # ani novou sit, ani snimky za sekundu.
+        #   `oci`    = jistota, ze jsou OBE oci videt (zezadu klesne)
+        #   `odklon` = jak je nos mimo stred mezi ocima, v ROZESTUPECH OCI
+        #              (0 = celem, roste do profilu; normalizace na rozestup
+        #              drzi cislo nezavisle na vzdalenosti — tyz princip
+        #              jako sirky ramen u ostatnich prahu)
+        _oci = float(min(Cf[1], Cf[2]))
+        _rozestup = abs(float(X[1] - X[2]))
+        _odklon = 9.0
+        if _oci >= m and _rozestup > 1e-6:
+            _odklon = abs(float(X[0]) - (float(X[1]) + float(X[2])) / 2.0) / _rozestup
+        self._pose_tvar = (_oci, _odklon)
+        _tvar_syrove = ("T", 0.0, 0.0, 0.0, sw, 0.0)
+        _tvar_bran = (p["pose_face_min_eye_conf"] > 0
+                      or p["pose_face_max_yaw"] < 9.0)
+        if _tvar_bran and _oci < max(p["pose_face_min_eye_conf"], m):
+            # 🔴 "oci nevidim" NENI "odvraceny": kdyz se oci nenajdou, zustane
+            # `_odklon` na navesti 9.0 a spadlo by to do horni meze jako
+            # natocena hlava. Je to tataz past jako `bez_nosu` x `od_nosu`
+            # (19. 9.) — dve priciny slite do jednoho cisla se pak ladi
+            # naslepo. Proto vlastni stitek, vyhodnoceny PRVNI.
+            self._pose_pocitej("bez_oci", None, _tvar_syrove)
+            return
+        if _odklon > p["pose_face_max_yaw"]:
+            self._pose_pocitej("odvraceny", None, _tvar_syrove)
             return
         zvednuto = []
         for jm, sh, el, wr in (("L", 5, 7, 9), ("P", 6, 8, 10)):

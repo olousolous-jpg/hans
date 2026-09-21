@@ -40,15 +40,24 @@ GESTA = ROOT / "data/mereni/gesta.log"
 
 
 def nacti_syrove(cesta=RAW):
-    """Radky: cas, strana, duvod, nad, loket, od nosu, sirka ramen, vychylka."""
+    """Radky: cas, strana, duvod, nad, loket, od nosu, sirka ramen, vychylka
+    [, jistota oci, odklon hlavy].
+
+    🔴 OSM NEBO DESET SLOUPCU. HANS_GESTURE_POSE_TVAR_V1 (21. 9.) pripsal dva
+    na konec; puvodni `len(p) != 8: continue` by kazdy NOVY radek TISE zahodil
+    a korpus by se tvaril prazdny presne ve chvili, kdy zacne narustat.
+    Starsi radky tvar nenesou — dostanou (-1, 9.0), tedy "nezmereno".
+    """
     ven = []
     for radek in open(cesta, encoding="utf-8", errors="replace"):
         p = radek.rstrip("\n").split("\t")
-        if len(p) != 8:
+        if len(p) not in (8, 10):
             continue
         try:
+            oci = float(p[8]) if len(p) == 10 else -1.0
+            odklon = float(p[9]) if len(p) == 10 else 9.0
             ven.append((float(p[0]), p[1], float(p[3]), float(p[4]),
-                        float(p[5]), float(p[6]), float(p[7])))
+                        float(p[5]), float(p[6]), float(p[7]), oci, odklon))
         except ValueError:
             continue
     ven.sort(key=lambda r: r[0])
@@ -81,9 +90,19 @@ def prehraj(radky, od, do, zmen=None):
             ram.append(R[i])
             i += 1
         zvednuto = []
-        for (_t, jm, nad, loket, odnosu, sw, dx) in ram:
+        for (_t, jm, nad, loket, odnosu, sw, dx, oci, odklon) in ram:
             if sw < p["pose_min_shoulder_h"]:
                 continue
+            # HANS_GESTURE_POSE_TVAR_V1 — brana pozornosti.
+            # 🔴 Radek BEZ zmerene tvare (oci < 0, starsi korpus) se pousti
+            # DAL. Kdyby se zahazoval, vysla by kazda varianta s touhle branou
+            # jako zazracne zlepseni — zahodila by proste cely stary korpus.
+            # Cena teto brany je tedy meritelna AZ na radcich od 21. 9.
+            if oci >= 0.0:
+                if p["pose_face_min_eye_conf"] > 0 and oci < p["pose_face_min_eye_conf"]:
+                    continue
+                if odklon > p["pose_face_max_yaw"]:
+                    continue
             # v syrovem logu se nedostupny nos pozna podle `odnosu` 9.0
             if p["pose_nose_required"] and odnosu >= 8.0:
                 continue
@@ -149,7 +168,9 @@ HISTORICKE = {"pose_min_shoulder_h": 0.08, "pose_wrist_above_shoulder": -0.4,
               "pose_wrist_above_max": 0.05, "pose_elbow_min": -0.8,
               "pose_wrist_from_nose": 0.5, "pose_nose_required": 0.0,
               "pose_min_samples": 3, "pose_min_swing": 0.4,
-              "pose_min_reversals": 1, "pose_eps": 0.1, "pose_window_s": 2.0}
+              "pose_min_reversals": 1, "pose_eps": 0.1, "pose_window_s": 2.0,
+              # tvar se 18.-19. 9. jeste nemerila → brana vypnuta
+              "pose_face_min_eye_conf": 0.0, "pose_face_max_yaw": 99.0}
 
 # Okna se znamou pravdou; ocekavany pocet se cte z gesta.log.
 VALIDACE = [("falešné 18. 9. večer", "2026-09-18 19:23", "2026-09-18 19:31"),

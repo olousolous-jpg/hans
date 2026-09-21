@@ -409,7 +409,13 @@
         "pose_min_swing": 0.4,
         "pose_min_reversals": 1,
         "pose_eps": 0.1,
-        "_pose_note": "Prahy mavnuti z POSTAVY. Jednotky: SIRKA RAMEN (ne pixely), vyska zaberu = 1. Pozor na meritko: sirka ramen byla 16. 9. zmerena 0.04-0.08 u cloveka pres pokoj a 0.19 u cloveka zblizka, takze prah 0.3 znamena u vzdalene postavy jen ~6 px, ale u blizke ~21 px — gesto je pak prisnejsi na skutecne mavani nez na nahodny pohyb v pozadi. pose_min_shoulder_h je spodni mez vzdalenosti (obdoba wave_min_palm_width u dlane). Ladit az podle souhrnu 'brany za 10 s' v gesta_ne.log."
+        "_pose_note": "Prahy mavnuti z POSTAVY. Jednotky: SIRKA RAMEN (ne pixely), vyska zaberu = 1. Pozor na meritko: sirka ramen byla 16. 9. zmerena 0.04-0.08 u cloveka pres pokoj a 0.19 u cloveka zblizka, takze prah 0.3 znamena u vzdalene postavy jen ~6 px, ale u blizke ~21 px — gesto je pak prisnejsi na skutecne mavani nez na nahodny pohyb v pozadi. pose_min_shoulder_h je spodni mez vzdalenosti (obdoba wave_min_palm_width u dlane). Ladit az podle souhrnu 'brany za 10 s' v gesta_ne.log.",
+        "pose_max_shoulder_h": 0.3,
+        "_pose_max_shoulder_note": "HANS_GESTURE_POSE_SIROKA_RAMENA_V1 (20. 9.): horni mez sirky ramen, 99 = vypnuto. Brana mela jen DOLNI mez (pose_min_shoulder_h) — potreti tyz tvar chyby. Uzivatel nahlasil 20. 9. dva falesne vystrely (15:47, 16:20); proti dvema pravym z tehoz odpoledne se lisi JEDINOU velicinou — sirkou ramen 3x (prava 0.104/0.117, falesna 0.363/0.350). Sirka ramen je proxy pro vzdalenost: falesne vznikly, kdyz nekdo stal tesne u kamery. ZMERENO prehranim celeho korpusu produkcni logikou (700 439 vzorku, validace proti gesta.log prosla): 45 -> 37 vystrelu, vsech 8 ubranych mimo kalibracni okna mavani; dolozena prava mavnuti maji 0.091-0.259. CENA: mavnuti z bezprostredni blizkosti Hans prestane brat.",
+        "pose_face_min_eye_conf": 0.0,
+        "_pose_face_min_eye_conf_note": "HANS_GESTURE_POSE_TVAR_V1 (21. 9.) BRANA POZORNOSTI. Min. jistota, ze jsou videt OBE oci (body 1 a 2 z tychz 17 bodu postavy). 0 = VYPNUTO, jen se meri. Duvod brany: 21. 9. zmereno, ze zadna z OSMI velicin stopy neodlisi prave mavnuti od falesneho (9 pravych x 19 falesnych, vsechny se prekryvaji) — devaty prah nad tymz signalem tedy nema smysl. Pozornost je signal JINEHO DRUHU a literatura ji u 'Midas touch' uvadi jako prvni volbu. Nestoji novou sit ani fps. Zamitnuti: stitek bez_oci.",
+        "pose_face_max_yaw": 99.0,
+        "_pose_face_max_yaw_note": "HANS_GESTURE_POSE_TVAR_V1 — max. odklon hlavy: jak daleko je nos od stredu mezi ocima, v ROZESTUPECH OCI (0 = celem do kamery, roste do profilu). Normalizace na rozestup oci drzi cislo nezavisle na vzdalenosti, tyz princip jako sirky ramen u ostatnich prahu. 99 = VYPNUTO. Zamitnuti: stitek odvraceny — ZAMERNE jiny nez bez_oci (dve priciny slite do jednoho cisla se ladi naslepo). ⚠️ PRAH ZATIM NENI ZMERENY: v pose_raw.log se tvar zacala zapisovat az 21. 9., takze retroaktivne to zmerit NEJDE. Nastavit az z korpusu proti DOLOZENYM pravym mavnutim. ⚠️ Meri natoceni HLAVY, ne smer pohledu."
     },
     "matrix": {
         "enabled": true,
@@ -1537,7 +1543,9 @@
     },
     "grounding_guard": {
         "use_evidence": false,
-        "_use_evidence_note": "HANS_EVIDENCE_V1 (7.9.): false = STARE chovani (guard soudi proti grounding + historie). Merici zapis HANS_EVIDENCE_AB_V1 bezi NEZAVISLE na tomhle klici a pocita obe varianty nad TOUTEZ odpovedi -> data se sbiraji bez rizika. Zapnout az kdyz mereni ukaze prinos; zatim je bilance vyrovnana (1 ubylo, 1 pribylo, 4 beze zmeny)."
+        "_use_evidence_note": "HANS_EVIDENCE_V1 (7.9.): false = STARE chovani (guard soudi proti grounding + historie). Merici zapis HANS_EVIDENCE_AB_V1 bezi NEZAVISLE na tomhle klici a pocita obe varianty nad TOUTEZ odpovedi -> data se sbiraji bez rizika. Zapnout az kdyz mereni ukaze prinos; zatim je bilance vyrovnana (1 ubylo, 1 pribylo, 4 beze zmeny).",
+        "min_dropped_thin": 5,
+        "_min_dropped_thin_note": "GROUNDING_GUARD_ACTIVE_V4 (20. 9.): 2 -> 5. Zmereno na provoznim logu za 4 dny: 16 zasahu na 162 tahu (10 %), 59 zahozenych vet, z toho jen 25 % byla tvrzeni o svete. 9 ze 16 zasahu bylo CELYCH falesnych. Pri prahu 5: falesne zasahy 9 -> 1, uzitecne 7 -> 4. Rozhodnuti uzivatele 20. 9.: 'radsi ukecany' nez utaty. POZOR: V3 (24. 8.) prah schvalne SNIZIL 4 -> 2 kvuli vyctove otazce na hrady v Ceskem raji; tenhle klic to vedome meni zpet a plati za to tim, ze kratke vycty (2-4 vety) guard pusti."
     },
     "ollama": {
         "base_slot_wait_s": 900,
