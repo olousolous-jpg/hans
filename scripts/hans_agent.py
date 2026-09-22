@@ -54,7 +54,17 @@ _ASK_INFO_PAT = re.compile(
     r"co vis|vis o|zajima me|odkud)\b")
 _ASK_ORDER_PAT = re.compile(
     r"\b(nastuduj|prostuduj|nauc se|zapis|poznamenej|pripomen|pridej|zarad|"
-    r"chci precist|chci si precist)\b")
+    r"chci precist|chci si precist|"
+    # HANS_AGENT_ASK_NOT_PLAY_V1 (22. 9.) — slovesa PREHRANI a DOHLEDANI.
+    # Bez nich by se zdvorila zadost v tazaci forme („muzes pustit na kodi
+    # nejaky film?", „umite pustit neco na televizi?") cetla jako dotaz
+    # a potlacila se — zmereno na 38 realnych vetach, kde router volil
+    # `kodi_play_film`: presne 4 takove. Tvary jsou VYPSANE, ne prefix:
+    # „ktery film bysis rad pustil znova?" je dotaz na OBLIBU a `pustil`
+    # se proto zamerne netrefi.
+    r"pust|pustte|pusti|pustis|pustit|pustime|"
+    r"prehraj|prehrat|prehrajes|spust|spustit|spustis|"
+    r"zapni|zapnes|zapnout|najdi|najdes|najit|stahni|stahnes|stahnout)\b")
 
 
 def _je_dotaz_ne_pokyn(msg: str) -> bool:
@@ -1973,6 +1983,25 @@ class AgentRouter:
              akce=("add_study_topic", "add_book_wishlist", "add_note"),
              podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_pokyn(msg),
              verdikt=None, duvod="věta se ptá, nezakládá úkol"),
+        # HANS_AGENT_ASK_NOT_PLAY_V1 (22. 9.) — DOTAZ NA OBLIBU NENI POKYN
+        # K PREHRANI. Doloženo testovacím rozhovorem 22. 9. (tah 30):
+        # na „jaký je tvůj nejoblíbenější film?" vzal router `kodi_play_film`
+        # s argumentem „můj nejoblíbenější film", Kodi grounding to správně
+        # zamítl (není v knihovně) — jenže za ním stojí
+        # `HANS_KODI_WEBSHARE_NABIDKA_V1`, takže Hans nabídl 24 souborů ke
+        # stažení z Webshare, včetně erotického filmu. Ta cesta sepnula za
+        # celou dostupnou historii logu 1× a rovnou takhle.
+        # 🔑 Vada NENÍ v nabídce, ale ve VOLBĚ AKCE — proto se opravuje tady,
+        # ne u Webshare ([[fix-the-origin-not-another-layer]]).
+        # Sdílí TÝŽ predikát jako pravidlo nad ním; druhý se nestaví.
+        # 📏 Změřeno na 758 replikách, 38 z nich volí `kodi_play_film`:
+        # potlačí 15 (dotazy na obsah, názor a doporučení), pustí všech
+        # 5 skutečných žádostí o přehrání i doložené „najdi mi film X".
+        # U zakládajících akcí (82 vět) je změna slovesného vzoru 0 vět.
+        dict(marker="HANS_AGENT_ASK_NOT_PLAY_V1",
+             akce=("kodi_play_film",),
+             podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_pokyn(msg),
+             verdikt=None, duvod="věta se ptá na film, nežádá přehrání"),
     )
 
     def _zapis_zajem_mluvciho(self, decision: dict, handler, message: str):
