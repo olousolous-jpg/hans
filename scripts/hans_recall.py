@@ -2245,6 +2245,75 @@ def _looks_like_film_query(question: str) -> bool:
     return bool(_FILM_CTX.search(_fold(question or "")))
 
 
+def films_liked_answer(db_path: str, limit: int = 3) -> Optional[str]:
+    """HANS_FILM_OPINION_ANSWER_V1 (22. 9.) — na dotaz \u201ekter\u00fd film se ti
+    l\u00edbil?\u201c odpov\u011bz z VLASTN\u00cdCH n\u00e1zor\u016f (`movie_opinion`), ne v\u00fdpisem
+    sledovan\u00fdch (`kodi_playing`).
+
+    Doloženo pam\u011b\u0165ovou sadou 22. 9.: na \u201ea jak\u00fd film se ti l\u00edbil?\u201c vr\u00e1til
+    Hans seznam naposledy sledovan\u00fdch \u2014 co\u017e na ot\u00e1zku po OBLIB\u011a neodpov\u00edd\u00e1.
+    Je to t\u0159et\u00ed v\u00fdskyt t\u0159\u00eddy \u201ev\u00fdpis m\u00edsto odpov\u011bdi\u201c (po `/sen`
+    a `/anomalie`, `HANS_LIST_NOT_CLAIM_V1` 21. 9.).
+    📌 Data pro to existuj\u00ed: `movie_opinion` m\u00e1 2 205 z\u00e1znam\u016f s obsahem
+    ve sloupci `data` \u2014 jen k nim \u017e\u00e1dn\u00e1 odpov\u011b\u010f nesahala.
+    ⚠️ Obsah je v `data`, ne v `note` \u2014 t\u00e1\u017e past jako u `reading_takeaway`.
+
+    Vrac\u00ed CS v\u011btu nebo None (\u017e\u00e1dn\u00fd n\u00e1zor \u2192 vol\u00e1 se dosavadn\u00ed cesta).
+    """
+    conn = None
+    try:
+        conn = _ro(db_path)
+        rows = conn.execute(
+            "SELECT title, data FROM diary WHERE event_type='movie_opinion' "
+            "AND data IS NOT NULL AND trim(data) != '' AND title IS NOT NULL "
+            "AND trim(title) != '' ORDER BY ts DESC LIMIT 60").fetchall()
+    except Exception:
+        return None
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+    # ⚠️ Tytez film mivá v deniku VIC TITULU ("Krouzek sebevrahu" x
+    # "Suicide Circle: Krouzek sebevrahu"), takze pouha shoda klicu nestaci
+    # a odpoved by tentyz film nabidla dvakrat. Dedup proto i na OBSAZENI.
+    # ⛔ A vyrazuji se zaznamy, kde Hans priznava, ze film NEZNA — na otazku
+    # "co te zaujalo" je priznani neznalosti spatna odpoved (na to ma jine
+    # cesty). Doloženo pri stavbe: treti polozka znela "Pripustim, ze o filmu
+    # vim jen velmi malo".
+    _NEZNA = ("v\u00edm jen velmi m\u00e1lo", "v\u00edm jen m\u00e1lo", "nezn\u00e1m",
+              "ne\u010detl jsem", "nevid\u011bl jsem", "nem\u00e1m z\u00e1znam")
+    videl, ven = set(), []
+    for title, data in rows:
+        t = (title or "").strip()
+        klic = t.lower()
+        if not t or klic in videl:
+            continue
+        if any(klic in _v or _v in klic for _v in videl):
+            continue
+        veta = (data or "").strip().split("\n")[0].strip()
+        # jen PRVNI veta nazoru — cely odstavec by z odpovedi udelal esej
+        m = re.search(r"^(.{20,180}?[.!?])(\s|$)", veta)
+        if m:
+            veta = m.group(1).strip()
+        elif len(veta) > 180:
+            veta = veta[:180].rstrip() + "\u2026"
+        if len(veta) < 20:
+            continue
+        if any(_n in veta.lower() for _n in _NEZNA):
+            continue
+        videl.add(klic)
+        ven.append((t, veta))
+        if len(ven) >= max(1, limit):
+            break
+    if not ven:
+        return None
+    if len(ven) == 1:
+        return "Z film\u016f, co jsem vid\u011bl, m\u011b zaujal %s. %s" % (ven[0][0], ven[0][1])
+    hlava = "Z film\u016f, co jsem vid\u011bl, m\u011b zaujaly tyhle:"
+    telo = "\n".join("\u2013 %s \u2014 %s" % (t, v) for t, v in ven)
+    return hlava + "\n" + telo
+
+
 def film_knowledge_answer(db_path: str, question: str = "") -> Optional[str]:
     """HANS_FILM_RECALL_V1 — když dotaz zmiňuje FILM podle názvu, dohledej v
     deníku Hansovy VLASTNÍ záznamy o tom filmu (movie_opinion = názor/děj,

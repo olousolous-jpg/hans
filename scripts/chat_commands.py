@@ -4036,8 +4036,40 @@ register(
 )
 
 
+# HANS_FILM_OPINION_ANSWER_V1 (22. 9.) — DOTAZ NA OBLIBU NENI DOTAZ NA VYPIS.
+# Uzky zamerne: vylucuje DOPORUCENI ("doporucil bys mi film?") i dotaz na
+# CIZI vkus ("myslis, ze by ji bavil ten film o Bondovi?") — obe tridy se
+# v korpusu vyskytuji a ani jedna sem nepatri.
+# 📏 Zmereno na 2 327 vetach (1 569 realnych chatu + korpus 758): sedne na
+# JEDNU realnou vetu ("jaky je tvuj nejoblibenejsi film?"), kontroly 9/9.
+_FILM_OBLIBA_PAT = re.compile(
+    r"(?:\b(jak[ýy]|kter[ýýy]|kter[éey])\b[^.?!]{0,30}\b(film|ser[ií][aá]l)\w*"
+    r"[^.?!]{0,30}\b(l[ií]bil|zaujal|bavil)\b"
+    r"|\bnejobl[ií]ben[eě]j[sš][ií]\b[^.?!]{0,12}\b(film|ser[ií][aá]l)"
+    r"|\b(film|ser[ií][aá]l)\w*[^.?!]{0,20}\bse\s+(ti|v[aá]m)\s+(l[ií]bil|zaujal)\b)",
+    re.I)
+_FILM_TRETI_PAT = re.compile(r"\b(by|mysl[ií][sš])\b[^.?!]{0,30}\bbavil\b", re.I)
+
+
+def _je_dotaz_na_oblibu_filmu(veta: str) -> bool:
+    """HANS_FILM_OPINION_ANSWER_V1 — pta se na JEHO oblibu, ne na doporuceni?"""
+    v = str(veta or "")
+    if not _FILM_OBLIBA_PAT.search(v):
+        return False
+    if _FILM_TRETI_PAT.search(v) or re.search(r"doporu[čc]", v, re.I):
+        return False
+    return True
+
+
 def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
-    from scripts.hans_recall import films_watched_answer
+    from scripts.hans_recall import films_watched_answer, films_liked_answer
+    # HANS_FILM_OPINION_ANSWER_V1 — nejdriv obliba, teprve pak vypis.
+    if _je_dotaz_na_oblibu_filmu(args or ""):
+        _ob = films_liked_answer(_recall_db(handler))
+        if _ob:
+            _log.info("HANS_FILM_OPINION_ANSWER_V1: dotaz na oblibu \u2192 "
+                      "odpovidam z vlastnich nazoru, ne vypisem")
+            return _ob
     # HANS_COUNT_FILMS_BOOKS_V1 — „kolik“ chce POCET, ne vypis.
     if _KOLIK_RE.search(str(args or "")):
         _p = _pocet_filmu(handler)
@@ -4057,6 +4089,11 @@ register(
         r"\bkolik\s+(?:\w+\s+){0,3}film\w*[^.?!]{0,30}\b(?:vid[\u011be]l|koukal|sledoval|zhl[\u00e9e]dl)",
         r"\bkolik\s+(?:jsi|jste|sis)\s+(?:u[\u017ez]\s+)?(?:vid[\u011be]l|koukal|sledoval|zhl[\u00e9e]dl)\w*\s+(?:\w+\s+)?film",
         r"posledn[ií].{0,10}film",
+        # HANS_FILM_OPINION_ANSWER_V1 (22. 9.) — "jaky je tvuj nejoblibenejsi
+        # film?" nesedlo na ZADNY vzor a padalo do volneho hovoru, kde si Hans
+        # oblibeny film VYMYSLEL (doloženo 22. 9.). Handler na to ma vlastni
+        # vetev z `movie_opinion`, takze se to sem pusti zamerne.
+        r"\bnejobl[ií]ben[eě]j[sš][ií]\b[^.?!]{0,12}\b(film|ser[ií][aá]l)",
         # HANS_FILM_QUERY_BOUNDARY_V1 (2.9.) — `\b` je tu NUTNA, ne kosmetika:
         # bez ni „jak[ýy]" matchne uvnitr slova „NEjaky", takze dotazovy vzor
         # spolknul ZADOST O SPUSTENI. Doloženo rozhovorem: „pust mi nejaky
