@@ -687,10 +687,49 @@ class HansCuriosity:
                               topic, result.title, result.summary[:80])
                     try:
                         from scripts import hans_schedule  # HANS_SCHEDULE_V1
-                        hans_schedule.mark(
-                            'curiosity_tick',
-                            ok=not getattr(result, 'pending', False),
-                            skip_reason='pending' if getattr(result, 'pending', False) else '')
+                        # HANS_SCHEDULE_PENDING_IS_RUN_V1 (22. 9.) — `pending`
+                        # NENI selhani rutiny. Clanek se PRECETL a ulozil se
+                        # i s raw textem; ceka jen shrnuti, ktere dozene
+                        # catchup (HANS_DEFERRED_SUMMARY_V1). Zapisovat to
+                        # jako neuspesny beh znamenalo, ze v noci (spi PC)
+                        # rutina zastarala a hlidac rozvrhu hlasil zpozdeni
+                        # o necem, co se samo srovna.
+                        # ZMERENO 22. 9. na VSECH sesti zpravach, co hlidac
+                        # kdy poslal: pet z nich je tenhle sum, jediny pravy
+                        # poplach (jina rutina, 50 h) projde dal. Doklad,
+                        # ze slo o nepravdu a ne jen o hluk: 21. 9. v 08:41
+                        # hlasil "zaostava o 7,2 h" o rutine, ktera cetla
+                        # pred 24 minutami.
+                        # NENI to revert HANS_SCHEDULE_LAST_OK_V1 (18. 8.):
+                        # ten hlida, aby SKIP neobnovoval hodiny cerstvosti.
+                        # Tady o skip nejde — prace probehla. Proto taky
+                        # `study_tick` zustava, jak je: jeho `deferred`
+                        # znamena, ze se nenastudovalo NIC.
+                        # Souhlasi to i s docstringem `mark()`: "pokud
+                        # subsystem bezel jen castecne/degradovane, dej
+                        # ok=True".
+                        _pend = bool(getattr(result, 'pending', False))
+                        # POJISTKA: kdyby se rozbil samotny catchup, pending
+                        # by se hromadil a rutina by vypadala vecne svezi —
+                        # presne ta ticha porucha, kvuli ktere hlidac je.
+                        # Nad mez se proto hlasi dal. Mez je z dat: nejdelsi
+                        # zmereny vypadek mozku byl 6,5 h (19.-22. 9.).
+                        _mez = float((self.config.get("curiosity", {}) or {})
+                                     .get("max_pending_h", 12))
+                        _stari = self._nejstarsi_pending_h() if _pend else 0.0
+                        if _pend and _stari > _mez:
+                            hans_schedule.mark(
+                                'curiosity_tick', ok=False,
+                                skip_reason='pending %.0f h nedozito' % _stari)
+                            _log.warning(
+                                "HANS_SCHEDULE_PENDING_IS_RUN_V1: nejstarsi "
+                                "odlozene cteni ceka %.1f h (mez %.0f h) — "
+                                "hlasim jako zaostavani, catchup nedobiha",
+                                _stari, _mez)
+                        else:
+                            hans_schedule.mark(
+                                'curiosity_tick', ok=True,
+                                skip_reason='pending' if _pend else '')
                     except Exception:
                         pass
                 else:
@@ -852,6 +891,27 @@ class HansCuriosity:
                       result.topic, result.title, len(raw))
         except Exception as e:
             _log.warning("Deferred store error: %s", e)
+
+    def _nejstarsi_pending_h(self) -> float:
+        """HANS_SCHEDULE_PENDING_IS_RUN_V1 — stari nejstarsiho NEDOZITEHO
+        odlozeneho cteni v hodinach (0.0 = nic nezbyva / nelze zjistit).
+
+        Predikat je SCHVALNE tentyz, jaky pouziva `_catchup_batch` — jedna
+        pravda o tom, co je jeste pending. Kdyz se dotaz nepovede, vraci 0.0,
+        tedy "nehlas poplach": pojistka nesmi sama delat falesne poplachy.
+        """
+        try:
+            conn = sqlite3.connect(self._diary_path)
+            row = conn.execute(
+                "SELECT MIN(ts) FROM diary WHERE event_type='web_read' "
+                "AND data LIKE '%\"pending\": 1%'").fetchone()
+            conn.close()
+        except Exception as e:
+            _log.debug("nejstarsi pending: %s", e)
+            return 0.0
+        if not row or not row[0]:
+            return 0.0
+        return max(0.0, (time.time() - float(row[0])) / 3600.0)
 
     def _catchup_batch(self, limit: int) -> int:
         """HANS_DEFERRED_SUMMARY_V1 — jádro: vezmi `limit` NEJSTARŠÍCH pending

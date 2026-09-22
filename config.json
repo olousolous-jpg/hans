@@ -1056,7 +1056,9 @@
         "read_summary_num_predict": 260,
         "_read_summary_num_predict_note": "Token budget pro hluboké shrnutí (dřív 100). ~260 = 3-5 vět s rezervou.",
         "wiki_title_min_coverage": 0.4,
-        "_wiki_coverage_note": "HANS_WIKI_COVERAGE_V1 (30.8.): kolik tokenu TITULU musi pokryt dotaz. Existujici wiki_title_min_score meri opacny smer (kolik tokenu DOTAZU je v titulu), takze jednoslovny dotaz dostal 1.00 i u ctyrslovneho ciziho clanku — 'Ceskem' -> 'Ceske mensiny ve svete'. Zavorkove upresneni titulu se ignoruje, jinak by 'Avengers (film, 2012)' propadlo. Prah 0.4 zmeren: 'Hrad Gutstejn' 0.50 a 'Hora Rip' 0.50 prochazeji, ze 200 entit nepropadla ani jedna."
+        "_wiki_coverage_note": "HANS_WIKI_COVERAGE_V1 (30.8.): kolik tokenu TITULU musi pokryt dotaz. Existujici wiki_title_min_score meri opacny smer (kolik tokenu DOTAZU je v titulu), takze jednoslovny dotaz dostal 1.00 i u ctyrslovneho ciziho clanku — 'Ceskem' -> 'Ceske mensiny ve svete'. Zavorkove upresneni titulu se ignoruje, jinak by 'Avengers (film, 2012)' propadlo. Prah 0.4 zmeren: 'Hrad Gutstejn' 0.50 a 'Hora Rip' 0.50 prochazeji, ze 200 entit nepropadla ani jedna.",
+        "max_pending_h": 12,
+        "_max_pending_h_note": "HANS_SCHEDULE_PENDING_IS_RUN_V1 (22. 9.): odlozene cteni (`pending`) se uz nepocita jako selhani rutiny `curiosity_tick` — clanek se precetl a ulozil, ceka jen shrnuti, ktere dozene catchup. Tahle mez je POJISTKA pro opacny pripad: kdyby se rozbil samotny catchup, pending by se hromadil a rutina by vypadala vecne sveza. Nad mez se hlasi dal. Hodnota je z dat — nejdelsi zmereny vypadek mozku (19.-22. 9.) byl 6,5 h, 12 h je nad nim s rezervou. Duvod zmeny: ze VSECH sesti zprav, co hlidac rozvrhu kdy poslal, bylo pet tenhle sum a jediny pravy poplach byl u jine rutiny."
     },
     "instant_lookup": {
         "enabled": true,
