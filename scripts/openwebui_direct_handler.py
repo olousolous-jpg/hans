@@ -2463,10 +2463,29 @@ class OpenWebUIDirectHandler:
             except Exception:
                 _asker_cizi = False
         if known and _asker_cizi:
+            # HANS_STRANGER_PRIVACY_SCOPE_V1 (22. 9.) — ROZSAH ZAKAZU MUSI
+            # BYT JEDNOZNACNY. Puvodni zneni "O lidech z tohoto domu
+            # NEMLUV" si model pregeneralizoval na "nemohu o domech, ve
+            # kterych pobyvaji lide, hovorit" — doloženo rozhovorem
+            # 22. 9. (tah 27): Hans si tema domu SAM otevrel v tahu 1
+            # ("znepokojuje me tisnive bezdeci domu"), potvrdil ho
+            # v tahu 14, a pak odmitl o nem mluvit. Rozpor sam se sebou,
+            # ktery je pro tazatele viditelny.
+            # 🔒 Zakaz se tim NEUVOLNUJE ani NEUTAHUJE: chrani tytez tri
+            # veci (jmena, role, vztahy). Mení se jen to, aby bylo jasne,
+            # ze predmetem jsou LIDE — dum, Hans sam a jeho uvahy pod nej
+            # nespadaji.
+            # ⛔ ZAMERNE SE NEPRIDAVA "nerikej, kdo je prave doma": to je
+            # rozhodnuti HANS_WHO_HOME_PRIVACY_V2 (8. 9.), ktere schvalne
+            # pousti "nikoho tu nevidim" dal, protoze V1 tim odmitanim
+            # kradl i odpovedi, ktere o lidech vubec nejsou. Rozhodnuti
+            # uzivatele 22. 9.: "jen zostrit klauzuli".
             persons_ctx = (
-                "\n\nMluvíš s někým, koho neznáš (%s). O lidech z tohoto domu "
-                "s ním NEMLUV — ani jména, ani role, ani rodinné vztahy. "
-                "Když se na ně zeptá, zdvořile odmítni." % name)
+                "\n\nMluvíš s někým, koho neznáš (%s). NEMLUV s ním "
+                "o LIDECH, kteří v tomto domě žijí — ani jména, ani role, "
+                "ani rodinné vztahy. Když se na NĚ zeptá, zdvořile odmítni. "
+                "Týká se to jen lidí: o sobě, o svých úvahách a o tom, co jsi "
+                "sám řekl dřív, mluv dál normálně." % name)
         elif known:
             lines = []
             for pname, pdata in known.items():
