@@ -1203,14 +1203,111 @@ def sources_answer(db_path: str, user_text: str,
     # odkaz k tématu, o kterém s tímhle člověkem vůbec nemluvil.
     # ⚠️ Odpověď MUSÍ říct, že to ještě není ověřené — jinak by se provizorní
     # nález tvářil jako uložená znalost a obešel by tím noční ověření.
+    # HANS_SOURCE_FRESH_REFERENT_V1 (22. 9.) — CERSTVE DOHLEDANI MUSI BYT
+    # REFERENT OTAZKY, ne proste posledni dohledani v okne.
+    # Odhaleno ZIVYM testem 22. 9.: Hans vypsal ctyri polozky dnesni cetby,
+    # uzivatel se zeptal "a odkud to mas?" a dostal odkaz na hrad Svojanov,
+    # ktery si dohledal o dvacet minut driv v UPLNE JINE souvislosti.
+    # Okno 1 h a "tyz tazatel" (HANS_SOURCE_REFERENT_SCOPE_V1) na to nestaci:
+    # obe meze byly splneny, jen to nebylo to, na co se ptal.
+    # Podminka je proto TATAZ, jakou pouziva vetev cetby niz: tema dohledani
+    # se musi objevit v dotazu NEBO v tom, co Hans prave rekl. Kdyz ne,
+    # propadne se dal — a odpovi bud cetba, nebo poctive priznani.
     try:
         _cerstve = _cerstve_dohledani(db_path, asker)
         if _cerstve:
             _tema, _url = _cerstve
-            return ("Ano, %s — to není ze zápisků. Dohledal jsem to během "
-                    "našeho hovoru k tématu '%s': %s Ještě si to musím "
-                    "ověřit, zatím to beru jako provizorní."
-                    % (oslov, _tema, _url))
+            _tt = _zdroj_slova(_tema, minlen=4)
+            _sedi = not _tt
+            if _tt:
+                # ⚠️ SEBEPOTVRZUJICI VSTUP — Hansovy vlastni odpovedi
+                # o provenienci se jako dukaz referentu POUZIT NESMI.
+                # Doloženo zivym testem 22. 9.: prvni (chybna) odpoved
+                # o Svojanove skoncila v historii, a pri druhem dotazu
+                # uz kontrola nasla "Svojanov" prave v ni — takze si
+                # chybu potvrdila sama. Uzivatel se pritom pta znovu
+                # PRAVE PROTO, ze prvni odpoved nesedela.
+                # [[severka-input-is-self-confirming]]
+                _moje = ("Dohledal jsem to b\u011bhem na\u0161eho hovoru",
+                         "to m\u00e1m ze sv\u00e9 \u010detby")
+                # POSLEDNI REPLIKA se bere z ULOZISTE KONVERZACE, ne
+                # z `_last_hans_topics`: ta ma vlastni filtr vyctu
+                # ("vypis neni tvrzeni"), takze prave tu repliku, na kterou
+                # se uzivatel ptá, casto vynecha. Zmereno 22. 9.: po
+                # dohledani hradu vratila tri STARSI repliky a cerstvou ne,
+                # takze kontrola referentu selhala a odpovedela cetba.
+                _kde = [user_text]
+                try:
+                    from scripts.conversation_store import ConversationStore
+                    from scripts.config_io import load as _cio
+                    _h = ConversationStore(_cio()).get_history(asker) or []
+                    for _m2 in reversed(_h):
+                        _txt2 = (_m2.get("content") or "") if isinstance(_m2, dict) else ""
+                        if not _txt2:
+                            continue
+                        if (_m2.get("role") or "") != "assistant":
+                            continue
+                        if any(_m in _txt2 for _m in _moje):
+                            continue      # nesmi se potvrzovat vlastni odpovedi
+                        _kde.append(_txt2)
+                        break
+                except Exception:
+                    _kde += [_r for _r in _last_hans_topics(
+                        db_path, limit=3, person=asker)
+                        if not any(_m in _r for _m in _moje)]
+                for _txt in _kde:
+                    _ct = _zdroj_slova(_txt, minlen=4)
+                    if any(a[:5] == b[:5] for a in _tt for b in _ct):
+                        _sedi = True
+                        break
+            if _sedi:
+                return ("Ano, %s — to není ze zápisků. Dohledal jsem to během "
+                        "našeho hovoru k tématu '%s': %s Ještě si to musím "
+                        "ověřit, zatím to beru jako provizorní."
+                        % (oslov, _tema, _url))
+            _log.info("HANS_SOURCE_FRESH_REFERENT_V1: čerstvé dohledání "
+                      "'%.40s' není referent otázky — jdu dál", _tema)
+    except Exception:
+        pass
+
+    # ── HANS_SOURCE_READING_URL_V1 (22. 9.) — ZDROJ U DENIKOVE CETBY ──
+    # Dolozeno pametovou sadou 22. 9. pod SKUTECNYM jmenem (test persona na to
+    # nestaci, do deniku nezapisuje): Hans vypsal ctyri polozky dnesni cetby
+    # a na "a odkud to mas?" i na "ten clanek o gulagu - kde jsi ho cetl?"
+    # odpovedel, ze zdroj nabidnout nemuze. Pritom tentyz clanek ma v deniku
+    # `source_url` zapsane tyz den v 08:45:10.
+    #
+    # PRICINA: vetve vys hledaji ENTITU (vlastni jmeno). Titul clanku
+    # ("Hlad, nemoci i nasili dozorcu, popsali archeologove podminky
+    # v gulagu") zadna entita neni, takze retez propadl az k priznani.
+    # Je to TATAZ TRIDA jako HANS_SOURCE_IS_SENSOR_V2 a _FRESH_LOOKUP_V1:
+    # dalsi druh zdroje, o kterem popreni nevedelo -> vlastni vetev pred
+    # priznanim, NE rozsirovani hledani v entitach.
+    #
+    # 📏 ZMERENO PRED NASAZENIM: na 25 realnych dotazech na zdroj z historie
+    # chatu vraci vetev 0 nalezu (nevymysli si), na trech dolozenych vetach
+    # a na skutecnem vypisu cetby 12/12 spravne.
+    # ⚠️ Cetnost te tridy je 25 dotazu z 1 569 chatu a DVAKRAT je v historii
+    # videt, ze se uzivatel musel zeptat znovu jinak ("ptam se jinak. odkud
+    # vis o ...", "zeptam se jinak, kde jsi cetl o ..."). Drivejsi zaver
+    # DROBNOSTI_17_09 o "0 vyskytech" merilo prilis uzke fraze.
+    try:
+        _cet = _zdroj_z_cetby(db_path, user_text)
+        if not _cet:
+            # anaforicke "a odkud to mas?" — referent je v tom, co Hans PRAVE
+            # rekl. Stejne mezE jako vys (tyz tazatel, okno 1 h) — jinak by
+            # se zdroj vyrobil z cizi repliky.
+            for _r in _last_hans_topics(db_path, limit=2, person=asker):
+                _cet = _zdroj_z_cetby(db_path, _r)
+                if _cet:
+                    break
+        if _cet:
+            if len(_cet) == 1:
+                _t, _u = _cet[0]
+                return ("Ano, %s — to mám ze své četby: %s\n%s"
+                        % (oslov, _t, _u))
+            return (("Ano, %s — to mám ze své četby:\n" % oslov)
+                    + "\n".join("\u2013 %s\n  %s" % (_t, _u) for _t, _u in _cet))
     except Exception:
         pass
 
@@ -1219,6 +1316,84 @@ def sources_answer(db_path: str, user_text: str,
             "článek s odkazem, %s. Zůstává mi jen obecná znalost, kterou "
             "jsem si osvojil — konkrétní zdroj Vám k tomu nabídnout nemohu, "
             "nechci si nic vymýšlet." % oslov)
+
+
+# HANS_SOURCE_READING_URL_V1 — slova, KTERYMI se otazka na zdroj pta
+# (ne to, NA CO se pta). Bez nich se "odkud cerpas informace o pocasi?"
+# trefilo do titulu "Pravo na informace" — zmereno.
+_ZDROJ_RAMEC = {
+    "odkud", "kde", "cerpas", "cerpal", "cerpala", "cerpate", "informace",
+    "informaci", "informacemi", "clanek", "clanku", "clanky", "zdroj",
+    "zdroje", "zdrojem", "cetl", "cetla", "cetls", "cetli", "cetlas",
+    "vlastne", "tohle", "tomhle", "tohohle", "rikas", "tvrdis", "presne",
+    "material", "materialy", "podklad", "podklady", "vsechno",
+    # HANS_SOURCE_READING_URL_V1 — pomocna slovesa a zajmena OBOU osob.
+    # Regresni pripad to chytil hned: u vykani zustavalo "jste" jako
+    # domnele tema, takze dotaz mel o jedno slovo vic a kratky rezim
+    # (vsechna slova dotazu musi sednout) se na nej uz nespustil.
+    # Vykaci varianta by se tak chovala HURE nez tykaci.
+    "jste", "jsi", "jsem", "mate", "mas", "vite", "vis", "ktere", "ktery",
+    "jake", "jaky", "jakym", "muzes", "muzete", "prosim"}
+
+
+def _zdroj_slova(text: str, minlen: int = 5, bez_ramce: bool = False) -> set:
+    """HANS_SOURCE_READING_URL_V1 — vyznamova slova bez diakritiky."""
+    import unicodedata as _u
+    _t = "".join(c for c in _u.normalize("NFD", (text or "").lower())
+                 if not _u.combining(c))
+    _s = {w for w in re.findall(r"[0-9a-z]+", _t)
+          if len(w) >= minlen and w not in _STOPWORDS}
+    return {w for w in _s if w not in _ZDROJ_RAMEC} if bez_ramce else _s
+
+
+def _zdroj_z_cetby(db_path: str, text: str, okno_dnu: int = 14,
+                   limit: int = 80, pokryti: float = 0.5) -> list:
+    """HANS_SOURCE_READING_URL_V1 — zdroje precteneho, na co se text pta.
+
+    Vraci seznam (titul, url), nejvys 3, nejnovejsi napred. Fail-safe je
+    prazdny seznam: radsi poctive priznani nez odkaz k necemu jinemu.
+
+    DVA REZIMY, podle toho, co muze nabidnout CIL:
+      (a) dlouhy text (Hansova replika s vypisem cetby) — musi pokryt
+          vetsinu vyznamovych slov titulu,
+      (b) kratka otazka, kde uzivatel jmenuje tema — titul nema jak
+          pokryt, takze staci, kdyz se trefi VSECHNA slova dotazu.
+    Porovnava se na PREFIX peti znaku, aby sedelo sklonovani (tyz pristup
+    jako entity store).
+    """
+    try:
+        _c = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        _rows = _c.execute(
+            "SELECT title, source_url, ts FROM diary WHERE source_url "
+            "IS NOT NULL AND source_url != '' AND ts > ? "
+            "ORDER BY ts DESC LIMIT ?",
+            (time.time() - okno_dnu * 86400, limit)).fetchall()
+        _c.close()
+    except Exception:
+        return []
+    _cil = _zdroj_slova(text, minlen=4, bez_ramce=True)
+    if not _cil:
+        return []
+    _ven = []
+    for _title, _url, _ts in _rows:
+        _tt = _zdroj_slova(_title)
+        if not _tt:
+            continue
+        _sh = {a for a in _tt if any(a[:5] == b[:5] for b in _cil)}
+        if not _sh:
+            continue
+        _sh_cil = {b for b in _cil if any(a[:5] == b[:5] for a in _tt)}
+        if (len(_sh) / len(_tt) >= pokryti
+                or (len(_cil) <= 3 and len(_sh_cil) == len(_cil))):
+            _ven.append((_ts, _title, _url))
+    _ven.sort(reverse=True)
+    _vid, _out = set(), []
+    for _ts, _t, _u in _ven:
+        if _u in _vid:
+            continue
+        _vid.add(_u)
+        _out.append((_t, _u))
+    return _out[:3]
 
 
 def _cerstve_dohledani(db_path: str, asker: Optional[str] = None,

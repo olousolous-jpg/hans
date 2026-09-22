@@ -607,3 +607,15 @@ def relax_sum(query: str, relaxovano: bool) -> str:
          "Průzor už nebyl vyplněn modří oblohy. Odpověď na tu otázku leží ve vesmíru."),
     ]
     return "|".join(r[3] for r in _bez_sumu_relaxace(query, rows, relaxovano))
+
+
+# ── HANS_SOURCE_READING_URL_V1 (22. 9.) ────────────────────────────────────
+# Sama `_zdroj_z_cetby` cte ZIVY denik, takze se jako regresni pripad nehodi
+# (bylo by to datovy pripad jako `korpus_kotva_balast` — pri rotaci okna by
+# zhasl). Testuje se proto DETERMINISTICKA cast: odfiltrovani slov, kterymi
+# se otazka na zdroj PTA. Prave ta chybela a "odkud cerpas informace
+# o pocasi?" se trefilo do titulu "Pravo na informace".
+def zdroj_slova(veta: str) -> str:
+    """Významová slova dotazu na zdroj, bez rámcových — seřazená, čárkou."""
+    from scripts.hans_recall import _zdroj_slova
+    return ",".join(sorted(_zdroj_slova(veta, minlen=4, bez_ramce=True)))

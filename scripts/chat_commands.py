@@ -3664,7 +3664,14 @@ register(
         r"\b(d[áa][šs]|d[áa]te|m[áa][šs]|m[áa]te|po[šs]le[šs]|po[šs]lete)"
         r"\s+(mi\s+)?(n[ěe]jak[ýéya]\s+)?odkaz",
         r"\bm[uů][žz]e([šs]|te)\s+(mi\s+)?(poslat|uk[áa]zat|d[áa]t)\s+.{0,14}odkaz",
-        r"\bkde\s+(jsi|si|jste)\s+(to\s+)?(četl|cetl|na[šs]el|na[šs]la|vzal|vzala|dozv[ěe]d[ěe]l)",
+        # HANS_SOURCES_PRONOUN_V1 (22. 9.) — zajmeno bylo jen "to", takze
+        # "kde jste HO cetl?" propadlo az do volneho hovoru a Hans si
+        # vymyslel cas zaznamu. Doloženo zivym testem 22. 9.
+        # 📏 Zmereno na 1 569 realnych vetach: PRIRUSTEK 0 — nic to
+        # nekrade a nic neztraci; je to pokryti tvaru, ktery se zatim
+        # nevyskytl, za nulovou cenu.
+        r"\bkde\s+(jsi|si|jste)\s+((to|ho|je|ji|jej|tohle|tenhle)\s+)?"
+        r"(četl|cetl|na[šs]el|na[šs]la|vzal|vzala|dozv[ěe]d[ěe]l)",
         r"\bjak[ýy]\s+(je\s+)?(ten\s+)?zdroj",
         r"\b(uka[žz]|uka[žz]te)\s+(mi\s+)?(sv[ée]\s+)?zdroj",
         r"\bjak[ée]\s+(m[áa][šs]|m[áa]te)\s+.{0,12}zdroj",
