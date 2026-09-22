@@ -1814,7 +1814,22 @@ register(
         # Zmereno pres `parse_command`: cil 6/6, kontroly 8/8 beze zmeny,
         # korpus 758 -> 3 zmenena smerovani, vsechna spravne.
         r"(?<![a-zá-ž])(malova[lit]\w*|kreslil\w*|tvo[řr]il\w*)\s+(jsi|jste|sis|si)(?![a-zá-ž])",
-        r"co\s+(jsi|jste|sis|si)\s+(u[žz]\s+|v[čc]era\s+|dnes\s+)?(malova[lit]\w*|kreslil\w*)",
+        # HANS_ARTWORK_ADVERB_WIDEN_V1 (22. 9.) — mezi zajmenem a slovesem
+        # smel stat jen UZAVRENY seznam prislovci (uz/vcera/dnes), takze
+        # "co jsi POSLEDNI DOBOU maloval?" regexova vrstva minula
+        # (`parse_command` -> None) a vetu prevzal LLM router, ktery zvolil
+        # `/dilo` — tedy vypis PSANI na dotaz o OBRAZECH. Doloženo
+        # pametovou sadou 22. 9.; se slovem "obrazy" odpovidal spravne.
+        # ⛔ Brana `/dilo` to zachytit NEMUZE: rozlisuje "vlastni zaznamy
+        # x cizi dilo" a tahle veta O JEHO vlastni cinnosti JE, jen o jine.
+        # Spravne misto je proto tady — prikaz predbehne agenta
+        # [[command-preempts-agent-same-message]].
+        # 📏 Zmereno na 2 327 vetach (1 569 realnych chatu + korpus 758):
+        # PRIRUSTEK 0 — realne tvary uz prochazely, takze je to pokryti
+        # dalsich formulaci za nulovou cenu, ne oprava casteho selhani.
+        # Az tri libovolna slova, liny kvantifikator (at se neprotahne
+        # pres pulku souveti).
+        r"co\s+(jsi|jste|sis|si)\s+(\w+\s+){0,3}?(malova[lit]\w*|kreslil\w*)",
     ],
     handler=_cmd_obrazy,
     help_text="Co jsem namaloval (přímo z deníku artwork): /obrazy [dnes]",
