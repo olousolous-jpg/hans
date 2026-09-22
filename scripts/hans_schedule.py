@@ -110,6 +110,15 @@ _SEED = [
     # nastaveno 25h → hlásí až po celém dni ticha.
     ("catchup_drain", "periodic", None, None, 25 * 3600,
      "Deferred pending catchup (po brain_up dojede backlog)"),
+    # HANS_ANOMALY_CADENCE_BY_RUN_V1 (22. 9.) — detektor odchylek potreboval
+    # misto, kam zapsat, ze BEZEL. Jeho vlastni stopa (`anomaly_note`) vznika
+    # jen kdyz neco najde, takze v tichem tydnu nebylo podle ceho merit
+    # kadenci. Proto `periodic`, NE `derived`.
+    # Prah je zamerne volny: kadence je 7 dni, hlasi se az po 9 — dvakrat
+    # volnejsi nez rytmus, at z toho nevznikne dalsi sum v hlidaci rozvrhu
+    # (22. 9. zmereno, ze pet z sesti jeho zprav byl sum).
+    ("anomaly_run", "periodic", None, None, 9 * 24 * 3600,
+     "Tydenni detektor odchylek v chovani (HANS_ANOMALY_V1)"),
 
     # ── HANS_SCHEDULE_DERIVED_V1 (18. 9.) — rutiny hlídané PODLE DAT ──────
     # Nepotřebují `mark()` v kódu: čerstvost se odvodí z `MAX(ts)` nad stopou,

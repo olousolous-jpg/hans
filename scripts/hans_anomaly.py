@@ -211,7 +211,19 @@ def maybe_run(diary_db_path: str, config: dict) -> Optional[str]:
     except Exception:
         pass
     cadence_days = int(cfg.get("cadence_days", 7))
-    # kadence per anomaly_note
+    # HANS_ANOMALY_CADENCE_BY_RUN_V1 (22. 9.) — BRANA SE PTALA NA SPATNOU VEC.
+    # Merila stari ZAPSANE poznamky `anomaly_note`, jenze `run_once` zapisuje
+    # JEN kdyz nejake odchylky najde (zamer: at denik neroste). V tydnu, kdy
+    # se nic neobvykleho nestane, tedy zadna poznamka nevznikne, brana nema
+    # co merit a detektor se pousti pri KAZDEM nocnim ticku.
+    # ZMERENO 22. 9. na logu: ~58 behu za hodinu, ~400 za noc, vsechny
+    # "0 odchylek" — misto jednoho behu za tyden.
+    # Je to tataz trida jako [[filter-after-limit-is-a-dead-gate]]: brana stoji
+    # na vystupu, ktery mechanismus sam nemusi vyrobit.
+    # Rozhoduje proto posledni BEH (i ten, co nic nenasel). Poznamka zustava
+    # jako ZALOHA — kdyby radek rozvrhu chybel (stara DB, rucne smazany seed),
+    # chova se brana jako driv misto toho, aby prestala brzdit uplne.
+    _naposled = 0.0
     try:
         conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path,
                                uri=True, timeout=3.0)
@@ -219,11 +231,20 @@ def maybe_run(diary_db_path: str, config: dict) -> Optional[str]:
             "SELECT ts FROM diary WHERE event_type='anomaly_note' "
             "ORDER BY ts DESC LIMIT 1").fetchone()
         conn.close()
-        if row and (time.time() - row[0]) < cadence_days * 86400:
-            _log.debug("anomaly: dříve než %dd, skip", cadence_days)
-            return None
+        if row and row[0]:
+            _naposled = float(row[0])
     except Exception:
         pass
+    try:
+        from scripts import hans_schedule
+        _r = hans_schedule.ScheduleStore(diary_db_path).get("anomaly_run")
+        if _r and _r.get("last_run_ts"):
+            _naposled = max(_naposled, float(_r["last_run_ts"]))
+    except Exception:
+        pass
+    if _naposled and (time.time() - _naposled) < cadence_days * 86400:
+        _log.debug("anomaly: driv nez %dd od posledniho behu, skip", cadence_days)
+        return None
     return run_once(diary_db_path, config)
 
 
@@ -239,6 +260,14 @@ def run_once(diary_db_path: str, config: dict) -> Optional[str]:
         min_baseline_count=int(cfg.get("min_baseline_count", 3)),
     )
     _log.info("anomaly: detekováno %d odchylek", len(anomalies))
+    # HANS_ANOMALY_CADENCE_BY_RUN_V1 — razitko I KDYZ nic nenaslo; prave to
+    # je ten udaj, ktery brane kadence chybel. Stampuje se v `run_once`, takze
+    # i rucni `/anomalie ted` se pocita jako beh (opravdu probehl).
+    try:
+        from scripts import hans_schedule
+        hans_schedule.ScheduleStore(diary_db_path).mark("anomaly_run")
+    except Exception as _se:
+        _log.debug("anomaly: razitko do rozvrhu selhalo: %s", _se)
     cs = format_anomalies_cs(config, anomalies)
     if cs and anomalies:  # zapíšeme JEN když jsou odchylky (jinak by deník rostl)
         write_anomaly_note(diary_db_path, cs, len(anomalies))
