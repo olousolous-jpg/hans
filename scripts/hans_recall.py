@@ -2414,6 +2414,133 @@ def book_origin_answer(book: dict) -> str:
             "zapsané nemám, pane." % t)
 
 
+_PRUBEH_RAMEC = {
+    "poprve", "dlouho", "ctes", "ctete", "znovu", "kapitole", "kapitola",
+    "kapitolu", "kapitol", "ktere", "kterou", "kolikate", "kolikatou", "nekdy",
+    "driv", "drive", "predtim", "jsi", "jste", "knihu", "kniha", "knize",
+    "tuhle", "tahle", "cetl", "cetla", "opakovane", "prave", "porad", "jeste",
+    "vlastne", "vubec", "tedy", "takze", "jakou", "jake", "jaky", "rikal",
+    "rikate", "rikas", "myslim", "prosim", "hansi"}
+
+
+def _PRUBEH_OBSAHOVA_SLOVA(question: str) -> bool:
+    """Nese otázka o průběhu čtení JMÉNO (slovo ≥ 4 mimo rámec dotazu)?"""
+    return any(len(w) >= 4 and w not in _PRUBEH_RAMEC
+               for w in re.findall(r"\w+", _fold(question or "").lower()))
+
+
+def _kniha_z_otazky(db_path: str, question: str) -> Optional[dict]:
+    """HANS_BOOK_PROGRESS_ANSWER_V1 — kniha z `hans_library` jmenovaná
+    v otázce: slovo otázky (≥ 4 znaky) je ZAČÁTKEM slova titulu (≥ 5).
+    „le guin" → „Le Guinova Ursula – …" (autor je v titulu)."""
+    slova_q = [w for w in re.findall(r"\w+", _fold(question or "").lower())
+               if len(w) >= 4]
+    if not slova_q:
+        return None
+    conn = None
+    try:
+        conn = _ro(db_path)
+        rows = conn.execute(
+            "SELECT book_id, book_title, author, COALESCE(url,'') FROM "
+            "hans_library WHERE status IN ('reading','finished') "
+            "ORDER BY started_at DESC").fetchall()
+    except Exception:
+        return None
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+    for bid, title, author, url in rows:
+        slova_t = [w for w in re.findall(r"\w+", _fold(title or "").lower())
+                   if len(w) >= 5]
+        # oboustranně: „guin" → „guinova", „doriana" → „dorian"
+        if any(t.startswith(q) or (len(q) >= 5 and q.startswith(t))
+               for q in slova_q for t in slova_t):
+            return {"id": bid or "", "title": title or "", "author": author or "",
+                    "url": url or ""}
+    return None
+
+
+def book_progress_answer(db_path: str, question: str,
+                         thread_texts: Optional[list] = None) -> str:
+    """HANS_BOOK_PROGRESS_ANSWER_V1 (23. 9.) — ODKDY a JAK DLOUHO knihu čtu,
+    na které jsem kapitole a jestli POPRVÉ. Deterministicky z `hans_library`
+    a deníku (`book_read`), bez LLM.
+
+    Doloženo 23. 9.: „tu knihu od le guin čteš poprvé?" → „četl jsem ji již
+    dříve" a „jak dlouho už ji čteš?" → „dva dny" (skutečně poprvé, 6 dní).
+    Popisek v podkladu (`HANS_BOOK_PROGRESS_LABEL_V1`) model PŘEHLÍŽEL a LLM
+    router `/cetl` zamítl — jenže ani `/cetl` průběh neuměl. Rozhodnutí se
+    proto nedává modelu: odpověď je z dat. 📏 Reálně 1× z 2 342 vět.
+    Kniha: z otázky → z vlákna → jediná rozečtená. Nenajde-li se, vrací ''
+    (volající jde dosavadní cestou)."""
+    kn = _kniha_z_otazky(db_path, question)
+    # Jmenuje-li otázka něco, co v knihovně NENÍ („čteš Doriana Graye?"
+    # a Dorian tam není), NESMÍ se odpovědět o jiné knize z vlákna.
+    if not kn and _PRUBEH_OBSAHOVA_SLOVA(question):
+        return ""
+    if not kn and thread_texts:
+        kn = book_from_thread(db_path, thread_texts)
+    conn = None
+    try:
+        conn = _ro(db_path)
+        if not kn:
+            rows = conn.execute(
+                "SELECT book_id, book_title FROM hans_library "
+                "WHERE status='reading'").fetchall()
+            if len(rows) != 1:
+                return ""
+            kn = {"id": rows[0][0], "title": rows[0][1]}
+        r = conn.execute(
+            "SELECT started_at, finished_at, status, current_chapter, "
+            "total_chapters FROM hans_library WHERE book_id=? "
+            "ORDER BY started_at DESC LIMIT 1", (kn["id"],)).fetchone()
+        if not r:
+            return ""
+        pocet_cteni = conn.execute(
+            "SELECT COUNT(*) FROM hans_library WHERE book_id=?",
+            (kn["id"],)).fetchone()[0]
+        kap = conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT title), MAX(ts) FROM diary "
+            "WHERE event_type='book_read' AND title LIKE ?",
+            (kn["title"] + " \u2014 kap.%",)).fetchone()
+    except Exception:
+        return ""
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+    start, fin, status, cur, tot = r
+    if not start:
+        return ""
+    d = lambda x: datetime.fromtimestamp(x).strftime("%-d. %-m.")
+    poprve = pocet_cteni <= 1 and (not kap or kap[0] == kap[1])
+    konec = fin if (status == "finished" and fin) else time.time()
+    dni = max(0, int((konec - start) // 86400))
+    dni_s = ("necelý den" if dni == 0 else "%d %s" % (
+        dni, "den" if dni == 1 else ("dny" if dni < 5 else "dní")))
+    t = kn.get("title") or "tu knihu"
+    if status == "finished" and fin:
+        out = ("„%s“ jsem dočetl %s, pane — četl jsem ji od %s, tedy %s."
+               % (t, d(fin), d(start), dni_s))
+    else:
+        out = "„%s“ čtu od %s, pane, tedy %s" % (t, d(start), dni_s)
+        if cur:
+            _ts = str(tot or "")
+            # „ze" před sto…/sedm…/sedmnáct… (ze 113, ze 7, ze 17)
+            _pr = ("ze" if (_ts[:1] == "7" or _ts[:2] == "17"
+                            or (len(_ts) == 3 and _ts[:1] == "1")) else "z")
+            out += " — teď jsem u kapitoly %s%s" % (
+                cur, (" %s %s" % (_pr, tot)) if tot else "")
+            if kap and kap[2]:
+                out += " (naposledy %s)" % d(kap[2])
+        out += "."
+    out += (" Podle deníku ji čtu poprvé." if poprve and status != "finished"
+            else " Četl jsem ji poprvé." if poprve
+            else " Podle deníku jsem ji četl víckrát.")
+    return out
+
+
 def films_liked_answer(db_path: str, limit: int = 3) -> Optional[str]:
     """HANS_FILM_OPINION_ANSWER_V1 (22. 9.) — na dotaz \u201ekter\u00fd film se ti
     l\u00edbil?\u201c odpov\u011bz z VLASTN\u00cdCH n\u00e1zor\u016f (`movie_opinion`), ne v\u00fdpisem

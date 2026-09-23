@@ -3279,6 +3279,20 @@ register(
 )
 
 
+# HANS_BOOK_PROGRESS_ANSWER_V1 (23. 9.) — dotaz na PRŮBĚH čtení (poprvé,
+# jak dlouho, od kdy, kolikátá kapitola). Rozhoduje VZOR, ne LLM router —
+# ten „tu knihu od le guin čteš poprvé?" zamítl jako dotaz na svět.
+_PRUBEH_CTENI_PAT = re.compile(
+    r"\b(?:[čc]te[šs]|[čc]tete)\b[^.?!]{0,40}\b(?:poprv|znovu|opakovan)"
+    r"|\b(?:poprv[ée]|znovu)\b[^.?!]{0,30}\b(?:[čc]te[šs]|[čc]tete)\b"
+    r"|\bjak\s+dlouho\b[^.?!]{0,30}\b(?:[čc]te[šs]|[čc]tete)\b"
+    r"|\bod\s+kdy\b[^.?!]{0,30}\b(?:[čc]te[šs]|[čc]tete)\b"
+    r"|\b(?:kolik[áa]t\w*|kter[ée]|jak[ée])\s+kapitol\w*\s+(?:u[žz]\s+)?(?:jsi|jste|[čc]te)"
+    r"|\b(?:na|u)\s+(?:kolik[áa]t|kter)[ée]\s+kapitol"
+    r"|\b[čc]etla?\s+(?:jsi|jste)\s+(?:ji|ho|tu\s+knihu)\s+(?:u[žz]\s+)?"
+    r"(?:n[ěe]kdy\s+)?(?:d[řr][íi]v|p[řr]edt[íi]m)", re.I)
+
+
 def _cmd_cetl(handler, name, args) -> str:
     from scripts.hans_recall import reading_answer
     q = (args or "").strip()
@@ -3294,6 +3308,18 @@ def _cmd_cetl(handler, name, args) -> str:
                 q = str(_tc[0])
         except Exception:
             pass
+    # HANS_BOOK_PROGRESS_ANSWER_V1 — průběh čtení z dat, ne výpisky.
+    if _PRUBEH_CTENI_PAT.search(q) or _PRUBEH_CTENI_PAT.search(_fold_diacritics(q)):
+        try:
+            from scripts.hans_recall import book_progress_answer
+            from scripts.hans_thread import recent_turns as _rt
+            _pr = book_progress_answer(
+                _recall_db(handler), q, [t for _r, t in _rt(handler, name)[-4:]])
+            if _pr:
+                _log.info("HANS_BOOK_PROGRESS_ANSWER_V1: průběh čtení z dat")
+                return _pr
+        except Exception as _pe:
+            _log.debug("prubeh cteni selhal: %s", _pe)
     # HANS_COUNT_FILMS_BOOKS_V1 — „kolik knih“ chce POCET, ne posledni cteni.
     if _KOLIK_RE.search(q):
         _p = _pocet_knih(handler)
@@ -3307,6 +3333,8 @@ register(
     "cetl",
     slash_aliases=["cetl", "četl", "cteni", "čtení"],
     nl_patterns=[
+        # HANS_BOOK_PROGRESS_ANSWER_V1 — vzor na průběh čtení (viz výš).
+        _PRUBEH_CTENI_PAT.pattern,
         # HANS_COUNT_FILMS_BOOKS_V1 (14. 9.) — pocet prectenych knih (tykani
         # i vykani, bez diakritiky). Na 2 248 realnych vetach 0 zasahu.
         r"\bkolik\s+(?:\w+\s+){0,3}kn[i\u00ed](?:h|\u017eek|zek)\w*[^.?!]{0,30}(?:[\u010dc]etl|p[\u0159r]e[\u010dc]ten)",

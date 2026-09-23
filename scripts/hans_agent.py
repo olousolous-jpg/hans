@@ -1771,6 +1771,42 @@ class AgentRouter:
             log.debug("agent social gate: %s", e)
             return False
 
+    # HANS_AGENT_SOCIAL_GUARD_THREAD_V1 (23. 9.) — 2. osoba = otázka na Hanse.
+    # Bez diakritiky se „děláš" píše „delas", proto i koncové -s; výjimky
+    # jsou běžná slova na -s, co slovesem ve 2. osobě nejsou.
+    _DRUHA_OSOBA = re.compile(
+        r"\b(ty|vy|tebe|tob[ěe]|v[áa]s|v[áa]m|jsi|jste|sis|tv[ůu]j|tvoje?|"
+        r"v[áa][šs]\w*)\b|\b\w{2,}[šs]\b|\b\w+te\b", re.IGNORECASE)
+    _NE_DRUHA = {"dnes", "pres", "nas", "kolac", "ves"}
+
+    def _navazuje_na_kolace(self, aid, message: str, handler) -> bool:
+        """HANS_AGENT_SOCIAL_GUARD_THREAD_V1 — router vybral `report_kolac_status`
+        správně, ale brzda soudila HOLOU větu: „a co dělá teď?" po řeči
+        o Koláči klasifikátor přečte jako dotaz na Hanse (doloženo 23. 9.,
+        odpověď pak míchala Hansovo studium s Koláčem).
+        Brzda neplatí, když: akce je Koláčova, věta NEMÁ tvar 2. osoby
+        a poslední výměna ve vlákně Koláče jmenuje (sdílený `_mentions_kolac`).
+        📏 Reálně 0× z 1 584 výměn — pokrytí tvaru, ne častá vada."""
+        if aid != "report_kolac_status":
+            return False
+        import unicodedata
+        m = "".join(c for c in unicodedata.normalize("NFKD", (message or "").lower())
+                    if not unicodedata.combining(c))
+        for mm in self._DRUHA_OSOBA.finditer(m):
+            if mm.group(0) not in self._NE_DRUHA:
+                return False
+        try:
+            from scripts.hans_thread import recent_turns
+            turns = recent_turns(handler, getattr(self, "_speaker", "") or "")
+        except Exception:
+            return False
+        posl = [t for _r, t in turns if (t or "").strip() != (message or "").strip()][-2:]
+        ok = any(self._mentions_kolac(t) for t in posl)
+        if ok:
+            log.info("HANS_AGENT_SOCIAL_GUARD_THREAD_V1: navazuje na Koláče "
+                     "→ brzda neplatí: %.50s", message)
+        return ok
+
     # HANS_AGENT_SLEEP_QUESTION_GUARD_V1 — rozkazová slovesa, která znamenají
     # SKUTEČNOU žádost o uspání. Když ve větě jsou, je to příkaz i s otazníkem
     # („můžeš jít spát?").
@@ -1968,7 +2004,11 @@ class AgentRouter:
         dict(marker="HANS_AGENT_SOCIAL_GUARD_V2",
              akce=("report_home_status", "report_who_is_home",
                    "report_now_playing", "report_kolac_status"),
-             podminka=lambda s, aid, msg, dec, h: s._is_small_talk(msg),
+             podminka=lambda s, aid, msg, dec, h: (
+                 s._is_small_talk(msg)
+                 # HANS_AGENT_SOCIAL_GUARD_THREAD_V1 (23. 9.) — navazující
+                 # „a co dělá teď?" po řeči o Koláči je o KOLÁČI.
+                 and not s._navazuje_na_kolace(aid, msg, h)),
              verdikt=None, duvod="dotaz je o Hansovi, ne o domě/Koláčovi"),
         # HANS_AGENT_PLAY_NARRATION_GUARD_V1 — vyprávění „co jsem včera pustil"
         # se NESMÍ zrouteovat na ovládání přehrávání. Míří i na `kodi_play_film`

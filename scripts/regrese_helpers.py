@@ -769,3 +769,35 @@ def puvod_knihy(veta: str) -> bool:
     """Sepne vzor na ZISKANI veci (`/zdroje` → puvod knihy)?"""
     from scripts.chat_commands import _PUVOD_KNIHY_PAT
     return bool(_PUVOD_KNIHY_PAT.search(veta or ""))
+
+
+# ── HANS_BOOK_PROGRESS_ANSWER_V1 / HANS_AGENT_SOCIAL_GUARD_THREAD_V1 (23. 9.) ─
+def prubeh_cteni(veta: str) -> bool:
+    """Sepne vzor na PRUBEH cteni (surovy i bez diakritiky)?"""
+    from scripts.chat_commands import _PRUBEH_CTENI_PAT, _fold_diacritics
+    return bool(_PRUBEH_CTENI_PAT.search(veta or "")
+                or _PRUBEH_CTENI_PAT.search(_fold_diacritics(veta or "")))
+
+
+def prubeh_jmenuje(veta: str) -> bool:
+    """Nese otazka o prubehu cteni jmeno knihy (mimo ramec dotazu)?"""
+    from scripts.hans_recall import _PRUBEH_OBSAHOVA_SLOVA
+    return _PRUBEH_OBSAHOVA_SLOVA(veta)
+
+
+def kolac_navazuje(veta: str, predchozi: str) -> bool:
+    """Neplati SOCIAL_GUARD pro report_kolac_status po dane predchozi replice?"""
+    from scripts.config_io import load
+    from scripts.hans_agent import AgentRouter
+
+    class _St:
+        def get_history(self, n):
+            return [{"role": "assistant", "content": predchozi}]
+        get_history_scoped = lambda self, n, c: self.get_history(n)
+
+    class _H:
+        conv_store = _St()
+    ar = AgentRouter.__new__(AgentRouter)
+    ar.config = load()
+    ar._speaker = "test"
+    return ar._navazuje_na_kolace("report_kolac_status", veta, _H())
