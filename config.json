@@ -1603,5 +1603,20 @@
         "_max_chars_note": "NARRATIVE_SHAPE_GUARD_V1 — strop delky kapitoly. Zdrave kapitoly 15. 6.-24. 8. 2026 mely 700-999 znaku, poskozene 2381-3267. Delsi text se NEZAPISE a rutina to zkusi znovu (WARNING v logu).",
         "min_first_person": 1,
         "_min_first_person_note": "NARRATIVE_SHAPE_GUARD_V1 — kolik znaku 1. osoby musi kapitola mit. ZMERENO 17. 9. na vsech 14 kapitolach: pri prahu 3 padly 2 z 11 ZDRAVYCH (24. 8. a 10. 8. maji jen 2 vyskyty), zatimco vsechny tri poskozene chytil uz strop delky — prah 3 tedy nic nenasel a jen vyrabel falesne poplachy. Rozhoduje max_chars a tvarove znacky rozboru; tohle je jen zachranna sit pro KRATKY rozbor. 0 = vypnuto."
+    },
+    "router": {
+        "_note": "HANS_ROUTER_V1 (23. 9.) — diagnostika routeru + přepnutí VPN. Účet na routeru jen pro čtení; jediná změna = skript hans-vpn-dalsi. Přepínají jen známé osoby a automatika.",
+        "enabled": true,
+        "ssh_timeout": 6,
+        "ping_targets": [
+            "1.1.1.1",
+            "9.9.9.9"
+        ],
+        "auto_switch": true,
+        "watch_interval_s": 60,
+        "fail_strikes": 2,
+        "cooldown_s": 600,
+        "max_switches_h": 3,
+        "switch_verify_s": 30
     }
 }

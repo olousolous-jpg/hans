@@ -51,12 +51,12 @@ def _diary_path(config: dict) -> str:
 _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika", "nitky",
                            "zajmy", "seznam", "kalendar", "zdravi", "nastroj",
                            "brief", "vytvor", "prohloubit", "rozvrh", "vhledy",
-                           "anomalie"})
+                           "anomalie", "router"})  # HANS_ROUTER_V1
 # HANS_KODI_PLAYCTL_V1 — stop/pauza jsou zásah do přehrávání → role full
 # KOLAC_EXAM_CONFIRM_V1 — `/nalez` je mutující: potvrzení zapisuje trvalou
 # zkušební otázku do souboru. Patří sem, ne mezi read-only inspect příkazy.
 _MUTATING_CMDS = frozenset({"hlidej", "preloz", "experiment", "smer", "stop", "pauza",
-                            "nalez"})
+                            "nalez", "vpnprepni"})  # HANS_ROUTER_V1
 
 # HANS_STUDY_NUDGE_V1 (4.8.) — některé příkazy jsou read-only JEN v základním
 # tvaru: `/studium` vypíše stav (inspect), ale `/studium přeskoč` posune program

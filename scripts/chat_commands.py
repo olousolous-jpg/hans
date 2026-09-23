@@ -4486,6 +4486,73 @@ register(
 )
 
 
+# ─── /router, /vpnprepni — HANS_ROUTER_V1 (23. 9.) ──────────────────────────
+# Stav domácí sítě a přepnutí VPN serveru. JEN pro známé osoby: cizímu
+# nepatří ani stav sítě, natož zásah do ní (rozhodnutí uživatele 23. 9.).
+# Přirozená řeč jde přes nl_patterns, NE přes LLM router — nová agentní akce
+# by změnila rozhodování routeru nad všemi větami (viz
+# [[action-description-is-router-change]]); tady stačí úzké vzory.
+def _router_smi(name) -> bool:
+    try:
+        from scripts.cz_names import is_known_person as _ikp
+        return bool(name) and _ikp(name)
+    except Exception:
+        return False
+
+
+def _cmd_router(handler, name, args) -> str:
+    if not _router_smi(name):
+        return "Stav domácí sítě vám bohužel říct nemohu."
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts import hans_router
+    except Exception as e:
+        return "Na router teď nedosáhnu. (%s)" % e
+    if not hans_router.enabled(cfg):
+        return "Přístup na router mám vypnutý."
+    return hans_router.summary(cfg)
+
+
+def _cmd_vpnprepni(handler, name, args) -> str:
+    if not _router_smi(name):
+        return "VPN server smí přepnout jen někdo z domácnosti."
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts import hans_router
+    except Exception as e:
+        return "Na router teď nedosáhnu. (%s)" % e
+    if not hans_router.enabled(cfg):
+        return "Přístup na router mám vypnutý."
+    return hans_router.switch_text(hans_router.switch_next(cfg, reason="povel"))
+
+
+_ROUTER_VEC = r"(?:router\w*|internet\w*|vpn\w*|wifi\w*|wi-fi\w*)"
+_ROUTER_ZLE = (r"(?:nejde|nefunguje|nefunguj[eí]|vypad[áa]v[áa]|pad[áa]|"
+               r"zlob[íi]|nejede)")
+register(
+    "router",
+    slash_aliases=["router", "sit", "síť", "vpn"],
+    nl_patterns=[
+        r"\b(?:stav|zkontroluj|zkontrolujte|jak\s+je\s+na\s+tom|jak\s+jde|"
+        r"co\s+d[ěe]l[áa])\b[^?.!]{0,20}\b" + _ROUTER_VEC + r"\b",
+        r"\b" + _ROUTER_ZLE + r"\b[^?.!]{0,15}\b" + _ROUTER_VEC + r"\b",
+        r"\b" + _ROUTER_VEC + r"\b[^?.!]{0,15}\b" + _ROUTER_ZLE + r"\b",
+    ],
+    handler=_cmd_router,
+    help_text="Stav routeru, internetu a VPN (jen pro domácnost)",
+)
+register(
+    "vpnprepni",
+    slash_aliases=["vpnprepni", "vpnpřepni", "prepnivpn", "přepnivpn"],
+    nl_patterns=[
+        r"\b(?:p[řr]epni|p[řr]epn[ěe]te|zm[ěe][nň]|zm[ěe][nň]te|vym[ěe][nň]|"
+        r"vym[ěe][nň]te)\b[^?.!]{0,20}\b(?:vpn\w*|server\w*)\b",
+    ],
+    handler=_cmd_vpnprepni,
+    help_text="Přepnu VPN na další server (jen pro domácnost)",
+)
+
+
 # ─── /zdravi — zdraví závislostí (HANS_HEALTH_V1) ────────────────────────────
 def _cmd_zdravi(handler, name, args) -> str:  # HANS_HEALTH_V1
     """Živá probe závislostí (Ollama/ComfyUI/Kodi/STT/PC/disk). /zdravi vylec =

@@ -299,6 +299,12 @@ class HansRoutine:
         self._health_last = {}           # poslední výsledek (pro surfacing)
         if self._health_enabled:
             threading.Thread(target=self._health_watcher_loop, daemon=True).start()
+        # HANS_ROUTER_V1 (23. 9.) — hlídač VPN: když nejde internet přes
+        # tunel a linka mimo něj ano, přepne server a ohlásí to. Vlastní
+        # vlákno, protože health běží á 10 min — na výpadek internetu pozdě.
+        self._router_st = {}
+        if bool(((self.config.get('router') or {}).get('enabled'))):
+            threading.Thread(target=self._router_watcher_loop, daemon=True).start()
         # HANS_DISTILLATION_V1 — fáze 2a noční destilace záseku
         self._distillation = None
         self._distillation_running = False   # idempotence — jednou denně
@@ -1574,6 +1580,22 @@ class HansRoutine:
         if wo and (now - wo) < getattr(self, '_wol_startup_grace_s', 300):
             return True  # čerstvě probuzeno → Ollama bootuje
         return False
+
+    def _router_watcher_loop(self):
+        """HANS_ROUTER_V1 — krok automatiky VPN á `router.watch_interval_s`.
+        Oznámení jde přes `_notifier` bez `direct` → v tichém okně počká."""
+        if self._stop.wait(120.0):
+            return
+        while not self._stop.is_set():
+            _rc = self.config.get('router') or {}
+            try:
+                from scripts import hans_router
+                hans_router.watch_tick(self.config, self._router_st,
+                                       notify=self._notifier)
+            except Exception as _e:
+                _log.debug('router watcher: %s', _e)
+            if self._stop.wait(float(_rc.get('watch_interval_s', 60))):
+                break
 
     def _health_watcher_loop(self):
         """HANS_HEALTH_V1 — periodická probe závislostí + self-heal zaseklé
