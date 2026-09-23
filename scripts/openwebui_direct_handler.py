@@ -699,8 +699,44 @@ class OpenWebUIDirectHandler:
                 _kodi = _kt(_c); _c.close()
             except Exception:
                 _kodi = set()
+            # HANS_BOOK_PROGRESS_LABEL_V1 (23. 9.) — u kapitoly knihy rekni,
+            # ODKDY ji Hans cte a jestli POPRVE. Doloženo testem 23. 9.:
+            # „tu knihu od le guin ctes poprve?" → ze tri kapitol v podkladu
+            # model vyvodil „cetl jsem ji jiz drive" — cte ji od 17. 9.
+            # od kap. 1. Zmereno: 16 knih v deniku, zadna kapitola dvakrat.
+            _prubeh = {}
+            try:
+                import sqlite3 as _s3b, datetime as _dtb
+                _cb = _s3b.connect(self.diary_db_path if hasattr(self, 'diary_db_path')
+                                   else 'data/hans_diary.db')
+                for _z in {str(_t).split(' \u2014 kap.')[0] for _ts, _s, _p, _t, _x in hits
+                           if _s == 'book_read' and ' \u2014 kap.' in str(_t or '')}:
+                    _r = _cb.execute(
+                        "SELECT MIN(ts), MAX(ts), COUNT(*), COUNT(DISTINCT title) "
+                        "FROM diary WHERE event_type='book_read' AND title LIKE ?",
+                        (_z + ' \u2014 kap.%',)).fetchone()
+                    _mx = _cb.execute(
+                        "SELECT title FROM diary WHERE event_type='book_read' "
+                        "AND title LIKE ? ORDER BY ts DESC LIMIT 1",
+                        (_z + ' \u2014 kap.%',)).fetchone()
+                    if _r and _r[0]:
+                        _d = lambda x: _dtb.datetime.fromtimestamp(x).strftime('%-d. %-m.')
+                        _kap = str(_mx[0]).split('kap.')[-1].strip() if _mx else '?'
+                        _prubeh[_z] = (
+                            'knihu \u010dtu od %s, naposledy jsem \u010detl kap. %s (%s); '
+                            '%s' % (_d(_r[0]), _kap, _d(_r[1]),
+                                    'podle den\u00edku ji \u010dtu POPRV\u00c9'
+                                    if _r[2] == _r[3] else
+                                    '\u010d\u00e1st jsem \u010detl v\u00edckr\u00e1t'))
+                _cb.close()
+            except Exception:
+                _prubeh = {}
+
             def _label(t, s):
                 _n = (t or s or '')
+                _z = str(_n).split(' \u2014 kap.')[0]
+                if s == 'book_read' and _z in _prubeh:   # HANS_BOOK_PROGRESS_LABEL_V1
+                    return '[Z knihy, kterou \u010dtu \u2014 %s; %s]' % (_n, _prubeh[_z])
                 if _kodi and str(_n).strip().lower() in _kodi:
                     return ('[Cetl jsem si o tomhle clanek, kdyz v televizi bezel '
                             '\u201e%s\u201c — NENI to moje cetba te knihy/filmu]' % _n)
