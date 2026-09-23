@@ -51,4 +51,29 @@ if got=$(printf '%s\n' "$mix" | match); then
                    *) bad=$((bad+1)); echo "  ✗ vybráno špatně: $got";; esac
 else bad=$((bad+1)); echo "  ✗ hru nenašel vůbec"; fi
 
+echo "── HANS_GAME_LEFTOVER_STEAMCLIENT_V1: kontejner klienta Steamu není zbytek hry ──"
+eval "$(sed -n '/^steam_client_pids()/,/^}/p' "$S")"
+# fixture "pid ppid args" podle skutečného stavu PC 23. 9.
+ps_fix='100 1 /home/user/.local/share/Steam/ubuntu12_32/steam -srt-logger-opened
+174 100 /home/user/.local/share/Steam/steamrt64/pv-runtime/steam-runtime-steamrt/pressure-vessel/libexec/steam-runtime-tools-0/srt-bwrap --args 26
+312 174 /usr/lib/pressure-vessel/from-host/libexec/steam-runtime-tools-0/pv-adverb --prefix=/usr/lib/pressure-vessel/from-host
+347 312 ./steamwebhelper -nocrashdialog
+500 100 /home/user/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=1174180 -- /usr/bin/pv-bwrap
+501 500 /home/user/.local/share/Steam/steamapps/common/SteamLinuxRuntime_sniper/pressure-vessel/libexec/steam-runtime-tools-0/srt-bwrap --args 26
+600 1 /home/user/.local/share/umu/steamrt4/pressure-vessel/libexec/steam-runtime-tools-0/srt-bwrap --args 26
+601 600 /usr/lib/pressure-vessel/from-host/libexec/steam-runtime-tools-0/pv-adverb --prefix=/usr/lib/pressure-vessel/from-host'
+skip=" $(printf '%s\n' "$ps_fix" | steam_client_pids | sort -n | tr '\n' ' ') "
+tk() {  # tk <ocekavano: vyrazen|hlidan> <popis> <pid>
+    local got=hlidan; case "$skip" in *" $3 "*) got=vyrazen;; esac
+    if [ "$1" = "$got" ]; then ok=$((ok+1)); printf '  ✓ %-46s → %s\n' "$2" "$got"
+    else bad=$((bad+1)); printf '  ✗ %-46s → %s (čekáno %s)\n' "$2" "$got" "$1"; fi
+}
+tk vyrazen "klient Steamu: srt-bwrap (steamrt64)"  174
+tk vyrazen "klient Steamu: pv-adverb"              312
+tk vyrazen "klient Steamu: steamwebhelper"         347
+tk hlidan  "hra ze Steamu: reaper SteamLaunch"     500
+tk hlidan  "hra ze Steamu: kontejner sniper"       501
+tk hlidan  "hra z Heroicu: kontejner umu steamrt4" 600
+tk hlidan  "hra z Heroicu: pv-adverb v umu"        601
+
 echo; echo "OK=$ok  CHYB=$bad"; [ "$bad" -eq 0 ]

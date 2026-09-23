@@ -86,15 +86,30 @@ resume_brain() { post_brain resume 10; }
 LEFT_PAT='wineserver|GenshinImpact|YuanShen|[Mm]iHoYo|HoYoPlay|pressure-vessel|pv-bwrap|gamescope'
 LEFT_GRACE_S="${LEFT_GRACE_S:-15}"   # extra grace po resume (nad GRACE_S) na doběhnutí cleanup
 
+# HANS_GAME_LEFTOVER_STEAMCLIENT_V1 — klient Steamu běží ve VLASTNÍM kontejneru
+# Steam Runtime (srt-bwrap + pv-adverb + steamwebhelper), jehož cmdline obsahuje
+# „pressure-vessel" stejně jako herní kontejnery. Doloženo 23. 9.: 6 hlášení
+# „zůstalo srt-bwrap pv-adverb" za 1 h, pokaždé tentýž kontejner běžícího klienta.
+# Vyřazuje se jen kořen `Steam/steamrt64/pv-runtime` a jeho potomci; herní
+# kontejnery (umu steamrt4, SteamLinuxRuntime_*) se hlídají dál, i když je spustil Steam.
+steam_client_pids() {   # stdin: "pid ppid args" → PID kontejneru klienta Steamu + potomků
+    awk '{ pp[$1] = $2; if ($0 ~ /\/steamrt64\/pv-runtime\//) root[$1] = 1 }
+         END { for (p in pp) { q = p; n = 0
+                   while ((q in pp) && n < 64) { if (q in root) { print p; break }
+                                                 q = pp[q]; n++ } } }'
+}
+
 check_leftovers() {
     # ověř, že se hra po zavření opravdu uklidila; jinak nahlas Hansovi
     sleep "$LEFT_GRACE_S"
     game_running && return   # mezitím se rozjela další hra → neřeš
-    local procs left n gpu names
+    local procs left n gpu names skip
     procs=$(ps -eo pid,stat,args 2>/dev/null | grep -vE '^\[')
+    skip=" $(ps -eo pid=,ppid=,args= 2>/dev/null | steam_client_pids | tr '\n' ' ') "
     left=$(printf '%s\n' "$procs" \
            | grep -iE "$LEFT_PAT" \
-           | grep -vE 'grep|hans-game-watch|/opt/Heroic|legendary|umu_run')
+           | grep -vE 'grep|hans-game-watch|/opt/Heroic|legendary|umu_run' \
+           | awk -v skip="$skip" 'index(skip, " " $1 " ") == 0')
     if [ -z "$left" ]; then
         log "úklid po hře OK — nic nezůstalo viset"
         return
