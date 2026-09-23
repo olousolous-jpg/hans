@@ -1434,7 +1434,12 @@ class OpenWebUIDirectHandler:
             _dbp_f = (self.config.get("diary_db")
                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                       or "data/hans_diary.db")
-            _fr = _film_recall(_dbp_f, str(_text),
+            # HANS_FILM_ASKER_PREFIX_V1 (23. 9.) — bez prefixu "<jmeno> se pta:",
+            # jinak jmeno tazatele trefi titul (test persona `zkouska` → film
+            # „Zkouska“: 5 ze 7 spusteni film_recall za 4 dny). Tentyz odrez
+            # jako u entit (HANS_ENTITY_STRIP_ASKER_V1). Zmereno na 91
+            # filmovych vetach × 3 jmenech: 84 rozdilu proti hole vete → 0.
+            _fr = _film_recall(_dbp_f, self._bez_tazatele(_text),
                                asker=name or "")  # HANS_FILM_OPINION_PRIVACY_V1
             if _fr:
                 self._vysledek_groundingu('grounded', 'film_recall')

@@ -664,3 +664,29 @@ def film_nazor_soukromi(cesta: str, tazatel: str) -> str:
     if not r:
         return "nic"
     return "se_jmenem" if jm.lower() in r.lower() else "bez_jmena"
+
+
+# ── HANS_FILM_ASKER_PREFIX_V1 (23. 9.) ───────────────────────────────────────
+def film_prefix_kolize(veta: str) -> str:
+    """Docasna DB s filmem „Zkouska“ (jako v produkci). Vrati titul, ktery
+    film_knowledge_answer trefil, nebo '' — jmeno tazatele nesmi byt titul."""
+    import os, re as _re, sqlite3, tempfile, time as _t
+    from scripts import hans_recall
+    d = tempfile.mkdtemp(); db = os.path.join(d, "t.db")
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE diary (id INTEGER PRIMARY KEY, ts REAL, event_type TEXT,"
+              " title TEXT, data TEXT, note TEXT, importance INTEGER,"
+              " provenance TEXT, source_url TEXT)")
+    for tit in ("Zkouška", "Doctor Strange"):
+        c.execute("INSERT INTO diary (ts,event_type,title,data) VALUES (?,?,?,?)",
+                  (_t.time(), "movie_opinion", tit, "Zajimavy film s dobrou kamerou a pribehem."))
+    c.commit(); c.close()
+    try:
+        from scripts.openwebui_direct_handler import OpenWebUIDirectHandler as _H
+        r = hans_recall.film_knowledge_answer(db, _H._ASKER_PFX.sub("", veta)) or ""
+    finally:
+        try: os.remove(db); os.rmdir(d)
+        except Exception: pass
+    m = _re.search(r"\u201e([^\u201c]+)\u201c", r)
+    return m.group(1) if m else ""
+
