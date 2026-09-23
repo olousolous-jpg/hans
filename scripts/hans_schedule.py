@@ -100,7 +100,14 @@ _SEED = [
     ("study_tick", "periodic", None, None, 48 * 3600,
      "Studijní tick: postup v aktivním study_program"),
     # Zvědavost / čtení — periodic idle.
-    ("curiosity_tick", "periodic", 30 * 60, None, 4 * 3600,
+    # HANS_SCHEDULE_CURIOSITY_GAP_V1 (23. 9.) — 4 h -> 12 h. `mark()` pada jen
+    # pri USPESNEM cteni; spoustec bez clanku (epizoda serialu, herni mod)
+    # nezapise nic, takze 4 h merily rytmus spoustecu, ne zdravi ctecky.
+    # Zmereno za 10 dni: 19 ze 120 mezer mezi ctenimi > 4 h, nejdelsi denni
+    # 11,1 h, nad 12 h zadna. Obe zpravy hlidace z 22.-23. 9. byly tenhle sum.
+    # Prazdne cteni se ZAMERNE nepocita jako beh — rozbita ctecka by pak
+    # vypadala vecne svezi (viz HANS_SCHEDULE_LAST_OK_V1).
+    ("curiosity_tick", "periodic", 30 * 60, None, 12 * 3600,
      "Zvědavý tick: čtení / prozkoumávání zájmů"),
     # Proton kalendář sync — každých 30 min (config.calendar.sync_interval_min).
     ("calendar_sync", "periodic", 30 * 60, None, 2 * 3600,
@@ -244,6 +251,11 @@ class ScheduleStore:
             db.execute("UPDATE hans_schedule SET expected_gap_s=? "
                        "WHERE name='study_tick' AND expected_gap_s=?",
                        (48 * 3600, 4 * 3600))
+            # HANS_SCHEDULE_CURIOSITY_GAP_V1 — totez adresne pro curiosity_tick
+            # (seed je INSERT OR IGNORE); jen z puvodni hodnoty 4 h.
+            db.execute("UPDATE hans_schedule SET expected_gap_s=? "
+                       "WHERE name='curiosity_tick' AND expected_gap_s=?",
+                       (12 * 3600, 4 * 3600))
             # HANS_STUDY_UNIFY_PERIOD_V1 (18.8.) — totéž pro `period_s`: seed je
             # INSERT OR IGNORE, takže existující řádek si drží 1800 = popis
             # třicetiminutového rytmu, který studium nemá (běží v nočním okně
