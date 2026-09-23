@@ -727,3 +727,23 @@ def film_nabizi_kameru(tazatel: str) -> bool:
     kp = _cfg().get("known_persons") or {}
     jm = "Neznamy Host" if tazatel == "cizi" else (next(iter(kp), "") if kp else "")
     return "kamerou" in (_cmd_film(None, jm, "co jste dnes viděl?") or "")
+
+
+# ── HANS_RELAX_BOOK_TITLE_V1 (23. 9.) ────────────────────────────────────────
+def relax_kniha(dotaz: str) -> int:
+    """Kolik kapitol projde relaxacnim filtrem? Umele radky (ts, zdroj,
+    partner, titul, text) — nezavisle na zivem indexu."""
+    from scripts.hans_convindex import _bez_sumu_relaxace
+    rows = [(1.0, "book_read", "", "Le Guinova Ursula – Zememori 1 – Carodej Zememori — kap. 51",
+             "Ged sel k mori a premyslel o svem stinu."),
+            (2.0, "book_read", "", "Já robot – Asimov Isaac — kap. 94",
+             "Odpoved na otazku vesmiru byla ztracena.")]
+    return len(_bez_sumu_relaxace(dotaz, rows, True))
+
+
+# ── HANS_RELAX_BOOK_ANCHOR_V1 (23. 9.) ───────────────────────────────────────
+def kniha_kotva(dotaz: str, slovo: str) -> bool:
+    """Drzi relaxacni zebrik `slovo` ve VSECH stupnich? (bez indexu)"""
+    from scripts.hans_convindex import relax_attempts
+    kroky, _ = relax_attempts(dotaz)
+    return bool(kroky) and all(slovo in k for k in kroky)

@@ -588,6 +588,23 @@ def relax_attempts(query: str):
     # do podkladu dostal i touhle druhou cestou, takže samotné
     # zachování tokenu by nestačilo (změřeno).
     _anchor_f = {_fold(_w) for _, _w in kotvy_ve_vete(query)}
+    # HANS_RELAX_BOOK_ANCHOR_V1 (23. 9.) — NAZEV ZA SLOVEM „kniha“ je kotva,
+    # i kdyz je psany malym pismenem. Doloženo 23. 9.: „co si myslis o knize
+    # Ja, robot?" — zebrik ubral nejkratsi `robot`, zbylo `mysl* kniz*`
+    # a to naslo Rudou knizku a Hobita (Ja robot ma Hans 179 kapitol).
+    # ⛔ „ta/tu/te kniha“ je ODKAZ zpet, ne nazev: bez vyjimky „Zmenila te
+    # ta kniha nejak? … Austenove" ztratila Pride and Prejudice (zmereno).
+    # ⛔ Obecne poradi „ramcova slova prvni" zmereno a ZAMITNUTO: 74 zmen
+    # na 2 345 vetach, smisene (i zhorseni).
+    # 📏 2 346 realnych vet: 1 zmena (knizka o designu → studium Designu,
+    # driv nic), 0 ztrat.
+    _mk = re.search(
+        r"(?<!\bta )(?<!\btu )(?<!\bté )(?<!\bte )(?<!\btou )"
+        r"\bkn[ií](?:ze|zce|žce|hu|ha|hy|ho)\b[\s:,\u201e\"]+"
+        r"([^?.!\u201e\u201c\"]{2,60})", query or "", re.I)
+    if _mk:
+        _anchor_f |= {_fold(_w) for _w in _WORD.findall(_mk.group(1))[:4]
+                      if len(_fold(_w)) >= 3 and _fold(_w) not in _STOP}
     _orig = {}          # kmen -> (složené slovo, délka originálu)
     for _t in raw:
         _orig.setdefault(_stem(_fold(_t)), (_fold(_t), len(_t)))
@@ -850,9 +867,38 @@ def _bez_sumu_relaxace(query: str, rows: list, relaxovano: bool) -> list:
         body = " " + _fold("%s %s" % (r[3] or "", r[4] or ""))
         return sum(1 for s in st if re.search(r"\b" + re.escape(s), body))
 
+    # HANS_RELAX_BOOK_TITLE_V1 (23. 9.) — (A) plati pro kapitolu, ktera
+    # slova dotazu jen OBSAHUJE, ne pro knihu, na kterou se dotaz PTA.
+    # Doloženo testem 23. 9.: „tu knihu od le guin ctes poprve?" → vsechny
+    # 3 kapitoly vyrazeny → factual_nofacts → „v pameti jsem o tom nic
+    # nemel" a dohledani na Wikipedii, ackoli Hans byl v kapitole 51.
+    # Kniha se pozna podle NAZVU (autor/titul), ne podle textu kapitoly.
+    # Shoda = spolecny zacatek slova, ktery pokryva skoro cele kratsi slovo
+    # (guin~guinova, guinove~guinova); prefix/_stem nestaci — „zeme" ze
+    # „zemetreseni" by trefil „Zememori" (zmereno: 6 falesnych z 7).
+    # 📏 2 346 realnych vet: 1 zmena (ta dolozena), 0 falesnych.
+    _qt = [_fold(x) for x in _WORD.findall(query or "")
+           if len(_fold(x)) >= 4 and _fold(x) not in _STOP]
+
+    def _shoda(a, b):
+        n = 0
+        for x, y in zip(a, b):
+            if x != y:
+                break
+            n += 1
+        return n >= max(4, min(len(a), len(b)) - 2)
+
+    def _o_knize(r):
+        if r[1] != "book_read":
+            return False
+        tw = [_fold(w) for w in _WORD.findall(str(r[3] or "").split(" kap.")[0])
+              if len(_fold(w)) >= 4]
+        return any(_shoda(a, b) for a in _qt for b in tw)
+
     pok = [_pokryti(r) for r in rows]
     nej = max(pok) if pok else 0
-    out = [r for r, p in zip(rows, pok) if r[1] != "book_read" and p >= nej - 1]
+    out = [r for r, p in zip(rows, pok)
+           if _o_knize(r) or (r[1] != "book_read" and p >= nej - 1)]
     if len(out) < len(rows):
         _log.info("HANS_KNOWLEDGE_RELAX_NOISE_V1: relaxace — vyřazeno %d z %d "
                   "nálezů (%s)", len(rows) - len(out), len(rows),
