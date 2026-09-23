@@ -961,18 +961,64 @@ def _run_kolac_status(handler, args) -> str:
             ts, note = r
     except Exception:
         pass
-    topic = ""
-    if note:
-        m = re.search(r"Téma:\s*(.+)", note)
-        if m:
-            topic = m.group(1).strip().splitlines()[0][:80]
+    # HANS_KOLAC_STATUS_V2 (23. 9.) — test pod znamym jmenem: „jak se ma
+    # kolac?" → „bavili o „fotbal““ (1. pad za „o") a na otazku se
+    # neodpovedelo. Tema se ted uvadi „na tema …", vycisti se z vety
+    # semene („Drive jsem premyslel o filmu 'X'." → „film X", 36 z 491
+    # dialogu za 14 dni) a odpoved nese to, co je o Kolaci DOLOZENE: kolik
+    # spolu dnes mluvili a jeho posledni vetu (nalezena u 460 z 491).
+    # Nalada Kolac NEMA — nic se nedomysli.
+    topic = _kolac_tema(re.search(r"Téma:\s*(.+)", note).group(1)) \
+        if note and re.search(r"Téma:\s*(.+)", note) else ""
     if topic:
         ago = time.time() - (ts or 0)
+        _veta = _kolac_posledni_veta(note, kn)
         if ago < 3600:
-            return f"{kn} a já jsme se před chvílí bavili o „{topic}“, pane."
-        return (f"{kn} zrovna tiše přemítá po mém boku; naposledy jsme rozprávěli "
-                f"o „{topic}“.")
+            _n = 0
+            try:
+                import sqlite3
+                _db = sqlite3.connect(_diary_path(handler))
+                _n = _db.execute(
+                    "SELECT COUNT(*) FROM diary WHERE event_type='teddy_dialog' "
+                    "AND date(ts,'unixepoch','localtime')=date('now','localtime')"
+                ).fetchone()[0]
+                _db.close()
+            except Exception:
+                _n = 0
+            _dnes = f" (dnes už {_n}×)" if _n > 1 else ""
+            out = (f"{kn} je čilý — před chvílí jsme se bavili na téma "
+                   f"„{topic}“{_dnes}.")
+            if _veta:
+                out += f" Naposledy mi řekl: „{_veta}“"
+            return out
+        return (f"{kn} zrovna tiše přemítá po mém boku; naposledy jsme spolu "
+                f"mluvili na téma „{topic}“.")
     return f"{kn} zrovna nic neprovádí, pane — tiše přemítá po mém boku."
+
+
+def _kolac_tema(raw: str) -> str:
+    """HANS_KOLAC_STATUS_V2 — tema dialogu citelne pro cloveka."""
+    t = (raw or "").strip().splitlines()[0].strip() if raw else ""
+    m = re.match(r"D[řr][íi]ve jsem p[řr]em[ýy][šs]lel o filmu\s*['‚„\"](.+?)['‘“\"]\.?$", t)
+    if m:
+        return "film " + m.group(1).strip()
+    m = re.match(r"KOLA[ČC]\w*\s+AKTIVN[ÍI]\s+P[ŘR][ÍI]PAD:\s*(.+)$", t, re.I)
+    if m:
+        return "případ " + m.group(1).strip()
+    return t[:80]
+
+
+def _kolac_posledni_veta(note: str, kn: str = "") -> str:
+    """HANS_KOLAC_STATUS_V2 — prvni veta Kolacovy posledni repliky, nebo ''."""
+    jm = [x for x in {kn, "Koláč", "Kolač"} if x]
+    rad = [m.group(1).strip() for m in re.finditer(
+        r"^\s*(?:%s):\s*(.+)$" % "|".join(map(re.escape, jm)), note or "", re.M)]
+    if not rad:
+        return ""
+    # radsi cela myslenka (≥ 40 zn) nez odsekle „Kvalitativni analyzy?“
+    m = (re.match(r"(.{40,200}?[.!?])(\s|$)", rad[-1])
+         or re.match(r"(.{15,180}?[.!?])(\s|$)", rad[-1]))
+    return m.group(1) if m else ""
 
 
 def _run_home_status(handler, args) -> str:
