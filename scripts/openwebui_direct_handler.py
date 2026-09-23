@@ -1434,7 +1434,8 @@ class OpenWebUIDirectHandler:
             _dbp_f = (self.config.get("diary_db")
                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                       or "data/hans_diary.db")
-            _fr = _film_recall(_dbp_f, str(_text))
+            _fr = _film_recall(_dbp_f, str(_text),
+                               asker=name or "")  # HANS_FILM_OPINION_PRIVACY_V1
             if _fr:
                 self._vysledek_groundingu('grounded', 'film_recall')
                 return _fr

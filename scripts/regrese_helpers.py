@@ -619,3 +619,48 @@ def zdroj_slova(veta: str) -> str:
     """Významová slova dotazu na zdroj, bez rámcových — seřazená, čárkou."""
     from scripts.hans_recall import _zdroj_slova
     return ",".join(sorted(_zdroj_slova(veta, minlen=4, bez_ramce=True)))
+
+
+# ── HANS_FILM_OPINION_PRIVACY_V1 (23. 9.) ────────────────────────────────────
+# Docasna DB se dvema nazory na tyz film: jeden jmenuje clena domacnosti
+# (jmeno se bere za behu z configu, v datech sady zadne neni), druhy ne.
+def film_nazor_soukromi(cesta: str, tazatel: str) -> str:
+    """cesta: 'znalost' (film_knowledge_answer) | 'obliba' (films_liked_answer)
+    tazatel: 'cizi' | 'znamy'. Vrati 'se_jmenem' / 'bez_jmena' / 'nic'."""
+    import os, sqlite3, tempfile, time as _t
+    from scripts import hans_recall
+    kp = _cfg().get("known_persons") or {}
+    if not kp:
+        return "chybi_known_persons"
+    klic, rec = next(iter(kp.items()))
+    jm = str((rec or {}).get("nom") or klic)
+    znamy = jm
+    d = tempfile.mkdtemp()
+    db = os.path.join(d, "t.db")
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE diary (id INTEGER PRIMARY KEY, ts REAL, event_type TEXT,"
+              " title TEXT, data TEXT, note TEXT, importance INTEGER,"
+              " provenance TEXT, source_url TEXT)")
+    now = _t.time()
+    c.execute("INSERT INTO diary (ts,event_type,title,data) VALUES (?,?,?,?)",
+              (now - 10, "movie_opinion", "Regresni Zkusebni Snimek",
+               "Tento film jsem sledoval s %s a bylo to prijemne odpoledne." % jm))
+    c.execute("INSERT INTO diary (ts,event_type,title,data) VALUES (?,?,?,?)",
+              (now - 20, "movie_opinion", "Regresni Zkusebni Snimek",
+               "Kamera pracuje se svetlem velmi citlive a pribeh ma dobre tempo."))
+    c.commit(); c.close()
+    try:
+        if cesta == "obliba":
+            r = hans_recall.films_liked_answer(db) or ""
+        else:
+            r = hans_recall.film_knowledge_answer(
+                db, "co vite o filmu Regresni Zkusebni Snimek?",
+                asker=("Neznamy Host" if tazatel == "cizi" else znamy)) or ""
+    finally:
+        try:
+            os.remove(db); os.rmdir(d)
+        except Exception:
+            pass
+    if not r:
+        return "nic"
+    return "se_jmenem" if jm.lower() in r.lower() else "bez_jmena"

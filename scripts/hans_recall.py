@@ -2301,6 +2301,11 @@ def films_liked_answer(db_path: str, limit: int = 3) -> Optional[str]:
             continue
         if any(_n in veta.lower() for _n in _NEZNA):
             continue
+        # HANS_FILM_OPINION_PRIVACY_V1 (23. 9.) — veta, ktera jmenuje clena
+        # domacnosti, o filmu nic nerika a tahle odpoved jde deterministicky
+        # KOMUKOLI (i cizimu). Zmereno: 14 z 2 224 prvnich vet.
+        if _jmenuje_domacnost(veta):
+            continue
         videl.add(klic)
         ven.append((t, veta))
         if len(ven) >= max(1, limit):
@@ -2314,7 +2319,21 @@ def films_liked_answer(db_path: str, limit: int = 3) -> Optional[str]:
     return hlava + "\n" + telo
 
 
-def film_knowledge_answer(db_path: str, question: str = "") -> Optional[str]:
+def _jmenuje_domacnost(text: str) -> bool:
+    """HANS_FILM_OPINION_PRIVACY_V1 (23. 9.) — jmenuje text clena domacnosti?
+    Sdileny predikat `cz_names.find_known_person` (pady, diakritika), ne novy.
+    ⚠️ Porovnava na prefix, takze obcas chytne i nevinne slovo (anglicke
+    "old", "sarkofagy") — na strane soukromi prijatelna chyba: poznamka
+    se jen vynecha. Selhani = False (dosavadni chovani)."""
+    try:
+        from scripts.cz_names import find_known_person
+        return bool(find_known_person(text or ""))
+    except Exception:
+        return False
+
+
+def film_knowledge_answer(db_path: str, question: str = "",
+                          asker: str = "") -> Optional[str]:
     """HANS_FILM_RECALL_V1 — když dotaz zmiňuje FILM podle názvu, dohledej v
     deníku Hansovy VLASTNÍ záznamy o tom filmu (movie_opinion = názor/děj,
     kodi_playing = kdy viděl) a vrať GROUNDED blok. None = žádný známý titul
@@ -2360,6 +2379,20 @@ def film_knowledge_answer(db_path: str, question: str = "") -> Optional[str]:
             "WHERE event_type='kodi_playing' "
             "AND title=?", (best,)).fetchone()
         notes = [str(n).strip() for _, n in ops if n and str(n).strip()]
+        # HANS_FILM_OPINION_PRIVACY_V1 (23. 9.) — CIZIMU tazateli nedavej
+        # poznamky, ktere jmenuji cleny domacnosti. Doloženo sadou B 23. 9.:
+        # blok s takovou vetou lezel v promptu ciziho (ven neprosla).
+        # Zmereno: 65 z 2 224 nazoru na filmy jmenuje nekoho z domacnosti,
+        # 59 z 1 180 titulu se to tyka. Ctvrty zdroj tridy
+        # HANS_PROMPT_HOUSEHOLD_PRIVACY_V1/V2 — tentyz predikat tazatele.
+        # Prazdny `asker` chovani NEMENI (jako V1: interni cesty bez mluvciho).
+        if asker and notes:
+            try:
+                from scripts.cz_names import is_known_person as _ikp
+                if not _ikp(asker):
+                    notes = [n for n in notes if not _jmenuje_domacnost(n)]
+            except Exception:
+                pass
         if not notes and not (seen and seen[0]):
             return None  # titul se objevil, ale nic konkrétního → nech projít dál
         parts = [f"SKUTEČNÝ ZÁZNAM o „{best}“ z TVÉHO deníku (odpověz JEN z něj, "
