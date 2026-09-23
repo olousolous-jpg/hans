@@ -3327,6 +3327,19 @@ register(
         # [[test-both-grammatical-persons]] · [[corpus-has-no-foreign-speakers]]
         r"\b(pře)?[čc]etla?\s+(jsi|sis|jste)\s+(něco|neco|někdy|nekdy|už|uz)?\s*o?\b.{2,}\?",
         r"\bco\s+(pr[áa]vě\s+|te[ďd]\s+)?[čc]te[šs]\b",
+        # HANS_CETL_VYKANI_V1 (23. 9.) — vzory vyse znaly jen TYKANI:
+        # "co jsi cetl" / "co ctes" prosly, "co jste cetl" / "co ctete"
+        # / "jake knihy jste cetl" spadly do LLM (sada B 23. 9.: 88 s
+        # a bez knihy, kterou Hans tutez noc cetl). Mezi zajmenem
+        # a slovesem az tri slova ("v posledni dobe") — vzor jako
+        # HANS_ARTWORK_ADVERB_WIDEN_V1. Zmereno na 2 342 realnych vetach:
+        # +1 spravne ("co jsis dnes precetl"), 0 ztrat; kontroly 11/11.
+        # [[test-both-grammatical-persons]]
+        r"\bco\s+(?:jste|jsis)\s+(?:\w+\s+){0,3}?(?:pře|pre)?[čc]etl",
+        r"\bco\s+(?:pr[áa]vě\s+|te[ďd]\s+)?[čc]tete\b",
+        r"\bjak[éeýy]\s+(?:kn[ií]\w*|[čc]l[áa]nk\w*|texty|[čc]etb\w*)"
+        r"(?:\s+(?:nebo|a)\s+\w+)?\s+(?:jsi|sis|jste)\s+(?:\w+\s+){0,3}?"
+        r"(?:pře|pre)?[čc]etl",
     ],
     handler=_cmd_cetl,
     help_text="Co/kdy jsem četl (přímo z deníku): co jsi četl? četl jsi o X?",
