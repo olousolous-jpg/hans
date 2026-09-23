@@ -4074,8 +4074,29 @@ def _je_dotaz_na_oblibu_filmu(veta: str) -> bool:
     return True
 
 
+# HANS_VIDEL_UPRESNI_V1 (23. 9.) — hole "co jsi/jste (dnes) videl?" je
+# viceznacne: film, nebo co Hans zahledl kamerou? Navrh uzivatele: zeptat
+# se, ne hadat. Odpoved "film" jde na /film, "kamerou" k modelu, ktery
+# odpovi ze ziveho stavu (overeno zive 23. 9.). 📏 V 2 342 realnych vetach
+# 0 vyskytu — realne dotazy na film nesou slovo "film"; je to pojistka.
+_VIDEL_HOLY_PAT = re.compile(
+    r"^\W*(?:a\s+|tak\s+)?co\s+(?:jsi|sis|jste)\s+"
+    r"(?:(?:dnes\w*|v[čc]era|naposledy|te[ďd])\s+)?vid[ěe]l\w*\s*\??\W*$",
+    re.I)
+
+
 def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
     from scripts.hans_recall import films_watched_answer, films_liked_answer
+    # HANS_CAMERA_STRANGER_V1 — cizimu kameru nenabizet: rovnou vypis filmu.
+    _znamy = True
+    try:
+        from scripts.cz_names import is_known_person as _ikp
+        _znamy = (not name) or _ikp(name)
+    except Exception:
+        pass
+    if _znamy and _VIDEL_HOLY_PAT.search(str(args or "")):
+        _log.info("HANS_VIDEL_UPRESNI_V1: hole 'videl' \u2192 upresnujici otazka")
+        return "Myslíte film, který jsem viděl, nebo co jsem zahlédl kamerou?"
     # HANS_FILM_OPINION_ANSWER_V1 — nejdriv obliba, teprve pak vypis.
     if _je_dotaz_na_oblibu_filmu(args or ""):
         _ob = films_liked_answer(_recall_db(handler))
@@ -4118,8 +4139,12 @@ register(
         # film?"), dotazy na bezici prehravani („je pusteny nejaky film?")
         # a vypraveni — ani jedna neni dotaz na to, co Hans videl.
         r"\bjak[ýy].{0,10}film",
-        r"co\s+(jsi|sis)\s+(dnes\w*\s+|včera\s+|naposledy\s+)?"
-        r"(vid[ěe]l|koukal|sledoval|d[íi]val)",
+        # HANS_VIDEL_UPRESNI_V1 (23. 9.) — + vykani (`jste`); "videl"
+        # s kamerovym dovetkem ("kamerou", "venku", "z okna") uz neni film
+        # (driv i "co jsi videl kamerou?" vratilo vypis filmu).
+        r"co\s+(jsi|sis|jste)\s+(dnes\w*\s+|včera\s+|naposledy\s+)?"
+        r"(vid[ěe]l(?!\w*\s+(?:kamer|venku|z\s+okna|za\s+oknem|na\s+ulic))"
+        r"|koukal|sledoval|d[íi]val)",
         r"co\s+jsem?\s+(dnes\w*\s+)?(vid[ěe]l|koukal|sledoval)",
         r"\bfilm\w*\s+(jsi|sis)\s+(vid|koukal|sledoval)",
     ],

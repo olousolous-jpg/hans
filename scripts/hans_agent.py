@@ -882,6 +882,14 @@ def _run_who_home(handler, args) -> str:
     def _odmitnout():
         from scripts.hans_recall import _PRIVACY_REFUSAL
         return _PRIVACY_REFUSAL
+    # HANS_CAMERA_STRANGER_V1 (23. 9.) — VEDOMA ZMENA rozhodnuti V2 vys:
+    # V2 pustila cizimu "nikoho tu nevidim" (tj. ze je dum prazdny).
+    # Pokyn uzivatele 23. 9.: "at nerika, co vidi kamerou, neznamemu".
+    # Duvod, proc V2 vznikla (V1 dala na dotaz o zraku odmitnuti O LIDECH),
+    # resi vlastni kamerove odmitnuti — zrak prizna, obsah nesdeli.
+    if _cizi:
+        from scripts.hans_recall import _CAMERA_REFUSAL
+        return _CAMERA_REFUSAL
     hi = getattr(handler, "_hans_idle", None)
     names = [n for n in (getattr(hi, "_present_names", None) or [])
              if n and n not in ("Unknown", "?", "")]

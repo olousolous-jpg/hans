@@ -334,7 +334,8 @@ class SurroundingsDB:
             for name_cz, cnt in sorted(counts.items(),
                                         key=lambda x: x[1], reverse=True)[:12]:
                 parts.append(f"{name_cz} ({cnt}×)" if cnt > 1 else name_cz)
-            if parts:
+            # HANS_CAMERA_STRANGER_V1 (23. 9.) — obsah zaberu cizimu ne.
+            if parts and asker_known:
                 lines.append("V místnosti vidím: " + ", ".join(parts) + ".")
 
         persons = self.get_persons()
@@ -378,7 +379,17 @@ class SurroundingsDB:
         # HANS_CHAT_HIDE_3RD_PARTY_V1 (20.7.): volající předá None místo []
         # = celou větu úplně vynech (chat módu, kde 3. strany dráždí model);
         # [] = „nikdo neni" (dnešní explicit signal); non-empty = normální list.
-        if visible_persons is None:
+        if not asker_known:
+            # HANS_CAMERA_STRANGER_V1 (23. 9.) — cizimu ANI "nikdo tu neni"
+            # (prozradi prazdny dum). Driv sem prosla veta "Nikdo neni
+            # momentalne v zornem poli" a Hans cizimu rekl "v mistnosti neni
+            # nikdo" (sada B 23. 9.). Zrak se nepopira (VISION_NOT_DENIED).
+            lines.append(
+                "Do místnosti vidíš (kamera funguje), ale s tímto člověkem "
+                "o tom, co nebo kdo v ní je, nemluvíš — ani že tu nikdo "
+                "není. Místo popírání zraku řekni, že to sděluješ jen "
+                "lidem, které znáš.")
+        elif visible_persons is None:
             # HANS_VISION_NOT_DENIED_V1 (8. 9.) — zamlčet KDO tu je neznamená
             # tvrdit, že Hans nevidí. Dřív se věta vynechala úplně (`pass`)
             # a model si prázdno doplnil popřením vlastní SCHOPNOSTI:
@@ -414,7 +425,7 @@ class SurroundingsDB:
             lines.append(weather_str)
 
         # Smer pohledu kamery
-        if pan_angle is not None:
+        if pan_angle is not None and asker_known:  # HANS_CAMERA_STRANGER_V1
             if pan_angle < -30:   _dir = "doleva"
             elif pan_angle > 30:  _dir = "doprava"
             else:                 _dir = "primo pred sebe"

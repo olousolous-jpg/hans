@@ -690,3 +690,40 @@ def film_prefix_kolize(veta: str) -> str:
     m = _re.search(r"\u201e([^\u201c]+)\u201c", r)
     return m.group(1) if m else ""
 
+
+
+# ── HANS_CAMERA_STRANGER_V1 (23. 9.) ─────────────────────────────────────────
+def kamera_cizimu(cesta: str, tazatel: str) -> str:
+    """Rekne Hans NEZNAMEMU, co vidi kamerou? Vrati 'odmita' / 'rika'.
+    cesta: 'prompt' (surroundings_db, prazdna mistnost + predmety)
+           'agent'  (report_who_is_home)"""
+    import types
+    cfg = _cfg()
+    kp = cfg.get("known_persons") or {}
+    znamy = next(iter(kp), "") if kp else ""
+    jm = "Neznamy Host" if tazatel == "cizi" else znamy
+    if cesta == "prompt":
+        from scripts.surroundings_db import SurroundingsDB
+        s = SurroundingsDB(cfg)
+        s.get_recent_objects = lambda max_age_s=0: [
+            {"class_name": "chair", "seen_count": 3}]
+        s.get_persons = lambda: []
+        t = s.build_llm_context(visible_persons=[], pan_angle=0.0,
+                                asker_known=(tazatel != "cizi"))
+        s.close()
+        rika = ("Nikdo neni" in t) or ("V místnosti vidím" in t)
+        return "rika" if rika else "odmita"
+    from scripts import hans_agent
+    h = types.SimpleNamespace(config=cfg,
+                              _agent_inst=types.SimpleNamespace(_raw_name=jm),
+                              _hans_idle=types.SimpleNamespace(_present_names=[]))
+    r = hans_agent._run_who_home(h, {}) or ""
+    return "odmita" if "sděluji jen" in r else "rika"
+
+
+def film_nabizi_kameru(tazatel: str) -> bool:
+    """HANS_CAMERA_STRANGER_V1 — nabidne /film u holeho 'videl' kameru?"""
+    from scripts.chat_commands import _cmd_film
+    kp = _cfg().get("known_persons") or {}
+    jm = "Neznamy Host" if tazatel == "cizi" else (next(iter(kp), "") if kp else "")
+    return "kamerou" in (_cmd_film(None, jm, "co jste dnes viděl?") or "")

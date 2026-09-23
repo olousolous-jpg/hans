@@ -3256,6 +3256,12 @@ def _family_sentence(pid: str, links: dict, config: dict) -> str:
 _PRIVACY_REFUSAL = ("O lidech z tohoto domu mluvím jen s těmi, koho znám, "
                     "pane. Snad mi to prominete.")
 
+# HANS_CAMERA_STRANGER_V1 (23. 9., pokyn uzivatele) — co Hans vidi kamerou,
+# nerika NEZNAMEMU. Priznava zrak (HANS_VISION_NOT_DENIED_V1 plati dal),
+# jen obsah nesdeli. Sdileno agentem i handlerem, at odmitaji stejne.
+_CAMERA_REFUSAL = ("Kamerou vidím, ale co v ní je, sděluji jen lidem, "
+                   "které znám. Snad mi to prominete.")
+
 
 def person_card(db_path: str, query: str, config: dict,
                 asker: str = "") -> str:
