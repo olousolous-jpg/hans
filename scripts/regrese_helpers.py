@@ -747,3 +747,25 @@ def kniha_kotva(dotaz: str, slovo: str) -> bool:
     from scripts.hans_convindex import relax_attempts
     kroky, _ = relax_attempts(dotaz)
     return bool(kroky) and all(slovo in k for k in kroky)
+
+
+# ── HANS_FILM_DAY_RANGE_V1 / HANS_BOOK_ORIGIN_V1 (23. 9.) ────────────────────
+def film_okno_prazdne(dotaz: str) -> str:
+    """Odpoved `films_watched_answer` nad PRAZDNYM denikem (docasna DB)."""
+    import os, sqlite3, tempfile
+    from scripts.hans_recall import films_watched_answer
+    fd, p = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        c = sqlite3.connect(p)
+        c.execute("CREATE TABLE diary (ts REAL, event_type TEXT, title TEXT)")
+        c.commit(); c.close()
+        return films_watched_answer(p, dotaz)
+    finally:
+        os.unlink(p)
+
+
+def puvod_knihy(veta: str) -> bool:
+    """Sepne vzor na ZISKANI veci (`/zdroje` → puvod knihy)?"""
+    from scripts.chat_commands import _PUVOD_KNIHY_PAT
+    return bool(_PUVOD_KNIHY_PAT.search(veta or ""))

@@ -4170,6 +4170,18 @@ class OpenWebUIDirectHandler:
                 self._thread_ctx = None
                 print(f"[Chat] thread error: {_te}")
             _cmd = parse_command(user_message)
+            # HANS_FILM_OPINION_ANAFORA_V1 (23. 9.) — anafora obliby po výpisu
+            # filmů („a který se ti z nich líbil nejvíc?“) nenese slovo „film“;
+            # o /film rozhodne předchozí replika ve vlákně.
+            if not _cmd:
+                try:
+                    from scripts.chat_commands import thread_film_opinion
+                    if thread_film_opinion(user_message, _t_turns):
+                        _cmd = ("film", user_message)
+                        logging.getLogger(__name__).info(
+                            'HANS_FILM_OPINION_ANAFORA_V1: vlákno → /film')
+                except Exception as _fae:
+                    logging.getLogger(__name__).debug('anafora film: %s', _fae)
             # HANS_CONFIRM_PRECEDENCE_V2 (20.8.) — ČEKÁ-LI AGENT NA POTVRZENÍ,
             # LLM ROUTER SE NEPTÁ. Princip už platí od 7.8. pro větev
             # prohloubení (`HANS_CONFIRM_PRECEDENCE_V1`), jen se nikdy

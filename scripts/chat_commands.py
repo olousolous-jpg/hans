@@ -3459,6 +3459,12 @@ def _tema_ze_zdrojoveho_dotazu(raw: str) -> str:
         return ""
 
 
+# HANS_BOOK_ORIGIN_V1 — sloveso ZÍSKÁNÍ věci (ne čerpání informace).
+_PUVOD_KNIHY_PAT = re.compile(
+    r"\b(vzal|vzala|na[šs]el|na[šs]la|sehnal|sehnala|dostal|dostala)\b"
+    r"|\bodkud\s+(ji|ho|jej)\s+m", re.I)
+
+
 def _cmd_zdroje(handler, name, args) -> str:
     """Vypíše odkazy na to, co Hans četl. Deterministicky z deníku.
 
@@ -3495,6 +3501,19 @@ def _cmd_zdroje(handler, name, args) -> str:
         q = raw.lower()          # slash forma: /zdroje vrak
     if not q and raw:
         q = _tema_ze_zdrojoveho_dotazu(raw)
+    # HANS_BOOK_ORIGIN_V1 (23. 9.) — „kde jsi ji vzal?“ o čtené KNIZE není
+    # dotaz na webové zdroje. Doloženo sadou A: vypsaly se přečtené články.
+    # Jen holý dotaz bez tématu a jen když vlákno jmenuje knihu z knihovny.
+    if not q and raw and _PUVOD_KNIHY_PAT.search(raw):
+        try:
+            from scripts.hans_thread import recent_turns as _rt
+            from scripts.hans_recall import book_from_thread, book_origin_answer
+            _kn = book_from_thread(db, [t for _r, t in _rt(handler, name)[-4:]])
+            if _kn:
+                _log.info("HANS_BOOK_ORIGIN_V1: původ knihy %s", _kn.get("id"))
+                return book_origin_answer(_kn)
+        except Exception as _be:
+            _log.debug("puvod knihy selhal: %s", _be)
     try:
         cx = _sq.connect("file:%s?mode=ro" % db, uri=True, timeout=5.0)
         if q:
@@ -4074,6 +4093,47 @@ def _je_dotaz_na_oblibu_filmu(veta: str) -> bool:
     return True
 
 
+# HANS_FILM_OPINION_ANAFORA_V1 (23. 9.) — „a který se ti z nich líbil
+# nejvíc?“ po výpisu filmů. Věta slovo „film“ nenese, takže `/film` nesepne
+# a šla přes self_state (Hans si estetiku vymyslel). Rozhoduje VLÁKNO:
+# přesměruje se, jen když předchozí Hansova replika JE výpis filmů
+# (`film_list_titles`) — „z nich“ o knihách zůstane beze změny.
+_ANAFORA_OBLIBY_PAT = re.compile(
+    r"\b(l[ií]bil\w*|bavil\w*|zaujal\w*)\b", re.I)
+_ANAFORA_ODKAZ_PAT = re.compile(
+    r"\bz\s+(nich|t[ěe]ch|toho)\b|\bkter[ýyáaée]\b|\bnejv[íi]c\b|"
+    r"\bnejl[ée]p\b", re.I)
+
+
+def je_anafora_obliby(veta: str) -> bool:
+    v = str(veta or "")
+    if len(v) > 120 or not _ANAFORA_OBLIBY_PAT.search(v):
+        return False
+    if not _ANAFORA_ODKAZ_PAT.search(v):
+        return False
+    # jiný druh díla ve větě = jiné téma, ne anafora na výpis filmů
+    if re.search(r"knih|obraz|hudb|p[íi]s[ní]|skladb|[čc]l[áa]n", v, re.I):
+        return False
+    return not (_FILM_TRETI_PAT.search(v) or re.search(r"doporu[čc]", v, re.I))
+
+
+def posledni_vypis_filmu(turns) -> list:
+    """Tituly z POSLEDNÍ Hansovy repliky, je-li výpisem filmů; jinak []."""
+    try:
+        from scripts.hans_recall import film_list_titles
+        for role, text in reversed(list(turns or [])):
+            if role == "assistant":
+                return film_list_titles(text)
+    except Exception:
+        pass
+    return []
+
+
+def thread_film_opinion(message: str, turns) -> bool:
+    """HANS_FILM_OPINION_ANAFORA_V1 — patří věta na /film díky vláknu?"""
+    return bool(je_anafora_obliby(message) and posledni_vypis_filmu(turns))
+
+
 # HANS_VIDEL_UPRESNI_V1 (23. 9.) — hole "co jsi/jste (dnes) videl?" je
 # viceznacne: film, nebo co Hans zahledl kamerou? Navrh uzivatele: zeptat
 # se, ne hadat. Odpoved "film" jde na /film, "kamerou" k modelu, ktery
@@ -4097,6 +4157,19 @@ def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
     if _znamy and _VIDEL_HOLY_PAT.search(str(args or "")):
         _log.info("HANS_VIDEL_UPRESNI_V1: hole 'videl' \u2192 upresnujici otazka")
         return "Myslíte film, který jsem viděl, nebo co jsem zahlédl kamerou?"
+    # HANS_FILM_OPINION_ANAFORA_V1 — „který z nich…“ po výpisu filmů:
+    # názor jen k filmům z TOHO výpisu, ne obecný žebříček.
+    if je_anafora_obliby(args or "") and not _je_dotaz_na_oblibu_filmu(args or ""):
+        try:
+            from scripts.hans_thread import recent_turns as _rt
+            from scripts.hans_recall import films_liked_among
+            _tit = posledni_vypis_filmu(_rt(handler, name))
+            if _tit:
+                _log.info("HANS_FILM_OPINION_ANAFORA_V1: anafora obliby → "
+                          "názor k %d filmům z výpisu", len(_tit))
+                return films_liked_among(_recall_db(handler), _tit)
+        except Exception as _ae:
+            _log.debug("anafora obliby selhala: %s", _ae)
     # HANS_FILM_OPINION_ANSWER_V1 — nejdriv obliba, teprve pak vypis.
     if _je_dotaz_na_oblibu_filmu(args or ""):
         _ob = films_liked_answer(_recall_db(handler))

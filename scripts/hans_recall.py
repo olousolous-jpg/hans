@@ -2034,6 +2034,38 @@ def films_watched_answer(db_path: str, question: str = "",
         conn = _ro(db_path)
         q = (question or "").lower()
         today = "dnes" in q or "dneska" in q
+        # HANS_FILM_DAY_RANGE_V1 (23. 9.) — okno znalo JEN slovo „dnes“, takže
+        # „co jsi včera viděl za filmy?“ vrátilo výpis posledních (tedy
+        # DNEŠNÍCH) filmů. Doloženo sadou A 23. 9. Protažen hotový parser
+        # `resolve_time_range` (včera, předevčírem, den v týdnu, datum,
+        # tento/minulý týden) — týž, který používá recall rozhovorů.
+        # 📏 Reálně 0× z 1 584 výměn; je to pokrytí tvaru, ne častá vada.
+        _rng = None
+        if not today:
+            try:
+                _rng = resolve_time_range(q)
+            except Exception:
+                _rng = None
+        if _rng:
+            _lbl = (_rng[2] or "").strip()
+            _lbl = (_lbl[:1].upper() + _lbl[1:]) if _lbl else "V tu dobu"
+            rows = conn.execute(
+                "SELECT ts, title FROM diary WHERE event_type='kodi_playing' "
+                "AND ts >= ? AND ts < ? ORDER BY ts DESC",
+                (_rng[0], _rng[1])).fetchall()
+            _seen, _tit = set(), []
+            for _ts, _t in rows:
+                _t = (_t or "").strip()
+                if _t and _t.lower() not in _seen:
+                    _seen.add(_t.lower())
+                    _tit.append(_t)
+                if len(_tit) >= limit * 2:
+                    break
+            if not _tit:
+                return ("%s jsem podle deníku žádný film ani pořad "
+                        "nesledoval, pane. Nebudu si nic vymýšlet." % _lbl)
+            return "%s jsem u obrazovky zaznamenal: %s." % (
+                _lbl, "; ".join("„%s“" % t for t in _tit))
         if today:
             midnight = datetime.now().replace(
                 hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -2245,6 +2277,143 @@ def _looks_like_film_query(question: str) -> bool:
     return bool(_FILM_CTX.search(_fold(question or "")))
 
 
+_NAZOR_NEZNA = ("v\u00edm jen velmi m\u00e1lo", "v\u00edm jen m\u00e1lo", "nezn\u00e1m",
+                "ne\u010detl jsem", "nevid\u011bl jsem", "nem\u00e1m z\u00e1znam")
+
+
+def _nazor_prvni_veta(data: str) -> Optional[str]:
+    """HANS_FILM_OPINION_ANAFORA_V1 — první věta vlastního názoru na film,
+    nebo None (krátká, přiznání neznalosti, jméno z domácnosti).
+    Vytaženo z `films_liked_answer`, aby obě odpovědi měly TÝŽ filtr."""
+    veta = (data or "").strip().split("\n")[0].strip()
+    m = re.search(r"^(.{20,180}?[.!?])(\s|$)", veta)
+    if m:
+        veta = m.group(1).strip()
+    elif len(veta) > 180:
+        veta = veta[:180].rstrip() + "\u2026"
+    if len(veta) < 20:
+        return None
+    if any(_n in veta.lower() for _n in _NAZOR_NEZNA):
+        return None
+    if _jmenuje_domacnost(veta):
+        return None
+    return veta
+
+
+# HANS_FILM_OPINION_ANAFORA_V1 — pozná VÝPIS filmů od `films_watched_answer`
+# (všechny tři tvary: dnes, časové okno, „Naposledy jsem sledoval“).
+_VYPIS_FILMU_PAT = re.compile(
+    r"^(Naposledy jsem sledoval|Dnes jsem u obrazovky zaznamenal"
+    r"|.{0,40}? jsem u obrazovky zaznamenal)")
+
+
+def film_list_titles(text: str) -> list:
+    """Tituly z Hansova výpisu filmů; [] když text výpisem není."""
+    t = (text or "").strip()
+    if not _VYPIS_FILMU_PAT.search(t):
+        return []
+    return [x.strip() for x in re.findall(r"„([^“]{1,120})“", t) if x.strip()]
+
+
+def films_liked_among(db_path: str, titles: list, limit: int = 2) -> str:
+    """HANS_FILM_OPINION_ANAFORA_V1 (23. 9.) — „a který se ti z nich líbil
+    nejvíc?“ po výpisu filmů. Názor se bere JEN k filmům z toho výpisu.
+    Doloženo sadou A 23. 9.: anafora nenesla slovo „film“, šla přes
+    self_state a Hans si estetiku filmu vymyslel. K žádnému názor → přizná."""
+    if not titles:
+        return ""
+    conn = None
+    ven = []
+    try:
+        conn = _ro(db_path)
+        for t in titles:
+            tl = t.lower()
+            rows = conn.execute(
+                "SELECT title, data FROM diary WHERE event_type='movie_opinion' "
+                "AND data IS NOT NULL AND trim(data) != '' AND title IS NOT NULL "
+                "AND (lower(title) = ? OR instr(lower(title), ?) > 0 "
+                "OR instr(?, lower(title)) > 0) ORDER BY ts DESC LIMIT 5",
+                (tl, tl, tl)).fetchall()
+            for _tt, data in rows:
+                # krátký titul (≤ 3 znaky) jen při přesné shodě
+                if len((_tt or "").strip()) <= 3 and (_tt or "").lower() != tl:
+                    continue
+                v = _nazor_prvni_veta(data)
+                if v:
+                    ven.append((t, v))
+                    break
+            if len(ven) >= max(1, limit):
+                break
+    except Exception:
+        return ""
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+    if not ven:
+        return ("K žádnému z těch filmů nemám zapsaný vlastní názor, pane, "
+                "takže si nebudu vymýšlet, který se mi líbil nejvíc.")
+    if len(ven) == 1:
+        return "Z nich mě nejvíc zaujal „%s“. %s" % ven[0]
+    return ("Názor mám zapsaný k těmhle z nich:\n"
+            + "\n".join("\u2013 %s \u2014 %s" % (t, v) for t, v in ven))
+
+
+def book_from_thread(db_path: str, texts: list) -> Optional[dict]:
+    """HANS_BOOK_ORIGIN_V1 — kniha z `hans_library`, o které vlákno mluví.
+    Shoda = slovo titulu (≥ 5 znaků) se ve vlákně objeví jako začátek
+    slova (bez diakritiky). Nejnověji založená kniha vyhrává."""
+    txt = " " + _fold(" ".join(str(x) for x in (texts or []))).lower()
+    if not txt.strip():
+        return None
+    conn = None
+    try:
+        conn = _ro(db_path)
+        rows = conn.execute(
+            "SELECT book_id, book_title, author, COALESCE(url,'') FROM "
+            "hans_library WHERE status IN ('reading','finished') "
+            "ORDER BY started_at DESC").fetchall()
+    except Exception:
+        return None
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+    for bid, title, author, url in rows:
+        slova = [w for w in re.findall(r"\w+", _fold(title or "").lower())
+                 if len(w) >= 5]
+        if any(re.search(r"(?<!\w)" + re.escape(w[:6]), txt) for w in slova):
+            return {"id": bid or "", "title": title or "", "author": author or "",
+                    "url": url or ""}
+    return None
+
+
+def book_origin_answer(book: dict) -> str:
+    """HANS_BOOK_ORIGIN_V1 (23. 9.) — odkud Hans knihu MÁ, z `hans_library`.
+    Doloženo sadou A: „kde jsi ji vzal?“ (o čtené knize) → výpis webových
+    zdrojů. Knihy jsou buď nahrané uživatelem (`user_*`), nebo z Project
+    Gutenberg. 🔒 Bez jména — kdo knihu nahrál, se neříká (smí to slyšet
+    i cizí)."""
+    t = book.get("title") or "tu knihu"
+    bid = book.get("id") or ""
+    url = book.get("url") or ""
+    if bid.startswith("user_"):
+        return ("Knihu „%s“ mi do knihovny nahrál někdo z domácnosti, pane — "
+                "sám jsem si ji nesháněl." % t)
+    if not url:
+        try:
+            from scripts.hans_library import _FALLBACK_BOOKS
+            url = next((b.get("url") or "" for b in _FALLBACK_BOOKS
+                        if b.get("id") == bid), "")
+        except Exception:
+            url = ""
+    if "gutenberg" in url:
+        return ("Knihu „%s“ jsem si stáhl z Project Gutenberg, kde je volně "
+                "dostupná, pane: %s" % (t, url))
+    return ("Knihu „%s“ mám ve své knihovně, ale odkud přesně pochází, "
+            "zapsané nemám, pane." % t)
+
+
 def films_liked_answer(db_path: str, limit: int = 3) -> Optional[str]:
     """HANS_FILM_OPINION_ANSWER_V1 (22. 9.) — na dotaz \u201ekter\u00fd film se ti
     l\u00edbil?\u201c odpov\u011bz z VLASTN\u00cdCH n\u00e1zor\u016f (`movie_opinion`), ne v\u00fdpisem
@@ -2290,21 +2459,12 @@ def films_liked_answer(db_path: str, limit: int = 3) -> Optional[str]:
             continue
         if any(klic in _v or _v in klic for _v in videl):
             continue
-        veta = (data or "").strip().split("\n")[0].strip()
-        # jen PRVNI veta nazoru — cely odstavec by z odpovedi udelal esej
-        m = re.search(r"^(.{20,180}?[.!?])(\s|$)", veta)
-        if m:
-            veta = m.group(1).strip()
-        elif len(veta) > 180:
-            veta = veta[:180].rstrip() + "\u2026"
-        if len(veta) < 20:
-            continue
-        if any(_n in veta.lower() for _n in _NEZNA):
-            continue
+        # jen PRVNI veta nazoru — cely odstavec by z odpovedi udelal esej.
         # HANS_FILM_OPINION_PRIVACY_V1 (23. 9.) — veta, ktera jmenuje clena
-        # domacnosti, o filmu nic nerika a tahle odpoved jde deterministicky
-        # KOMUKOLI (i cizimu). Zmereno: 14 z 2 224 prvnich vet.
-        if _jmenuje_domacnost(veta):
+        # domacnosti, se vynecha (odpoved jde deterministicky i cizimu).
+        # Filtr je sdileny s `films_liked_among` (HANS_FILM_OPINION_ANAFORA_V1).
+        veta = _nazor_prvni_veta(data)
+        if not veta:
             continue
         videl.add(klic)
         ven.append((t, veta))
