@@ -1,0 +1,15 @@
+# Volitelné Python balíčky. Selhání instalace se jen nahlásí — Hans bez nich
+# běží, jen daná funkce zůstane vypnutá.
+
+# kalendář (hans_calendar)
+icalendar
+recurring-ical-events
+
+# import e-knih ve formátu MOBI (ebook_import)
+mobi
+
+# sdílení přes web (hans_webshare)
+passlib
+
+# Matrix chat (hans_matrix)
+matrix-nio

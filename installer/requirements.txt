@@ -1,0 +1,30 @@
+# Python balíčky pro Hanse, které NEJSOU v apt (instalují se do .venv).
+#
+# Sestaveno z importů v kódu (main.py, web_admin.py, scripts/, tools/), ne z
+# `pip freeze` — deploy/requirements.txt je výpis celého systému včetně CUDA
+# a na čistém Pi se nainstalovat nedá. Verze jsou převzaté z něj, tedy z Pi,
+# na kterém Hans běží.
+#
+# numpy, opencv, pillow, scipy, scikit-learn, psutil, requests, picamera2,
+# lgpio, spidev a hailort přicházejí z apt (viz apt-packages.txt). Instalátor
+# jejich verze navíc zamkne (constraints), aby je pip ve venv nepřepsal.
+
+# webadmin
+fastapi==0.136.1
+uvicorn==0.46.0
+pydantic==2.13.3
+
+# hlas: TTS, detekce řeči, potlačení šumu
+edge-tts==7.2.7
+webrtcvad==2.0.10
+# webrtcvad importuje pkg_resources, které setuptools od verze 81 nemá
+setuptools<81
+noisereduce==3.0.3
+
+# wake word (verze 0.4.0 má modely přibalené, nic se nestahuje zvlášť)
+openwakeword==0.4.0
+onnxruntime==1.24.4
+
+# čtení webu a e-knih
+beautifulsoup4==4.13.4
+lxml

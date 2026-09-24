@@ -1,0 +1,55 @@
+# Systémové balíčky pro Hanse na Raspberry Pi 5 (Raspberry Pi OS, 64 bit).
+#
+# Formát:  balik            — povinný
+#          ?balik           — volitelný (selhání jen nahlásí)
+#          balik1|balik2    — stačí první, který v repozitáři existuje
+#
+# Proč apt a ne pip: HW knihovny (Hailo, kamera, GPIO) přes pip nejdou. Těžké
+# vědecké balíčky (numpy, opencv, scipy…) bereme z apt taky — picamera2 z apt
+# je sestavená proti numpy z apt a jiná verze numpy ve venv by ji rozbila.
+# venv proto vzniká s --system-site-packages a tyhle balíčky vidí.
+
+# ── Python a sestavení ──
+python3
+python3-venv
+python3-pip
+python3-dev
+build-essential
+git
+curl
+jq
+sqlite3
+
+# ── Hailo AI Kit (driver, HailoRT, modely v /usr/share/hailo-models) ──
+hailo-all
+
+# ── Kamera ──
+python3-picamera2
+python3-libcamera
+rpicam-apps|libcamera-apps
+
+# ── GPIO / SPI (displeje očí, servo) ──
+python3-lgpio
+python3-spidev
+?python3-rpi-lgpio
+?python3-smbus2|python3-smbus
+
+# ── Vědecké a obrazové knihovny (musí být ze stejného zdroje jako picamera2) ──
+python3-numpy
+python3-opencv
+python3-pil
+python3-scipy
+python3-sklearn
+python3-matplotlib
+python3-psutil
+python3-requests
+python3-tk
+
+# ── Audio, video, síť ──
+ffmpeg
+alsa-utils
+libportaudio2
+psmisc
+iputils-ping
+openssh-client
+sshpass
