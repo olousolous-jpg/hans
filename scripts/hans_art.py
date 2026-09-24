@@ -422,13 +422,22 @@ def _translate_subject(config: dict, subject_cs: str) -> str:
         from scripts.ollama_client import ollama_generate
     except Exception:
         return ""
+    # HANS_ART_SUBJECT_EN_V1 (24. 9.) — překládá ČESKÝ model (hans-czech,
+    # rezidentní → 0 VRAM, BEZ keep_alive=0, to by ho vyhodilo z paměti).
+    # Změřeno na 10 námětech: qwen2.5:7b 6/10 („zraloka“ → ripe banana,
+    # „žraloka“ → crocodile, „kentaura“ → knight with horse head, „kočky se
+    # psem“ → cat fight), hans-czech 10/10 vč. „cat versus dog fight“.
+    # Zkracování z docstringu výš byla vada qwen, ne překladu jako takového.
+    _acf = _acfg(config)
     out = ollama_generate(
-        str(_acfg(config).get("prompt_model", "qwen2.5:7b")),
+        str(_acf.get("subject_translate_model")
+            or _acf.get("verdict_model")
+            or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest")),
         "Czech: %s\nEnglish:" % subject_cs,
         system=("Translate the Czech noun phrase into ENGLISH. Output ONLY the "
                 "English words, 1-6 words, nothing else. Never transliterate — "
                 "if it is a creature or thing, use its real English name."),
-        config=config, timeout=60, keep_alive=0,
+        config=config, timeout=60,
         options={"temperature": 0.0, "num_predict": 24})
     return (out or "").strip().strip('."\'').splitlines()[0][:60] if out else ""
 
@@ -537,6 +546,21 @@ def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str =
     model = str(acfg.get("prompt_model", "qwen2.5:7b"))
     user = (source_intro if source_intro is not None
             else f"Book: {title}\n\nReader's reflection (Czech):\n{reflection}\n\n")
+    # HANS_ART_SUBJECT_EN_V1 — anglický název námětu VŽDY, ne až po úniku.
+    # Doloženo 22. 9.: „ponorku v tlame zraloka“ → slon, „zraloka“ → žena
+    # v knihovně, „žraloka“ → příšera v lese; v promptu žádné české slovo
+    # nezůstalo, takže _cs_leak (níž) se nespustil — slovo se PŘELOŽILO ŠPATNĚ.
+    # Vždy (1 dotaz na rezidentní model, ~1 s): `_looks_english` pustí češtinu
+    # bez háčků („zraloka“) a `_cs_leak` nerozliší jazyk. U anglického námětu
+    # vyjde překlad stejně a nápověda se nepřidá.
+    if cs_subject:
+        _en0 = _translate_subject(config, cs_subject)
+        if _en0 and _en0.lower() != cs_subject.lower() and not _cs_leak(cs_subject, _en0):
+            if cs_subject in user:
+                user = user.replace(cs_subject, "%s (%s)" % (cs_subject, _en0), 1)
+            else:
+                user += "ENGLISH NAME OF THE SUBJECT: %s\n\n" % _en0
+            _log.info('art: HANS_ART_SUBJECT_EN_V1 námět „%s“ → „%s“', cs_subject, _en0)
     # HANS_ART_INTENT_V1 (5.8.) — TRVALÉ ZÁMĚRY mají přednost před posledními
     # ponaučeními. Ponaučení jsou reakce na JEDEN obraz a jsou zaměnitelná
     # (115 unikátních textů, ale pořád „introduce subtle X to enhance visual
