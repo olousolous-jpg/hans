@@ -1504,6 +1504,8 @@
         "voice_timeout": 180,
         "_voice_model_note": "SEVERKA_CZ_OUTPUT_V1 — base model vrací analysis/rationale anglicky (v EN je úsudek čistší); CZ-facing text projde hlasovým krokem. PŘEKLAD ANO, KOREKTURA NE: korektura překlopila „Jsi Hans\" na „Jsem Hans\" a chybu neopravila — na text, který se zapisuje do config.persona.core, se 8B modelem nesahá.",
         "cadence_days": 7,
+        "min_days_since_change": 7,
+        "_min_days_since_change_note": "SEVERKA_CHANGE_COOLDOWN_V1 (24. 9. 2026) — po schválené změně identity Severka tolik dní nic nenavrhuje (bez brzdy navrhovala přejmenování role při každém běhu). Výchozí v kódu 30; 7 = zkušební období na pokyn uživatele. /severka teď brzdu obchází.",
         "_cadence_days_note": "SEVERKA_CADENCE_V1 (17. 9. 2026) — po kolika dnech smi Severka znovu zvazit zmenu identity. Puvodne 7 natvrdo, 17. 9. zmeneno na 30 (uzivatel: 7 dni je asi moc malo), a TYZ DEN vraceno na 7: ukazalo se, ze navrhy vypousteli umeni a historii kvuli POSKOZENE narativni kapitole (NARRATIVE_NUM_CTX_V1), ne kvuli kadenci — a oprava se potrebuje overit driv nez za mesic. Az bude overeno, zvaz navrat na 30. Konvence jako direction.cadence_days (14), synthesis.cadence_days (3)."
     },
     "climate": {

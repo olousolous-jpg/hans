@@ -378,7 +378,10 @@ class Severka:
             _st = self._store()
             _cur = _st.current() if _st else None
             if _cur and _cur.source != "seed" and _min_d > 0:
-                _stari = (time.time() - float(_cur.ts or 0)) / 86400.0
+                # kalendářní dny: noční běh ve 3:00 by jinak změnu z rána
+                # téhož dne o 7 dní dřív počítal jako 6,8 → ztracený týden
+                _stari = float((datetime.now().date()
+                                - datetime.fromtimestamp(float(_cur.ts or 0)).date()).days)
                 if _stari < _min_d:
                     _log.info("severka %s: identita v%s je stará %.1f dne "
                               "(< %g) → nechávám ji uležet, nic nenavrhuji",
