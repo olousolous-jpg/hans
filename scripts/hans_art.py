@@ -781,6 +781,48 @@ def record_art_feedback(db_path: str, artwork_rowid, title: str, rating=None,
         return False
 
 
+def rederive_lesson_with_feedback(config: dict, db_path: str, artwork_rowid) -> str:
+    """HANS_ART_FEEDBACK_V2 — po lidském hodnocení odvoď lekci k TOMU obrazu
+    znovu, hned. Nová lekce je nejnovější → příští obraz ji dostane do zadání
+    (klíčová slova se dopočítají lazy). Dřív se hodnocení projevilo až
+    u přespříštího obrazu. Vrací novou lekci nebo ''."""
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        row = con.execute("SELECT title, note, data FROM diary WHERE rowid=? "
+                          "AND event_type='artwork'", (artwork_rowid,)).fetchone()
+        fbs = con.execute("SELECT data FROM diary WHERE event_type='art_feedback' "
+                          "ORDER BY ts DESC").fetchall()
+        con.close()
+    except Exception as e:
+        _log.warning("art: rederive — čtení selhalo: %s", e)
+        return ""
+    if not row:
+        return ""
+    title, verdict, data = row
+    try:
+        vision = (json.loads(data or "{}") or {}).get("vision", "")
+    except Exception:
+        vision = ""
+    rating, koment = None, []
+    for (d,) in fbs:
+        try:
+            j = json.loads(d or "{}")
+        except Exception:
+            continue
+        if j.get("artwork_rowid") != artwork_rowid:
+            continue
+        if rating is None and j.get("rating") is not None:
+            rating = j["rating"]
+        if j.get("comment"):
+            koment.append(j["comment"])
+    if rating is None and not koment:
+        return ""
+    lesson = _derive_art_lesson(config, db_path, title, vision, verdict or "",
+                                store=True, feedback_this=(rating, " / ".join(koment)))
+    _log.info("art: HANS_ART_FEEDBACK_V2 lekce k „%s“ po hodnocení: %.120s", title, lesson)
+    return lesson
+
+
 def recent_art_feedback(db_path: str, days: int = 21, limit: int = 3) -> list:
     """[(titul, rating, komentář)] nejnovější první, sloučené po obraze."""
     try:
@@ -1036,7 +1078,8 @@ def _covered_aspects(db_path: str, days: int = 30, min_n: int = 4) -> list:
 
 
 def _derive_art_lesson(config: dict, db_path: str, title: str,
-                       vision_desc: str, verdict: str, store: bool = True) -> str:
+                       vision_desc: str, verdict: str, store: bool = True,
+                       feedback_this=None) -> str:
     """Odvodí ponaučení pro příští render z vize + verdiktu. Běží na hans-czech
     (warm, žádný extra model do VRAM). Uloží do deníku 'art_lesson' (když store).
     Vrací ponaučení nebo ''. Nikdy nehází."""
@@ -1092,6 +1135,24 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
                 t_, {1: "liked it", -1: "did NOT like it"}.get(r_, "commented"),
                 (" — \"%s\"" % c_) if c_ else "") for t_, r_, c_ in _fb) + "\n\n")
         _log.info("art: lesson zná %d lidských hodnocení", len(_fb))
+    # HANS_ART_FEEDBACK_V2 — lidský soud o TOMHLE obraze je verdikt, ne vodítko.
+    # Doloženo 24. 9.: 👍 „není mu co vytknout“ a lekce přesto opravovala
+    # měřítko — výtku si vzala z Hansova vlastního verdiktu.
+    if feedback_this:
+        _r, _c = feedback_this
+        if _r == 1:
+            _pokyn = ("The human LIKED this image%s. Do NOT fix anything the human "
+                      "did not criticise and ignore the painter's own doubts. Output "
+                      "guidance that KEEPS what worked here — name it concretely "
+                      "from the description." % ((" and said: \"%s\"" % _c) if _c else ""))
+        elif _r == -1:
+            _pokyn = ("The human DID NOT LIKE this image%s. Build the guidance on "
+                      "fixing exactly that; the painter's own praise does not count."
+                      % ((" and said: \"%s\"" % _c) if _c else ""))
+        else:
+            _pokyn = ("The human commented on this image: \"%s\". Build the "
+                      "guidance on that comment first." % _c)
+        recent_block += "HUMAN VERDICT ON THIS VERY IMAGE (final word):\n%s\n\n" % _pokyn
     user = (recent_block
             + "Independent description of the rendered image:\n%s\n\n"
             "Painter's verdict:\n%s\n\nWrite the ONE-line guidance."

@@ -445,6 +445,19 @@ class MatrixBridge:
             return None
         return fb
 
+    def _art_fb_rederive(self, rowid):
+        """HANS_ART_FEEDBACK_V2 — nová lekce hned po hodnocení, MIMO event loop
+        (volá LLM). Víc hodnocení za sebou → poslední vyhraje, starší doběhnou."""
+        import threading as _th
+
+        def _run():
+            try:
+                from scripts.hans_art import rederive_lesson_with_feedback
+                rederive_lesson_with_feedback(self.config, self._diary_path(), rowid)
+            except Exception as e:
+                _log.warning("matrix: nová lekce po hodnocení selhala: %s", e)
+        _th.Thread(target=_run, daemon=True).start()
+
     async def _on_reaction(self, room, event):
         try:
             if event.sender == self._client.user_id:
@@ -463,6 +476,7 @@ class MatrixBridge:
             record_art_feedback(self._diary_path(), cil["rowid"], cil["title"],
                                 rating=r, person=self._person_for(event.sender),
                                 via="matrix_reakce")
+            self._art_fb_rederive(cil["rowid"])
         except Exception as e:
             _log.warning("matrix: reakce selhala: %s", e)
 
@@ -491,6 +505,7 @@ class MatrixBridge:
             record_art_feedback(self._diary_path(), cil["rowid"], cil["title"],
                                 rating=r, comment=koment, person=person,
                                 via="matrix_odpoved" if reply_to else "matrix_zprava")
+            self._art_fb_rederive(cil["rowid"])
             await self._a_send("Děkuji, zapsal jsem si to k obrazu „%s“ — "
                                "příště z toho vyjdu." % cil["title"], room.room_id)
             return True
