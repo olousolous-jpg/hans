@@ -54,10 +54,10 @@ def llm_forms(gen, nom: str, gender: str) -> Optional[dict]:
     prompt = (
         "Vyskloňuj české křestní jméno „%s“ (%s). Vrať JSON s klíči gen, dat, acc, "
         "loc, voc — tvary 2., 3., 4., 6. a 5. pádu jednotného čísla, BEZ předložek, "
-        "s velkým počátečním písmenem. Příklad pro Petr (muž): "
-        '{"gen":"Petra","dat":"Petrovi","acc":"Petra","loc":"Petrovi","voc":"Petře"}. '
-        "Příklad pro Jana (žena): "
-        '{"gen":"Jany","dat":"Janě","acc":"Janu","loc":"Janě","voc":"Jano"}.'
+        "s velkým počátečním písmenem. Příklad pro Karel (muž): "
+        '{"gen":"Karla","dat":"Karlovi","acc":"Karla","loc":"Karlovi","voc":"Karle"}. '
+        "Příklad pro Eva (žena): "
+        '{"gen":"Evy","dat":"Evě","acc":"Evu","loc":"Evě","voc":"Evo"}.'
         % (nom, "mužské jméno" if gender == "muž" else "ženské jméno"))
     try:
         data = gen.json(prompt, _SCHEMA, temperature=0.0)
@@ -70,7 +70,7 @@ def llm_forms(gen, nom: str, gender: str) -> Optional[dict]:
 
 
 def _ask_person(gen, existing: Optional[dict] = None) -> Optional[dict]:
-    nom = ui.ask("Jméno (1. pád, např. Petr) — Enter = konec", (existing or {}).get("nom", ""))
+    nom = ui.ask("Jméno (1. pád, např. Karel) — Enter = konec", (existing or {}).get("nom", ""))
     if not nom:
         return None
     g_def = (existing or {}).get("gender", "žena" if nom.endswith("a") else "muž")
@@ -90,7 +90,7 @@ def _ask_person(gen, existing: Optional[dict] = None) -> Optional[dict]:
 def step(cfg: dict, gen, answers: dict) -> list[dict]:
     ui.header("Domácnost")
     ui.info("Koho bude persona znát a oslovovat jménem. Z pádů se sestaví pravidla")
-    ui.info("oslovení (čeština chce vokativ: „Petře“, ne „Petr“).")
+    ui.info("oslovení (čeština chce vokativ: „Karle“, ne „Karel“).")
     ui.info("Klíč osoby (jméno bez diakritiky, malými) musí později sedět s jménem při")
     ui.info("zápisu obličeje do rozpoznávání.")
     people = list(answers.get("household") or [])

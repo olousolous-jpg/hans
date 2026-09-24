@@ -92,12 +92,12 @@ class TestModels(unittest.TestCase):
 
 
 class TestPersona(unittest.TestCase):
-    B = {"name": "Anička", "gender": "žena", "role": "zahradnice",
+    B = {"name": "Rozárka", "gender": "žena", "role": "zahradnice",
          "description": "x", "formal": True}
 
     def test_normalize_replaces_name(self):
         p = persona.normalize(dict(fake_services.PERSONA,
-                                   core="Jsi Anička, zahradnice domácnosti. Máš ráda květiny."),
+                                   core="Jsi Rozárka, zahradnice domácnosti. Máš ráda květiny."),
                               self.B)
         self.assertTrue(p["core"].startswith("Jsi {name}, zahradnice"))
         self.assertEqual(persona.problems(p, self.B), [])
@@ -116,21 +116,23 @@ class TestPersona(unittest.TestCase):
         self.assertIn("Mluvíš česky", r)
 
     def test_slug(self):
-        self.assertEqual(persona.slug("Anička Nová"), "anicka-nova")
+        self.assertEqual(persona.slug("Rozárka Nová"), "rozarka-nova")
 
 
 class TestHousehold(unittest.TestCase):
     def test_key_and_rules(self):
         self.assertEqual(household.key_of("Šárka Nová"), "sarka")
-        people = [{"nom": "Petr", "voc": "Petře"}, {"nom": "Marie", "voc": "Marie"}]
+        people = [{"nom": "Karel", "voc": "Karle"}, {"nom": "Marie", "voc": "Marie"}]
         r = household.address_rules(people)
-        self.assertIn("vokativ Petře (ne Petr)", r)
+        self.assertIn("vokativ Karle (ne Karel)", r)
         self.assertNotIn("Marie (ne", r)
 
     def test_fallback_forms(self):
-        f = household._fallback_forms("Petr", "muž")
-        self.assertEqual(f["voc"], "Petře")
-        self.assertEqual(f["acc"], "Petra")
+        # bez LLM se použijí Hansova pravidla z cz_names (jen základní vzory;
+        # proto je průvodce vždy dá uživateli potvrdit)
+        self.assertEqual(household._fallback_forms("Karel", "muž")["voc"], "Karle")
+        f = household._fallback_forms("Honza", "muž")
+        self.assertEqual((f["voc"], f["acc"]), ("Honzo", "Honzu"))
 
 
 # ── end-to-end ──────────────────────────────────────────────────────────────
@@ -191,7 +193,7 @@ class TestEndToEnd(unittest.TestCase):
         return r
 
     def test_full_flow(self):
-        r = self.wiz(["127.0.0.1", "sk-test1234567890", "a@b.cz", "petr",
+        r = self.wiz(["127.0.0.1", "sk-test1234567890", "a@b.cz", "karel",
                       "aa:bb:cc:dd:ee:ff", "", "", ""], "network")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue((self.tmp / "config.private.json").exists())
@@ -200,10 +202,10 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("OpenEuroLLM", r.stdout)
 
-        r = self.wiz(["Petr", "m", "pán domu", "", "", "", "", "",
-                      "Jana", "z", "paní domu", "", "", "", "", "", "",   # "" = konec seznamu
+        r = self.wiz(["Karel", "m", "pán domu", "", "", "", "", "",
+                      "Eva", "z", "paní domu", "", "", "", "", "", "",   # "" = konec seznamu
                       "",                                              # rodinné vazby? ne
-                      "Anička", "z", "zahradnice", "Laskavá zahradnice.", "",
+                      "Rozárka", "z", "zahradnice", "Laskavá zahradnice.", "",
                       "veverka skeptička", "", "",
                       ""], "persona")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -221,20 +223,20 @@ class TestEndToEnd(unittest.TestCase):
         pub = json.loads((self.tmp / "config.json").read_text(encoding="utf-8"))
         priv = json.loads((self.tmp / "config.private.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(cfg["persona"]["name"], "Anička")
+        self.assertEqual(cfg["persona"]["name"], "Rozárka")
         self.assertTrue(cfg["persona"]["core"].startswith("Jsi {name}, zahradnice"))
         self.assertIn("ženského rodu", cfg["persona"]["language_rules"])
-        self.assertIn("vokativ Petře (ne Petr)", cfg["persona"]["address_rules"])
-        self.assertIn("vokativ Jano (ne Jana)", cfg["persona"]["address_rules"])
-        self.assertEqual(cfg["known_persons"]["petr"]["voc"], "Petře")
-        self.assertEqual(cfg["known_persons"]["jana"]["dat"], "Janě")
-        self.assertEqual(cfg["relationship_seed"]["jana"]["role"], "paní domu")
+        self.assertIn("vokativ Karle (ne Karel)", cfg["persona"]["address_rules"])
+        self.assertIn("vokativ Evo (ne Eva)", cfg["persona"]["address_rules"])
+        self.assertEqual(cfg["known_persons"]["karel"]["voc"], "Karle")
+        self.assertEqual(cfg["known_persons"]["eva"]["dat"], "Evě")
+        self.assertEqual(cfg["relationship_seed"]["eva"]["role"], "paní domu")
         self.assertEqual(cfg["hans_dialog"]["kolac_name"], "Šiška")
         self.assertEqual(cfg["tts"]["voice"], "cs-CZ-VlastaNeural")
-        self.assertEqual(cfg["models"]["dialog"], "anicka-czech:latest")
+        self.assertEqual(cfg["models"]["dialog"], "rozarka-czech:latest")
         left = {p: m for p, m in models.model_paths(cfg).items() if "hans-czech" in m}
         self.assertEqual(left, {})
-        self.assertIn("anicka-czech:latest", self.st.models)
+        self.assertIn("rozarka-czech:latest", self.st.models)
         self.assertEqual(len(cfg["knowledge"]["collections"]), 6)
         self.assertTrue(cfg["knowledge"]["enabled"])
         self.assertEqual(cfg["openwebui_direct"]["api_token"], "sk-test1234567890")
@@ -250,8 +252,8 @@ class TestEndToEnd(unittest.TestCase):
         # hans_persona z toho postaví systémový prompt se jménem
         from scripts.hans_persona import persona_core
         core = persona_core(cfg)
-        self.assertIn("Jsi Anička, zahradnice", core)
-        self.assertIn("Petře", core)
+        self.assertIn("Jsi Rozárka, zahradnice", core)
+        self.assertIn("Karle", core)
 
 
 class TestDryRun(unittest.TestCase):

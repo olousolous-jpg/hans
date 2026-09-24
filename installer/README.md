@@ -87,3 +87,6 @@ Samotný průvodce: `python3 installer/wizard.py persona --dry-run --fresh`.
 ```bash
 python3 -m unittest discover -s installer/tests -v
 ```
+`test_dependencies.py` hlídá, že každý balíček importovaný v kódu Hanse instalátor
+zná. Když do Hanse přibude nový `import`, test selže a řekne, co doplnit do
+`requirements.txt` / `apt-packages.txt`.
