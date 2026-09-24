@@ -354,6 +354,12 @@ step_network() {
 step_llm() {
     say "  Texty persony (identita, společník, skloňování jmen) napíše jazykový model."
     local ch rc
+    # Testovací režim (installer/test_install.sh): generátor je předem daný
+    if [ -n "${HANS_GEN_URL:-}" ]; then
+        info "Generátor předem nastavený: ${HANS_GEN_MODEL:-auto} @ $HANS_GEN_URL"
+        wizard llm --url "$HANS_GEN_URL" --model "${HANS_GEN_MODEL:-}"
+        return
+    fi
     while true; do
         ch="$(ask "Kde má běžet? 1) Ollama na PC (doporučeno)  2) lokálně na Pi  3) ručně přes Claude/ChatGPT" 1)"
         case "$ch" in

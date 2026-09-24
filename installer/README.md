@@ -62,6 +62,25 @@ Hans musí běžet (kamera + Hailo). Obličejová data zůstávají jen na Pi
 (`data/known_faces*.pkl`, mimo git). Po změně domácnosti Hanse restartuj
 (`systemctl --user restart hans`), aby nové lidi načetl.
 
+## Zkouška instalátoru: `test_install.sh` (bezpečné i na Pi, kde Hans běží)
+```bash
+bash installer/test_install.sh               # interaktivně, falešný jazykový model
+bash installer/test_install.sh --yes         # rychle, všude výchozí odpovědi
+bash installer/test_install.sh --live-llm    # texty generuje skutečná Ollama na PC
+bash installer/test_install.sh --keep        # nechat výsledek v data/installer/dryrun/
+```
+1. zkontroluje syntaxi a pustí automatické testy (`installer/tests`),
+2. udělá otisk všeho, na co instalace sahá (config, služba, `.venv`, sudoers, stav),
+3. projde celý `install.sh --dry-run --fresh`: přesně ty otázky, co na novém Pi.
+   Ve výchozím stavu místo Ollamy na PC odpovídá **falešný model** s ukázkovými
+   texty (PC se nezatěžuje, persona bude „zahradnice“ s tvým jménem a rolí),
+4. ověří, že výsledný config jde načíst, veřejná část neobsahuje nic citlivého,
+   persona se sestaví, a že se **na zařízení nic nezměnilo**. Končí
+   „ZKOUŠKA PROŠLA“, nebo vypíše, co se změnilo či selhalo.
+
+`--keep` nechá výsledek v `data/installer/dryrun/`. Obsahuje, co jsi zadal
+(jména, API klíč), takže ho nikam neposílej a pak smaž.
+
 ## Vyzkoušení bez instalace (i na Pi, kde Hans běží)
 ```bash
 bash installer/install.sh --dry-run --fresh

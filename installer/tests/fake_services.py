@@ -91,7 +91,9 @@ def make_handler(st: FakeState):
                 elif "SPOLEČNÍKA" in prompt:
                     out = COMPANION
                 elif "Vytvoř identitu" in prompt:
-                    out = PERSONA
+                    out = dict(PERSONA)
+                    role = prompt.split("Výchozí role: ", 1)[1].split("\n", 1)[0].strip()
+                    out["core"] = out["core"].replace("zahradnice", role, 1)
                 else:
                     out = {"pozdrav": "Dobrý den"}
                 return self._send({"message": {"content": json.dumps(out, ensure_ascii=False)}})
