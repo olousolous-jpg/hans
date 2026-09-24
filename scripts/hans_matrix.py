@@ -435,10 +435,20 @@ class MatrixBridge:
     # ── HANS_ART_FEEDBACK_V1 ─────────────────────────────────────────────────
     _ART_FB_OKNO_S = 24 * 3600
 
+    _ART_FB_SOUBOR = "data/.art_fb_last.json"
+
     def _art_fb_cil(self, eid=None):
         """Obraz, ke kterému se zpětná vazba vztahuje: přesně podle event_id
         (reakce / odpověď), jinak poslední doručený v okně 24 h."""
         fb = getattr(self, "_art_fb_last", None)
+        if fb is None:                          # po restartu ze souboru
+            try:
+                with open(self._ART_FB_SOUBOR, encoding="utf-8") as _f:
+                    fb = json.load(_f)
+                fb["eids"] = set(fb.get("eids") or [])
+                self._art_fb_last = fb
+            except Exception:
+                fb = None
         if not fb or time.time() - fb["ts"] > self._ART_FB_OKNO_S:
             return None
         if eid is not None and eid not in fb["eids"]:
@@ -489,6 +499,23 @@ class MatrixBridge:
             reply_to = (rel.get("m.in_reply_to", {}) or {}).get("event_id")
             from scripts.hans_art import feedback_rating, record_art_feedback
             r = feedback_rating(text)
+            # HANS_ART_REPAINT_V1 — „zkus to ještě jednou“ + připomínka do 30 min
+            from scripts.hans_art import je_zadost_o_opakovani, opraveny_namet
+            _cil_o = self._art_fb_cil(reply_to) if reply_to else self._art_fb_cil()
+            if (_cil_o and je_zadost_o_opakovani(text)
+                    and time.time() - _cil_o["ts"] < 1800):
+                _kom = "\n".join(l for l in text.split("\n")
+                                 if not l.startswith(">")).strip()
+                record_art_feedback(self._diary_path(), _cil_o["rowid"],
+                                    _cil_o["title"], rating=(r if r is not None else -1),
+                                    comment=_kom, person=person, via="matrix_opakuj")
+                self._art_fb_rederive(_cil_o["rowid"])
+                loop = asyncio.get_event_loop()
+                _namet = await loop.run_in_executor(
+                    None, opraveny_namet, self.config, _cil_o["title"], _kom)
+                _log.info("matrix: HANS_ART_REPAINT_V1 „%s“ + připomínka → „%s“",
+                          _cil_o["title"], _namet)
+                return "namaluj " + _namet
             if reply_to:
                 cil = self._art_fb_cil(reply_to)
             elif r is not None and len(text) <= 300:
@@ -533,8 +560,11 @@ class MatrixBridge:
             # takze se tahle trida chyb nedala z logu ZMERIT (korpus vracel
             # 0 vyskytu u chyby, ktera se prokazatelne stala 4x).
             _log.info("matrix ← %s: %.200s", person, text)
-            if await self._art_fb_zprava(room, event, text, person):  # HANS_ART_FEEDBACK_V1
+            _fbz = await self._art_fb_zprava(room, event, text, person)  # HANS_ART_FEEDBACK_V1
+            if _fbz is True:
                 return
+            if isinstance(_fbz, str) and _fbz:     # HANS_ART_REPAINT_V1 — přepsaná žádost
+                text = _fbz
 
             # HANS_BRIDGE_COMMANDS_V1 — příkazy/intenty (jen role 'full'), stejné
             # co Telegram. Běží v EXECUTORU: ctx.send volá self.send, které blokuje
@@ -850,6 +880,11 @@ class MatrixBridge:
                              getattr(self, "_last_event_id", None)) if e}
         self._art_fb_last = {"rowid": rid_, "title": title, "ts": time.time(),
                              "eids": _eids}
+        try:                                    # přežije restart Hanse
+            with open(self._ART_FB_SOUBOR, "w", encoding="utf-8") as _f:
+                json.dump(dict(self._art_fb_last, eids=sorted(_eids)), _f)
+        except Exception as _fe:
+            _log.debug("art_fb_last uložení: %s", _fe)
         _log.info("matrix: vyžádaný obraz → %.40s (čekám na hodnocení, %d id)",
                   title, len(_eids))
 

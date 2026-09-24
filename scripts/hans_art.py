@@ -781,6 +781,47 @@ def record_art_feedback(db_path: str, artwork_rowid, title: str, rating=None,
         return False
 
 
+# ── HANS_ART_REPAINT_V1 (24. 9.) — „zkus to ještě jednou“ s připomínkou ────
+# Doloženo 24. 9. 13:26: připomínka bez palce a bez odpovědi šla do volného
+# hovoru, model odpověděl „Maluji obraz na téma … s podvodní oblohou a divnými
+# mraky“ — nic se nemalovalo (předstíraná akce) a do „zadání“ dal právě to,
+# co vadilo. Teď: žádost o opakování do 30 min po doručení → připomínka jako
+# 👎 s komentářem + opravený námět → skutečné „namaluj …“.
+_OPAKUJ = re.compile(
+    r"zkus(?:te)?\s+(?:to\s+)?(?:je[sš]t[eě](?:\s+jednou)?|znovu|znova)"
+    r"|je[sš]t[eě]\s+jednou|p[rř]ed[eě]lej|p[rř]ekresli|namaluj\s+(?:to\s+)?znovu"
+    r"|\bznovu\b|\bznova\b", re.I)
+_OPRAVA_SYS = (
+    "Máš původní zadání obrazu a připomínku zadavatele (co bylo na obraze špatně "
+    "nebo jak to myslel). Napiš JEDNOU krátkou větou česky opravené zadání obrazu: "
+    "popiš jen to, co MÁ být na obraze vidět. NEZMIŇUJ nic, co vadilo nebo co tam "
+    "být nemá (žádné 'bez …', 'ne …'). Vrať jen tu větu, bez uvozovek.")
+
+
+def je_zadost_o_opakovani(text: str) -> bool:
+    return bool(_OPAKUJ.search(text or ""))
+
+
+def opraveny_namet(config: dict, puvodni: str, pripominka: str) -> str:
+    """Původní námět + připomínka → opravený námět (rezidentní hans-czech).
+    Změřeno 6/6 („zralok zapasi s ponorkou“ + „mel jsem na mysli okusovat…“
+    → „Zralok okusuje ponorku.“). Chyba → původní námět."""
+    try:
+        from scripts.ollama_client import ollama_generate
+        acf = _acfg(config)
+        out = ollama_generate(
+            str(acf.get("verdict_model")
+                or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest")),
+            "Původní zadání: %s\nPřipomínka: %s\nOpravené zadání:" % (puvodni, pripominka),
+            system=_OPRAVA_SYS, config=config, timeout=60,
+            options={"temperature": 0.2, "num_predict": 60})
+        v = ((out or "").strip().splitlines() or [""])[0].strip().strip('"„“').rstrip(".")
+        return v[:160] or puvodni
+    except Exception as e:
+        _log.warning("art: opravený námět selhal: %s", e)
+        return puvodni
+
+
 def rederive_lesson_with_feedback(config: dict, db_path: str, artwork_rowid) -> str:
     """HANS_ART_FEEDBACK_V2 — po lidském hodnocení odvoď lekci k TOMU obrazu
     znovu, hned. Nová lekce je nejnovější → příští obraz ji dostane do zadání
