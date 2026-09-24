@@ -37,6 +37,8 @@ class FakeState:
         self.files: dict[str, str] = {}
         self.log: list[tuple[str, str, object]] = []
         self.chat_override = None      # callable(body) -> str, pro testy chyb
+        self.faces: dict[str, int] = {}          # webadmin: jméno → počet vzorků
+        self.enroll_calls: list[dict] = []
 
 
 def make_handler(st: FakeState):
@@ -68,6 +70,9 @@ def make_handler(st: FakeState):
                 return self._send({"models": [{"name": m} for m in st.models]})
             if self.path.startswith("/api/v1/knowledge"):
                 return self._send({"items": [{"name": k, "id": v} for k, v in st.collections.items()]})
+            if self.path == "/api/faces":
+                return self._send([{"name": k, "samples": v, "db": "arcface"}
+                                   for k, v in sorted(st.faces.items())])
             if self.path == "/":
                 return self._send({"ok": True})
             self._send({"detail": "not found"}, 404)
@@ -106,6 +111,16 @@ def make_handler(st: FakeState):
                 name = body.get("model") or body.get("name")
                 st.models.append(name)
                 return self._send({"status": "success"})
+            if p == "/api/enroll/start":
+                st.enroll_calls.append(body)
+                # jako by člověk v okně na Pi potvrdil zápis
+                st.faces[body["name"]] = st.faces.get(body["name"], 0) + 20
+                return self._send({"ok": True, "message": "Multi-phase enroll '%s'" % body["name"]})
+            if p == "/api/enroll/quick_augment":
+                st.enroll_calls.append(body)
+                if body["name"] not in st.faces:
+                    return self._send({"detail": "Osoba není ve FaceDB"}, 400)
+                return self._send({"ok": True, "name": body["name"], "session": body["session"]})
             if p == "/api/v1/knowledge/create":
                 kid = str(uuid.uuid4())
                 st.collections[body["name"]] = kid

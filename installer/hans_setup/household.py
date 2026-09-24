@@ -98,6 +98,13 @@ def step(cfg: dict, gen, answers: dict) -> list[dict]:
         ui.info("Uloženo z minula: " + ", ".join(p["nom"] for p in people))
         if not ui.confirm("Ponechat?", True):
             people = []
+        elif ui.confirm("Přidat další osoby?", False):
+            while True:
+                print()
+                p = _ask_person(gen)
+                if not p:
+                    break
+                people.append(p)
     if not people:
         while True:
             print()

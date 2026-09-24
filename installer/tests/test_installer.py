@@ -256,6 +256,50 @@ class TestEndToEnd(unittest.TestCase):
         self.assertIn("Karle", core)
 
 
+class TestFaces(unittest.TestCase):
+    """Průvodce zápisem obličejů proti falešnému webadminu."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv, cls.st = fake_services.start(0)
+        from hans_setup import faces
+        faces.ADMIN = "http://127.0.0.1:%d" % cls.srv.server_address[1]
+        faces.POLL_S, faces.WAIT_S = 0.05, 2
+        cls.faces = faces
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def test_session_by_hour(self):
+        self.assertEqual(self.faces.current_session(8), "morning")
+        self.assertEqual(self.faces.current_session(14), "afternoon")
+        self.assertEqual(self.faces.current_session(20), "evening")
+
+    def test_enroll_all_missing(self):
+        from hans_setup import ui
+        cfg = {"known_persons": {"karel": {"nom": "Karel"}, "eva": {"nom": "Eva"}}}
+        self.st.faces = {"eva": 12}
+        feed = iter(["v", "", "k"])     # zapsat nezapsané, připraven, konec
+        import builtins
+        orig_input, orig_tty = builtins.input, ui._tty
+        builtins.input = lambda p="": next(feed, "")
+        ui._tty = lambda: True
+        try:
+            self.faces.step(cfg, dry_run=False)
+        finally:
+            builtins.input, ui._tty = orig_input, orig_tty
+        self.assertEqual([c["name"] for c in self.st.enroll_calls if "seconds" in c], ["karel"])
+        self.assertEqual(self.st.enroll_calls[-1], {"name": "karel", "seconds": 0})
+        self.assertEqual(self.st.faces["karel"], 20)
+
+    def test_augment_needs_existing_person(self):
+        self.st.faces = {}
+        with self.assertRaises(self.faces.AdminError):
+            self.faces._call("POST", "/api/enroll/quick_augment",
+                             {"name": "nikdo", "session": "morning"})
+
+
 class TestDryRun(unittest.TestCase):
     def test_dry_run_does_not_touch_real_config(self):
         before = {p: (ROOT / p).read_bytes() for p in ("config.json",)
