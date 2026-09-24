@@ -7,6 +7,7 @@ Dialog se zapisuje do deníku a čte nahlas přes TTS.
 import threading
 import time
 import random
+import re  # HANS_KOLAC_TOPIC_SUBJECT_V1
 import logging
 import requests
 from pathlib import Path
@@ -194,6 +195,7 @@ _ANGLES_BY_KIND = {
     "observation": ["co to znamená", "co s tím", "domněnky o příčině", "debate"],
     "movie_diary": ["proč zaujal", "scéna která utkvěla", "srovnání", "debate"],
     "free":        ["úvaha", "vzpomínka", "historka", "debate"],
+    "case":        ["dedukce", "podezřelý detail", "co nesedí", "debate"],  # HANS_KOLAC_TOPIC_SUBJECT_V1
     "toaster":     ["toast"],   # Švitorka mód — vždy o pečivu
 }
 
@@ -457,7 +459,7 @@ class TopicManager:
                 is_debate=random.random() < self.debate_probability,
             )
 
-        priority = ["study", "reading", "kodi", "observation", "movie_diary", "weather"]
+        priority = ["study", "reading", "case", "kodi", "observation", "movie_diary", "weather"]
         fresh.sort(key=lambda c: priority.index(c["kind"])
                    if c["kind"] in priority else 999)
 
@@ -502,9 +504,27 @@ class TopicManager:
                 candidates.append({
                     "subject": title, "kind": "reading", "seed": part,
                 })
-            elif "kodi" in low or "hraje" in low or "film" in low:
+            # HANS_KOLAC_TOPIC_SUBJECT_V1 (24. 9.) — dřív tahle větev brala
+            # cokoli se slovem „film“/„hraje“ a tématem se stala CELÁ věta
+            # („Dříve jsem přemýšlel o filmu 'Dr. No'.“, „KOLAČŮV AKTIVNÍ
+            # PŘÍPAD: … Fáze: …“); větev movie_diary níž byla mrtvá.
+            elif "kolačův aktivní případ:" in low:
+                _m = re.search(r"případ:\s*([^\n]+)", part, re.I)
                 candidates.append({
-                    "subject": part[:80], "kind": "kodi", "seed": part,
+                    "subject": (_m.group(1).strip() if _m else part.strip())[:60],
+                    "kind": "case", "seed": part.strip(),
+                })
+            elif "filmu" in low and "přemýšlel" in low:
+                _m = re.search(r"['\u201e\"]([^'\u201c\"]+)['\u201c\"]", part)
+                candidates.append({
+                    "subject": (_m.group(1) if _m else part)[:80],
+                    "kind": "movie_diary", "seed": part,
+                })
+            elif "kodi právě hraje:" in low:
+                _m = re.search(r"hraje:\s*([^(\n]+)", part, re.I)
+                candidates.append({
+                    "subject": (_m.group(1).strip() if _m else part)[:80],
+                    "kind": "kodi", "seed": part,
                 })
             elif "venku je" in low or "počasí" in low:
                 candidates.append({
@@ -514,10 +534,6 @@ class TopicManager:
                 candidates.append({
                     "subject": "co je v místnosti", "kind": "observation",
                     "seed": part,
-                })
-            elif "filmu" in low and "přemýšlel" in low:
-                candidates.append({
-                    "subject": part[:80], "kind": "movie_diary", "seed": part,
                 })
         return candidates
 
@@ -1348,6 +1364,17 @@ class HansDialog:
                           "model_name", "jobautomation/OpenEuroLLM-Czech:latest"))
         kolac_model = dc.get("kolac_model") or hans_model  # volitelně jiný mozek
         n_lines = int(dc.get("lines_per_dialog", 4))
+        # HANS_KOLAC_TOPIC_MASK_V1 (24. 9.) — v 1. kole dostane Hans (i Koláč)
+        # JEN tu část kontextu, ze které téma vzniklo, ne celou směs dne
+        # (počasí, 3 články, film, případ, kniha, studium…) s pokynem „vyjdi
+        # z těchto detailů“. Změřeno: 1. kolo zmiňovalo předchozí/cizí téma
+        # 20,6 % (další kola 8–9 %); A/B na živém modelu 3 témata × 3 běhy:
+        # odbočení k jiné položce směsi 6/9 → 0/9. Inspirace: maskování
+        # kontextu v AutoPersonas (arXiv 2607.08252). Celá směs zůstává jen
+        # tématu „dnešní den“ (kind free), kde JE tématem.
+        _seed = getattr(topic, "seed_context", "") or ""
+        if _seed.strip() and getattr(topic, "kind", "free") != "free":
+            full_context = _seed.strip()
         scene = (f"Téma hovoru: {getattr(topic, 'subject', '')}\n"
                  f"Úhel: {getattr(topic, 'angle', '')}\n")
         # KOLAC_DIALOG_COHERENCE_V1 — na POKRAČUJÍCÍCH turnech NEcpát grab-bag
