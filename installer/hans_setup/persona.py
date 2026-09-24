@@ -265,7 +265,9 @@ def step_companion(cfg: dict, gen, b: dict, answers: dict) -> dict:
 def generate(gen, b: dict, companion: dict, people: list) -> Optional[dict]:
     feedback = ""
     p: Optional[dict] = None
+    attempts = 0
     while True:
+        attempts += 1
         ui.info("Generuji identitu (%s) — může to trvat i pár minut…" % gen.label)
         try:
             raw = gen.json(persona_prompt(b, companion, H.describe(people), feedback),
@@ -280,6 +282,11 @@ def generate(gen, b: dict, companion: dict, people: list) -> Optional[dict]:
         if p:
             bad = problems(p, b)
             show(p, b, bad)
+        if not ui._tty() and attempts >= 3:
+            # neinteraktivně (--yes) se nesmí točit donekonečna
+            if p:
+                ui.warn("Neinteraktivní režim: přijímám poslední návrh i s výhradami.")
+            return p
         choice = ui.choose("Co dál?", [("p", "přijmout"), ("z", "vygenerovat znovu"),
                                        ("k", "znovu s poznámkou, co změnit"),
                                        ("u", "upravit ručně v editoru"),
