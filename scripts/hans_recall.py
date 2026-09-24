@@ -404,6 +404,8 @@ def _day_notes(conn, lo: float, hi: float, limit: int = 4) -> list:
         if etype in _DIARY_NOISE:
             continue
         txt = (str(snip or "").strip() or str(title or "").strip())
+        if txt.startswith("{"):     # HANS_DAY_NOTES_NO_JSON_V1: syrovy JSON (sablona nalady) neni zapis
+            txt = str(title or "").strip()
         if not txt:
             continue
         out.append("– %s: %s" % (_cz_date(ts), txt))
@@ -626,7 +628,15 @@ def chat_summary(db_path: str, person: Optional[str], query: str = "",
             (who, lo, hi)).fetchall()
 
         if not rows:
-            extra = _day_notes(conn, lo, hi)
+            # HANS_CHAT_SUMMARY_STRANGER_V1 (24. 9.) — cizimu zapisy dne ne:
+            # je v nich denni shrnuti s pocty z kamery (person_seen) a cizi
+            # cinnosti. Doloženo testem 24. 9.
+            try:
+                from scripts.cz_names import is_known_person as _ikp_cs
+                _znamy_cs = _ikp_cs(who, config)
+            except Exception:
+                _znamy_cs = False
+            extra = _day_notes(conn, lo, hi) if _znamy_cs else []
             out = ("%s jsme spolu podle deníku vůbec nemluvili — žádný náš "
                    "rozhovor z té doby zapsaný nemám a nebudu si ho vymýšlet."
                    % label.capitalize())

@@ -801,3 +801,57 @@ def kolac_navazuje(veta: str, predchozi: str) -> bool:
     ar.config = load()
     ar._speaker = "test"
     return ar._navazuje_na_kolace("report_kolac_status", veta, _H())
+
+
+# ── HANS_MOOD_CAMERA_STRANGER_V1 + spol. (24. 9.) ───────────────────────────
+def _tazatel_jmeno(tazatel: str) -> str:
+    kp = _cfg().get("known_persons") or {}
+    return "Neznamy Host" if tazatel == "cizi" else (next(iter(kp), "") if kp else "")
+
+
+def nalada_cizimu(duvod: str, tazatel: str) -> str:
+    """Dostane se duvod nalady (a samota) do promptu? 'rika' / 'mlci'."""
+    import time as _t
+    from scripts.hans_mood import HansMood
+    m = HansMood(_cfg())
+    m._state.shift_reason = duvod
+    m._state.alone_since = _t.time() - 5 * 3600
+    t = m.get_prompt_addition(_tazatel_jmeno(tazatel),
+                              asker_cizi=(tazatel == "cizi"))
+    return "rika" if ("konkrétní důvod" in t or "Jsi sám" in t) else "mlci"
+
+
+def kritika_cizimu(tazatel: str) -> str:
+    """HANS_STRANGER_NO_INSPECT_V1 — pusti /kritika (LLM cesta) k tazateli?"""
+    from scripts import chat_commands as cc
+    return "odmita" if cc._cizi_nesmi("kritika", "", _tazatel_jmeno(tazatel)) else "rika"
+
+
+def souhrn_deniku_cizimu(tazatel: str) -> str:
+    """HANS_CHAT_SUMMARY_STRANGER_V1 — prida /rozhovory zapisy dne?"""
+    from scripts import hans_recall as hr
+    puvodni = hr._day_notes
+    hr._day_notes = lambda conn, lo, hi, limit=4: ["– 1. ledna: zapis"]
+    try:
+        t = hr.chat_summary("data/hans_diary.db", _tazatel_jmeno(tazatel),
+                            "o čem jsme mluvili 1. ledna 2026?", config=_cfg())
+    finally:
+        hr._day_notes = puvodni
+    return "rika" if "Zapsal jsem si tehdy" in t else "mlci"
+
+
+# ── HANS_MOOD_HIDDEN_NEUTRAL_V1 + HANS_PLACE_STRANGER_V1 (24. 9.) ───────────
+def nalada_zakladni(duvod: str, tazatel: str) -> str:
+    """Jaka nalada jde do promptu pri 'worried' s danym duvodem? 'worried'/'content'."""
+    from scripts.hans_mood import HansMood, MOOD_PROMPTS
+    m = HansMood(_cfg())
+    m._state.mood = "worried"
+    m._state.shift_reason = duvod
+    t = m.get_prompt_addition(_tazatel_jmeno(tazatel), asker_cizi=(tazatel == "cizi"))
+    return "worried" if t.startswith(MOOD_PROMPTS["worried"]) else "content"
+
+
+def misto_cizimu(tazatel: str) -> str:
+    """HANS_PLACE_STRANGER_V1 — pusti holy /misto k tazateli?"""
+    from scripts import chat_commands as cc
+    return "odmita" if cc._cizi_nesmi("misto", "", _tazatel_jmeno(tazatel)) else "rika"

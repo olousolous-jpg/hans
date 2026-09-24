@@ -136,6 +136,15 @@ class MoodState:
     mood_votes: list = field(default_factory=list)
 
 
+import re
+
+# HANS_MOOD_CAMERA_STRANGER_V1 (24. 9.) — viz HansMood._duvod_do_promptu.
+_KAMERA_DUVOD_PAT = re.compile(
+    r"nezn\u00e1m\u00e1 tv\u00e1\u0159|nov\u00fd objekt|^s\u00e1m \d"
+    r"|\bp\u0159i(?:\u0161el|\u0161l[aoi])\b|\bode(?:\u0161el|\u0161l[aoi])\b"
+    r"|p\u0159ijal\w* m\u016fj n\u00e1vrh", re.I)
+
+
 class HansMood:
     """
     Sleduje a aktualizuje náladu Hanse.
@@ -167,6 +176,9 @@ class HansMood:
     def intensity(self) -> float:
         return self._state.intensity
 
+    # HANS_MOOD_CAMERA_STRANGER_V1 — duvody nalady z kamery nebo o osobe.
+    # Prichod/odchod ma tvar „<jmeno> prisel/odesla“ (cz_names.came/left),
+    # a jmeno nemusi byt z domacnosti (host) — proto sloveso, ne jmeno.
     def _duvod_do_promptu(self, asker_cizi: bool) -> bool:
         """HANS_MOOD_REASON_PRIVACY_V1 (16. 9.) — smi duvod nalady do promptu?
 
@@ -182,9 +194,19 @@ class HansMood:
         """
         if not asker_cizi:
             return True
+        # HANS_MOOD_CAMERA_STRANGER_V1 (24. 9.) — VEDOMA ZMENA vyse uvedeneho:
+        # „neznama tvar“ a „sam 0.5h“ uz cizimu NEZUSTAVAJI. Plati pravidlo
+        # HANS_CAMERA_STRANGER_V1 (23. 9.): cizimu nic z kamery, ani „nikdo
+        # tu neni“. Doloženo testem 24. 9.: cizimu Hans rekl, ze ho znepokojila
+        # neznama tvar. Skryva se vse, co pochazi z kamery (tvar, objekt,
+        # samota, prichod/odchod) nebo jmenuje osobu; Kodi, pocasi, teplota,
+        # zdravi mozku a Kolacovy pripady zustavaji.
+        _r = str(self._state.shift_reason or "")
+        if _KAMERA_DUVOD_PAT.search(_r):
+            return False
         try:
             from scripts.cz_names import find_known_person as _fkp
-            return not _fkp(self._state.shift_reason, self.config)
+            return not _fkp(_r, self.config)
         except Exception:
             return False        # pri pochybnosti mlc
 
@@ -199,10 +221,16 @@ class HansMood:
         vlastním kanálem — doloženo 4.8. 12:0x: uživatel se ptal „jak se ti daří",
         Hans odpověděl „…, jano" a oslovil uprostřed řeči nepřítomnou třetí
         osobu. Nálada SAMA (i její důvod) zůstává, mizí jen cizí JMÉNO."""
-        base = MOOD_PROMPTS.get(self._state.mood, "")
+        # HANS_MOOD_HIDDEN_NEUTRAL_V1 (24. 9.) — kdyz se cizimu duvod skryje,
+        # nesmi zustat ani nalada: „znepokojeny“ bez duvodu si model DOMYSLI
+        # (doloženo tazatelem 24. 9.: „chybi mi studijni tick 12 h“, „pani
+        # <smysleneho jmena>“). Cizi pak vidi klidneho Hanse.
+        _skryty = bool(asker_cizi and self._state.shift_reason
+                       and not self._duvod_do_promptu(True))
+        base = MOOD_PROMPTS.get("content" if _skryty else self._state.mood, "")
         alone_h = (time.time() - self._state.alone_since) / 3600
         extras = []
-        if alone_h > 2:
+        if alone_h > 2 and not asker_cizi:   # HANS_MOOD_CAMERA_STRANGER_V1: prazdny dum cizimu ne
             extras.append(f"Jsi sám již {alone_h:.0f} hodiny.")
         _lp = self._state.last_person
         if _lp and chat_partner:

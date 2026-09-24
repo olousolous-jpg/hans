@@ -1590,6 +1590,21 @@ class OpenWebUIDirectHandler:
                                     name and str(name).strip().lower() in _pritomni)
                         except Exception:
                             pass
+                        # HANS_MOOD_CAMERA_STRANGER_V1 (24. 9.) — blok o sobe
+                        # bral duvod nalady BEZ filtru, takze obchazel
+                        # HANS_MOOD_REASON_PRIVACY_V1 (doloženo: cizimu „neznama
+                        # tvar“). Tataz brana jako v prompt addition; cizimu
+                        # ani zapnute hlidani (= dum je prazdny).
+                        try:
+                            from scripts.cz_names import is_known_person as _ikp_ss
+                            if not (name and _ikp_ss(name, self.config)):
+                                _rt_state.pop("guard", None)
+                                if _mr and not _mobj._duvod_do_promptu(True):
+                                    _mr = ""
+                                    _mo = "content"   # HANS_MOOD_HIDDEN_NEUTRAL_V1
+                        except Exception:
+                            _mr = ""
+                            _rt_state.pop("guard", None)
                         _ss = self_state_facts(_dbp_ss, mood=_mo, mood_reason=_mr,
                                                runtime=_rt_state or None)
                         if _ss:
@@ -2630,7 +2645,10 @@ class OpenWebUIDirectHandler:
         room_ctx = ""
         _ro = getattr(self, '_room_observer', None)
         if _ro:
-            _room = _ro.get_context_string()
+            # HANS_PLACE_STRANGER_V1 (24. 9., pokyn uzivatele) — popis mistnosti
+            # (z kamery) ani model domova cizimu ne. Doloženo tazatelem: cizimu
+            # Hans popsal okna, gauc, obrazy a dvere do kuchyne.
+            _room = _ro.get_context_string() if not _asker_cizi else ""
             if _room:
                 room_ctx = '\n\n' + _room
 
@@ -2639,7 +2657,8 @@ class OpenWebUIDirectHandler:
         # Do POZDRAVU se model místa NEdává (na přání uživatele — brevita).
         place_ctx = ""
         try:
-            _ps = self._place_store() if not for_greeting else None
+            _ps = (self._place_store()
+                   if not for_greeting and not _asker_cizi else None)  # HANS_PLACE_STRANGER_V1
             if _ps is not None:
                 _wx = getattr(self, '_weather', None)
                 _wx_str = _wx.get_context_string() if _wx else None

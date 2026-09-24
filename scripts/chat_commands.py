@@ -240,13 +240,19 @@ _JEN_ZNAMYM = frozenset({
     "zapis", "work", "denik", "dialog", "zaptej", "enroll", "sleep", "herni",
     "severka", "hlidej", "preloz", "vypnipc", "vpnprepni", "router",
     "experiment", "stop", "pauza", "hledani", "nalez", "brief", "vytvor",
+    # HANS_STRANGER_NO_INSPECT_V1 (24. 9.) — sebekritika vznika z rozhovoru
+    # s domacnosti a nese jejich jmena (i v 7. pade, ktery privacy vzor
+    # nom/acc/voc nechyti). Doloženo: LLM router ji poslal cizimu.
+    "kritika",
+    # HANS_PLACE_STRANGER_V1 (24. 9., pokyn uzivatele) — rozlozeni domu cizimu
+    # ne; VEDOMA ZMENA: driv byl holy vypis /misto pro cizi otevreny.
+    "misto",
 })
 _CTENI_BEZ_ARG = {  # příkaz → argumenty, které jsou jen výpis
     "seznam": (), "kalendar": (), "nitky": ("vse",), "studium": ("programy",),
-    "dilo": ("vse",), "napad": ("vse",), "kritika": (), "dashboard": (),
+    "dilo": ("vse",), "napad": ("vse",), "dashboard": (),
     "avatar": ("stav",), "zdravi": (), "nastroj": (), "prohloubit": (),
     "vhledy": (), "anomalie": (), "interest": (),
-    "misto": ("mistnost", "okno", "dvere", "vedle", "rozlozeni"),
 }
 
 
