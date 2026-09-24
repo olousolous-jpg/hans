@@ -37,12 +37,30 @@ bash installer/install.sh
 | `models` | náhrada `hans-czech` aliasem `<persona>-czech`, kontrola všech modelů z configu |
 | `knowledge` | RAG kolekce v OpenWebUI + nahrání vygenerovaných dokumentů identity |
 | `service` | `~/.config/systemd/user/hans.service` (PATH vede do `.venv`) |
+| `faces` | průvodce rozpoznáváním osob: spustí Hanse a postupně zapíše obličeje lidí z domácnosti |
 | `finish` | shrnutí a ruční kroky |
 
 Kroky jdou pouštět opakovaně i jednotlivě: `--only persona,models`, `--skip hailo`,
 `--redo`. Stav je v `data/installer/state`, odpovědi průvodce v
 `data/installer/answers.json`, zálohy configu v `data/installer/backup-*`
 (vše v `data/`, tedy mimo git).
+
+## Rozpoznávání osob
+```bash
+bash installer/install.sh --only faces        # nebo: python3 installer/wizard.py faces
+python3 installer/wizard.py household         # přidat/upravit lidi (bez nové persony)
+```
+Průvodce ukáže, kdo z domácnosti je v databázi tváří, a každého nezapsaného
+provede zápisem přes Hansův webadmin (`/api/enroll/start`, vícefázově 1 → 2 → 3 m,
+Hans navádí hlasem, asi 2 minuty). Na konci se na **displeji Pi** otevře okno
+s náhledy: vyřadit špatné snímky, do pole „Jméno osoby“ napsat **klíč osoby**,
+který průvodce vypíše (jméno malými písmeny bez diakritiky), a potvrdit. Průvodce
+počká, až se osoba v databázi objeví. Zapsaným lidem nabídne doplnění vzorků
+pro současné světlo (ráno / odpoledne / večer).
+
+Hans musí běžet (kamera + Hailo). Obličejová data zůstávají jen na Pi
+(`data/known_faces*.pkl`, mimo git). Po změně domácnosti Hanse restartuj
+(`systemctl --user restart hans`), aby nové lidi načetl.
 
 ## Vyzkoušení bez instalace (i na Pi, kde Hans běží)
 ```bash

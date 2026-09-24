@@ -7,6 +7,8 @@ Použití (z kořene repozitáře):
     python3 installer/wizard.py persona            # domácnost, persona, společník
     python3 installer/wizard.py models             # náhrada hans-czech + kontrola modelů
     python3 installer/wizard.py knowledge          # RAG kolekce + dokumenty identity
+    python3 installer/wizard.py household          # jen přidat/upravit lidi v domácnosti
+    python3 installer/wizard.py faces              # zápis obličejů (Hans musí běžet)
     python3 installer/wizard.py show               # co je nastavené
 
 Společné přepínače:
@@ -26,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hans_setup import cfg as C            # noqa: E402
-from hans_setup import household, knowledge, models, network, persona, ui  # noqa: E402
+from hans_setup import faces, household, knowledge, models, network, persona, ui  # noqa: E402
 from hans_setup.gen import ManualGen, OllamaGen  # noqa: E402
 
 LOCAL_OLLAMA = "http://127.0.0.1:11434"
@@ -127,6 +129,18 @@ def cmd_show(cfg, answers, a):
     return False
 
 
+def cmd_household(cfg, answers, a):
+    """Jen domácnost (přidání/úprava lidí) bez nového generování persony."""
+    gen = make_gen(answers, a.manual)
+    household.step(cfg, gen if isinstance(gen, OllamaGen) else None, answers)
+    return True
+
+
+def cmd_faces(cfg, answers, a):
+    faces.step(cfg, a.dry_run)
+    return False
+
+
 def cmd_get(cfg, answers, a):
     """Vypíše hodnotu z configu (pro install.sh), např. `get pc_remote.user`."""
     v = C.get(cfg, a.key, "")
@@ -136,7 +150,7 @@ def cmd_get(cfg, answers, a):
 
 COMMANDS = {"network": cmd_network, "llm": cmd_llm, "persona": cmd_persona,
             "models": cmd_models, "knowledge": cmd_knowledge, "show": cmd_show,
-            "get": cmd_get}
+            "household": cmd_household, "faces": cmd_faces, "get": cmd_get}
 
 
 def main(argv=None) -> int:

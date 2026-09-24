@@ -21,7 +21,7 @@ LOG_FILE="$DATA_DIR/install.log"
 # shellcheck source=lib/common.sh
 source "$INSTALLER_DIR/lib/common.sh"
 
-STEPS=(preflight apt system hailo venv network llm persona models knowledge service finish)
+STEPS=(preflight apt system hailo venv network llm persona models knowledge service faces finish)
 declare -A STEP_DESC=(
     [preflight]="kontrola zařízení, systému a místa"
     [apt]="systémové balíčky (Hailo, kamera, GPIO, audio…)"
@@ -34,6 +34,7 @@ declare -A STEP_DESC=(
     [models]="chatový model persony + kontrola modelů na PC"
     [knowledge]="paměť: RAG kolekce v OpenWebUI + dokumenty identity"
     [service]="systemd služba (autostart po bootu)"
+    [faces]="rozpoznávání osob: zápis obličejů lidí z domácnosti"
     [finish]="shrnutí a ruční kroky"
 )
 
@@ -122,6 +123,8 @@ step_preflight() {
     if systemctl --user is-active --quiet hans 2>/dev/null || pgrep -f "python3.* main.py" >/dev/null 2>&1; then
         running=1
     fi
+    # Hans spuštěný TÍMHLE instalátorem (krok service už proběhl) je v pořádku
+    [ "$(state_get done_service)" = "1" ] && running=0
     if [ "$running" = "1" ]; then
         warn "Na tomhle zařízení právě běží Hans."
         if [ "$DRY_RUN" != "1" ] && [ "$FORCE" != "1" ]; then
@@ -400,6 +403,27 @@ step_service() {
     fi
 }
 
+step_faces() {
+    say "  Hans se naučí poznávat lidi z domácnosti podle obličeje. Potřebuje k tomu"
+    say "  běžet (kamera + Hailo) a zapojený displej, na kterém se zápis potvrzuje."
+    if [ "$DRY_RUN" != "1" ] && ! http_ok "http://127.0.0.1:7860/api/faces"; then
+        if [ ! -e /dev/hailo0 ]; then
+            warn "Hailo zatím není vidět (/dev/hailo0) — nejdřív restart Pi, pak:"
+            warn "  bash installer/install.sh --only faces"
+            return 0
+        fi
+        confirm "Spustit teď Hanse (systemctl --user start hans)?" a || {
+            info "Později:  bash installer/install.sh --only faces"; return 0; }
+        run systemctl --user start hans
+        info "Čekám, až Hans naběhne (modely Hailo, webadmin)…"
+        local _
+        for _ in $(seq 1 60); do http_ok "http://127.0.0.1:7860/api/faces" && break; sleep 2; done
+        http_ok "http://127.0.0.1:7860/api/faces" || {
+            warn "Webadmin neodpovídá — viz journalctl --user -u hans -f"; return 1; }
+    fi
+    wizard faces
+}
+
 step_finish() {
     wizard show || true
     cat <<EOF
@@ -409,8 +433,8 @@ ${C_BLD}Ruční kroky, které instalátor neudělá:${C_RST}
   • Kamera:  rpicam-hello -t 3000   musí ukázat obraz
   • Displeje očí a servo zapojit podle pinmapy (scripts/Eye_sphere.py)
   • Zvuk: ověř výstup  speaker-test -c2 -t wav ; ALSA zařízení je v configu tts.alsa_device
-  • Obličeje lidí z domácnosti zapiš ve webadminu (http://<pi>:7860) pod STEJNÝM
-    jménem, jaké má osoba v průvodci (malými písmeny bez diakritiky)
+  • Obličeje: pokud krok faces neproběhl, spusť ho později:
+      bash installer/install.sh --only faces
   • Avatar (volitelné): ComfyUI na PC — viz deploy/SETUP_PC.md, kap. 3
 
 ${C_BLD}Spuštění:${C_RST}
