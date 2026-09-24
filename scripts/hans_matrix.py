@@ -350,6 +350,12 @@ class MatrixBridge:
 
         # registrace callbacků PŘED úvodním sync
         self._client.add_event_callback(self._on_message, RoomMessageText)
+        # HANS_ART_FEEDBACK_V1 — 👍/👎 reakce na doručený obraz
+        try:
+            from nio import ReactionEvent as _RE
+            self._client.add_event_callback(self._on_reaction, _RE)
+        except Exception as _re:
+            _log.warning("matrix: reakce nepůjde číst: %s", _re)
         # auto-přijetí pozvánky (jen od povolených user_id, nebo když seznam
         # prázdný = důvěřuj — jednouživatelský setup). Bez toho by se bot
         # musel do místnosti připojit ručně.
@@ -426,6 +432,72 @@ class MatrixBridge:
         except Exception as e:
             _log.warning("matrix on_invite: %s", e)
 
+    # ── HANS_ART_FEEDBACK_V1 ─────────────────────────────────────────────────
+    _ART_FB_OKNO_S = 24 * 3600
+
+    def _art_fb_cil(self, eid=None):
+        """Obraz, ke kterému se zpětná vazba vztahuje: přesně podle event_id
+        (reakce / odpověď), jinak poslední doručený v okně 24 h."""
+        fb = getattr(self, "_art_fb_last", None)
+        if not fb or time.time() - fb["ts"] > self._ART_FB_OKNO_S:
+            return None
+        if eid is not None and eid not in fb["eids"]:
+            return None
+        return fb
+
+    async def _on_reaction(self, room, event):
+        try:
+            if event.sender == self._client.user_id:
+                return
+            if getattr(event, "server_timestamp", 0) / 1000.0 < self._started_ts:
+                return
+            if self._users and event.sender not in self._users:
+                return
+            cil = self._art_fb_cil(getattr(event, "reacts_to", None))
+            if not cil:
+                return
+            from scripts.hans_art import feedback_rating, record_art_feedback
+            r = feedback_rating(getattr(event, "key", ""))
+            if r is None:
+                return
+            record_art_feedback(self._diary_path(), cil["rowid"], cil["title"],
+                                rating=r, person=self._person_for(event.sender),
+                                via="matrix_reakce")
+        except Exception as e:
+            _log.warning("matrix: reakce selhala: %s", e)
+
+    async def _art_fb_zprava(self, room, event, text: str, person: str) -> bool:
+        """Odpověď na obraz, nebo krátká zpráva s palcem po doručení → hodnocení.
+        True = zpráva spotřebována (nejde do příkazů ani hovoru)."""
+        try:
+            rel = ((getattr(event, "source", {}) or {}).get("content", {}) or {}) \
+                .get("m.relates_to", {}) or {}
+            reply_to = (rel.get("m.in_reply_to", {}) or {}).get("event_id")
+            from scripts.hans_art import feedback_rating, record_art_feedback
+            r = feedback_rating(text)
+            if reply_to:
+                cil = self._art_fb_cil(reply_to)
+            elif r is not None and len(text) <= 300:
+                cil = self._art_fb_cil()
+            else:
+                cil = None
+            if not cil:
+                return False
+            koment = "\n".join(l for l in text.split("\n")
+                               if not l.startswith(">")).strip()
+            for x in ("👍", "👎"):
+                koment = koment.replace(x, "")
+            koment = koment.strip(" ,.-\n")
+            record_art_feedback(self._diary_path(), cil["rowid"], cil["title"],
+                                rating=r, comment=koment, person=person,
+                                via="matrix_odpoved" if reply_to else "matrix_zprava")
+            await self._a_send("Děkuji, zapsal jsem si to k obrazu „%s“ — "
+                               "příště z toho vyjdu." % cil["title"], room.room_id)
+            return True
+        except Exception as e:
+            _log.warning("matrix: hodnocení obrazu selhalo: %s", e)
+            return False
+
     async def _on_message(self, room, event):
         try:
             # ignoruj vlastní zprávy a historii před startem
@@ -446,6 +518,8 @@ class MatrixBridge:
             # takze se tahle trida chyb nedala z logu ZMERIT (korpus vracel
             # 0 vyskytu u chyby, ktera se prokazatelne stala 4x).
             _log.info("matrix ← %s: %.200s", person, text)
+            if await self._art_fb_zprava(room, event, text, person):  # HANS_ART_FEEDBACK_V1
+                return
 
             # HANS_BRIDGE_COMMANDS_V1 — příkazy/intenty (jen role 'full'), stejné
             # co Telegram. Běží v EXECUTORU: ctx.send volá self.send, které blokuje
@@ -532,10 +606,11 @@ class MatrixBridge:
     # ── OUTBOUND (async jádro) ──────────────────────────────────────────────
     async def _a_send(self, text: str, room_id: str) -> bool:
         try:
-            await self._client.room_send(
+            _r = await self._client.room_send(
                 room_id=room_id, message_type="m.room.message",
                 content={"msgtype": "m.text", "body": text[:16000]},
                 ignore_unverified_devices=True)
+            self._last_event_id = getattr(_r, "event_id", None)  # HANS_ART_FEEDBACK_V1
             return True
         except Exception as e:
             _log.warning("matrix room_send selhal: %s", e)
@@ -573,9 +648,10 @@ class MatrixBridge:
             keys["url"] = resp.content_uri
             content = {"msgtype": msgtype, "body": name, "info": info,
                        "file": keys}
-            await self._client.room_send(
+            _r = await self._client.room_send(
                 room_id=room_id, message_type="m.room.message",
                 content=content, ignore_unverified_devices=True)
+            self._last_file_event_id = getattr(_r, "event_id", None)  # HANS_ART_FEEDBACK_V1
             if caption:
                 await self._a_send(caption, room_id)
             return True
@@ -749,11 +825,18 @@ class MatrixBridge:
         if note:
             cap += f"\n\n{note[:200]}"
         self._cmd_state.pop("paint", None)
+        self._last_event_id = self._last_file_event_id = None
         if path and os.path.exists(path):
             self.send_photo(path, cap)
         else:
             self.send(cap)
-        _log.info("matrix: vyžádaný obraz → %.40s", title)
+        # HANS_ART_FEEDBACK_V1 — k obrázku i popisku lze dát 👍/👎 nebo odpovědět
+        _eids = {e for e in (getattr(self, "_last_file_event_id", None),
+                             getattr(self, "_last_event_id", None)) if e}
+        self._art_fb_last = {"rowid": rid_, "title": title, "ts": time.time(),
+                             "eids": _eids}
+        _log.info("matrix: vyžádaný obraz → %.40s (čekám na hodnocení, %d id)",
+                  title, len(_eids))
 
     def _diary_path(self) -> str:
         return ((self.config.get("hans_idle", {}) or {}).get("diary_db")

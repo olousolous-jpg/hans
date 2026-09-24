@@ -433,7 +433,7 @@ def _translate_subject(config: dict, subject_cs: str) -> str:
     return (out or "").strip().strip('."\'').splitlines()[0][:60] if out else ""
 
 
-def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
+def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str = "",
                   system: str = None, source_intro: str = None,
                   en_fallback: str = None, prev: dict = None,
                   cs_subject: str = "", bez_zalohy: bool = False) -> Optional[str]:
@@ -624,6 +624,165 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     return p2[:600]
 
 
+# ── HANS_ART_LESSON_KEYWORDS_V1 (24. 9.) — lekce DOOPRAVDY do promptu ─────────
+# Změřeno: slova lekce se do zadání dalšího obrazu dostala v 9 % (náhodné
+# zadání 7 %) — lekce šla modelu jen jako „Craft notes … (secondary)“ a ten ji
+# vynechal. Teď se z nejnovější lekce jednou vyrobí 3–6 klíčových slov
+# (rezidentní hans-czech) a připojí se DETERMINISTICKY na konec každého
+# zadání. Obal nad `_scene_prompt_core`, ať pokryje všechny návraty včetně
+# záložní šablony. Klíčová slova se ukládají k lekci (sloupec `data`).
+_KW_SYSTEM = (
+    "Convert the painting guidance into 3-6 short comma-separated Stable "
+    "Diffusion prompt keywords that DESCRIBE THE DESIRED VISUAL RESULT "
+    "(e.g. 'warm golden light, asymmetric composition, sharp foreground'). "
+    "No verbs like introduce/explore, no negatives, no full sentences. "
+    "Output ONLY the keywords.")
+
+
+def _lesson_keywords(config: dict, db_path: str, lesson_id=None) -> tuple:
+    """(lekce, klíčová slova) nejnovější lekce (nebo `lesson_id`); lazy
+    doplní a uloží klíčová slova, když chybí. Chyba → ('', '')."""
+    if not db_path:
+        return "", ""
+    try:
+        con = sqlite3.connect(db_path, timeout=5.0)
+        if lesson_id is None:
+            row = con.execute(
+                "SELECT id, note, data FROM diary WHERE event_type='art_lesson' "
+                "AND note IS NOT NULL AND note!='' ORDER BY ts DESC LIMIT 1").fetchone()
+        else:
+            row = con.execute("SELECT id, note, data FROM diary WHERE id=?",
+                              (lesson_id,)).fetchone()
+        if not row:
+            con.close()
+            return "", ""
+        lid, note, data = row
+        try:
+            kw = (json.loads(data or "{}") or {}).get("keywords", "")
+        except Exception:
+            kw = ""
+        if not kw:
+            from scripts.ollama_client import ollama_generate
+            acfg = _acfg(config)
+            model = str(acfg.get("verdict_model")
+                        or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest"))
+            raw = ollama_generate(model, note, system=_KW_SYSTEM, config=config,
+                                  timeout=60, options={"temperature": 0,
+                                                       "num_predict": 40})
+            kw = _strip_cjk((raw or "").strip().strip('"').replace("\n", " "))
+            kw = ", ".join(x.strip(" .") for x in kw.split(",") if x.strip(" ."))[:160]
+            if kw:
+                con.execute("UPDATE diary SET data=? WHERE id=?",
+                            (json.dumps({"keywords": kw}, ensure_ascii=False), lid))
+                con.commit()
+        con.close()
+        return note or "", kw or ""
+    except Exception as e:
+        _log.warning("art: klíčová slova lekce selhala: %s", e)
+        return "", ""
+
+
+def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
+                  *args, **kwargs) -> Optional[str]:
+    p = _scene_prompt_core(config, title, reflection, db_path, *args, **kwargs)
+    if not p or not db_path:
+        return p
+    _l, kw = _lesson_keywords(config, db_path)
+    if kw:
+        p = p.rstrip(" ,.;") + ", " + kw
+        _log.info("art: HANS_ART_LESSON_KEYWORDS_V1 → do promptu: %s", kw)
+    return p
+
+
+# ── HANS_ART_VERDICT_GROUNDED_V1 (24. 9.) — splněno z popisu, ne z dojmu ──────
+# Změřeno: verdikt tvrdil „povedlo se“ ČASTĚJI, když se lekce v obraze
+# neprojevila (59 %) než když ano (51 %); „nepovedlo“ 11 % × 27 %. Otázka byla
+# návodná. Teď se splnění spočítá z nezávislého popisu a verdikt ho dostane
+# jako fakt.
+_KW_STOP = {"light", "colour", "color", "tones", "image", "scene", "style",
+            "detail", "detailed", "painting", "subtle"}
+
+
+def _lekce_splnena(klicova: str, lekce: str, popis: str) -> tuple:
+    """(splněno: bool|None, nalezeno[], chybí[]) — porovná kmeny klíčových slov
+    (jinak slov lekce) s popisem obrazu. None = není z čeho soudit."""
+    zdroj = klicova or lekce or ""
+    slova = [w for w in re.findall(r"[a-z]{5,}", zdroj.lower()) if w not in _KW_STOP]
+    kmeny = list(dict.fromkeys(w[:6] for w in slova))
+    if not kmeny or not popis:
+        return None, [], []
+    low = popis.lower()
+    nal = [k for k in kmeny if k in low]
+    chybi = [k for k in kmeny if k not in low]
+    return (len(nal) / len(kmeny) >= 0.34), nal, chybi
+
+
+# ── HANS_ART_FEEDBACK_V1 (24. 9.) — lidský soud o obraze ──────────────────────
+# Jediná skutečná míra kvality (Hansův verdikt s obrazem nesouvisel, viz
+# HANS_ART_VERDICT_GROUNDED_V1). Uživatel k doručenému obrazu dá na Matrixu
+# 👍/👎 reakcí nebo odpoví komentářem. Uloží se jako 'art_feedback' a při
+# dalším obraze jde do odvození lekce jako NEJVYŠŠÍ autorita.
+_PALEC_NAHORU = ("👍", "palec nahoru", "palec nahoru")
+_PALEC_DOLU = ("👎", "palec dolu", "palec dolů")
+
+
+def feedback_rating(text: str):
+    """+1 / -1 / None z textu nebo klíče reakce."""
+    low = (text or "").lower()
+    if any(x in low for x in _PALEC_DOLU):
+        return -1
+    if any(x in low for x in _PALEC_NAHORU):
+        return 1
+    return None
+
+
+def record_art_feedback(db_path: str, artwork_rowid, title: str, rating=None,
+                        comment: str = "", person: str = "", via: str = "") -> bool:
+    try:
+        db = sqlite3.connect(db_path, timeout=5.0)
+        db.execute(
+            "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
+            (time.time(), "art_feedback", title or "",
+             ("%s %s" % ({1: "👍", -1: "👎"}.get(rating, ""), comment or "")).strip(),
+             json.dumps({"artwork_rowid": artwork_rowid, "rating": rating,
+                         "comment": comment or "", "person": person, "via": via},
+                        ensure_ascii=False)))
+        db.commit()
+        db.close()
+        _log.info("art: HANS_ART_FEEDBACK_V1 %s k „%s“: %s %.80s", person,
+                  title, {1: "👍", -1: "👎"}.get(rating, "·"), comment or "")
+        return True
+    except Exception as e:
+        _log.warning("art: zápis zpětné vazby selhal: %s", e)
+        return False
+
+
+def recent_art_feedback(db_path: str, days: int = 21, limit: int = 3) -> list:
+    """[(titul, rating, komentář)] nejnovější první, sloučené po obraze."""
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        rows = con.execute(
+            "SELECT title, data FROM diary WHERE event_type='art_feedback' "
+            "AND ts>=? ORDER BY ts DESC", (time.time() - days * 86400,)).fetchall()
+        con.close()
+    except Exception:
+        return []
+    po = {}
+    for title, data in rows:
+        try:
+            d = json.loads(data or "{}")
+        except Exception:
+            continue
+        k = d.get("artwork_rowid") or title
+        r = po.setdefault(k, [title, None, []])
+        if r[1] is None and d.get("rating") is not None:
+            r[1] = d.get("rating")
+        if d.get("comment"):
+            r[2].append(d["comment"])
+    out = [(t, r, " / ".join(c)) for t, r, c in po.values()]
+    return out[:limit]
+
+
 def _caption(reflection: str, title: str) -> str:
     """Krátký český popisek = první věta reflexe, fallback název knihy.
     Slouží jako FALLBACK, když Hansovo hodnocení (HANS_ART_VERDICT_V1) selže."""
@@ -726,10 +885,22 @@ def _evaluate_artwork(config: dict, db_path: str, title: str,
     past = _past_verdicts(db_path, limit=2)
     progress_block = ""
     if prior_lesson:
+        # HANS_ART_VERDICT_GROUNDED_V1 — splnění spočtené z popisu jako FAKT
+        _pl, _pkw = _lesson_keywords(config, db_path)
+        _ok, _nal, _chybi = _lekce_splnena(_pkw, prior_lesson, vision_desc)
+        if _ok is True:
+            _fakt = ("Podle nezávislého popisu se to na obraze PROJEVILO "
+                     "(v popisu je: %s)." % ", ".join(_nal))
+        elif _ok is False:
+            _fakt = ("Podle nezávislého popisu se to na obraze NEPROJEVILO "
+                     "(v popisu chybí: %s). Nepiš, že se to povedlo." % ", ".join(_chybi[:5]))
+        else:
+            _fakt = "Z popisu se to posoudit nedá — nevyjadřuj se k tomu."
         progress_block = (
-            "Před tímto obrazem sis předsevzal zlepšit toto:\n„%s\"\n"
-            "V první větě upřímně posuď, jestli se to tentokrát povedlo (klidně "
-            "i jen částečně) — tím uvidíš svůj vlastní vývoj.\n\n" % prior_lesson)
+            "Před tímto obrazem sis předsevzal zlepšit toto:\n„%s\"\n%s\n"
+            "V první větě to věcně řekni, bez přikrašlování.\n\n"
+            % (prior_lesson, _fakt))
+        _log.info("art: HANS_ART_VERDICT_GROUNDED_V1 lekce splněna=%s", _ok)
     antirepeat_block = ""
     if past:
         antirepeat_block = (
@@ -887,6 +1058,16 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
         _log.info("art: lesson zná vytěžené aspekty (nej: %s, mezera: %s)",
                   _nej[0][0] if _nej else "?",
                   _mez[0][0] if _mez else "—")
+    # HANS_ART_FEEDBACK_V1 — lidský soud má přednost před vlastním verdiktem
+    _fb = recent_art_feedback(db_path)
+    if _fb:
+        recent_block += (
+            "HUMAN FEEDBACK on recent paintings (the real judge — it OUTRANKS the "
+            "painter's own verdict; build the guidance on it first):\n"
+            + "\n".join("- %s: %s%s" % (
+                t_, {1: "liked it", -1: "did NOT like it"}.get(r_, "commented"),
+                (" — \"%s\"" % c_) if c_ else "") for t_, r_, c_ in _fb) + "\n\n")
+        _log.info("art: lesson zná %d lidských hodnocení", len(_fb))
     user = (recent_block
             + "Independent description of the rendered image:\n%s\n\n"
             "Painter's verdict:\n%s\n\nWrite the ONE-line guidance."
