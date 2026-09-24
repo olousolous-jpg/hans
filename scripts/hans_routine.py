@@ -2028,6 +2028,13 @@ class HansRoutine:
                 hans_schedule.mark('nightly_analytics')
             except Exception:
                 pass
+            # HANS_LOCK_AUDIT_V1 (24. 9.) — týdenní měření uzamčení (jen čte
+            # deník, 1× za ISO týden; výsledek pro lidi přes /uzamceni).
+            try:
+                from scripts.hans_uzamceni import record_week
+                record_week(self._diary_path)
+            except Exception as _ue:
+                _log.warning("uzamceni: %s", _ue)
             # HANS_OFFLINE_WINDOWS_V1 (18.7.) — vyrobit scorable záznamy
             # „byl jsem offline T1–T2" z brain_down/up eventů (pro budoucí
             # sebe-odvození vzorců přes hans_self_insight). Idempotentní,

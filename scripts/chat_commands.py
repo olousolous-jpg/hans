@@ -1290,6 +1290,29 @@ register(
 )
 
 
+# ─── /uzamceni — HANS_LOCK_AUDIT_V1 (24. 9.) ─────────────────────────────
+def _cmd_uzamceni(handler, name, args) -> str:
+    """Týdenní míry uzamčení (self-locking) — pro lidi, ne pro Hanse."""
+    cfg = getattr(handler, "config", {}) or {}
+    db = (cfg.get("diary_db") or (cfg.get("diary", {}) or {}).get("db_path")
+          or "data/hans_diary.db")
+    try:
+        from scripts.hans_uzamceni import format_report
+        return format_report(db)
+    except Exception as e:
+        _log.warning("/uzamceni selhalo: %s", e)
+        return "Měření uzamčení se teď nepovedlo."
+
+
+register(
+    "uzamceni",
+    slash_aliases=["uzamceni", "uzamčení"],
+    nl_patterns=[],
+    handler=_cmd_uzamceni,
+    help_text="Týdenní míry uzamčení: opakování témat, ozvěna persony (/uzamceni)",
+)
+
+
 # ─── /art — Hans namaluje obraz k aktuální knize (HANS_ART_V1) ────────────
 def _cmd_art(handler, name, args) -> str:
     """/art [název knihy] — Hans hned namaluje obraz k (zadané/aktuální) knize.
