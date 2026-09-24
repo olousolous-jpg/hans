@@ -227,6 +227,58 @@ def _oslov_dle_tazatele(text, handler, name):
         return text
 
 
+# HANS_STRANGER_NO_MUTATE_V1 (24. 9.) — cizí nesmí měnit Hansovo chování ani
+# stav (pokyn uživatele: „cizí nemá mít možnost upravovat chování Hanse").
+# Jedno místo pro web i Matrix. Dvě skupiny:
+#  - VŽDY jen známým: příkazy, které samy o sobě mění stav, spouštějí práci
+#    nebo zasahují do domu;
+#  - PODLE ARGUMENTU: holý tvar je jen výpis, mutuje až podpříkaz. Hlídá se
+#    jen u slash/holého tvaru; NL předává celou větu a obsluhy podpříkazy
+#    porovnávají přesně, LLM router předává args prázdné (fail-closed).
+# Prázdné jméno se za známé NEpočítá.
+_JEN_ZNAMYM = frozenset({
+    "zapis", "work", "denik", "dialog", "zaptej", "enroll", "sleep", "herni",
+    "severka", "hlidej", "preloz", "vypnipc", "vpnprepni", "router",
+    "experiment", "stop", "pauza", "hledani", "nalez", "brief", "vytvor",
+})
+_CTENI_BEZ_ARG = {  # příkaz → argumenty, které jsou jen výpis
+    "seznam": (), "kalendar": (), "nitky": ("vse",), "studium": ("programy",),
+    "dilo": ("vse",), "napad": ("vse",), "kritika": (), "dashboard": (),
+    "avatar": ("stav",), "zdravi": (), "nastroj": (), "prohloubit": (),
+    "vhledy": (), "anomalie": (), "interest": (),
+    "misto": ("mistnost", "okno", "dvere", "vedle", "rozlozeni"),
+}
+
+
+def _cizi_nesmi(cmd_id: str, args, name) -> str:
+    """Vrátí odmítnutí pro cizího u mutujícího příkazu, jinak ''."""
+    if cmd_id in _JEN_ZNAMYM:
+        pass
+    elif cmd_id == "smer":
+        # `/smer` mění i z NL: oznamovací věta se stane směrem
+        # (_smer_is_custom) — brána rozhoduje stejně jako obsluha.
+        a = str(args or "").strip()
+        if not a or a.lower() in ("stav", "status"):
+            return ""
+        if _route_origin() not in ("slash", "bare") and not _smer_is_custom(a):
+            return ""
+    elif cmd_id in _CTENI_BEZ_ARG and _route_origin() in ("slash", "bare"):
+        a = _fold_diacritics(str(args or "")).strip().lower()
+        if not a or a.split()[0] in _CTENI_BEZ_ARG[cmd_id]:
+            return ""
+    else:
+        return ""
+    try:
+        from scripts.cz_names import is_known_person as _ikp
+        if name and _ikp(name):
+            return ""
+    except Exception:
+        pass
+    _log.info("HANS_STRANGER_NO_MUTATE_V1: %s od neznámého (%s) odmítnuto",
+              cmd_id, name)
+    return "Tohle mohu udělat jen pro svou domácnost."
+
+
 def dispatch(command: tuple[str, str], handler, name: Optional[str]) -> str:
     """Spustí command. handler = openwebui_direct_handler instance.
     Vrátí text odpovědi pro chat."""
@@ -234,6 +286,9 @@ def dispatch(command: tuple[str, str], handler, name: Optional[str]) -> str:
     spec = _COMMANDS.get(cmd_id)
     if not spec:
         return f"⚠ Neznámý příkaz: {cmd_id}"
+    _odmitnuti = _cizi_nesmi(cmd_id, args, name)
+    if _odmitnuti:
+        return _odmitnuti
     try:
         return _oslov_dle_tazatele(
             spec["handler"](handler, name, args), handler, name)

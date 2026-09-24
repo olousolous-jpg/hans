@@ -2215,6 +2215,19 @@ class AgentRouter:
             conf = float(decision.get("confidence", 0) or 0)
             if conf < self.threshold:
                 return None
+            # HANS_STRANGER_NO_MUTATE_V1 (24. 9.) — cizí nesmí nic měnit:
+            # projdou mu jen dotazy na stav (`report_*`). Odpověď místo ticha,
+            # aby persona akci nepotvrdila (HANS_AGENT_SPEAK_REJECT_V1).
+            if not aid.startswith("report_"):
+                try:
+                    from scripts.cz_names import is_known_person as _ikp
+                    _znamy = bool(name) and _ikp(name)
+                except Exception:
+                    _znamy = False
+                if not _znamy:
+                    log.info("HANS_STRANGER_NO_MUTATE_V1: agent %s od neznámého "
+                             "(%s) odmítnuto", aid, name)
+                    return "Tohle mohu udělat jen pro svou domácnost."
             args = {k: (decision.get("args", {}) or {}).get(k)
                     for k in action.args}
             h = _args_hash(aid, args)
