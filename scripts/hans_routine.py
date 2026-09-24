@@ -1420,6 +1420,8 @@ class HansRoutine:
         self._maybe_calendar_sync()
         # HANS_NOTIFY_QUEUE_V1 — odešli, co do fronty zapsal skript zvenčí.
         self._drain_notify_queue()
+        # HANS_ART_RETRY_V1 — dotáhni obraz, který uživatel chtěl a nevyšel.
+        self._maybe_retry_paint()
         # HANS_WEBSHARE_PRESUN_TICK_V1 — dotáhni stahování z Webshare: stahuje
         # se na Pi (běží nonstop), hotový soubor se přesouvá na PC. Patří to
         # sem, do tick(), a NE do nočních úloh: PC se v noci vypíná (~3:27),
@@ -1466,6 +1468,77 @@ class HansRoutine:
                         _log.warning("webshare notifier selhal: %s", _ne)
         except Exception as e:
             _log.debug("webshare presun tick: %s", e)
+
+    def _maybe_retry_paint(self):
+        """HANS_ART_RETRY_V1 (24. 9.) — dlužné obrazy (slib kind='paint' od
+        `paint_subject(zadal=…)` nebo když ComfyUI spalo) zkusí namalovat
+        á 10 min, JEN když je mozek, dílna a nehraje se. Hotový obraz pošle
+        hned na Matrix s fotkou (ne až při zahlédnutí kamerou). 3 nezdary →
+        poctivá zpráva a konec. Render běží ve vlákně (trvá minuty)."""
+        import threading as _th
+        import time as _t
+        if _t.time() - getattr(self, "_retry_paint_ts", 0.0) < 600:
+            return
+        self._retry_paint_ts = _t.time()
+        if getattr(self, "_retry_paint_busy", False):
+            return
+        try:
+            from scripts.hans_commitments import open_paint_retries
+            rows = open_paint_retries(self._diary_path)
+        except Exception:
+            return
+        if not rows:
+            return
+        try:
+            from scripts.ollama_client import game_mode_on
+            from scripts import hans_art
+            if game_mode_on() or not self._brain_up() \
+                    or not hans_art.comfy_available(self.config):
+                return
+        except Exception:
+            return
+        cid, person, topic, tries, _styl = rows[0]
+
+        def _run():
+            self._retry_paint_busy = True
+            try:
+                import sqlite3 as _sq
+                from scripts.hans_commitments import (_fulfill_paint,
+                                                      mark_reported)
+                zavreno = _fulfill_paint(self.config, self._diary_path, cid,
+                                         topic, int(tries or 0))
+                if not zavreno:
+                    _log.info("HANS_ART_RETRY_V1: „%s“ zatím nevyšel (pokus %d)",
+                              topic, int(tries or 0) + 1)
+                    return
+                _d = _sq.connect(self._diary_path, timeout=5.0)
+                _r = _d.execute("SELECT result FROM commitments WHERE id=?",
+                                (cid,)).fetchone()
+                _d.close()
+                vysl = (_r[0] or "") if _r else ""
+                import os as _os
+                if vysl and _os.path.exists(vysl):
+                    text = ("Slíbený obraz na téma „%s“ je hotový — tady je." % topic)
+                    foto = vysl
+                else:
+                    text = ("Obraz na téma „%s“ se mi ani na třetí pokus nepodařilo "
+                            "namalovat. Omlouvám se — zkusíte mi ho zadat znovu?" % topic)
+                    foto = None
+                ok = False
+                if self._notifier:
+                    try:
+                        ok = self._notifier(text, direct=True, photo=foto)
+                    except TypeError:
+                        ok = self._notifier(text)
+                if ok is not False:
+                    mark_reported(self._diary_path, [cid])
+                _log.info("HANS_ART_RETRY_V1: „%s“ → %s, doručeno=%s",
+                          topic, "obraz" if foto else "vzdáno", ok)
+            except Exception as e:
+                _log.warning("HANS_ART_RETRY_V1: %s", e)
+            finally:
+                self._retry_paint_busy = False
+        _th.Thread(target=_run, daemon=True, name="art-retry").start()
 
     def _drain_notify_queue(self, path: str = "data/notify_queue.jsonl"):
         """HANS_NOTIFY_QUEUE_V1 — pošli zprávy, které do fronty zapsal skript

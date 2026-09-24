@@ -217,7 +217,7 @@ class HansIdle:
             _log.debug('routine curiosity wiring: %s', _cwe)
         # SEVERKA_PROACTIVE_NOTIFY_V1 — Hans sám oznámí (Telegram) Severčin návrh
         # identity. Čte self.chat.telegram až při volání (chat se drátuje později).
-        def _proactive_notify(text, direct=False):
+        def _proactive_notify(text, direct=False, photo=None):
             # HANS_NOTIFY_DIAG_V1 (6.8.) — dřív tahle funkce TIŠE nic neudělala,
             # když most chyběl nebo byl vypnutý, a výjimky šly do debug logu.
             # Volající pak hlásil „odesláno", ačkoli zpráva nikam nedorazila
@@ -245,8 +245,12 @@ class HansIdle:
                 # [[telegram-quiet-hours]] to říká přímo: proaktivní až po 9:00,
                 # ODPOVĚDI UŽIVATELI VŽDY HNED. Tiché okno zůstává na Severce
                 # a proaktivitě, kde dává smysl.
-                _send = tg.send if direct else getattr(tg, 'send_proactive', tg.send)
-                ok = _send(text)
+                # HANS_ART_RETRY_V1 — dlužný obraz jde i s obrázkem
+                if photo and __import__('os').path.exists(photo) and hasattr(tg, 'send_photo'):
+                    ok = tg.send_photo(photo, text)
+                else:
+                    _send = tg.send if direct else getattr(tg, 'send_proactive', tg.send)
+                    ok = _send(text)
                 if ok is False:
                     _log.warning('proactive_notify: most odmítl odeslat '
                                  '(tiché hodiny?) — %.60s', text)

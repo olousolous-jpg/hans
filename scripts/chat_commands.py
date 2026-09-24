@@ -1426,7 +1426,8 @@ def _cmd_namaluj(handler, name, args) -> str:
             except Exception as _te:
                 _log.debug("tv_paint_subject: %s", _te)
                 _subj, _src = _disp, "jen podle názvu"
-            _t.Thread(target=lambda: hans_art.paint_subject(cfg, db, _subj),
+            _t.Thread(target=lambda: hans_art.paint_subject(cfg, db, _subj,
+                                                            zadal=name or ""),
                       daemon=True).start()
             _log.info("namaluj CO V TV → '%s' (%s)", _subj[:60], _src)
             _note = {"z popisu pořadu": "podle jeho děje",
@@ -1535,12 +1536,18 @@ def _cmd_namaluj(handler, name, args) -> str:
                 "nebo „namaluj japonskou zahradu\".")
 
     if not hans_art.comfy_available(cfg):
+        # HANS_ART_RETRY_V1 — „až bude PC vzhůru, namaluji“ platilo jen slovem
+        try:
+            from scripts.hans_commitments import add_paint_retry
+            add_paint_retry(db, name or "", subj, style)
+        except Exception as _ae:
+            _log.warning("namaluj: uložení dlužného obrazu selhalo: %s", _ae)
         return ("Rád bych, pane — ale má výtvarná dílna (ComfyUI na PC) teď neběží. "
-                "Až bude PC vzhůru, obraz namaluji.")
+                "Poznamenal jsem si to: až bude PC vzhůru, obraz namaluji a pošlu vám ho.")
 
     def _worker():
         try:
-            hans_art.paint_subject(cfg, db, subj, style=style)
+            hans_art.paint_subject(cfg, db, subj, style=style, zadal=name or "")
         except Exception as _e:
             _log.warning("namaluj render selhal: %s", _e)
     _t.Thread(target=_worker, daemon=True).start()

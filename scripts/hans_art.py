@@ -2617,7 +2617,7 @@ def _wiki_capture_person(config: dict, db_path: str, subject: str):
 
 
 def paint_subject(config: dict, diary_db_path: str, subject: str,
-                  style: str = ""):
+                  style: str = "", zadal: str = "", _retry: bool = False):
     """Hans namaluje obraz na LIBOVOLNÉ téma / dojem (např. z rozhovoru).
     style: volitelný umělecký styl („Salvador Dalí", „Bauhaus", „gotika") —
     grounduje se a vloží do promptu místo pevného ocasu (HANS_ART_STYLE_V4).
@@ -2758,6 +2758,15 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
         # nikdy nepřijde. Doloženo 15:06: Ollama timeout → render odložen,
         # uživatel čekal a `/stav` mezitím hlásil, že se nemaluje.
         # Fronta doručí zprávu Hansovým mostem (`HANS_NOTIFY_QUEUE_V1`).
+        # HANS_ART_RETRY_V1 — omluva jen tomu, kdo o obraz žádal (autonomní
+        # malování a opakovaný pokus nic neslibovaly), a slib se ULOŽÍ.
+        if _retry or not zadal:
+            return None
+        try:
+            from scripts.hans_commitments import add_paint_retry
+            add_paint_retry(diary_db_path, zadal, subject, style)
+        except Exception as _ce:
+            _log.warning("art: uložení dlužného obrazu selhalo: %s", _ce)
         try:
             import json as _js
             import time as _tm
@@ -2765,8 +2774,8 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
                 _q.write(_js.dumps({
                     "text": ("Omlouvám se, pane — obraz na téma „%s\" se mi "
                              "teď nepodařilo namalovat (nedostal jsem se ke "
-                             "svému mozku). Zkusím to znovu; kdyby to "
-                             "spěchalo, řekněte a pustím se do toho hned."
+                             "svému mozku). Poznamenal jsem si ho: namaluji ho, "
+                             "jakmile to půjde, a hned vám ho pošlu."
                              % title),
                     # HANS_NOTIFY_DIRECT_V1 — uživatel na obraz ČEKÁ; tiché hodiny
                     # tuhle omluvu jednou odložily do 9:00 a slib zase visel.

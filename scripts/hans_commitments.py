@@ -447,7 +447,7 @@ def add_reminder(diary_db_path: str, person: str, text: str,
         db.commit()
         db.close()
     except Exception as e:
-        log.warning("add_reminder selhalo: %s", e)
+        _log.warning("add_reminder selhalo: %s", e)
         return False, "Poznamenat si to se mi teď nepovedlo, pane."
 
     if due > 0:
@@ -461,6 +461,54 @@ def add_reminder(diary_db_path: str, person: str, text: str,
                       % kdy.strftime(kdy_txt))
     return True, ("Poznamenáno, pane. Termín jsem z toho nevyčetl, "
                   "tak to připomenu, až vás uvidím.")
+
+
+def add_paint_retry(diary_db_path: str, person: str, subject: str,
+                    style: str = "") -> bool:
+    """HANS_ART_RETRY_V1 (24. 9.) — obraz, který uživatel chtěl a render
+    nevyšel (nebo PC spalo), se uloží jako slib kind='paint'. Dřív omluva
+    slibovala „zkusím to znovu“, ale nic se neuložilo: z 18 takových žádostí
+    se 12 nenamalovalo nikdy. Dotahuje `hans_routine._maybe_retry_paint`
+    (á 10 min, jakmile je mozek) a večerní `fulfill_commitments`.
+    Styl se pamatuje v `due_text` (slib typu paint termín nemá)."""
+    subject = (subject or "").strip()
+    if not subject:
+        return False
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        _init(db)
+        if db.execute("SELECT 1 FROM commitments WHERE status='open' AND "
+                      "kind='paint' AND topic=?", (subject,)).fetchone():
+            db.close()
+            return True                 # už čeká, neduplikuj
+        now = time.time()
+        txt = "namaluji obraz na téma „%s“" % subject
+        db.execute(
+            "INSERT INTO commitments (person, text, text_norm, status, "
+            "source_ts, created_ts, due_ts, due_text, announced, topic, kind, "
+            "reported, tries) VALUES (?,?,?,'open',?,?,0,?,1,?,'paint',0,0)",
+            (person or "", txt, _norm(txt), now, now, (style or "")[:60], subject))
+        db.commit()
+        db.close()
+        _log.info("HANS_ART_RETRY_V1: dlužný obraz „%s“ pro %s", subject, person)
+        return True
+    except Exception as e:
+        _log.warning("add_paint_retry selhalo: %s", e)
+        return False
+
+
+def open_paint_retries(diary_db_path: str) -> List[tuple]:
+    """[(id, person, topic, tries, style)] otevřených dlužných obrazů."""
+    try:
+        db = sqlite3.connect("file:%s?mode=ro" % diary_db_path, uri=True, timeout=3.0)
+        rows = db.execute(
+            "SELECT id, person, topic, tries, due_text FROM commitments WHERE "
+            "status='open' AND kind='paint' AND topic!='' AND result='' "
+            "ORDER BY created_ts ASC").fetchall()
+        db.close()
+        return rows
+    except Exception:
+        return []
 
 
 def is_commitment_query(text: str) -> bool:
@@ -631,7 +679,17 @@ def _fulfill_paint(config, diary_db_path, cid, topic, tries) -> bool:
     rel = None
     try:
         from scripts import hans_art
-        r = hans_art.paint_subject(config, diary_db_path, topic)
+        _styl = ""
+        try:                                   # HANS_ART_RETRY_V1 — styl v due_text
+            _d = sqlite3.connect(diary_db_path, timeout=5.0)
+            _row = _d.execute("SELECT due_text FROM commitments WHERE id=?",
+                              (cid,)).fetchone()
+            _d.close()
+            _styl = (_row[0] or "") if _row else ""
+        except Exception:
+            pass
+        r = hans_art.paint_subject(config, diary_db_path, topic, style=_styl,
+                                   _retry=True)
         if r:
             rel = r[0]  # (rel_path, caption)
     except Exception as e:
