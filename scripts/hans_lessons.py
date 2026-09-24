@@ -235,7 +235,26 @@ _TOPIC_STOP_EXTRA = {
     "cem", "cim", "proc", "kde", "kdy", "kdo", "jak", "muzes", "muzete",
     "rici", "rekni", "povez", "vis", "znas", "prosim", "mohl", "mohla",
     "bys", "byste", "nachazeji", "nachazi", "vsechno", "vsechny", "nejake",
+    # HANS_LESSON_PERSONAL_V1 (24. 9.) — casove slovo NENI tema. „co se delo
+    # v patek?“ tim vytahlo cizimu opravu z rozhovoru domacnosti („v patek jsem
+    # vam doporucil …“). Casovy udaj nese 4 z 61 lekci a nic nerozlisuje.
+    "pondeli", "utery", "streda", "stredu", "ctvrtek", "patek", "sobota",
+    "sobotu", "nedele", "nedeli", "tyden", "tydne", "tydnu", "minuly",
+    "minuleho", "minulem", "vcera", "dnes", "dneska", "zitra", "rano",
+    "vecer", "vecera",
 }
+
+# HANS_LESSON_PERSONAL_V1 — citace ve 2. osobě je soukromý rozhovor s tím, kdo
+# Hanse opravil („doporučil jsem VÁM“, „požádal JSI mě“). Změřeno na 60 citacích:
+# 2 takové bez jména, obě osobní; obecné opravy faktů 2. osobu nemají.
+_DRUHA_OSOBA = re.compile(
+    r"\b(vam|vas|vami|ti|te|tebe|tobe|tebou|jste|jsi)\b")
+
+
+def _fold(t: str) -> str:
+    import unicodedata as _ud
+    return "".join(c for c in _ud.normalize("NFD", (t or "").lower())
+                    if _ud.category(c) != "Mn")
 
 
 def _jmenuje_domacnost(text: str) -> bool:
@@ -360,7 +379,8 @@ def lessons_for_topic(diary_db_path: str, text: str, limit: int = 3,
         # tim mu sebrala i uzitecnou opravu — „42 je Douglas Adams, ne Asimov“
         # zeslo na „mel bych byt peclivejsi“, coz chybe nezabrani. Vypousti se
         # tedy jen citace, ktera SKUTECNE jmenuje clena domacnosti.
-        if bez_citace and _corr and _jmenuje_domacnost(_corr):
+        if bez_citace and _corr and (_jmenuje_domacnost(_corr)
+                                     or _DRUHA_OSOBA.search(_fold(_corr))):  # HANS_LESSON_PERSONAL_V1
             _corr = ""
         scored.append((best, _i, _corr if len(_corr) >= 8 else note, note))
     scored.sort(key=lambda r: (r[0], r[1]))   # (přesnost, vzácnost), pak novost

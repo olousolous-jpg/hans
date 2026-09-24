@@ -240,6 +240,7 @@ class KodiMonitor:
                     self._curiosity.trigger_kodi(
                         title      = item["title"],
                         media_type = item.get("type", "movie"),
+                        year       = item.get("year") or None,   # HANS_FILM_ARTICLE_V1
                     )
                 if item.get("title") and hasattr(self, '_mood'):
                     self._mood.update_kodi(item["title"])

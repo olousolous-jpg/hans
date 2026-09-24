@@ -2325,6 +2325,34 @@ def film_list_titles(text: str) -> list:
     return [x.strip() for x in re.findall(r"„([^“]{1,120})“", t) if x.strip()]
 
 
+def nazor_k_filmu(db_path: str, title: str) -> Optional[str]:
+    """HANS_FILM_RECOMMEND_V1 — první věta Hansova vlastního názoru na PŘESNĚ
+    tento titul (`movie_opinion`), jinak None. `title = ?`, ne `lower()` —
+    SQLite `lower()` nemění ne-ASCII („Čelisti“)."""
+    t = (title or "").strip()
+    if not t:
+        return None
+    conn = None
+    try:
+        conn = _ro(db_path)
+        for (data,) in conn.execute(
+                "SELECT data FROM diary WHERE event_type='movie_opinion' "
+                "AND title = ? AND data IS NOT NULL AND trim(data) != '' "
+                "ORDER BY ts DESC LIMIT 5", (t,)).fetchall():
+            v = _nazor_prvni_veta(data)
+            if v:
+                return v
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return None
+
+
 def films_liked_among(db_path: str, titles: list, limit: int = 2) -> str:
     """HANS_FILM_OPINION_ANAFORA_V1 (23. 9.) — „a který se ti z nich líbil
     nejvíc?“ po výpisu filmů. Názor se bere JEN k filmům z toho výpisu.

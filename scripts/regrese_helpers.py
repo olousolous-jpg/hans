@@ -872,3 +872,18 @@ def videno_pred(sezeni: list, stari_dni: float) -> str:
         c.execute("INSERT INTO kodi_sessions VALUES ('movie','X',?,?)",
                   (s, s + float(minut) * 60))
     return "hlasi" if naposledy_videno(c, "X", now, max_days=stari_dni) else "mlci"
+
+
+def cteni_znamemu(cmd: str) -> str:
+    """HANS_STRANGER_INSIGHTS_V1 — známý čtecí příkaz dostane (prázdné = pustí)."""
+    from scripts import chat_commands as cc
+    return "pusti" if not cc._cizi_nesmi(cmd, "", _tazatel_jmeno("znamy")) else "odmita"
+
+
+# ── HANS_LESSON_PERSONAL_V1 (24. 9.) ─────────────────────────────────────────
+def lekce_citace(dotaz: str, tazatel: str) -> str:
+    """Dostane tazatel u dotazu doslovnou citaci soukromé opravy ('kachn')?"""
+    from scripts.hans_lessons import lessons_for_topic
+    r = lessons_for_topic("data/hans_diary.db", dotaz, limit=3,
+                          bez_citace=(tazatel == "cizi"))
+    return "cituje" if any("kachn" in x.lower() for x in r) else "necituje"

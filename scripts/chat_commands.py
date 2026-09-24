@@ -247,13 +247,18 @@ _JEN_ZNAMYM = frozenset({
     # HANS_PLACE_STRANGER_V1 (24. 9., pokyn uzivatele) — rozlozeni domu cizimu
     # ne; VEDOMA ZMENA: driv byl holy vypis /misto pro cizi otevreny.
     "misto",
+    # HANS_STRANGER_INSIGHTS_V1 (24. 9.) — vhledy nesou jmena domacnosti
+    # a pocty zaznamu z kamery, nitky tema rozhovoru podle osob. Doloženo
+    # tazatelem: LLM router poslal cizimu /vhledy. Audit vsech 14 ctecich
+    # prikazu otevrenych cizim: ostatni ciste.
+    "vhledy", "nitky",
 })
-_JEN_ZNAMYM_CTENI = frozenset({"kritika", "misto"})  # HANS_STRANGER_READ_MSG_V1
+_JEN_ZNAMYM_CTENI = frozenset({"kritika", "misto", "vhledy", "nitky"})  # HANS_STRANGER_READ_MSG_V1
 _CTENI_BEZ_ARG = {  # příkaz → argumenty, které jsou jen výpis
-    "seznam": (), "kalendar": (), "nitky": ("vse",), "studium": ("programy",),
+    "seznam": (), "kalendar": (), "studium": ("programy",),
     "dilo": ("vse",), "napad": ("vse",), "dashboard": (),
     "avatar": ("stav",), "zdravi": (), "nastroj": (), "prohloubit": (),
-    "vhledy": (), "anomalie": (), "interest": (),
+    "anomalie": (), "interest": (),
 }
 
 
@@ -4222,6 +4227,67 @@ _FILM_OBLIBA_PAT = re.compile(
 _FILM_TRETI_PAT = re.compile(r"\b(by|mysl[ií][sš])\b[^.?!]{0,30}\bbavil\b", re.I)
 
 
+# HANS_FILM_RECOMMEND_V1 (24. 9.) — žádost o DOPORUČENÍ filmu. Dřív žádný vzor:
+# věta šla do volného hovoru (Hans si jednou vymyslel „The Avengers z roku
+# 1950“) nebo k agentovi, kde film vybíral model. Změřeno na 2 354 reálných
+# větách: 5 shod, všech 5 skutečné žádosti, 0 falešných. Obliba („jaký film se
+# ti líbil“) i cizí vkus („bavil by ji ten film?“) jsou jiné třídy.
+_DOPORUC_FILM_PAT = re.compile(
+    r"\bdoporu[cč]\w*\b[^?.!]{0,40}\bfilm|\bfilm\w*\b[^?.!]{0,30}\bdoporu[cč]"
+    r"|\btip\w* na (?:nejak\w* )?film"
+    r"|\b(?:co|jaky film)\b[^?.!]{0,20}\b(?:bych|bychom|bysme|mam|mame|mel|mela|meli)\b"
+    r"[^?.!]{0,15}\b(?:pustit|podivat|koukat|videt)\b[^?.!]{0,15}(?:film|vecer|dnes)")
+
+
+def _je_zadost_o_doporuceni_filmu(veta: str) -> bool:
+    v = _fold_diacritics(veta or "").lower()
+    # „doporučuješ TEN film, co jsme viděli?“ = názor na konkrétní film
+    if re.search(r"\bt(?:en|enhle|ento|ahle|ohle)\s+film", v):
+        return False
+    return bool(_DOPORUC_FILM_PAT.search(v))
+
+
+def _doporuc_film(handler, name, znamy: bool) -> str:
+    """HANS_FILM_RECOMMEND_V1 — film z knihovny TOUŽ logikou jako proaktivní
+    nabídka (`hans_idle._pick_next_film`: žánry a oblíbené filmy tazatele,
+    občas opakované zhlédnutí) + Hansův vlastní názor, jinak první věta děje.
+    '' = nelze (Kodi/idle nedostupné) → volající pokračuje dál."""
+    hi = getattr(handler, "_hans_idle", None)
+    if hi is None or getattr(hi, "kodi", None) is None:
+        return ""
+    try:
+        m = hi._pick_next_film([name] if (name and znamy) else [], hi._fcfg())
+    except Exception as e:
+        _log.debug("doporuceni filmu: vyber selhal: %s", e)
+        return ""
+    if not m or not (m.get("title") or "").strip():
+        return ""
+    t = m["title"].strip()
+    _pop = [str(m["year"])] if m.get("year") else []
+    _pop += [g for g in (m.get("genre") or [])[:2] if g]
+    out = "Z naší knihovny bych navrhl „%s“%s." % (
+        t, (" (%s)" % ", ".join(_pop)) if _pop else "")
+    try:
+        from scripts.hans_recall import nazor_k_filmu
+        _n = nazor_k_filmu(_recall_db(handler), t)
+    except Exception:
+        _n = None
+    if _n:
+        out += " " + _n
+    else:
+        try:
+            from scripts.hans_entities import _first_sentence
+            _d = _first_sentence((m.get("plot") or "").strip(), 240)
+        except Exception:
+            _d = ""
+        if _d:
+            out += " " + _d
+    if znamy:
+        out += " Když řeknete „pusť %s“, pustím ho." % t
+    _log.info("HANS_FILM_RECOMMEND_V1: doporučuji %r (%s)", t, name)
+    return out
+
+
 def _je_dotaz_na_oblibu_filmu(veta: str) -> bool:
     """HANS_FILM_OPINION_ANSWER_V1 — pta se na JEHO oblibu, ne na doporuceni?"""
     v = str(veta or "")
@@ -4309,6 +4375,12 @@ def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
                 return films_liked_among(_recall_db(handler), _tit)
         except Exception as _ae:
             _log.debug("anafora obliby selhala: %s", _ae)
+    # HANS_FILM_RECOMMEND_V1 — žádost o doporučení má přednost před oblibou
+    # i výpisem (výpis zhlédnutých filmů na ni neodpovídá).
+    if _je_zadost_o_doporuceni_filmu(args or ""):
+        _dop = _doporuc_film(handler, name, _znamy)
+        if _dop:
+            return _dop
     # HANS_FILM_OPINION_ANSWER_V1 — nejdriv obliba, teprve pak vypis.
     if _je_dotaz_na_oblibu_filmu(args or ""):
         _ob = films_liked_answer(_recall_db(handler))
@@ -4329,6 +4401,11 @@ register(
     "film",
     slash_aliases=["film", "filmy"],
     nl_patterns=[
+        # HANS_FILM_RECOMMEND_V1 (24. 9.) — žádost o doporučení filmu
+        r"\bdoporu[cč]\w*\b[^?.!]{0,40}\bfilm",
+        r"\bfilm\w*\b[^?.!]{0,30}\bdoporu[cč]",
+        r"\btip\w* na (?:n[eě]jak\w* )?film",
+        r"\b(?:co|jak[yý] film)\b[^?.!]{0,20}\b(?:bych|bychom|bysme|m[aá]m|m[aá]me|m[eě]l|m[eě]la|m[eě]li)\b[^?.!]{0,15}\b(?:pustit|pod[ií]vat|koukat|vid[eě]t)\b[^?.!]{0,15}(?:film|ve[cč]er|dnes)",
         # HANS_COUNT_FILMS_BOOKS_V1 (14. 9.) — pocet videnych filmu. SLOVESO je
         # povinne: bez nej sedl vzor i na „kolik stoji ten film v kine?“.
         # Na 2 248 realnych vetach chyti jen doložený dotaz z 13. 8.

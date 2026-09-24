@@ -341,7 +341,8 @@ class WebReader:
             return None
 
     def wikipedia_read(self, query: str, lang: str = "cs",
-                       max_chars: int | None = None) -> Optional["ReadResult"]:
+                       max_chars: int | None = None,
+                       art: Optional[dict] = None) -> Optional["ReadResult"]:
         """CURIOSITY_DEEP_V1 — zvídavé čtení z CELÉHO článku (ne jen lead).
         Lehčí sourozenec `wikipedia()`: vrací stejný ReadResult, ale poznámka
         vzniká z většího těla článku (anti-mělkost — Hansova každodenní znalost
@@ -349,7 +350,8 @@ class WebReader:
         if max_chars is None:
             max_chars = int(
                 self.config.get("curiosity", {}).get("read_max_chars", 6000))
-        art = self.wikipedia_article(query, lang=lang, max_chars=max_chars)
+        if art is None:   # HANS_FILM_ARTICLE_V1 — volající může dát hotový článek
+            art = self.wikipedia_article(query, lang=lang, max_chars=max_chars)
         if not art or not (art.get("text") or "").strip():
             return None
         text = art["text"]
@@ -556,6 +558,47 @@ class WebReader:
         return out
 
     # ── Wikipedia hloubkové čtení (HANS_STUDY_DEEP_V1) ──────────────────────────
+
+    def film_article(self, title: str, year=None, lang: str = "cs",
+                     max_chars: int = 12000) -> Optional[dict]:
+        """HANS_FILM_ARTICLE_V1 (24. 9.) — článek, který je opravdu o FILMU.
+
+        Holý název je víceznačný: změřeno 24. 9., že Kodi-zvědavost si ke 18 z 51
+        filmů (35 %) přečetla něco jiného — „Duna“ = písečná duna, „Čelisti“,
+        „Apollo 13“, „Everest“, „Marketa Lazarová“ (román)… a zapsala to jako
+        četbu k filmu. Kandidáti „X (film, rok)“ → „X (film)“ → „X“; bere se
+        první článek, který Wikidata NEVYVRÁTÍ jako film (`je_film_stav` is
+        False — „nevím“ projde, viz HANS_KODI_GLOSS_IS_FILM_V2). Článek s JINÝM
+        rokem v názvu je jiný film („Šakal (film, 1997)“ na dotaz 1973).
+        Simulace na 51 filmech: 16 z 18 opraveno, 2 přeskočeny, 31 správných
+        beze změny. None = žádný filmový článek → nic nečíst."""
+        from scripts.hans_facts import je_film_stav
+        t = (title or "").strip()
+        if not t:
+            return None
+        cands = ([f"{t} (film, {year})"] if year else []) + [f"{t} (film)", t]
+        for q in cands:
+            art = self.wikipedia_article(q, lang=lang, max_chars=max_chars)
+            if not art or not (art.get("text") or "").strip():
+                continue
+            nazev = (art.get("title") or "").strip() or q
+            roky = re.findall(r"\b(1[89]\d\d|20\d\d)\b", nazev)
+            if year and roky and str(year) not in roky:
+                continue
+            if je_film_stav(nazev, art.get("lang") or lang) is False:
+                continue
+            return art
+        _log.info("HANS_FILM_ARTICLE_V1: k filmu %r (%s) není filmový článek → nečtu",
+                  t, year or "bez roku")
+        return None
+
+    def wikipedia_read_film(self, title: str, year=None) -> Optional["ReadResult"]:
+        """HANS_FILM_ARTICLE_V1 — zvídavé čtení o filmu jen z filmového článku."""
+        _mc = int(self.config.get("curiosity", {}).get("read_max_chars", 6000))
+        art = self.film_article(title, year=year, max_chars=_mc)
+        if art is None:
+            return None
+        return self.wikipedia_read(title, max_chars=_mc, art=art)
 
     def wikipedia_article(self, query: str, lang: str = "cs",
                           max_chars: int = 12000) -> Optional[dict]:

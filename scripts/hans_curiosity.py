@@ -168,15 +168,21 @@ class HansCuriosity:
 
     # ── Triggery ──────────────────────────────────────────────────────────────
 
-    def trigger_kodi(self, title: str, media_type: str = "movie"):
+    def trigger_kodi(self, title: str, media_type: str = "movie", year=None):
         """
         Kodi hraje film/seriál → Hans si ho chce vyhledat.
+        HANS_FILM_ARTICLE_V1: u FILMU jen článek, který je o filmu (35 % čtení
+        bylo o něčem jiném — „Duna“ = písečná duna).
         """
         if not title or self._on_cooldown("kodi", title):
             return
         _log.info("Curiosity trigger: Kodi — '%s'", title)
+        if media_type == "movie":
+            _fn = lambda: self._reader.wikipedia_read_film(title, year)
+        else:
+            _fn = lambda: self._reader.wikipedia_read(title)
         self._read_async(
-            fn    = lambda: self._reader.wikipedia_read(title),
+            fn    = _fn,
             topic = "kodi",
             key   = title,
         )

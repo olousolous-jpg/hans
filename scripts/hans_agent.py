@@ -506,11 +506,8 @@ def _reject_kodi_play(handler, args) -> str:
     try:
         from scripts.web_reader import WebReader
         w = WebReader(getattr(handler, "config", {}) or {})
-        art = None
-        for q in ("%s (film)" % title, title):
-            art = w.wikipedia_article(q, lang="cs", max_chars=700)
-            if art and (art.get("text") or "").strip():
-                break
+        # HANS_FILM_ARTICLE_V1 — sdílené hledání filmového článku (i zvědavost)
+        art = w.film_article(title, lang="cs", max_chars=700)
         if art:
             from scripts.hans_entities import _first_sentence
             g = _first_sentence(art.get("text") or "")
