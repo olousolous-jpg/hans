@@ -1253,7 +1253,7 @@ def _cmd_severka(handler, name, args) -> str:
             return "Rozhodovací mechanismus není dostupný."
         def _run():
             try:
-                sev.evaluate()
+                sev.evaluate(force=True)  # SEVERKA_CHANGE_COOLDOWN_V1: ruční = bez odstupu
             except Exception as _e:
                 _log.error("severka manual run: %s", _e)
         threading.Thread(target=_run, daemon=True).start()

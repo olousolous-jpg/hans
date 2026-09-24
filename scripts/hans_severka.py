@@ -96,7 +96,9 @@ def _role_problem(role: str, core: str) -> str:
     if not r:
         return "návrh nejmenuje roli"
     slova = r.split()
-    if len(slova) > 3 or len(r) > 40:
+    # 3 → 6 slov (24. 9.): „správce knihovny a historických sbírek“ je
+    # konkrétní role, limit 3 ji zahodil (3/3 v měření varianty E)
+    if len(slova) > 6 or len(r) > 60:
         return "role není krátké pojmenování (%s)" % r
     rf = _fold(r)
     for a in _ABSTRAKTNI_ROLE:
@@ -178,7 +180,7 @@ _SYSTEM = (
     "CORE oslovuje postavu v 2. osobě jednotného čísla (ty), nikdy nevyká.\n"
     "  Když dosavadní CORE žádnou konkrétní roli nejmenuje, je to samo o sobě "
     "důvod k 'propose'.\n"
-    "Vrať VÝHRADNĚ JSON objekt s klíči: role (konkrétní role, 1–3 slova česky "
+    "Vrať VÝHRADNĚ JSON objekt s klíči: role (konkrétní role, nejvýš 6 slov česky "
     "v 1. pádu — jen při 'propose'), decision ('keep'|'propose'), analysis "
     "(krátký rozbor shody/rozporu role a tendencí), proposed_core (nový CORE — "
     "jen při 'propose', jinak prázdné), rationale (proč — jen při 'propose')."
@@ -358,11 +360,31 @@ class Severka:
             _log.debug("severka _durable_hobbies failed: %s", _e)
             return []
 
-    def evaluate(self) -> dict:
+    def evaluate(self, force: bool = False) -> dict:
         """Spustí rozhodnutí. Když gate neprojde → {'decision':'keep', gate:False}.
         Když LLM navrhne změnu → vytvoří PENDING verzi a vrátí ji. Nic neaplikuje.
+        force=True (ruční `/severka teď`) obejde odstup od poslední změny.
         """
         date_str = datetime.now().strftime("%Y-%m-%d")
+        # SEVERKA_CHANGE_COOLDOWN_V1 (24. 9.) — brzda v KÓDU, ne v promptu.
+        # Změřeno nad schválenou v6: model navrhne přejmenování role 8/8
+        # (správce ↔ archivář ↔ kurátor), i hodinu po schválení; pravidlo
+        # „stálost role“ v zadání to nespravilo (4/4 dál propose). Identita
+        # se proto po změně nechá uležet `severka.min_days_since_change` dní.
+        # Není to deferral (nic nečeká na mozek) → volající nastaví kadenci.
+        if not force:
+            _min_d = float((self._config.get("severka", {}) or {})
+                           .get("min_days_since_change", 30))
+            _st = self._store()
+            _cur = _st.current() if _st else None
+            if _cur and _cur.source != "seed" and _min_d > 0:
+                _stari = (time.time() - float(_cur.ts or 0)) / 86400.0
+                if _stari < _min_d:
+                    _log.info("severka %s: identita v%s je stará %.1f dne "
+                              "(< %g) → nechávám ji uležet, nic nenavrhuji",
+                              date_str, _cur.id, _stari, _min_d)
+                    return {"decision": "keep", "gate": True, "durable": [],
+                            "message": "", "cooldown": True}
         durable = self.durable_tendencies()
         durable_h = self._durable_hobbies()
         if not durable and not durable_h:
