@@ -665,6 +665,41 @@ def _trace_zapis(payload, url, trvani, vysledek):
         pass
 
 
+# HANS_OLLAMA_MODEL_STUCK_V1 (24. 9.) — Ollama na PC umí uvíznout PER MODEL:
+# požadavek na ne-rezidentní model (OpenEuroLLM) visí, v logu Ollamy se ani
+# neobjeví „loading model“, a přitom hans-czech odpovídá za 1 s. Doloženo
+# 24. 9. dvakrát (08:17, 10:25), pokaždé pomohl až restart. Hlídač zdraví to
+# neviděl: zkouší jen hans-czech, a zkoušet ne-rezidentní model nesmí (načetl
+# by ho a vytlačil hans-czech). Proto se to pozná tady, levně a jen HTTP:
+# po posledním pokusu se zeptám /api/ps — když požadovaný model po celou
+# dobu čekání v paměti NENÍ, nešlo o dlouhou práci, ale o zásek. Zapíše se
+# značka, kterou si vyzvedne `_health_watcher_loop` a Ollamu restartuje.
+STUCK_FLAG = str(Path(__file__).resolve().parent.parent / "data" / ".ollama_model_stuck.json")
+
+
+def _poznac_nenacteny_model(url: str, payload: dict, timeout: int, pokusu: int) -> None:
+    try:
+        model = str((payload or {}).get("model") or "")
+        if not model or timeout * pokusu < 60:   # krátké sondy načtení nestihnou
+            return
+        base = url.split("/api/", 1)[0]
+        r = requests.get(base + "/api/ps", timeout=(CONNECT_TIMEOUT, 5))
+        if not r.ok:
+            return
+        nactene = {m.get("name") for m in (r.json().get("models") or [])}
+        if model in nactene:
+            return                               # model běží → dlouhá práce, ne zásek
+        import json as _json
+        with open(STUCK_FLAG, "w", encoding="utf-8") as f:
+            _json.dump({"ts": time.time(), "model": model,
+                        "nactene": sorted(x for x in nactene if x)}, f)
+        _log.warning("HANS_OLLAMA_MODEL_STUCK_V1: %s se za %d s ani nenačetl "
+                     "(v paměti %s) → značka pro hlídač", model,
+                     timeout * pokusu, sorted(x for x in nactene if x) or "nic")
+    except Exception as e:
+        _log.debug("model stuck check: %s", e)
+
+
 def _post_with_retry_impl(url: str, payload: dict, timeout: int,
                           extractor) -> Optional[str]:
     """POST s retry při timeout. LOG_CIRCUIT_V1: potlač spam z mrtvého endpointu."""
@@ -707,6 +742,7 @@ def _post_with_retry_impl(url: str, payload: dict, timeout: int,
             else:
                 _log.error("Ollama neodpověděla do %d s ani po %d pokusech: %s",
                            timeout, attempt, url)
+                _poznac_nenacteny_model(url, payload, timeout, attempt)
         except requests.exceptions.ConnectionError as exc:
             if br.should_log(exc):
                 _log.error("Ollama connection error: %s — %s", url, exc)

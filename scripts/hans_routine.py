@@ -1597,6 +1597,39 @@ class HansRoutine:
             if self._stop.wait(float(_rc.get('watch_interval_s', 60))):
                 break
 
+    def _model_stuck_heal(self, oll_status) -> bool:
+        """HANS_OLLAMA_MODEL_STUCK_V1 — restart Ollamy, když ollama_client
+        zapsal značku „model se nenačetl“. Jen čerstvá značka (15 min), ne
+        v herním módu ani při plánované nedostupnosti PC, a nejvýš 1× za
+        30 min (kdyby to restart nespravil, ať se netočí dokola)."""
+        import json as _json, os as _os, time as _t
+        from scripts.ollama_client import STUCK_FLAG, game_mode_on
+        from scripts import hans_health
+        try:
+            with open(STUCK_FLAG, encoding="utf-8") as f:
+                zn = _json.load(f)
+        except FileNotFoundError:
+            return False
+        except Exception:
+            zn = {}
+        stari = _t.time() - float(zn.get("ts") or 0)
+        if stari > 900:
+            _os.remove(STUCK_FLAG)
+            return False
+        if oll_status != hans_health.OK or game_mode_on() \
+                or self._pc_planned_unavailable():
+            return False
+        if _t.time() - getattr(self, "_model_stuck_heal_ts", 0.0) < 1800:
+            return False
+        _log.warning("health: model %s se nenačítá (hans-czech odpovídá) → "
+                     "restartuji Ollamu", zn.get("model"))
+        self._model_stuck_heal_ts = _t.time()
+        try:
+            _os.remove(STUCK_FLAG)
+        except Exception:
+            pass
+        return bool(hans_health.heal_ollama(self.config))
+
     def _health_watcher_loop(self):
         """HANS_HEALTH_V1 — periodická probe závislostí + self-heal zaseklé
         Ollamy. Vlastní vlákno (nezávislé na tick). Self-heal AŽ po N po sobě
@@ -1634,6 +1667,13 @@ class HansRoutine:
                                     pass
                 else:
                     self._health_wedge_strikes = 0
+                # HANS_OLLAMA_MODEL_STUCK_V1 — zásek per model (značka od
+                # ollama_client). Sonda ho nevidí, protože zkouší jen hans-czech.
+                try:
+                    if 'ollama' not in healed and self._model_stuck_heal(oll):
+                        healed.append('ollama')
+                except Exception as _se:
+                    _log.warning("health: model stuck heal: %s", _se)
                 hans_health._write_state(health, healed)
                 bad = hans_health.degraded_services(health)
                 # HANS_HEALTH_LOG_CIRCUIT_V1 — hlas jen na HRANĚ stavu: WARNING
