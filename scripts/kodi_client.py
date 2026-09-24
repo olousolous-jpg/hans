@@ -190,7 +190,8 @@ class KodiClient:
                            'artist', 'album', 'showtitle', 'season',
                            'file',   # HANS_TRANSLATE_V1 — cesta k souboru
                                      # (smb://.../SHARE/... -> /mnt/SHARE/... na PC)
-                           'episode', 'plot', 'plotoutline'],  # MOVIE_GROUNDING_V1
+                           'episode', 'plot', 'plotoutline',  # MOVIE_GROUNDING_V1
+                           'uniqueid'],  # HANS_FILM_IMDB_V1 — IMDb/Wikidata ID filmu
         })
         if result and 'result' in result:
             item = result['result'].get('item', {})

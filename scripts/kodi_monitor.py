@@ -241,6 +241,8 @@ class KodiMonitor:
                         title      = item["title"],
                         media_type = item.get("type", "movie"),
                         year       = item.get("year") or None,   # HANS_FILM_ARTICLE_V1
+                        imdb       = (item.get("uniqueid") or {}).get("imdb", ""),     # HANS_FILM_IMDB_V1
+                        qid        = (item.get("uniqueid") or {}).get("wikidata", ""),
                     )
                 if item.get("title") and hasattr(self, '_mood'):
                     self._mood.update_kodi(item["title"])

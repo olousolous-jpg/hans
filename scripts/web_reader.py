@@ -560,7 +560,8 @@ class WebReader:
     # ── Wikipedia hloubkové čtení (HANS_STUDY_DEEP_V1) ──────────────────────────
 
     def film_article(self, title: str, year=None, lang: str = "cs",
-                     max_chars: int = 12000) -> Optional[dict]:
+                     max_chars: int = 12000, imdb: str = "",
+                     qid: str = "") -> Optional[dict]:
         """HANS_FILM_ARTICLE_V1 (24. 9.) — článek, který je opravdu o FILMU.
 
         Holý název je víceznačný: změřeno 24. 9., že Kodi-zvědavost si ke 18 z 51
@@ -576,6 +577,27 @@ class WebReader:
         t = (title or "").strip()
         if not t:
             return None
+        # HANS_FILM_IMDB_V1 (24. 9.) — známe-li IMDb/Wikidata ID (Kodi je má
+        # u 954 z 968 filmů), žádné hádání podle názvu: položka → odkaz na
+        # článek. Změřeno na celé knihovně: 913 položek, 598 s českým a 294
+        # jen s anglickým článkem (92 % knihovny). Jinak kandidáti podle názvu.
+        if imdb or qid:
+            try:
+                from scripts.hans_facts import qid_pro_imdb, sitelinky
+                _q = (qid or "").strip() or qid_pro_imdb(imdb)
+                _sl = sitelinky(_q) if _q else {}
+                for _web, _lang in (("cswiki", "cs"), ("enwiki", "en")):
+                    _nazev = _sl.get(_web)
+                    if not _nazev:
+                        continue
+                    _txt = self._wiki_extract(_nazev, _lang, intro_only=False)
+                    if _txt and len(_txt) >= 120:
+                        return {"page_title": _nazev, "title": _nazev,
+                                "url": (f"https://{_lang}.wikipedia.org/wiki/"
+                                        + requests.utils.quote(_nazev.replace(" ", "_"))),
+                                "text": _txt[:max_chars], "lang": _lang}
+            except Exception as _ie:
+                _log.debug("HANS_FILM_IMDB_V1 %s/%s: %s", imdb, qid, _ie)
         cands = ([f"{t} (film, {year})"] if year else []) + [f"{t} (film)", t]
         for q in cands:
             art = self.wikipedia_article(q, lang=lang, max_chars=max_chars)
@@ -592,10 +614,12 @@ class WebReader:
                   t, year or "bez roku")
         return None
 
-    def wikipedia_read_film(self, title: str, year=None) -> Optional["ReadResult"]:
+    def wikipedia_read_film(self, title: str, year=None, imdb: str = "",
+                            qid: str = "") -> Optional["ReadResult"]:
         """HANS_FILM_ARTICLE_V1 — zvídavé čtení o filmu jen z filmového článku."""
         _mc = int(self.config.get("curiosity", {}).get("read_max_chars", 6000))
-        art = self.film_article(title, year=year, max_chars=_mc)
+        art = self.film_article(title, year=year, max_chars=_mc,
+                                imdb=imdb, qid=qid)   # HANS_FILM_IMDB_V1
         if art is None:
             return None
         return self.wikipedia_read(title, max_chars=_mc, art=art)

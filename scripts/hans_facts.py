@@ -31,6 +31,7 @@ OVĚŘENO NAŽIVO 26.8.2026:
 from __future__ import annotations
 
 import json
+import re   # HANS_FILM_IMDB_V1
 import logging
 import sqlite3
 import time
@@ -98,6 +99,40 @@ def _get(url: str) -> dict:
                 continue
             raise
     raise RateLimit("HTTP 429/503 i po %d pokusech" % (len(BACKOFF_S) + 1))
+
+
+def qid_pro_imdb(imdb: str) -> Optional[str]:
+    """HANS_FILM_IMDB_V1 (24. 9.) — Wikidata položka PŘESNĚ podle IMDb ID (P345).
+    Kodi má IMDb ID u 954 z 968 filmů (vlastní scraper). Běžné API (haswbstatement),
+    ne SPARQL — ten byl 24. 9. omezen na 1 dotaz/min. None = nenalezeno/chyba."""
+    i = (imdb or "").strip()
+    if not re.match(r"^tt\d{5,10}$", i):
+        return None
+    try:
+        d = _get("https://www.wikidata.org/w/api.php?action=query&list=search"
+                 "&format=json&srlimit=1&srnamespace=0&srsearch="
+                 + urllib.parse.quote("haswbstatement:P345=" + i))
+        hits = d.get("query", {}).get("search", [])
+        q = (hits[0].get("title") or "") if hits else ""
+        return q if re.match(r"^Q\d+$", q) else None
+    except Exception as e:
+        _log.debug("qid_pro_imdb %s: %s", i, e)
+        return None
+
+
+def sitelinky(qid: str, weby=("cswiki", "enwiki")) -> dict:
+    """HANS_FILM_IMDB_V1 — {„cswiki“: „Duna (film, 2021)“, …} pro položku."""
+    if not re.match(r"^Q\d+$", (qid or "").strip()):
+        return {}
+    try:
+        d = _get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                 "&format=json&props=sitelinks&sitefilter=%s&ids=%s"
+                 % ("|".join(weby), qid.strip()))
+        sl = (d.get("entities", {}).get(qid.strip(), {}) or {}).get("sitelinks", {}) or {}
+        return {k: v.get("title", "") for k, v in sl.items() if v.get("title")}
+    except Exception as e:
+        _log.debug("sitelinky %s: %s", qid, e)
+        return {}
 
 
 def qid_for(source_title: str, lang: str = "cs") -> tuple:
