@@ -1134,6 +1134,17 @@ def _cmd_severka(handler, name, args) -> str:
     sev = getattr(_rt, "_severka", None)
     if ident is None:
         return "Verzování identity není dostupné."
+    # SEVERKA_KNOWN_ONLY_V1 (24. 9.) — identita je věc domácnosti: cizí nesmí
+    # schvalovat, vracet ani spouštět změnu a nemá ani číst historii verzí.
+    # Přísně: prázdné jméno se tu NEpočítá za známé (jinde to konvence je).
+    try:
+        from scripts.cz_names import is_known_person as _ikp
+        _znamy = bool(name) and _ikp(name)
+    except Exception:
+        _znamy = False
+    if not _znamy:
+        _log.info("SEVERKA_KNOWN_ONLY_V1: /severka od neznámého (%s) odmítnuto", name)
+        return "O své identitě mluvím jen se svou domácností."
     parts = (args or "").strip().split(maxsplit=1)
     cmd = parts[0].lower() if parts else "stav"
     rest = parts[1].strip() if len(parts) > 1 else ""
