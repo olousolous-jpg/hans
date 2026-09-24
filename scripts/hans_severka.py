@@ -238,6 +238,41 @@ class Severka:
         return (self._config.get("persona", {}) or {}).get("core", "")
 
     # ── SEVERKA_CZ_OUTPUT_V1 ────────────────────────────────────────────────
+    # ── SEVERKA_ROLE_JUDGE_V1 ────────────────────────────────────────────────
+    _ROLE_JUDGE_SYS = (
+        "Posuzuješ dvě pojmenování role jedné postavy v domácnosti. Odpověz "
+        "JEDINÝM slovem: STEJNA, když jde o tutéž činnost jen jinými slovy nebo "
+        "s přidaným přívlastkem či rozšířením (např. knihovník × správce knihovny "
+        "a sbírek), nebo JINA, když by postava dělala pro lidi podstatně jinou "
+        "činnost (např. knihovník × učitel).")
+
+    def _current_role(self) -> str:
+        """Role ze stávajícího CORE: „Jsi <jméno>. Jsi <role>, …“ → <role>."""
+        import re as _re
+        core = self._current_core() or ""
+        m = _re.search(r"^\s*Jsi\s+[^.]+\.\s*Jsi\s+([^,.;]+)", core)
+        return " ".join(m.group(1).split()) if m else ""
+
+    def _role_same(self, cur: str, new: str):
+        """True = totéž jinými slovy, False = jiná činnost, None = soudce nedostupný."""
+        try:
+            from scripts.ollama_client import ollama_generate
+            r = ollama_generate(
+                model=self._voice_model,
+                prompt="ROLE A: %s\nROLE B: %s\nOdpověď:" % (cur, new),
+                system=self._ROLE_JUDGE_SYS, config=self._config,
+                timeout=self._voice_timeout,
+                options={"temperature": 0, "num_predict": 4})
+        except Exception as e:
+            _log.warning("severka: soudce role selhal: %s", e)
+            return None
+        u = (r or "").upper()
+        if "STEJN" in u:
+            return True
+        if "JIN" in u:
+            return False
+        return None
+
     def _do_cestiny(self, text: str, co: str = "text") -> str:
         """Přeloží text do češtiny, když ČESKY NENÍ. Česky psaný text vrací
         BEZE ZMĚNY — korektura je vědomě zamítnutá (viz poznámka výše).
@@ -549,6 +584,25 @@ class Severka:
                          date_str, _vada, " ".join(new_core.split()))
             return {"decision": "keep", "gate": True, "durable": durable,
                     "message": "", "role_rejected": _vada}
+        # SEVERKA_ROLE_JUDGE_V1 (24. 9.) — jen jiné pojmenování téže role
+        # NENÍ změna identity. Měřeno: generátor navrhl nad schválenou rolí
+        # 11/11 synonymum nebo rozšíření (správce ↔ archivář ↔ správce sbírek),
+        # pravidlo v zadání to nespravilo. Soudí proto ZVLÁŠŤ úzká otázka
+        # (inspirace „information orthogonality“, AutoPersonas 2607.08252)
+        # na rezidentním hlasovém modelu: 21/24 na párech se známou odpovědí,
+        # 3 opakování vždy shodná. Soudce nedostupný → odloženo, ne návrh.
+        _cur_role = self._current_role()
+        if _cur_role:
+            _stejna = self._role_same(_cur_role, _role)
+            if _stejna is None:
+                _log.info("severka %s: soudce role nedostupný → odloženo", date_str)
+                return {"decision": "keep", "gate": True, "durable": durable,
+                        "message": "", "deferred": True}
+            if _stejna:
+                _log.info("severka %s: „%s“ je jen jiné pojmenování role „%s“ "
+                          "→ držím identitu", date_str, _role, _cur_role)
+                return {"decision": "keep", "gate": True, "durable": durable,
+                        "message": "", "role_same": _role}
 
         # Vytvoř PENDING verzi (NIC se neaplikuje) + zapiš návrh do deníku
         st = self._store()
