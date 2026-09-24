@@ -1,5 +1,7 @@
 # Instalace Hanse na nové zařízení
 
+> Stav, rozhodnutí, známá omezení a jak navázat: [STAV.md](STAV.md)
+
 Samostatný instalátor v této složce. **Nemění žádný existující soubor Hanse** —
 instaluje prostředí, zapisuje config (přes `scripts/config_io`, tedy rozděleně
 na veřejnou a privátní část) a vytváří systemd službu.
