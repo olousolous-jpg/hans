@@ -1,0 +1,21 @@
+[Unit]
+Description=Hans — domácí AI společník (nainstalováno přes installer/)
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=@HOME@/.Xauthority
+# run.sh volá `python3.13` a `python3` — díky PATH se najdou ty z .venv
+# (venv obsahuje obě jména), takže run.sh se nemusí měnit.
+Environment=PATH=@ROOT@/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=VIRTUAL_ENV=@ROOT@/.venv
+# počkej na X server (autologin může naběhnout pomaleji než user systemd)
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do [ -S /tmp/.X11-unix/X0 ] && exit 0; sleep 1; done'
+ExecStart=/bin/bash @ROOT@/run.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
