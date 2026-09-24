@@ -744,6 +744,16 @@ class HansRoutine:
                                    "— když budete chtít, řekněte /severka stav.")
                 except Exception as _ne:
                     _log.warning("Severka notifier selhal: %s", _ne)
+        # SEVERKA_LOG_HONEST_V1 (24. 9.) — brzda, zamítnutá role a synonymum
+        # se dřív hlásily jako „drift malý“; log má říct skutečný důvod.
+        elif res.get("cooldown"):
+            _log.info("Severka: identita je mladší než min_days_since_change → nechávám ji uležet.")
+        elif res.get("role_rejected"):
+            _log.info("Severka: návrh zahozen pojistkou role (%s) → držím roli.",
+                      res.get("role_rejected"))
+        elif res.get("role_same"):
+            _log.info("Severka: návrh je jen jiné pojmenování role (%s) → držím roli.",
+                      res.get("role_same"))
         elif res.get("gate"):
             _log.info("Severka: gate prošel, drift malý → držím roli.")
         else:

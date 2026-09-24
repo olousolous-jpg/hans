@@ -237,19 +237,37 @@ class IdentityStore:
     def _apply_core(self, new_core: str) -> bool:
         """Mutace běžícího configu + zápis config.json (snapshot předem)."""
         try:
-            # 1) živá mutace (persona_core čte config za běhu)
-            self._config.setdefault("persona", {})["core"] = new_core
-            # 2) persist na disk
+            # HANS_IDENTITY_CONFIG_IO_V1 (24. 9.) — NAPŘED disk, pak živá mutace.
+            # Dřív se `config.json` zapisoval tady napřímo (odsazení 2 → celý
+            # soubor přeformátován, doloženo schválením v7) a BEZ kontroly
+            # tajemství, kterou má `config_io.save`. Skutečný config teď jde
+            # přes `config_io` (split veřejné/privátní + kontrola); když zápis
+            # odmítne, identita se NEaplikuje ani do běžícího configu.
             if self._config_path and os.path.exists(self._config_path):
-                with open(self._config_path, encoding="utf-8") as fh:
-                    disk = json.load(fh)
                 os.makedirs(_SNAP_DIR, exist_ok=True)
                 snap = f"{_SNAP_DIR}/config.json.{int(time.time())}.bak"
                 shutil.copy2(self._config_path, snap)
-                disk.setdefault("persona", {})["core"] = new_core
-                with open(self._config_path, "w", encoding="utf-8") as fh:
-                    json.dump(disk, fh, indent=2, ensure_ascii=False)
-                _log.info("identity apply: config.json zapsán (záloha %s)", snap)
+                if os.path.basename(self._config_path) == "config.json":
+                    from pathlib import Path as _P
+                    from scripts import config_io as _cio
+                    _root = _P(os.path.dirname(os.path.abspath(self._config_path)))
+                    disk = _cio.load(_root, hlasit=False)
+                    if not disk:
+                        _log.warning("_apply_core: config nejde načíst → neaplikuji")
+                        return False
+                    disk.setdefault("persona", {})["core"] = new_core
+                    if not _cio.save(disk, _root):
+                        _log.warning("_apply_core: config_io zápis odmítl → neaplikuji")
+                        return False
+                else:   # dočasný config ze smoke testu
+                    with open(self._config_path, encoding="utf-8") as fh:
+                        disk = json.load(fh)
+                    disk.setdefault("persona", {})["core"] = new_core
+                    with open(self._config_path, "w", encoding="utf-8") as fh:
+                        fh.write(json.dumps(disk, indent=4, ensure_ascii=False) + "\n")
+                _log.info("identity apply: config zapsán (záloha %s)", snap)
+            # živá mutace (persona_core čte config za běhu)
+            self._config.setdefault("persona", {})["core"] = new_core
             return True
         except Exception as e:
             _log.warning("_apply_core failed: %s", e)

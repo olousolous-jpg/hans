@@ -56,6 +56,12 @@ class KodiClient:
 
     def __init__(self, config: dict):
         cfg           = config.get("kodi", {})
+        self._kcfg    = cfg      # HANS_KODI_SEEN_BEFORE_V1 — nastaveni pro monitor
+        try:
+            from scripts.hans_persona import persona_name as _pn
+            self._persona = _pn(config)
+        except Exception:
+            self._persona = "Hans"
         self.enabled  = bool(cfg.get("enabled", True))
         self.host     = cfg.get("host", "localhost")
         self.port     = int(cfg.get("port", 8080))
@@ -92,6 +98,15 @@ class KodiClient:
         except Exception as e:
             _log.error("Kodi call error: %s", e)
         return None
+
+    def notify(self, title: str, message: str, display_s: float = 15.0,
+               image: str = "info") -> bool:
+        """HANS_KODI_SEEN_BEFORE_V1 — kratka notifikace v rohu TV (GUI.ShowNotification).
+        Nic nespousti ani nemeni, jen se ukaze. `image` = cesta NA KODI nebo „info“."""
+        r = self._call("GUI.ShowNotification", {
+            "title": title, "message": message, "image": image or "info",
+            "displaytime": int(max(1.5, float(display_s)) * 1000)})
+        return bool(r and r.get("result") == "OK")
 
     # ── Playback helpers ──────────────────────────────────────────────────────
 

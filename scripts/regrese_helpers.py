@@ -855,3 +855,20 @@ def misto_cizimu(tazatel: str) -> str:
     """HANS_PLACE_STRANGER_V1 — pusti holy /misto k tazateli?"""
     from scripts import chat_commands as cc
     return "odmita" if cc._cizi_nesmi("misto", "", _tazatel_jmeno(tazatel)) else "rika"
+
+
+# ── HANS_KODI_SEEN_BEFORE_V1 (24. 9.) ────────────────────────────────────────
+def videno_pred(sezeni: list, stari_dni: float) -> str:
+    """Umela historie: sezeni = [(pred_kolika_dny_start, minut)] filmu 'X'.
+    Vrati 'hlasi' / 'mlci' pro spusteni tehoz filmu ted."""
+    import sqlite3 as _s, time as _t
+    from scripts.kodi_monitor import naposledy_videno
+    c = _s.connect(":memory:")
+    c.execute("CREATE TABLE kodi_sessions (media_type TEXT, title TEXT, "
+              "started_at REAL, updated_at REAL)")
+    now = _t.time()
+    for dni, minut in sezeni:
+        s = now - float(dni) * 86400
+        c.execute("INSERT INTO kodi_sessions VALUES ('movie','X',?,?)",
+                  (s, s + float(minut) * 60))
+    return "hlasi" if naposledy_videno(c, "X", now, max_days=stari_dni) else "mlci"

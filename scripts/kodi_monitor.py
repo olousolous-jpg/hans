@@ -21,6 +21,58 @@ from scripts.cz_names import came as _cz_came, left as _cz_left, \
 _log = logging.getLogger("kodi_monitor")
 
 
+# ── HANS_KODI_SEEN_BEFORE_V1 (24. 9.) ────────────────────────────────────────
+# „Tenhle film jsme videli v pondeli (pred 3 dny).“ Zdroj je `kodi_sessions`
+# (zacatek i konec sledovani), ne denik — jen tak jde poznat, ze se film
+# opravdu DIVAL: tretina sezeni trva do 10 min (film se jen otevrel).
+# Sezeni do 6 h od sebe = jedno sledovani (pauza, pokracovani vecer).
+# Zmereno prehranim historie od 25. 4.: 7 hlasek na 629 sezeni filmu.
+def naposledy_videno(conn, title: str, now: float, min_s: float = 1800,
+                     max_days: float = 7.0, merge_s: float = 6 * 3600):
+    """Konec posledniho sledovani filmu (>= min_s), pokud skoncilo pred mene
+    nez max_days. Probihajici sledovani (do merge_s) se nepocita. Jinak None."""
+    t = (title or "").strip()
+    if not t:
+        return None
+    # trim(title)=? — NE lower(): SQLite lower() nemeni ne-ASCII (Č, Ó)
+    rows = conn.execute(
+        "SELECT started_at, updated_at FROM kodi_sessions "
+        "WHERE media_type='movie' AND trim(title)=? AND started_at < ? "
+        "ORDER BY started_at", (t, now - 1)).fetchall()
+    views = []
+    for s, u in rows:
+        u = max(float(u or s), float(s))
+        if views and s - views[-1][1] < merge_s:
+            views[-1][1] = max(views[-1][1], u)
+            views[-1][2] += u - s
+            continue
+        views.append([float(s), u, u - s])
+    if not views:
+        return None
+    if now - views[-1][1] < merge_s:
+        return None          # jde o pokracovani tehoz sledovani
+    for s, u, d in reversed(views):
+        if now - u > max_days * 86400:
+            return None
+        if d >= min_s:
+            return u
+    return None
+
+
+def videno_text(konec: float, now: float) -> str:
+    """„Tenhle film jsme videli v pondeli 21. 9. (pred 3 dny).“"""
+    d0 = datetime.fromtimestamp(konec)
+    dni = (datetime.fromtimestamp(now).date() - d0.date()).days
+    _dny = ["v pondělí", "v úterý", "ve středu", "ve čtvrtek", "v pátek",
+            "v sobotu", "v neděli"]
+    if dni <= 0:
+        return "Tenhle film jsme viděli už dnes."
+    if dni == 1:
+        return "Tenhle film jsme viděli včera."
+    kdy = "%s %d. %d." % (_dny[d0.weekday()], d0.day, d0.month)
+    return "Tenhle film jsme viděli %s (před %d dny)." % (kdy, dni)
+
+
 class KodiMonitor:
     # T3_ENCOUNTER_TRACKER_V1 — optional callbacks pro EncounterTracker.
     # Pokud nastaveno (Memory wiring), volá se v update_visible při arrived/left.
@@ -203,6 +255,8 @@ class KodiMonitor:
                         self._curiosity.trigger_question(_ctx, source_type='kodi')
             _log.info("New session: '%s' (%s) — watchers: %s",
                       item.get("title"), item.get("type"), self._visible)
+            if _should_fire and item.get("type") == "movie" and item.get("title"):
+                self._ohlas_videno(item["title"], now)   # HANS_KODI_SEEN_BEFORE_V1
             # Zapiš do Hansova deníku
             if _should_fire:   # KODI_TITLE_THROTTLE_V1
                 self._diary_log(item)
@@ -218,6 +272,51 @@ class KodiMonitor:
                     WHERE id=?
                 """, (now, persons_json, self._current_session_id))
                 self._conn.commit()
+
+    def _ohlas_videno(self, title: str, now: float) -> None:
+        """HANS_KODI_SEEN_BEFORE_V1 — film, ktery jsme videli za posledni tyden,
+        ohlasi kratce na TV. Nic starsiho (pokyn uzivatele 24. 9.)."""
+        try:
+            kc = getattr(self.kodi, "_kcfg", {}) or {}
+            if not kc.get("seen_before_notify", True):
+                return
+            with self._lock:
+                konec = naposledy_videno(
+                    self._conn, title, now,
+                    min_s=float(kc.get("seen_before_min_minutes", 30)) * 60,
+                    max_days=float(kc.get("seen_before_max_days", 7)))
+            if konec is None:
+                return
+            if self._hans_nabidl(title, now):
+                _log.info("HANS_KODI_SEEN_BEFORE_V1: '%s' nabidl sam Hans → neohlasuji", title)
+                return
+            text = videno_text(konec, now)
+            # Hansova tvar: soubor, ktery na OSMC udrzuje dialog nabidky filmu
+            # (KodiClient._scp_face, AVATAR_KODI_IMAGE_V1); overeno na TV 24. 9.
+            ok = self.kodi.notify(getattr(self.kodi, "_persona", "Hans"), text,
+                                  float(kc.get("seen_before_display_s", 15)),
+                                  image=kc.get("seen_before_image",
+                                               "special://home/addons/service.hans.suggest"
+                                               "/media/hans_face.png"))
+            _log.info("HANS_KODI_SEEN_BEFORE_V1: '%s' → %s (%s)", title, text,
+                      "ukazano" if ok else "Kodi neodpovedel")
+        except Exception as e:
+            _log.warning("HANS_KODI_SEEN_BEFORE_V1 selhal: %s", e)
+
+    def _hans_nabidl(self, title: str, now: float) -> bool:
+        """Nabidl ten film Hans sam v poslednich 15 min? (KODI_FILM_SUGGEST_V1)"""
+        try:
+            c = sqlite3.connect("file:%s?mode=ro" % self.diary_path, uri=True, timeout=3)
+            try:
+                r = c.execute(
+                    "SELECT 1 FROM diary WHERE event_type='film_suggestion' "
+                    "AND ts>? AND note=?",
+                    (now - 900, "Návrh: %s" % title)).fetchone()
+            finally:
+                c.close()
+            return bool(r)
+        except Exception:
+            return False
 
     def _diary_log(self, item: dict):
         """Zapiš aktuálně hraný titul do Hansova deníku."""

@@ -248,6 +248,7 @@ _JEN_ZNAMYM = frozenset({
     # ne; VEDOMA ZMENA: driv byl holy vypis /misto pro cizi otevreny.
     "misto",
 })
+_JEN_ZNAMYM_CTENI = frozenset({"kritika", "misto"})  # HANS_STRANGER_READ_MSG_V1
 _CTENI_BEZ_ARG = {  # příkaz → argumenty, které jsou jen výpis
     "seznam": (), "kalendar": (), "nitky": ("vse",), "studium": ("programy",),
     "dilo": ("vse",), "napad": ("vse",), "dashboard": (),
@@ -282,6 +283,10 @@ def _cizi_nesmi(cmd_id: str, args, name) -> str:
         pass
     _log.info("HANS_STRANGER_NO_MUTATE_V1: %s od neznámého (%s) odmítnuto",
               cmd_id, name)
+    # HANS_STRANGER_READ_MSG_V1 (24. 9.) — u příkazů, které nic nemění, je to
+    # otázka, ne úkon: „udělat“ by na „kde jsi?“ znělo nesmyslně.
+    if cmd_id in _JEN_ZNAMYM_CTENI:
+        return "O tom mluvím jen se svou domácností."
     return "Tohle mohu udělat jen pro svou domácnost."
 
 
