@@ -1140,6 +1140,10 @@ def _cmd_severka(handler, name, args) -> str:
     by = name or "user"
 
     pend = ident.pending()
+    # SEVERKA_DISPLAY_NAME_V1 — CORE je uložený s tokenem {name}
+    # (SEVERKA_NAME_TOKEN_V1); do výpisu pro člověka patří jméno.
+    from scripts.hans_persona import apply_name as _an
+    _jm = lambda t: _an(t or "", getattr(ident, "_config", None) or {})
 
     if cmd in _SEVERKA_APPROVE:
         target = int(rest) if rest.isdigit() else (pend[0].id if pend else None)
@@ -1149,7 +1153,7 @@ def _cmd_severka(handler, name, args) -> str:
             cur = ident.current()
             core = cur.core if cur else ""
             return ("Děkuji za důvěru, pane. Přijal jsem novou podobu sebe sama. "
-                    "Od této chvíle jsem:" + NL_RUNTIME + NL_RUNTIME + "„" + core + "\"")
+                    "Od této chvíle jsem:" + NL_RUNTIME + NL_RUNTIME + "„" + _jm(core) + "\"")
         return "Schválení se nezdařilo (verze %s není čekající?)." % target
 
     if cmd in _SEVERKA_REJECT:
@@ -1166,7 +1170,7 @@ def _cmd_severka(handler, name, args) -> str:
         if ident.rollback(int(rest), approved_by=by):
             cur = ident.current()
             return ("Vrátil jsem se k dřívější podobě:" + NL_RUNTIME + NL_RUNTIME
-                    + "„" + (cur.core if cur else "") + "\"")
+                    + "„" + _jm(cur.core if cur else "") + "\"")
         return "Rollback se nezdařil."
 
     if cmd in _SEVERKA_HISTORY:
@@ -1175,7 +1179,7 @@ def _cmd_severka(handler, name, args) -> str:
             return "Historie identity je prázdná."
         out = ["Historie mé identity, pane:"]
         for v in hist:
-            out.append("  [%d] %s — %s: %.70s" % (v.id, v.status, v.source, v.core))
+            out.append("  [%d] %s — %s: %.70s" % (v.id, v.status, v.source, _jm(v.core)))
         return NL_RUNTIME.join(out)
 
     if cmd in _SEVERKA_RUN:
@@ -1195,12 +1199,12 @@ def _cmd_severka(handler, name, args) -> str:
     out = []
     if cur:
         out.append("Současná identita (verze %d, zdroj %s):" % (cur.id, cur.source))
-        out.append("„" + cur.core + "\"")
+        out.append("„" + _jm(cur.core) + "\"")
     if pend:
         out.append("")
         out.append("Čekající návrh změny:")
         for p in pend:
-            out.append("  [verze %d] „%s\"" % (p.id, p.core))
+            out.append("  [verze %d] „%s\"" % (p.id, _jm(p.core)))
             if p.rationale:
                 out.append("    důvod: %s" % p.rationale)
         out.append("")

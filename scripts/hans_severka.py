@@ -553,6 +553,9 @@ class Severka:
             return None
 
     def _user_message(self, new_core: str, rationale: str) -> str:
+        # SEVERKA_DISPLAY_NAME_V1 — člověk má vidět jméno, ne token {name}
+        from scripts.hans_persona import apply_name as _an
+        new_core = _an(new_core, self._config)
         """Zpráva, kterou Hans řekne uživateli — oznámení + čekání na schválení."""
         out = ("Pane, dovolím si něco osobního. Po čase jsem zvážil, kým se "
                # HANS_SEVERKA_MSG_ROLE_FREE_V1 - bez konkretni role, at nezestarne
@@ -566,6 +569,9 @@ class Severka:
         return out
 
     def _write_proposal_diary(self, pid, new_core, rationale, analysis, date_str):
+        # SEVERKA_DISPLAY_NAME_V1 — deník je Hansova paměť, token tam nepatří
+        from scripts.hans_persona import apply_name as _an
+        new_core = _an(new_core, self._config)
         try:
             note = (f"Návrh nové identity (verze {pid}).\n"
                     f"Nový CORE: {new_core}\n"
