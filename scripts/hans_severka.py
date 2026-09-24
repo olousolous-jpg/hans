@@ -74,6 +74,48 @@ _VOICE_PREKLAD = (
 # člověk při schvalování. Překládá se JEN to, co není česky.
 
 
+# SEVERKA_CONCRETE_ROLE_V1 — pojistka za pravidlem v promptu. Návrh bez
+# konkrétní role, s abstraktní „rolí“, nebo s vykáním v CORE se NEZALOŽÍ
+# (CORE je systémový prompt a oslovuje postavu; vykání tam doloženo 1 ze 3
+# běhů A/B 24. 9.). Vrací důvod zamítnutí, nebo '' když je návrh v pořádku.
+_ABSTRAKTNI_ROLE = ("pozorovatel", "analytik", "dokumentator", "badatel",
+                    "syntetizator", "myslitel", "zkoumatel", "system")
+_VYKANI_RE = None
+
+
+def _fold(s: str) -> str:
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFKD", (s or "").lower())
+                   if not unicodedata.combining(ch))
+
+
+def _role_problem(role: str, core: str) -> str:
+    global _VYKANI_RE
+    import re as _re
+    r = " ".join(str(role or "").split())
+    if not r:
+        return "návrh nejmenuje roli"
+    slova = r.split()
+    if len(slova) > 3 or len(r) > 40:
+        return "role není krátké pojmenování (%s)" % r
+    rf = _fold(r)
+    for a in _ABSTRAKTNI_ROLE:
+        if a in rf:
+            return "abstraktní role (%s)" % r
+    # stačí kterékoli slovo role — řídící jméno stojí jednou vpředu
+    # („správce sbírky“), jindy vzadu („domácí knihovník“)
+    cf = _fold(core)
+    kmeny = [w[:max(4, min(6, len(w) - 2))] for w in map(_fold, slova) if len(w) >= 4]
+    if not any(k in cf for k in kmeny):
+        return "role „%s“ v navrženém CORE není" % r
+    if _VYKANI_RE is None:
+        _VYKANI_RE = _re.compile(r"(?<!\w)(vá[šs]|vám|vámi|vaš\w*)(?!\w)",
+                                 _re.IGNORECASE)
+    if _VYKANI_RE.search(core or ""):
+        return "navržený CORE vyká"
+    return ""
+
+
 # Defaulty gate (config["severka"] je přebije)
 MIN_EVIDENCE = 8
 MIN_AGE_DAYS = 21
@@ -113,7 +155,31 @@ _SYSTEM = (
     "vlastním vývojem. Navržená identita má navazovat na SMĚŘOVÁNÍ tohoto "
     "příběhu (kým se {persona_name} stává), ne mu odporovat; je to kontext "
     "pro koherenci, ne náhrada za tendence a koníčky.\n"
-    "Vrať VÝHRADNĚ JSON objekt s klíči: decision ('keep'|'propose'), analysis "
+    # SEVERKA_CONCRETE_ROLE_V1 (24. 9.) — bez tohohle model zobecňoval na
+    # nejvyšší úroveň: návrhy „analytický dokumentátor složitých systémů“,
+    # „badatel a analytik“, „analytik a syntetizátor“ (A/B nad týmiž daty:
+    # staré zadání 0/3 konkrétní role, nové 3/3). Uživatel: role majordomus
+    # je ZÁKLAD a studiem se z ní má stát jiná konkrétní role (knihovník,
+    # archivář, učitel…), ne abstraktní přívlastek. Pojistka je i v kódu
+    # (_role_problem) — pravidlo v promptu samo nestačí.
+    "- KONKRÉTNÍ ROLE: {persona_name} začínal jako MAJORDOMUS domácnosti — to je "
+    "výchozí role a jeho vztah k lidem, se kterými žije. Tím, co studuje a čemu "
+    "se věnuje, se z něj může stát něco jiného, ale vždy to musí být KONKRÉTNÍ "
+    "ROLE, kterou člověk zná ze života a hned si představí, co dělá a pro koho — "
+    "například knihovník, archivář, kronikář, učitel, průvodce nebo správce "
+    "sbírky. Role musí vyrůstat z koníčků a studia výše, ne z tohoto výčtu.\n"
+    "  Zkouška: člen domácnosti ho představí návštěvě větou 'To je náš …' a věta "
+    "musí znít přirozeně.\n"
+    "  ⛔ Abstraktní popisy NEJSOU role: 'analytický dokumentátor složitých "
+    "systémů', 'pozorovatel', 'analytik vzorců', 'badatel lidského chování'. "
+    "To jsou přívlastky.\n"
+    "  CORE MUSÍ roli pojmenovat hned v první větě po jménu a říct, komu slouží "
+    "(domácnosti, lidem, se kterými žije). Povaha a zájmy přijdou až ZA roli. "
+    "CORE oslovuje postavu v 2. osobě jednotného čísla (ty), nikdy nevyká.\n"
+    "  Když dosavadní CORE žádnou konkrétní roli nejmenuje, je to samo o sobě "
+    "důvod k 'propose'.\n"
+    "Vrať VÝHRADNĚ JSON objekt s klíči: role (konkrétní role, 1–3 slova česky "
+    "v 1. pádu — jen při 'propose'), decision ('keep'|'propose'), analysis "
     "(krátký rozbor shody/rozporu role a tendencí), proposed_core (nový CORE — "
     "jen při 'propose', jinak prázdné), rationale (proč — jen při 'propose')."
 )
@@ -448,6 +514,16 @@ class Severka:
             _log.info("severka %s: 'propose' bez proposed_core → držím roli", date_str)
             return {"decision": "keep", "gate": True, "durable": durable,
                     "message": ""}
+        # SEVERKA_CONCRETE_ROLE_V1 — bez konkrétní role se návrh nezakládá.
+        # Není to deferral: model rozhodl, jen špatně; další pokus přijde
+        # s příští kadencí. Hlásí se hlasitě, ne jako „držím roli“.
+        _role = (parsed.get("role") or "").strip()
+        _vada = _role_problem(_role, new_core)
+        if _vada:
+            _log.warning("severka %s: návrh NEZAKLÁDÁM — %s | CORE: %.160s",
+                         date_str, _vada, " ".join(new_core.split()))
+            return {"decision": "keep", "gate": True, "durable": durable,
+                    "message": "", "role_rejected": _vada}
 
         # Vytvoř PENDING verzi (NIC se neaplikuje) + zapiš návrh do deníku
         st = self._store()
