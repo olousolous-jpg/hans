@@ -1,5 +1,6 @@
 """
-Shared logger — writes INFO+ to data/system.log (rotating, max 2MB × 3 files).
+Shared logger — writes INFO+ to data/system.log (rotating, 2 MB × 60 files).
+Rotated files live in data/logs/ (system.log.1 … .60), the active one stays in data/.
 Terminal gets WARNING+ only so the console stays clean.
 
 Usage:
@@ -22,7 +23,23 @@ from pathlib import Path
 # jiný proces si nastaví HANS_LOG_FILE PŘED prvním importem scripts.logger.
 _LOG_PATH    = Path(os.environ.get("HANS_LOG_FILE") or "data/system.log")
 _MAX_BYTES   = 2 * 1024 * 1024   # 2 MB per file
-_BACKUP_COUNT = 3
+# HANS_LOG_RETENTION_V1 (25. 9.) — 3 → 60 souborů. Logy držely jen ~3 dny, takže
+# trend („roste to?“) nešel spočítat vůbec (`hans_prevence`). Tempo ~2,3 MB/den
+# → 60 × 2 MB ≈ 120 MB ≈ 50 dní; na Pi místa dost (rozhodnutí uživatele).
+# Velikost souboru ZÁMĚRNĚ beze změny: hlídač zdraví čte aktuální + .1 a čekal
+# by jinak na delší soubory.
+_BACKUP_COUNT = 60
+# Rotované soubory do vlastního adresáře (přání uživatele) — aktivní system.log
+# zůstává v data/, protože ho čte řada míst (ranní kontrola, rozhovor_api, …).
+_ROT_DIR = "logs"
+
+
+def _rot_namer(name: str) -> str:
+    """HANS_LOG_RETENTION_V1 — data/system.log.N → data/logs/system.log.N."""
+    p = Path(name)
+    d = p.parent / _ROT_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d / p.name)
 _initialized  = False
 
 
@@ -44,6 +61,7 @@ def get_logger(name: str = "facerecog") -> logging.Logger:
             _LOG_PATH, maxBytes=_MAX_BYTES,
             backupCount=_BACKUP_COUNT, encoding="utf-8"
         )
+        fh.namer = _rot_namer   # HANS_LOG_RETENTION_V1
         fh.setLevel(logging.INFO)
         fh.setFormatter(fmt)
 

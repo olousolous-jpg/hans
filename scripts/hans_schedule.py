@@ -124,6 +124,10 @@ _SEED = [
     # Prah je zamerne volny: kadence je 7 dni, hlasi se az po 9 — dvakrat
     # volnejsi nez rytmus, at z toho nevznikne dalsi sum v hlidaci rozvrhu
     # (22. 9. zmereno, ze pet z sesti jeho zprav byl sum).
+    # HANS_PREVENTION_V1 (25. 9.) — hodinový sběr souhrnů pro prevenci; když
+    # tiše umře, trendy přestanou přibývat a nikdo si toho nevšimne.
+    ("prevence_sber", "periodic", 3600, None, 3 * 3600,
+     "Sběr denních souhrnů pro prevenci (chyby, samoopravy, disky, paměť)"),
     ("anomaly_run", "periodic", None, None, 9 * 24 * 3600,
      "Tydenni detektor odchylek v chovani (HANS_ANOMALY_V1)"),
 

@@ -16,7 +16,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Soubory s logem (aktuální + 1 rotace; noční chyby se sem vejdou).
-_LOG_FILES = ["data/system.log", "data/system.log.1"]
+# HANS_LOG_RETENTION_V1 (25. 9.) — rotované soubory jsou v data/logs/
+_LOG_FILES = ["data/system.log", "data/logs/system.log.1"]
 
 # Řádek logu: "YYYY-MM-DD HH:MM:SS [LEVEL] name: zpráva"
 _TS_FMT = "%Y-%m-%d %H:%M:%S"

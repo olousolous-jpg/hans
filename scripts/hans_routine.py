@@ -1437,6 +1437,9 @@ class HansRoutine:
         # sem, do tick(), a NE do nočních úloh: PC se v noci vypíná (~3:27),
         # takže by přesun narazil přesně na to, kvůli čemu se stahuje na Pi.
         self._maybe_webshare_presun()
+        # HANS_PREVENTION_V1 — hodinový sběr denních souhrnů (chyby, samoopravy,
+        # disky, paměť). Jen SBĚR; hlášení až nad ~14 dny základu.
+        self._maybe_prevence_sber()
         # HANS_REFLECTION_BRAIN_UP_CATCHUP_V1 — dojeď VČEREJŠÍ reflexi, když
         # večerní okno propásla (PC bývá po 23:00 vypnuté). ⚠️ Patří sem, do
         # tick(), NE do `_run_night_tasks` — ten běží pod `if self.is_night`,
@@ -1450,6 +1453,20 @@ class HansRoutine:
         # NIGHT_WORKER_THREAD_V1 — noční LLM analytika se sem UŽ NEVOLÁ; běží
         # ve vlastním vlákně (_night_worker_loop). Zaseklá Ollama tak
         # neblokuje tento tick ani volajícího (proaktivita/film/autoplay).
+
+    def _maybe_prevence_sber(self):
+        """HANS_PREVENTION_V1 — jednou za hodinu, ve vlastním vlákně (SSH na PC
+        smí čekat, tick ne)."""
+        now = time.time()
+        if now - getattr(self, "_last_prevence", 0.0) < 3600:
+            return
+        self._last_prevence = now
+        import threading
+
+        def _do():
+            from scripts import hans_prevence
+            hans_prevence.sber(self.config, self._diary_path)
+        threading.Thread(target=_do, daemon=True, name="prevence").start()
 
     def _maybe_webshare_presun(self):
         """HANS_WEBSHARE_PRESUN_TICK_V1 — hotové stažení přesuň z Pi na PC.
