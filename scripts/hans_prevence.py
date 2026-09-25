@@ -182,6 +182,78 @@ def sber_meridel(c, config: dict) -> None:
         pass
 
 
+# ── Kodi box (OSMC) ─────────────────────────────────────────────────────────
+# HANS_KODI_LOG_RO_V1 (25. 9.) — na přání uživatele i chyby z Kodi boxu. Hranice
+# „Kodi mimo Hanse“ (22. 8.) je tím otevřená ÚZCE, po vzoru HANS_ROUTER_V1:
+# vlastní klíč `~/.ssh/hans_kodi_svc` smí na boxu spustit JEN `~/hans-log-cist`
+# (authorized_keys: command=…,restrict) — vrátí error/warning řádky kodi.log
+# (+ kodi.old.log) novější než zadaný čas a zaplnění disku. Nic nezapisuje.
+# Interval 5 h (uživatel): čte se přírůstkově, takže interval mění jen čerstvost;
+# ztráta hrozí jen při DVOU restartech Kodi v jednom intervalu (log se točí restartem).
+_KODI_LINE = re.compile(
+    r"^(\d{4}-\d\d-\d\d) [\d:.]+ T:\d+\s+(error|warning) <([^>]+)>: (.*)$")
+KODI_INTERVAL_S = 5 * 3600
+
+
+def podpis_kodi(zprava: str) -> str:
+    s = re.sub(r"https?://\S+", "<url>", zprava or "")
+    s = re.sub(r"(?:smb:|special:|resource:|image:)?/\S+", "<path>", s)
+    return podpis(s)
+
+
+def sber_kodi(c, config: dict, vynutit: bool = False) -> int:
+    kc = (config.get("kodi", {}) or {})
+    host = (kc.get("host") or "").strip()
+    pc = (config.get("prevence", {}) or {})
+    klic = os.path.expanduser(str(pc.get("kodi_ssh_key", "~/.ssh/hans_kodi_svc")))
+    if not host or not os.path.exists(klic):
+        return 0
+    r0 = c.execute("SELECT v FROM health_meta WHERE k='kodi_beh_ts'").fetchone()
+    interval = float(pc.get("kodi_interval_s", KODI_INTERVAL_S))
+    if not vynutit and r0 and time.time() - float(r0[0] or 0) < interval:
+        return 0
+    row = c.execute("SELECT v FROM health_meta WHERE k='kodi_posledni'").fetchone()
+    od = row[0] if row else ""
+    import subprocess
+    try:
+        r = subprocess.run(["ssh", "-i", klic, "-o", "BatchMode=yes",
+                            "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=6",
+                            "-o", "StrictHostKeyChecking=accept-new",
+                            "osmc@%s" % host, od],
+                           capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        _log.info("prevence: Kodi box nedostupný: %s", e)
+        return 0
+    if r.returncode != 0:
+        _log.info("prevence: Kodi čtení selhalo (exit %s): %s",
+                  r.returncode, (r.stderr or "")[:120])
+        return 0
+    day = time.strftime("%Y-%m-%d")
+    n, nejnovejsi = 0, od
+    for l in r.stdout.splitlines():
+        if l.startswith("DF "):
+            p = l.split()
+            if len(p) == 4 and p[1].isdigit():
+                _nastav(c, day, "disk_free_gb", "kodi_root", round(int(p[3]) / 1e9, 2))
+                _nastav(c, day, "disk_used_pct", "kodi_root",
+                        round(100.0 * int(p[2]) / max(1, int(p[1])), 1))
+            continue
+        m = _KODI_LINE.match(l)
+        if not m:
+            continue
+        d, lvl, mod, msg = m.groups()
+        _pricti(c, d, "kodi_err" if lvl == "error" else "kodi_warn",
+                "%s|%s" % (mod, podpis_kodi(msg)))
+        n += 1
+        if l[:23] > nejnovejsi:
+            nejnovejsi = l[:23]
+    c.execute("INSERT OR REPLACE INTO health_meta (k, v) VALUES ('kodi_posledni', ?)",
+              (nejnovejsi,))
+    c.execute("INSERT OR REPLACE INTO health_meta (k, v) VALUES ('kodi_beh_ts', ?)",
+              (str(time.time()),))
+    return n
+
+
 def sber(config: dict, db_path: str) -> dict:
     """Jeden běh sběru. Nikdy nevyhazuje."""
     try:
@@ -189,6 +261,11 @@ def sber(config: dict, db_path: str) -> dict:
         try:
             n = sber_logu(c)
             sber_meridel(c, config)
+            nk = 0
+            try:
+                nk = sber_kodi(c, config)
+            except Exception as ke:
+                _log.info("prevence: Kodi sběr: %s", ke)
             c.commit()
         finally:
             c.close()
@@ -197,8 +274,9 @@ def sber(config: dict, db_path: str) -> dict:
             hans_schedule.mark("prevence_sber")
         except Exception:
             pass
-        _log.info("HANS_PREVENTION_V1: sběr hotov (%d řádků chyb a varování)", n)
-        return {"ok": True, "radku": n}
+        _log.info("HANS_PREVENTION_V1: sběr hotov (%d řádků chyb a varování, "
+                  "Kodi %d)", n, nk)
+        return {"ok": True, "radku": n, "kodi": nk}
     except Exception as e:
         _log.warning("HANS_PREVENTION_V1: sběr selhal: %s", e)
         return {"ok": False, "chyba": str(e)}
