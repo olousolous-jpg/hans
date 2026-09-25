@@ -603,7 +603,7 @@
         "toaster_mode": false,
         "two_minds": true,
         "lines_per_dialog": 4,
-        "line_num_predict": 120,
+        "line_num_predict": 250,
         "kolac_name": "Koláč",
         "_hans_personality_note": "HANS_PERSONALITY_DEAD_KEY_V1 (10. 9.): tenhle klíč UŽ NIKDO ZA BĚHU NEČTE — Hansovu personu bere hans_dialog z persona_core() (PERSONA_REFACTOR). Živý zdroj identity je persona.core, který přepisuje Severka. Text se tu srovnal jen proto, že web admin pole pořád zobrazuje pod štítkem „Hans — osobnost\" a lhal (stálo tu „Formální anglický majordomus z 19. století\", ačkoli Hans majordomem není od 3. 9.). ⚠️ Editace tohohle pole v UI NEMÁ ŽÁDNÝ ÚČINEK — buď pole z config_schema.py odstranit, nebo ho přesměrovat na persona.core.",
         "_note_stance_challenge_min_conf": "HANS_KOLAC_CHALLENGE_DURABLE_V1: už jen PODLAHA, ne výběr. Dřív 0,7 a bylo to sebezavírající — ústupek srazí confidence o 15 %, takže úspěšně zpochybněný postoj propadl pod práh a vypadl z výběru. Výběr dělá evidence (stance_challenge_min_ev), ne confidence.",
@@ -611,8 +611,9 @@
         "_note_stance_challenge_min_ev": "Kolikrát musel být postoj pozorován, aby se dal zpochybnit. Zrcadlí HANS_PERSONA_STANCE_DURABLE_V1 (persona bere týž práh).",
         "stance_challenge_fresh_days": 21,
         "_note_stance_challenge_fresh_days": "Jak starý smí být poslední výskyt postoje. Mrtvý postoj nemá smysl zpochybňovat.",
-        "line_max_chars": 400,
-        "_note_line_max_chars": "HANS_KOLAC_LINE_SEAM_V1: strop délky jedné repliky. Přes něj se řez položí na KONEC VĚTY, ne doprostřed slova. Dřív natvrdo 300 a 159 ze 180 useknutých replik mělo přesně 300 znaků."
+        "line_max_chars": 800,
+        "_note_line_max_chars": "HANS_KOLAC_LINE_SEAM_V1: strop délky jedné repliky. Přes něj se řez položí na KONEC VĚTY, ne doprostřed slova. Dřív natvrdo 300 a 159 ze 180 useknutých replik mělo přesně 300 znaků.",
+        "_note_line_num_predict": "HANS_TEXT_LIMITS_V1 (25. 9.): 120 tokenů utínalo ~2,6 % replik kolem 350–400 zn (pod znakovým stropem, takže šev nezabral). Sonda bez limitu: 40/40 replik dokončeno, medián 180, p90 240, max 404 zn → 250 tokenů / 800 zn s rezervou; šev zůstává jen pojistka."
     },
     "room_observer": {
         "enabled": true,
@@ -939,9 +940,10 @@
         "sections_min": 5,
         "sections_max": 8,
         "num_ctx": 8192,
-        "section_num_predict": 500,
-        "section_max_chars": 4000,
-        "rag_collection": "hans_dila"
+        "section_num_predict": 1200,
+        "section_max_chars": 6000,
+        "rag_collection": "hans_dila",
+        "_note_section_limits": "HANS_TEXT_LIMITS_V1 (25. 9.): 500 tokenů (~1 500 zn) utínalo 10 z 12 oddílů esejí uprostřed věty. Sonda bez limitu: model sám napíše 1 500–2 100 zn a všech 6 oddílů dokončí → 1200 tokenů je rezerva, ne cíl."
     },
     "synthesis": {
         "enabled": true,

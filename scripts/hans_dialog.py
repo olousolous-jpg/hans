@@ -1338,8 +1338,11 @@ class HansDialog:
         # Strop se zvedl na 400 (živá sonda: repliky sahají do 376 zn, přes
         # 400 žádná) a když i tak přeteče, šev padne na KONEC VĚTY — týž
         # princip jako HANS_YT_SENTENCE_SEAM_V1 u slepování titulků.
-        # ⛔ `line_num_predict` (120) v tom NEVINNĚ nefiguruje: změřeno živě,
-        # že model při něm vrátí 255 zn a větu dokončí. Nezvedat.
+        # 🔴 HANS_TEXT_LIMITS_V1 (25. 9.) — `line_num_predict` 120 PŘECE kousal:
+        # ~2,6 % replik useknutých kolem 350–400 zn, tedy POD stropem znaků,
+        # takže tenhle šev nezabral. Sonda bez limitu: 40/40 dokončeno, max
+        # 404 zn → config 250 tokenů / 800 zn; šev zůstává jen pojistka.
+        # (Starší „nezvedat, nekouše“ bylo změřeno na jedné replice 255 zn.)
         _cap = int(dc.get("line_max_chars", 400))
         if len(first) > _cap:
             _cut = first[:_cap]

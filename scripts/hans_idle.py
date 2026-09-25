@@ -22,6 +22,17 @@ from scripts.cz_names import was as _cz_was, saw as _cz_saw, \
 _log = logging.getLogger("hans_idle")
 
 
+def _cely_dej(plot: str, strop: int = 4000) -> str:
+    """HANS_TEXT_LIMITS_V1 — děj filmu celý; jen extrémně dlouhý se utne,
+    a to na konci věty, ne uprostřed slova."""
+    p = (plot or "").strip()
+    if len(p) <= strop:
+        return p
+    cut = p[:strop]
+    poz = max(cut.rfind(c) for c in ".!?")
+    return cut[:poz + 1] if poz >= strop // 2 else cut
+
+
 class HansIdle:
 
     def __init__(self, config: dict, kodi_client, openwebui_chat=None):
@@ -2438,7 +2449,10 @@ class HansIdle:
         title    = movie.get("title", "")
         year     = movie.get("year", "")
         genre    = ", ".join(movie.get("genre", []))
-        plot     = movie.get("plot", "")[:300]
+        # HANS_TEXT_LIMITS_V1 (25. 9.) — dřív natvrdo [:300]: 26 z 32 záznamů
+        # končilo uprostřed věty a z uříznutého děje vznikal i názor na film.
+        # Celý děj (pojistka 4 000 zn ukončená na konci věty).
+        plot     = _cely_dej(movie.get("plot", ""))
         rating   = movie.get("rating", 0)
         director = ", ".join(movie.get("director", []))
 

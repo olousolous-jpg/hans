@@ -347,7 +347,10 @@ class KodiMonitor:
             if genre:    parts.append(f"žánr: {genre}")
             if director: parts.append(f"režie: {director}")
             if watchers: parts.append(f"sledují: {', '.join(watchers)}")
-            if plot:     parts.append(f"děj: {plot[:1000]}")
+            # HANS_TEXT_LIMITS_V1 (25. 9.) — dřív [:1000] uprostřed věty
+            if plot:
+                from scripts.hans_idle import _cely_dej
+                parts.append(f"děj: {_cely_dej(plot)}")
             note = " | ".join(parts)
 
             conn = sqlite3.connect(str(self.diary_path))
