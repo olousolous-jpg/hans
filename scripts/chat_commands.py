@@ -4288,6 +4288,86 @@ def _doporuc_film(handler, name, znamy: bool) -> str:
     return out
 
 
+# HANS_FILM_SIMILAR_V1 (25. 9.) — „něco podobného jako X“ → filmy TÉHOŽ REŽISÉRA,
+# které knihovna nemá (Wikidata přes IMDb ID z Kodi, `hans_film_podobny`).
+# Zadání uživatele: jen na požádání; známému i nabídka z Webshare ve stejném
+# výpisu jako `HANS_KODI_WEBSHARE_NABIDKA_V1`. Na 1 729 reálných větách vzor
+# nesedl ani jednou (0 falešných, ale i 0 dosavadních žádostí).
+_PODOBNY_FILM_PAT = re.compile(
+    r"\b(?:film\w*|neco\w*|nejak\w*|tip\w*)\b[^?.!]{0,25}\bpodobn\w*"
+    r"|\bpodobn\w*\s+(?:film\w*|neco\w*)"
+    r"|\bod\s+(?:stejn\w+|t\w+\s+sam\w+)\s+rezis[eé]r")
+
+
+def _je_zadost_o_podobny_film(veta: str) -> bool:
+    return bool(_PODOBNY_FILM_PAT.search(_fold_diacritics(veta or "").lower()))
+
+
+def _podobny_film(handler, name, znamy: bool, veta: str) -> str:
+    """HANS_FILM_SIMILAR_V1 — tip na filmy téhož režiséra mimo knihovnu."""
+    from scripts import hans_film_podobny as fp
+    hi = getattr(handler, "_hans_idle", None)
+    kodi = getattr(hi, "kodi", None) if hi is not None else None
+    if kodi is None:
+        return "Knihovnu filmů teď nevidím, zkuste to prosím za chvíli."
+    dotaz = fp.nazev_z_vety(veta)
+    try:
+        filmy = fp.knihovna(kodi)
+        film = fp.najdi_v_knihovne(filmy, dotaz) if dotaz else None
+        if dotaz and film is None:
+            q, cs = fp.qid_podle_nazvu(dotaz)
+            if q:
+                film = {"_qid": q, "title": cs}
+        if not dotaz:
+            np = kodi.get_now_playing()
+            if np and (np.get("type") in (None, "", "movie")):
+                film = np
+        if film is None:
+            if dotaz:
+                return ("Film „%s“ jsem nenašel ani v knihovně, ani na Wikidatech. "
+                        "Zkuste mi napsat jeho přesný název." % dotaz)
+            return "Podobný jako který film? Napište mi prosím jeho název."
+        rez, tipy = fp.podobne(film, filmy)
+    except fp.Nedostupne as e:
+        _log.info("HANS_FILM_SIMILAR_V1: Wikidata nedostupná: %s", e)
+        return "Na Wikidata se teď nedostanu, zkuste to prosím za chvíli."
+    nazev = (film.get("title") or "").strip() or dotaz
+    rok = film.get("year") or ""
+    hlava = "„%s“%s" % (nazev, (" (%s)" % rok) if rok else "")
+    if not rez:
+        return ("U filmu %s nemám na Wikidatech režiséra, takže podobný podle "
+                "něj nenajdu." % hlava)
+    if not tipy:
+        return ("%s — režie %s. Další jeho známé filmy už v knihovně máme."
+                % (hlava, rez))
+    radky = "\n".join("%d. %s%s" % (i, t["nazev"], (" (%s)" % t["rok"]) if t["rok"] else "")
+                      for i, t in enumerate(tipy, 1))
+    out = ("%s — režie %s. Další filmy stejného režiséra, které v knihovně "
+           "nemáme:\n%s" % (hlava, rez, radky))
+    _log.info("HANS_FILM_SIMILAR_V1: %r → %s", nazev, [t["nazev"] for t in tipy])
+    # Webshare jen známému (stažení je mutující akce, `HANS_STRANGER_NO_MUTATE_V1`)
+    # a jen když je nastavený; chyba Webshare nesmí shodit samotný tip.
+    if not znamy:
+        return out
+    try:
+        cfg = getattr(handler, "config", {}) or {}
+        wc = (cfg.get("webshare", {}) or {})
+        from scripts import hans_webshare as _ws
+        if wc.get("enabled", True) and _ws.nastaveno(cfg):
+            for t in tipy[:2]:
+                nalezy = _ws.hledej(cfg, t["nazev"], limit=int(wc.get("limit", 25)))
+                if nalezy:
+                    zapamatuj_nalezy(name or "", t["nazev"], nalezy)
+                    return (out + "\n\nNa Webshare jsem k „%s“ našel tohle "
+                            "(kvalitu odhaduji z názvu souboru):\n%s"
+                            "\n\nStáhnu který? Stačí /hledani stahni <číslo>."
+                            % (t["nazev"], _ws.vypis(nalezy, int(wc.get("vypis_kolik", 8)))))
+            out += "\n\nNa Webshare jsem je nenašel."
+    except Exception as _we:
+        _log.debug("HANS_FILM_SIMILAR_V1 webshare: %s", _we)
+    return out
+
+
 def _je_dotaz_na_oblibu_filmu(veta: str) -> bool:
     """HANS_FILM_OPINION_ANSWER_V1 — pta se na JEHO oblibu, ne na doporuceni?"""
     v = str(veta or "")
@@ -4375,6 +4455,10 @@ def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
                 return films_liked_among(_recall_db(handler), _tit)
         except Exception as _ae:
             _log.debug("anafora obliby selhala: %s", _ae)
+    # HANS_FILM_SIMILAR_V1 — „něco podobného jako X“ je užší než doporučení
+    # („doporuč mi film podobný Duně“ sedí na oba vzory) → jde první.
+    if _je_zadost_o_podobny_film(args or ""):
+        return _podobny_film(handler, name, _znamy, args or "")
     # HANS_FILM_RECOMMEND_V1 — žádost o doporučení má přednost před oblibou
     # i výpisem (výpis zhlédnutých filmů na ni neodpovídá).
     if _je_zadost_o_doporuceni_filmu(args or ""):
@@ -4401,6 +4485,12 @@ register(
     "film",
     slash_aliases=["film", "filmy"],
     nl_patterns=[
+        # HANS_FILM_SIMILAR_V1 (25. 9.) — „něco podobného jako X“. SMĚROVÁNÍ chce
+        # filmový kontext: holé „něco podobného“ poslalo na /film i „zažil jsi
+        # někdy něco podobného?“. Uvnitř /film pak stačí široký predikát.
+        r"\bfilm\w*\b[^?.!]{0,30}\bpodobn\w*|\bpodobn\w*\b[^?.!]{0,30}\bfilm",
+        r"\b(?:pod[ií]vat|koukat|kouknout)\b[^?.!]{0,30}\bpodobn\w*|\bpodobn\w*\b[^?.!]{0,30}\b(?:pod[ií]vat|koukat|kouknout)\b",
+        r"\bod\s+(?:stejn\w+|t\w+\s+sam\w+)\s+re[zž]is[eé]r",
         # HANS_FILM_RECOMMEND_V1 (24. 9.) — žádost o doporučení filmu
         r"\bdoporu[cč]\w*\b[^?.!]{0,40}\bfilm",
         r"\bfilm\w*\b[^?.!]{0,30}\bdoporu[cč]",
