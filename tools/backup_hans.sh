@@ -139,6 +139,22 @@ if [ -n "$PC_HOST" ] && [ -n "$PC_USER" ] && [ -f "$HOME/.ssh/hans_pc" ]; then
     fi
 fi
 
+ROUTER_HOST="${ROUTER_HOST:-$(_cfg "(c.get('router') or {}).get('host','')")}"
+ROUTER_USER="${ROUTER_USER:-$(_cfg "(c.get('router') or {}).get('user','hans')")}"
+if [ -n "$ROUTER_HOST" ] && [ -f "$HOME/.ssh/hans_router_svc" ]; then
+    # HANS_BACKUP_ROUTER_V1 — rozhodnutí uživatele 25. 9. (mění „nenapojovat“ z 23. 8.):
+    # export přes Hansův účet JEN pro čtení, tajemství ven PŘÍMO V ROUŘE (syrový
+    # export se nikam neukládá). VPN klíče se po obnově doplní RUČNĚ z webu Protonu.
+    if ssh -i "$HOME/.ssh/hans_router_svc" -o BatchMode=yes -o ConnectTimeout=8 \
+           "$ROUTER_USER@$ROUTER_HOST" "/export" 2>/dev/null \
+         | python3 "$ROOT/tools/router_export_filtr.py" > "$REM/router.rsc" 2>/dev/null \
+       && [ "$(wc -l < "$REM/router.rsc")" -gt 20 ]; then
+        echo "  router: $(wc -l < "$REM/router.rsc") řádků (bez tajemství)"
+    else
+        rm -f "$REM/router.rsc"; echo "  router: NEDOSTUPNÝ — záloha bez routeru"
+    fi
+fi
+
 # --- 3) Archiv ---
 ARCHIVE="$OUT_DIR/hans_backup_${KIND}_${STAMP}.tar.gz"
 tar -czf "$ARCHIVE" -C "$STAGE" .

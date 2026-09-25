@@ -4,22 +4,24 @@
 #  • čas "YYYY-MM-DD HH:MM:SS" (nebo prázdno) → řádky error/warning z kodi.log
 #    (+ předchozí běh kodi.old.log) novější než ten čas, a zaplnění disku;
 #  • "zaloha" (HANS_BACKUP_REMOTE_V1) → tar.gz PEVNÉHO seznamu souborů na stdout
-#    (nastavení myIPTV, zdroje, boot config, fstab, crontab, tenhle skript).
+#    (nastavení myIPTV, zdroje, boot config, fstab, crontaby root+osmc, watchdog + jeho log).
 # Nic nezapisuje (kromě dočasného výpisu crontabu v /tmp), shell nedostane.
 # Volá ho Hansův sběr pro prevenci a noční záloha (Raspberry, scripts/hans_prevence.py,
 # tools/backup_hans.sh).
 OD="$SSH_ORIGINAL_COMMAND"
 if [ "$OD" = "zaloha" ]; then
   CT=/tmp/hans_zaloha_crontab_root.txt
+  CU=/tmp/hans_zaloha_crontab_osmc.txt
   sudo -n crontab -l > "$CT" 2>/dev/null || true
+  crontab -l > "$CU" 2>/dev/null || true   # tady žije kodi-watchdog.sh (á 5 min)
   tar czf - --ignore-failed-read \
     /home/osmc/.kodi/userdata/addon_data/plugin.video.myiptv \
     /home/osmc/.kodi/userdata/sources.xml /home/osmc/.kodi/userdata/mediasources.xml \
     /home/osmc/.kodi/userdata/passwords.xml /home/osmc/.kodi/userdata/advancedsettings.xml \
     /home/osmc/.kodi/userdata/favourites.xml /home/osmc/.kodi/userdata/guisettings.xml \
-    /boot/config-user.txt /etc/fstab "$CT" \
+    /boot/config-user.txt /etc/fstab "$CT" "$CU" /home/osmc/watchdog.log \
     /home/osmc/kodi-watchdog.sh /home/osmc/hans-log-cist 2>/dev/null
-  rm -f "$CT"
+  rm -f "$CT" "$CU"
   exit 0
 fi
 case "$OD" in
