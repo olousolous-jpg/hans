@@ -62,6 +62,19 @@ Hans si vede **per-osoba modely** (co koho zajímá) a **rozjeté nitky**: zachy
 naváže („jak to dopadlo?"). Nitky navíc **dozrávají v čase** — vynoří se až po
 svém datu. (`hans_threads`, `hans_person_interests`)
 
+### Vývoj persony bez uzamčení — inspirace z výzkumu
+Dvě práce pomohly Severce, aby se identita vyvíjela, ale nepřevalila se na
+každém šumu ani neuvízla ve vlastní ozvěně:
+- **AutoPersonas** (Mengchen Li, [arXiv:2607.08252](https://arxiv.org/abs/2607.08252))
+  — metriky uzamčení persony (opakování témat, podíl nejčastějších). Podle nich
+  vznikla týdenní diagnostika `/uzamceni` a Koláčův dialog, který drží jedno
+  téma místo celé směsi dne. (`hans_uzamceni`, `hans_dialog`)
+- **Do AI Personas Grow?** (M. Wang, P. Wang, X. Yang, D. Wang, S. Feng,
+  F. F.-H. Nah, E.-P. Lim, [arXiv:2608.06485](https://arxiv.org/abs/2608.06485))
+  — změna osobnosti bez události je šum. Podle toho Severka nechá nezávislého
+  soudce ověřit, že navržená role je opravdu jiná, ne synonymum, a po změně
+  identity drží ochrannou lhůtu. (`hans_severka`)
+
 ---
 
 ## Architektura (vrstvy)

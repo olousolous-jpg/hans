@@ -67,6 +67,19 @@ has an exam") and follows up on their next visit ("how did it go?"). Threads als
 **mature over time** — they surface only after their date.
 (`hans_threads`, `hans_person_interests`)
 
+### Persona evolution without lock-in — research inspiration
+Two papers helped Severka let the identity evolve without flipping on every bit
+of noise or getting stuck in its own echo:
+- **AutoPersonas** (Mengchen Li, [arXiv:2607.08252](https://arxiv.org/abs/2607.08252))
+  — persona lock-in metrics (topic repetition, share of the most frequent topics).
+  They inspired the weekly `/uzamceni` diagnostic and a Koláč dialogue that stays
+  on one topic instead of the whole mix of the day. (`hans_uzamceni`, `hans_dialog`)
+- **Do AI Personas Grow?** (M. Wang, P. Wang, X. Yang, D. Wang, S. Feng,
+  F. F.-H. Nah, E.-P. Lim, [arXiv:2608.06485](https://arxiv.org/abs/2608.06485))
+  — personality change without a life event is noise. Accordingly, Severka has an
+  independent judge confirm that a proposed role is genuinely different, not a
+  synonym, and holds a cooldown after an identity change. (`hans_severka`)
+
 ---
 
 ## Architecture (layers)
