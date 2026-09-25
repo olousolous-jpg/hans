@@ -172,7 +172,10 @@ class KodiMonitor:
             try:
                 self._poll()
             except Exception as e:
-                _log.error("Poll error: %s", e)
+                # HANS_KODI_POLL_TRACE_V1 (25. 9.) — `'int' object has no attribute
+                # 'get'` padlo 1× (25. 9. 07:24:59) BEZ tracebacku, takže nešlo
+                # dohledat, kde vzniká. Chyba je vzácná → plný výpis nezaplaví log.
+                _log.error("Poll error: %s", e, exc_info=True)
             self._stop.wait(self.poll_interval)
 
     def _poll(self):
