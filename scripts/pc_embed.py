@@ -26,6 +26,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import numpy as np
 
@@ -33,6 +34,22 @@ log = logging.getLogger("pc_embed")
 
 SIZE = 112
 DIM = 512
+
+# HANS_PC_EMBED_GAME_OFF_V1 (25. 9.) — při HŘE se na PC neposílá nic.
+# Předpoklad z 11. 8. („~5 embeddingů/s, zátěž zanedbatelná", proto služba
+# běžela ZÁMĚRNĚ i při hraní) neplatí: Pi posílá ~11/s a služba během
+# Cyberpunku brala 105 % CPU; bez požadavků 0,0 %. Brzda je proto na Pi
+# (jedno místo pro všechny tři vstupy herního módu na PC, nic se nemusí
+# zapínat zpátky). Jen příznak HRY — překlad (`.ollama_paused_translate`)
+# embed nevypíná. Cena: při hraní rozpoznává Hailo, stejně jako v noci.
+_GAME_FLAG = Path(__file__).resolve().parent.parent / "data" / ".ollama_paused"
+
+
+def _hra_bezi() -> bool:
+    try:
+        return _GAME_FLAG.exists()
+    except Exception:
+        return False
 
 
 class PCEmbedder:
@@ -50,13 +67,24 @@ class PCEmbedder:
         self._fails = 0
         self._open_until = 0.0
         self._stats = {"ok": 0, "fail": 0, "skip": 0}
+        self._hra = False   # HANS_PC_EMBED_GAME_OFF_V1 — poslední stav pro log hrany
 
     # ── stav ─────────────────────────────────────────────────────────────
 
     @property
     def available(self) -> bool:
         """Je jistič sepnutý? (neznamená, že PC odpoví — jen že to má cenu zkusit)"""
-        return self.enabled and time.time() >= self._open_until
+        if not self.enabled:
+            return False
+        hra = _hra_bezi()   # HANS_PC_EMBED_GAME_OFF_V1
+        if hra != self._hra:
+            self._hra = hra
+            log.info("HANS_PC_EMBED_GAME_OFF_V1: %s",
+                     "herní mód → PC embedding vypnut, rozpoznává Hailo" if hra
+                     else "herní mód skončil → PC embedding znovu zapnut")
+        if hra:
+            return False
+        return time.time() >= self._open_until
 
     def stats(self) -> dict:
         return dict(self._stats, jistic_otevren=not self.available)

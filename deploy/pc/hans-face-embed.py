@@ -21,6 +21,10 @@ ZÁMĚRNĚ NA CPU, NE NA GPU:
     • nutnost hlídat herní mód,
     • a hlavně: rozpoznávání funguje I BĚHEM HRANÍ.
   Ze dvou výpadkových oken (noc + hraní) tak zbude jen noční vypnutí PC.
+  ⚠️ ZMĚNĚNO 25. 9. (HANS_PC_EMBED_GAME_OFF_V1, rozhodnutí uživatele): tempo
+  není ~5/s, ale ~11/s a během Cyberpunku to bylo 105 % CPU. Při herním módu
+  proto Pi na PC NIC NEPOSÍLÁ (brzda v `scripts/pc_embed.py`) a rozpoznává
+  Hailo. Služba běží dál; bez požadavků bere 0 % CPU.
   Na GPU se dá přejít později, kdyby latence vadila (ORT_PROVIDER=ROCm).
 
 PROTOKOL (schválně hloupý, ať nemá co selhat):

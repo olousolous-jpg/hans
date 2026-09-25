@@ -6,6 +6,7 @@ After=network-online.target
 Type=simple
 # ZÁMĚRNĚ CPU: na GPU by služba soupeřila o VRAM s Ollamou a ComfyUI a musela
 # by hlídat herní mód. Na CPU běží i během hraní — viz hlavička skriptu.
+# Od 25. 9. jí ale Pi při herním módu nic neposílá (HANS_PC_EMBED_GAME_OFF_V1).
 Environment=FACE_MODEL=%h/hans/w600k_r50.onnx
 Environment=FACE_PORT=8765
 Environment=FACE_THREADS=8
