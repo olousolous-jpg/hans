@@ -157,7 +157,13 @@ class HansDistillation:
                     _log.warning("distill_hobbies selhal (distillation OK): %s", _he)
 
             # HANS_GOAL_MATERIAL_GATE_V1 (A)
-            cile_kandidati = self._filtr_materialu(candidates)
+            # HANS_GOAL_NO_KODI_V1 (25. 9.) — cíl „zásek" se zakládá jen
+            # z čtení, které si Hans vybral SÁM. Čtení `[kodi]` spouští
+            # domácnost tím, co pustí v televizi; 3 ze 4 cílů mimo Design
+            # (a cíl č. 1) vznikly jen z nich a cíl pak tvrdil „opakovaně jsem
+            # si vybíral…". Zájmy výš dál dostávají plný seznam (jiný spotřebitel).
+            cile_kandidati = self._filtr_materialu(
+                self._select_candidates(bez_kodi=True))
 
             if not cile_kandidati:
                 # HANS_GOAL_STUDY_SOURCE_V1 (B)
@@ -359,7 +365,7 @@ class HansDistillation:
         except Exception as _e:
             _log.warning("A2 _distill_interests failed: %s", _e)
 
-    def _select_candidates(self) -> list:
+    def _select_candidates(self, bez_kodi: bool = False) -> list:
         conn = sqlite3.connect(self._diary_db_path)
         try:
             cur = conn.cursor()
@@ -374,8 +380,9 @@ class HansDistillation:
                 SELECT id, title, ts FROM diary
                 WHERE event_type = 'web_read' AND ts > ?
                   AND COALESCE(note, '') NOT LIKE '[goal]%'
+                  AND (? = 0 OR COALESCE(note, '') NOT LIKE '[kodi]%')
                 ORDER BY title, ts
-            """, (since,))
+            """, (since, 1 if bez_kodi else 0))  # HANS_GOAL_NO_KODI_V1
             rows = cur.fetchall()
 
             by_title = defaultdict(list)
