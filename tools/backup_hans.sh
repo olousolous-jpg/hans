@@ -105,6 +105,40 @@ if [ -d "$UNITS" ]; then
     echo "  systemd: $(ls -1 "$STAGE/systemd_user" 2>/dev/null | wc -l) souborů"
 fi
 
+# --- 2d) Vzdálené stroje (HANS_BACKUP_REMOTE_V1, 25. 9., pokyn uživatele) ---
+# Podpůrné skripty a nastavení, které žijí MIMO Pi: Kodi box (OSMC) a PC.
+# Bez nich by po reinstalaci OSMC chybělo nastavení IPTV („jakoby TV“, myIPTV),
+# zdroje a boot config, a na PC herní hlídač a služba embeddingů.
+# Selhání tady zálohu NEshodí (stroj může spát) — jen se vypíše; offsite hlídá 4).
+REM="$STAGE/remote"; mkdir -p "$REM"
+_cfg() { (cd "$ROOT" && python3 -c "from scripts import config_io; c=config_io.load(hlasit=False); print($1)") 2>/dev/null; }
+KODI_HOST="${KODI_HOST:-$(_cfg "(c.get('kodi') or {}).get('host','')")}"
+if [ -n "$KODI_HOST" ] && [ -f "$HOME/.ssh/hans_kodi_svc" ]; then
+    # omezený klíč: na boxu smí jen ~/hans-log-cist, režim „zaloha“ = pevný seznam
+    if ssh -i "$HOME/.ssh/hans_kodi_svc" -o BatchMode=yes -o IdentitiesOnly=yes \
+           -o ConnectTimeout=8 "osmc@$KODI_HOST" zaloha > "$REM/osmc.tar.gz" 2>/dev/null \
+       && [ -s "$REM/osmc.tar.gz" ]; then
+        echo "  osmc: $(du -h "$REM/osmc.tar.gz" | cut -f1)"
+    else
+        rm -f "$REM/osmc.tar.gz"; echo "  osmc: NEDOSTUPNÉ (záloha bez Kodi boxu)"
+    fi
+fi
+PC_HOST="${PC_HOST:-$(_cfg "(c.get('pc_remote') or {}).get('host','')")}"
+PC_USER="${PC_USER:-$(_cfg "(c.get('pc_remote') or {}).get('user','')")}"
+if [ -n "$PC_HOST" ] && [ -n "$PC_USER" ] && [ -f "$HOME/.ssh/hans_pc" ]; then
+    # jen skripty a nastavení; model ArcFace (166 MB) ani venv ne — dají se stáhnout znovu
+    if ssh -i "$HOME/.ssh/hans_pc" -o BatchMode=yes -o ConnectTimeout=8 "$PC_USER@$PC_HOST" \
+         'crontab -l > "$HOME/.cache/hans_zaloha_crontab.txt" 2>/dev/null; cd "$HOME" && tar czf - --ignore-failed-read \
+            hans/hans-face-embed.py .config/systemd/user/hans-face-embed.service \
+            .config/systemd/user/hans-game-watch.service .local/bin/hans-game-watch.sh \
+            .cache/hans_zaloha_crontab.txt /etc/systemd/system/ollama.service.d 2>/dev/null' \
+         > "$REM/pc.tar.gz" 2>/dev/null && [ -s "$REM/pc.tar.gz" ]; then
+        echo "  pc: $(du -h "$REM/pc.tar.gz" | cut -f1)"
+    else
+        rm -f "$REM/pc.tar.gz"; echo "  pc: NEDOSTUPNÉ (spí?) — záloha bez PC"
+    fi
+fi
+
 # --- 3) Archiv ---
 ARCHIVE="$OUT_DIR/hans_backup_${KIND}_${STAMP}.tar.gz"
 tar -czf "$ARCHIVE" -C "$STAGE" .
