@@ -239,13 +239,19 @@ class KodiMonitor:
                     _now_s - self._last_fired.get(_fkey, 0) >= self._fire_throttle_s)
                 if _fkey and _should_fire:
                     self._last_fired[_fkey] = _now_s
+                # HANS_KODI_UNIQUEID_TYPE_V1 (25. 9.) — `uniqueid` je slovník jen
+                # u filmu/epizody; u TV kanálu (IPTV) je to ČÍSLO → `.get` padal
+                # a s ním celý blok nové relace (zvědavost, nálada, otázka).
+                # Zachyceno prevencí: 2× `Poll error: 'int' … 'get'` 25. 9.
+                _uid = item.get("uniqueid")
+                _uid = _uid if isinstance(_uid, dict) else {}
                 if _should_fire and item.get("title") and hasattr(self, '_curiosity'):
                     self._curiosity.trigger_kodi(
                         title      = item["title"],
                         media_type = item.get("type", "movie"),
                         year       = item.get("year") or None,   # HANS_FILM_ARTICLE_V1
-                        imdb       = (item.get("uniqueid") or {}).get("imdb", ""),     # HANS_FILM_IMDB_V1
-                        qid        = (item.get("uniqueid") or {}).get("wikidata", ""),
+                        imdb       = _uid.get("imdb", ""),     # HANS_FILM_IMDB_V1
+                        qid        = _uid.get("wikidata", ""),
                     )
                 if item.get("title") and hasattr(self, '_mood'):
                     self._mood.update_kodi(item["title"])

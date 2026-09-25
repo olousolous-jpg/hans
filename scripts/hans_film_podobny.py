@@ -211,7 +211,8 @@ def _cs_nazev(e: dict) -> str:
 
 
 def _qid(film: dict) -> str:
-    uid = film.get("uniqueid") or {}
+    uid = film.get("uniqueid")
+    uid = uid if isinstance(uid, dict) else {}   # TV kanál má uniqueid číslo
     q = (uid.get("wikidata") or "").strip()
     if re.match(r"^Q\d+$", q):
         return q
@@ -254,7 +255,8 @@ def podobne(film: dict, filmy: list, limit: int = 3) -> tuple:
     q = film.get("_qid") or _qid(film)
     if not q:
         return "", []
-    mame = {((m.get("uniqueid") or {}).get("imdb") or "") for m in filmy} - {""}
+    mame = {(m.get("uniqueid") or {}).get("imdb") or "" for m in filmy
+            if isinstance(m.get("uniqueid") or {}, dict)} - {""}
     # V mezipaměti je filmografie PŘED odečtením knihovny — co mezitím přibylo
     # do Kodi, se odečte znovu.
     z = _cache_vem("rez:" + q)
