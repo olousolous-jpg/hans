@@ -352,6 +352,12 @@ class KodiMonitor:
 
             # Sestavení poznámky
             parts = [f"Typ: {mtype}"]
+            # HANS_KODI_CHANNEL_NAME_V1 (25. 9.) — u TV je `title` POŘAD z programu
+            # a jméno kanálu je v `label`; dřív se kanál nikam neukládal, takže
+            # „kolik kanálů jsme sledovali“ nešlo spočítat (query_diary).
+            _kanal = (item.get("label") or "").strip() if mtype == "channel" else ""
+            if _kanal and _kanal != title:
+                parts.append(f"kanál: {_kanal}")
             if year:     parts.append(f"rok {year}")
             if genre:    parts.append(f"žánr: {genre}")
             if director: parts.append(f"režie: {director}")
