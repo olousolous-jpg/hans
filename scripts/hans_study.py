@@ -1217,6 +1217,7 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
             return None, None, "__transient__"
         return None, None, None
 
+    art = _overeny_clanek(config, w, sub, topic, art, art_max)  # HANS_STUDY_ARTICLE_JUDGE_V1
     used_lang = art.get("lang", lang)
     parts = [f"[Hlavní článek: {art['page_title']}]\n{art['text']}"]
     if sub_n > 0:
@@ -1288,6 +1289,124 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
         except Exception as e:
             _log.debug("sources V2 selhaly: %s", e)
     return "\n\n".join(parts), art.get("url", ""), art["page_title"]
+
+
+# ── HANS_STUDY_ARTICLE_JUDGE_V1 (26. 9.) — JE ČLÁNEK O POD-TÉMATU? ──────────
+# Změřeno na 87 nastudovaných pod-tématech: title-similarity gate pustí obecný
+# nebo cizí článek („Taktika ve fotbale" → MS 1962, „Pověsti a mytologie"
+# (Český ráj) → Inuitská mytologie, „Akustická ekologie" → Ekologie). Soudce
+# nad ÚVODEM článku řekl „ne" u 43/87, z toho ~35 právem. Výběr jen podle
+# NÁZVU (deterministicky i malým LLM) zkoušen a ZAMÍTNUT — mění stejně
+# k horšímu jako k lepšímu. Náhrada z kandidátů cs + en (úvod, soudce) zlepšila
+# ~22 z 34 změn; horší byly hlavně ŽIVOTOPISY → ty se vyřazují podle data
+# narození. Nenajde-li se nic lepšího, ZŮSTÁVÁ dnešní volba (žádné zhoršení).
+# Model qwen2.5:7b (4,7 GB) se vejde do VRAM vedle base i hans-czech.
+_JUDGE_SYSTEM = (
+    "Posuzuješ, jestli se z článku dá nastudovat zadané pod-téma. 'ano' = článek "
+    "je přímo o pod-tématu; 'castecne' = obecnější nadřazený článek, kde pod-téma "
+    "tvoří podstatnou část; 'ne' = článek je o něčem jiném (jiná věc se stejným "
+    "slovem, jiná země, jen okrajová zmínka).")
+_JUDGE_SCHEMA = {"type": "object", "properties": {"verdikt": {
+    "type": "string", "enum": ["ano", "castecne", "ne"]}}, "required": ["verdikt"]}
+_ZIVOTOPIS = re.compile(
+    r"\(\s*\*\s*\d|\bnarozen[aý]?\b|\(born\b|\bborn \d|\(\d{4}\s*[–-]\s*\d{4}\)"
+    r"|\(\s*\d{1,2}\.\s*\w+\s+\d{3,4}"            # (27. ledna 1814 – …)
+    r"|\(\s*\d{1,2}\s+[A-Z][a-z]+\s+\d{3,4}"         # (27 January 1814 – …)
+    r"|\(\s*[A-Z][a-z]+\s+\d{1,2},\s*\d{3,4}")       # (January 27, 1814 – …)
+
+
+def _soudce_clanku(config: dict, topic: str, sub: str, title: str, lead: str,
+                   lang: str) -> str:
+    """'ano' / 'castecne' / 'ne'; '' = nerozhodnuto (LLM dole, herní mód)."""
+    try:
+        from scripts.ollama_client import ollama_generate
+        raw = ollama_generate(
+            str(_cfg(config).get("judge_model", "qwen2.5:7b")),
+            "Téma: %s\nPod-téma: %s\nČlánek: %s (%s Wikipedia)\nÚvod článku: %s"
+            % (topic, sub, title, lang, (lead or "")[:700]),
+            system=_JUDGE_SYSTEM, config=config, timeout=120, keep_alive=300,
+            format=_JUDGE_SCHEMA,
+            options={"temperature": 0, "num_ctx": 4096, "num_predict": 60})
+        return (json.loads(raw or "{}").get("verdikt") or "")
+    except Exception as e:
+        _log.debug("soudce článku: %s", e)
+        return ""
+
+
+def _overeny_clanek(config: dict, w, sub: str, topic: str, art: dict,
+                    art_max: int) -> dict:
+    if not _cfg(config).get("judge_article", True):
+        return art
+    title = art.get("page_title") or ""
+    if _norm(title) == _norm(sub):
+        return art
+    lang0 = art.get("lang", "cs")
+    v0 = _soudce_clanku(config, topic, sub, title, art.get("text", "")[:700], lang0)
+    if v0 != "ne":
+        return art
+    kand = []
+    head = sub.split(":")[0].strip()
+    for q in dict.fromkeys([sub, head]):
+        try:
+            r = w._get("https://cs.wikipedia.org/w/api.php", params={
+                "action": "query", "list": "search", "srsearch": q,
+                "format": "json", "srlimit": 5, "srnamespace": 0}, timeout=15)
+            kand += [("cs", h["title"]) for h in
+                     r.json().get("query", {}).get("search", [])]
+        except Exception:
+            pass
+    try:
+        from scripts.ollama_client import ollama_generate
+        en = json.loads(ollama_generate(
+            str(_cfg(config).get("judge_model", "qwen2.5:7b")),
+            "Topic: %s\nSubtopic: %s" % (topic, sub),
+            system="Translate the Czech study subtopic into a short English "
+                   "Wikipedia search query (2-5 words).",
+            config=config, timeout=60, keep_alive=300,
+            format={"type": "object", "properties": {"en": {"type": "string"}},
+                    "required": ["en"]},
+            options={"temperature": 0, "num_predict": 40}) or "{}").get("en", "")
+        if en:
+            r = w._get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "list": "search", "srsearch": en,
+                "format": "json", "srlimit": 3, "srnamespace": 0}, timeout=15)
+            kand += [("en", h["title"]) for h in
+                     r.json().get("query", {}).get("search", [])]
+    except Exception as e:
+        _log.debug("soudce: en kandidáti: %s", e)
+    vyber, stopa = None, []
+    for lg, t in list(dict.fromkeys(kand))[:8]:
+        if t == title:
+            continue
+        try:
+            lead = w.wikipedia_intro(t, lang=lg, max_chars=700) or ""
+        except Exception:
+            lead = ""
+        if not lead or (_ZIVOTOPIS.search(lead[:200]) and not _ZIVOTOPIS.search(sub)):
+            continue
+        v = _soudce_clanku(config, topic, sub, t, lead, lg)
+        stopa.append("%s:%s=%s" % (lg, t, v))
+        if v == "ano":
+            vyber = (lg, t); break
+        if v == "castecne" and not vyber:
+            vyber = (lg, t)
+    if not vyber:
+        _log.info("study: '%s' → článek '%s' soudce odmítl, lepší se nenašel "
+                  "(nechávám) %s", sub, title, stopa)
+        return art
+    try:
+        text = w._wiki_extract(vyber[1], vyber[0], intro_only=False) or ""
+    except Exception:
+        text = ""
+    if len(text) < 400:
+        return art
+    import requests as _rq
+    _log.info("study: '%s' → článek '%s' soudce odmítl, beru %s:%s %s",
+              sub, title, vyber[0], vyber[1], stopa)
+    return {"page_title": vyber[1], "title": vyber[1], "lang": vyber[0],
+            "url": "https://%s.wikipedia.org/wiki/%s" % (
+                vyber[0], _rq.utils.quote(vyber[1].replace(" ", "_"))),
+            "text": text[:art_max]}
 
 
 # ── Studijní poznámka (LLM zpracuje čtení na poznámku v 1. osobě) ───────────
@@ -1507,6 +1626,18 @@ class StudyStore:
                            "deepen_round INTEGER NOT NULL DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # HANS_STUDY_SOURCES_KEEP_V1 (26. 9.) — CELÝ studijní materiál.
+            # Dřív se z ~12–16 tis. znaků článku uložila jen poznámka o 6–9
+            # větách (~8 %) a zdroj se zahodil (87 poznámek, 0 s odkazem).
+            # Web z díla pak mohl stavět jen z poznámky. Poznámka zůstává
+            # Hansovým zápiskem; tohle je podklad pro text díla a ověření faktů.
+            db.execute("""CREATE TABLE IF NOT EXISTS study_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
+                program_id INTEGER, idx INTEGER, deepen_round INTEGER,
+                topic TEXT, sub TEXT, main_title TEXT, url TEXT,
+                material TEXT, chars INTEGER)""")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_study_sources_sub "
+                       "ON study_sources(topic, sub)")
             # HANS_STUDY_DEEPEN_V2 — ask-first: návrhy prohloubení čekají na schválení
             db.execute("""CREATE TABLE IF NOT EXISTS deepen_proposals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, topic TEXT,
@@ -1907,6 +2038,9 @@ class StudyStore:
         title = f"Studium: {topic} — {sub}"
         self._write_diary("study_note", title, note, diary_writer)
 
+        # 3a) HANS_STUDY_SOURCES_KEEP_V1 — ulož celý materiál i odkaz
+        self._save_source(prog, idx, topic, sub, _main, source_url, material)
+
         # 3b) per-práce výpisky z odborných prací (HANS_RESEARCH_PAPER_TAKEAWAY_V1)
         try:
             self._record_paper_takeaways(config, topic, research_papers,
@@ -1956,6 +2090,26 @@ class StudyStore:
             return {"result": "completed", "topic": topic, "sub": sub}
         return {"result": "studied", "topic": topic, "sub": sub,
                 "index": new_idx, "total": len(curriculum)}
+
+    def _save_source(self, prog: dict, idx: int, topic: str, sub: str,
+                     main_title, url, material) -> None:
+        """HANS_STUDY_SOURCES_KEEP_V1 — selhání zápisu studium nezastaví."""
+        try:
+            conn = sqlite3.connect(self._diary_path, timeout=5.0)
+            try:
+                conn.execute(
+                    "INSERT INTO study_sources (ts, program_id, idx, "
+                    "deepen_round, topic, sub, main_title, url, material, chars) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (time.time(), prog.get("id"), idx,
+                     int(prog.get("deepen_round") or 0), topic, sub,
+                     main_title if main_title != "__transient__" else None,
+                     url, material, len(material or "")))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("study: zdroj se neuložil (%s): %s", sub, e)
 
     def _write_diary(self, event_type: str, title: str, text: str,
                      diary_writer=None):

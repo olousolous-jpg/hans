@@ -1220,7 +1220,14 @@
         "_note": "HANS_MAKER_V1: exekuce briefu -> artefakt. coder cil: coder-schopny model (qwen2.5-coder z toolscoutu, jinak qwen2.5:14b) -> data/works/artifacts/<slug>/index.html. num_gpu:0 = RAM/CPU, NESAHA na rezidentni hans-czech ani hru (pomalejsi, one-shot). image cil -> ComfyUI. coder_model prazdny = auto z nainstalovanych.",
         "auto": true,
         "gen_images": true,
-        "max_images": 4
+        "max_images": 4,
+        "web_v2": {
+            "enabled": true,
+            "plan_model": "qwen3:30b",
+            "vision_model": "qwen2.5vl:7b",
+            "opravna_kola": 2,
+            "_note": "HANS_WEB_DILO_V1 (26. 9.): text ze zdrojů studia → obrázky k textu → Hans volí nástroje (plan_model) → stavba (maker.coder_model/auto) → kontrola v Chromiu (JS, přetečení, kontrast WCAG, mrtvé odkazy, výplň) → opravná kola jen podle deterministických vad. Hudba zůstává na staré cestě; selhání → stará cesta."
+        }
     },
     "guard": {
         "_note": "HANS_GUARD_V1 — hlídací režim (/hlidej). Aktivuje se JEN příkazem; stav v data/.hans_guard.",

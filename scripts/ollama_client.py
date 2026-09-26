@@ -572,8 +572,15 @@ def ollama_generate(
     keep_alive: int = DEFAULT_KEEP_ALIVE,
     stream: bool = False,
     options: dict | None = None,
+    format: dict | str | None = None,
+    think: bool | None = None,
 ) -> Optional[str]:
-    """Pošle /api/generate request. Vrátí text odpovědi nebo None."""
+    """Pošle /api/generate request. Vrátí text odpovědi nebo None.
+
+    HANS_GENERATE_FORMAT_V1 (26. 9.) — `format` = JSON schéma (Ollama
+    structured output) nebo "json"; bez schématu base model opakoval klíče
+    v objektu a půlka výstupu se ztratila. `think=False` vypne přemýšlení
+    u qwen3 — jinak spotřebuje num_predict a vrátí prázdno."""
     if game_mode_on():   # OLLAMA_GAME_MODE_V1
         return None
     url = _resolve_url(ollama_url, config)
@@ -589,6 +596,10 @@ def ollama_generate(
         payload["images"] = images
     if options:
         payload["options"] = options
+    if format is not None:
+        payload["format"] = format
+    if think is not None:
+        payload["think"] = think
 
     return _post_with_retry(f"{url}/api/generate", payload, timeout,
                             _extract_generate)

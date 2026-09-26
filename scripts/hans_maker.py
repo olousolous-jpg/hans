@@ -720,6 +720,21 @@ def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
     subs = [(_slug(n["sub"]), n["sub"]) for n in notes]
     dest_dir = _ART_DIR / _slug(topic) / ("v%d" % int(deepen_round))
     dest_dir.mkdir(parents=True, exist_ok=True)
+    # HANS_WEB_DILO_V1 (26. 9.) — nová cesta: text ze zdrojů → obrázky k textu
+    # → Hans si zvolí nástroje → stavba → kontrola v prohlížeči → oprava.
+    # Hudba zůstává na staré cestě (notové příklady umí jen ona); selže-li
+    # nová cesta, pokračuje se postaru — dílo nesmí kvůli ní vypadnout.
+    if not _je_hudebni_tema(topic):
+        try:
+            from scripts import hans_webdilo as _wd
+            if _wd.enabled(config):
+                _r = _wd.make_site(config, db_path, topic, notes, dest_dir,
+                                   deepen_round)
+                if _r:
+                    return _r
+                _log.warning("maker site: nová cesta (webdilo) selhala → postaru")
+        except Exception as _e:
+            _log.warning("maker site: webdilo výjimka %s → postaru", _e)
     model = _coder_model(config)
     result = {"status": "deferred", "reason": "LLM nedostupný"}
     try:
