@@ -254,8 +254,9 @@ ho postupně zlepšuje:
 Hans má **faktické povědomí o vlastních schopnostech** (kurátorovaný manifest) —
 takže je v komunikaci nabízí a používá, místo aby je odmítal. Když mu přibude
 **nová schopnost** (rozšíří se manifest), sám si toho **všimne** (zapíše si to,
-zvedne náladu) a je **zvědavý ji vyzkoušet** — u bezpečných kreativních schopností
-si ji reálně vyzkouší a napíše, co zjistil. Zdroj je faktický, ne domněnka.
+zvedne náladu) a je **zvědavý ji vyzkoušet** — zapíše si, co od ní čeká. Skutečné
+samostatné vyzkoušení je zatím připravené jen pro malování a ještě se nespustilo.
+Zdroj je faktický, ne domněnka.
 (`hans_capabilities`)
 
 ### Sebeřízená tvorba

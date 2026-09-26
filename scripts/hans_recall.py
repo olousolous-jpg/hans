@@ -92,11 +92,19 @@ _DNY_AKUZ = ("v pondělí", "v úterý", "ve středu", "ve čtvrtek", "v pátek"
              "v sobotu", "v neděli")
 
 
-def _cz_when(ts: float, with_weekday: bool = True) -> str:
-    """'v pátek 25. dubna 2026 v 19:05' — česky, deterministicky."""
+def _cz_when(ts: float, with_weekday: bool = True, slovy: bool = False) -> str:
+    """'v pátek 25. dubna 2026 v 19:05' — česky, deterministicky.
+
+    HANS_TIME_WORDS_SHARED_V1 (26. 9.) — `slovy=True` přidá čas i slovy pro
+    podklad MODELU: záznam „24. září v 20:13“ Hans vyslovil „v osmnáct hodin
+    třináct minut“ (převod čísla si dělal sám). Týž důvod jako
+    TIME_AWARENESS_WORDS_V1 u aktuálního času. Výpisy pro člověka beze změny."""
     d = datetime.fromtimestamp(ts)
     day = f"{d.day}. {_MESICE_GEN[d.month]} {d.year}"
     out = f"{day} v {d:%H:%M}"
+    if slovy:
+        from scripts.cz_numbers import cz_clock_words
+        out += f" ({cz_clock_words(d.hour, d.minute)})"
     if with_weekday:
         out = f"{_DNY_AKUZ[d.weekday()]} {out}"
     return out
@@ -2733,7 +2741,7 @@ def film_knowledge_answer(db_path: str, question: str = "",
             parts.append("Tvé dřívější poznámky a názory:")
             parts.extend(f"- {n}" for n in notes)
         if seen and seen[0]:
-            kdy = _cz_when(seen[1]) if seen[1] else "dříve"
+            kdy = _cz_when(seen[1], slovy=True) if seen[1] else "dříve"
             krat = "jednou" if seen[0] == 1 else f"{seen[0]}×"
             # HANS_FILM_FIRST_SEEN_V1 — \u201epoprve\u201c jen kdyz se od \u201enaposledy\u201c
             # lisi o vic nez den. Zmereno: z 483 vicekrat videnych titulu je to

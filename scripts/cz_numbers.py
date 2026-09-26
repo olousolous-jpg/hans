@@ -159,3 +159,28 @@ def normalize(text: str) -> str:
     # data „D. měsíc" / „DD.MM." pokrývají kroky 1–2. Tečka zůstane na místě.)
     text = re.sub(r'\b\d+\b', lambda m: cardinal(m.group(0)), text)
     return text
+
+
+# TIME_AWARENESS_WORDS_V1 — český slovní čas (0–59) pro slabý model
+_CZ_ONES = ('nula','jedna','dvě','tři','čtyři','pět','šest','sedm','osm',
+            'devět','deset','jedenáct','dvanáct','třináct','čtrnáct',
+            'patnáct','šestnáct','sedmnáct','osmnáct','devatenáct')
+_CZ_TENS = {20:'dvacet',30:'třicet',40:'čtyřicet',50:'padesát'}
+
+def _cz_num_0_59(n: int) -> str:
+    if n < 20: return _CZ_ONES[n]
+    t, o = (n // 10) * 10, n % 10
+    return _CZ_TENS[t] if o == 0 else f'{_CZ_TENS[t]} {_CZ_ONES[o]}'
+
+def _cz_unit(n: int, one: str, few: str, many: str) -> str:
+    if 11 <= n <= 19: return many        # jedenáct..devatenáct hodin
+    o = n if n < 20 else n % 10          # tvar řídí poslední číslo
+    if o == 1: return one
+    if 2 <= o <= 4: return few
+    return many
+
+def cz_clock_words(h: int, m: int) -> str:
+    hw = f"{_cz_num_0_59(h)} {_cz_unit(h,'hodina','hodiny','hodin')}"
+    if m == 0: return hw
+    mw = f"{_cz_num_0_59(m)} {_cz_unit(m,'minuta','minuty','minut')}"
+    return f'{hw} {mw}'

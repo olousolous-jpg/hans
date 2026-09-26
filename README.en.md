@@ -268,9 +268,9 @@ and gradually improves it:
 Hans has a **factual awareness of his own capabilities** (a curated manifest) — so
 he offers and uses them in conversation instead of denying them. When a **new
 capability** is added (the manifest grows), he **notices** it himself (logs it,
-lifts his mood) and is **curious to try it** — for safe creative abilities he
-actually tries it and writes down what he found. The source is factual, not a
-guess. (`hans_capabilities`)
+lifts his mood) and is **curious to try it** — he writes down what he expects
+from it. An actual self-run trial is so far prepared only for painting and has not
+run yet. The source is factual, not a guess. (`hans_capabilities`)
 
 ### Self-directed creativity
 Nothing commands the creation. It kicks in during idle moments (at night, when

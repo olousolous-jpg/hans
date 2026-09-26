@@ -91,29 +91,9 @@ A1_ABSTAIN_TEXT = (
 )
 
 
-# TIME_AWARENESS_WORDS_V1 — český slovní čas (0–59) pro slabý model
-_CZ_ONES = ('nula','jedna','dvě','tři','čtyři','pět','šest','sedm','osm',
-            'devět','deset','jedenáct','dvanáct','třináct','čtrnáct',
-            'patnáct','šestnáct','sedmnáct','osmnáct','devatenáct')
-_CZ_TENS = {20:'dvacet',30:'třicet',40:'čtyřicet',50:'padesát'}
-
-def _cz_num_0_59(n: int) -> str:
-    if n < 20: return _CZ_ONES[n]
-    t, o = (n // 10) * 10, n % 10
-    return _CZ_TENS[t] if o == 0 else f'{_CZ_TENS[t]} {_CZ_ONES[o]}'
-
-def _cz_unit(n: int, one: str, few: str, many: str) -> str:
-    if 11 <= n <= 19: return many        # jedenáct..devatenáct hodin
-    o = n if n < 20 else n % 10          # tvar řídí poslední číslo
-    if o == 1: return one
-    if 2 <= o <= 4: return few
-    return many
-
-def _cz_clock_words(h: int, m: int) -> str:
-    hw = f"{_cz_num_0_59(h)} {_cz_unit(h,'hodina','hodiny','hodin')}"
-    if m == 0: return hw
-    mw = f"{_cz_num_0_59(m)} {_cz_unit(m,'minuta','minuty','minut')}"
-    return f'{hw} {mw}'
+# TIME_AWARENESS_WORDS_V1 — český slovní čas; od 26. 9. sdílený v cz_numbers
+# (HANS_TIME_WORDS_SHARED_V1 — potřebuje ho i recall filmu).
+from scripts.cz_numbers import cz_clock_words as _cz_clock_words  # noqa: E402
 
 
 class _SkipLookup(Exception):
@@ -1340,6 +1320,23 @@ class OpenWebUIDirectHandler:
                 if _pc:
                     self._vysledek_groundingu('grounded', 'pc_stav')
                     return _pc
+                # HANS_FILM_BEFORE_READING_V1 (26. 9.) — „co víš o FILMU X?“
+                # patří filmovému záznamu, ne četbě. Doloženo živě: „co víš
+                # o filmu Duna?“ → `reading_recall` (článek o Duně: Části
+                # druhé) → „V paměti to nemám“, ač Hans film viděl 3×.
+                # Změřeno: 3 reálné takové věty, u žádné filmový záznam není →
+                # film_knowledge vrátí None a jde se dál beze změny.
+                import re as _re_f
+                if _re_f.search(r"\bfilm\w*|\bseri[aá]l\w*", str(_text), _re_f.I):
+                    try:
+                        from scripts.hans_recall import film_knowledge_answer as _fka
+                        _fr0 = _fka(_dbp_kc, self._bez_tazatele(_text),
+                                    asker=name or "")
+                    except Exception:
+                        _fr0 = None
+                    if _fr0:
+                        self._vysledek_groundingu('grounded', 'film_recall')
+                        return _fr0
                 # HANS_READING_RECALL_V1 — nejdřív deterministicky dohledej, co
                 # si o tom Hans SÁM přečetl (declension-safe, obchází flaky RAG
                 # na tenkých souhrnech). Má přednost před „nemám záznam".
