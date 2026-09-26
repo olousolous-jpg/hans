@@ -2682,7 +2682,14 @@ def film_knowledge_answer(db_path: str, question: str = "",
                 continue
             multiword = " " in tf
             if not multiword and len(tf) < 6:
-                continue  # krátké jednoslovné (Hra, Past…) → riziko falešné shody
+                # krátké jednoslovné (Hra, Past…) → riziko falešné shody.
+                # HANS_FILM_SHORT_TITLE_V1 (25. 9.) — VÝJIMKA, když věta titul
+                # výslovně označí: „film Duna“, „o filmu Duna“, „Duna“ v uvozovkách.
+                # Změřeno na 1 675 reálných větách (98 filmových dotazů): 1 změna
+                # („pusť film ring“ → Ring, správně), 0 falešných.
+                if not re.search(r"\bfilm\w*\s+[„\"']?" + re.escape(tf) + r"\b"
+                                 r"|[„\"']" + re.escape(tf) + r"[“\"']", q_fold):
+                    continue
             if re.search(r"\b" + re.escape(tf) + r"\b", q_fold):
                 if best is None or len(tf) > len(_fold(best).lower()):
                     best = title
