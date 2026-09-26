@@ -6532,6 +6532,128 @@ def _ws_zapis_denik(cfg, polozka, uloha) -> None:
         _log.debug("webshare: deníkový zápis selhal: %s", e)
 
 
+# HANS_CASES_CMD_V1 (26. 9.) — DOTAZ NA KOLÁČOVY PŘÍPADY NEMĚL CESTU.
+# Změřeno 25. 9.: v reálných chatech 9 dotazů na Koláčovy případy („jaké
+# případy jsi řešil?" 5× po sobě) a ani jednou skutečná odpověď — model si
+# délku případů vymyslel, nebo je zapřel; „kolik máte otevřených případů?"
+# poslal LLM router na NÁKUPNÍ seznam. Data přitom leží v `kolac_cases`.
+# Odpověď je deterministická, bez LLM. Vzory chtějí 2. osobu (tykání
+# i vykání) nebo jméno společníka, aby „co řešil Poirot za případy" ani
+# „v tom případě…" nespadly sem; „případně" chrání koncovka.
+_PRIPAD = r"případ(?:y|u|ů|ech|em|ům)?\b"
+_PRIPAD_TY = (r"(řešíte|řešíš|řešite|vyšetřujete|vyšetřuješ|"
+              r"(jsi|jste|ste|si)\s+(s\s+\w+\s+)?(řešil|vyšetřoval)\w*)")
+_FAZE_CZ = {"opening": "zahájení", "gathering": "sbírání stop",
+            "theory": "teorie", "resolution": "rozuzlení"}
+
+
+def _dny_cz(d: float) -> str:
+    d = round(d, 1)
+    s = (f"{d:.1f}".rstrip("0").rstrip(".")).replace(".", ",")
+    if d == 1:
+        return "1 den"
+    if d == int(d) and 2 <= d <= 4:
+        return f"{s} dny"
+    return f"{s} dne" if d != int(d) else f"{s} dní"
+
+
+def _datum_cz(t: float) -> str:
+    lt = time.localtime(t)
+    return f"{lt.tm_mday}. {lt.tm_mon}."
+
+
+def _cmd_pripady(handler, name, args) -> str:
+    """Běžící případ, poslední tři uzavřené a souhrn — z `kolac_cases`."""
+    import json
+    import sqlite3
+    cfg = getattr(handler, "config", {}) or {}
+    dbp = (cfg.get("diary", {}) or {}).get("db_path", "data/hans_diary.db")
+    try:
+        from scripts.hans_kolac import kolac_name as _kn
+        k = _kn(cfg)
+    except Exception:
+        k = "Koláč"
+    try:
+        db = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True)
+        aktivni = db.execute(
+            "SELECT title, phase, opened_at, clues FROM kolac_cases "
+            "WHERE phase != 'closed' ORDER BY opened_at DESC LIMIT 1").fetchone()
+        uzavrene = db.execute(
+            "SELECT title, opened_at, closed_at FROM kolac_cases "
+            "WHERE phase = 'closed' AND closed_at IS NOT NULL "
+            "ORDER BY closed_at DESC").fetchall()
+        # Skutečný závěr píše jen hook `case_resolution` (resolution v tabulce
+        # je generická věta) — a jen u části případů.
+        zavery = {}
+        for t, note, data in db.execute(
+                "SELECT title, note, data FROM diary "
+                "WHERE event_type = 'case_resolution' ORDER BY id"):
+            txt = (note or data or "").strip()
+            if t and txt:
+                zavery[t] = txt
+        db.close()
+    except Exception as e:
+        _log.warning("pripady: čtení selhalo: %s", e)
+        return "Záznamy o případech se mi teď nepodařilo otevřít."
+
+    radky = []
+    if aktivni:
+        title, phase, opened, clues = aktivni
+        try:
+            stopy = json.loads(clues or "[]")
+        except Exception:
+            stopy = []
+        den = max(1, int((time.time() - opened) / 86400) + 1)
+        r = (f"Právě s panem {k}em vyšetřujeme „{title}“ — od {_datum_cz(opened)} "
+             f"({den}. den), fáze: {_FAZE_CZ.get(phase, phase)}, "
+             f"záznamů ve spisu {len(stopy)}.")
+        podnet = (stopy[0].get("text") if stopy and isinstance(stopy[0], dict)
+                  else "") or ""
+        if podnet:
+            # Šablona stopy je ve 3. osobě („<Jméno> četl o X a …“) → 1. osoba.
+            podnet = re.sub(r"^\w+\s+((pře)?četl)\b", r"jsem \1", podnet, 1)
+            r += f" Začalo to tím, že {podnet}"
+            if not r.endswith((".", "!", "?")):
+                r += "."
+        radky.append(r)
+    else:
+        radky.append(f"Teď s panem {k}em žádný případ nevyšetřujeme.")
+
+    if uzavrene:
+        posl = []
+        for title, o, c in uzavrene[:3]:
+            p = f"„{title}“ ({_datum_cz(o)}–{_datum_cz(c)}, {_dny_cz((c - o) / 86400)})"
+            z = zavery.get(title)
+            if z:
+                z = re.split(r"(?<=[.!?])\s", z, 1)[0][:200]
+                p += f" — můj závěr: {z}"
+            posl.append(p)
+        radky.append("Naposledy uzavřené: " + "; ".join(p.rstrip(".") for p in posl) + ".")
+        delky = sorted((c - o) / 86400 for _, o, c in uzavrene)
+        n = len(delky)
+        med = (delky[n // 2] if n % 2 else (delky[n // 2 - 1] + delky[n // 2]) / 2)
+        radky.append(
+            f"Celkem jsme uzavřeli {n} případů; typicky trvají {_dny_cz(med)} "
+            f"(nejkratší {_dny_cz(delky[0])}, nejdelší {_dny_cz(delky[-1])}).")
+    return "\n".join(radky)
+
+
+register(
+    "pripady",
+    slash_aliases=["pripady", "případy", "kauzy"],
+    nl_patterns=[
+        r"\b" + _PRIPAD + r".{0,40}\bkoláč\w*",
+        r"\bkoláč\w*.{0,40}\b" + _PRIPAD,
+        r"\b(jaké|jaký|jaká|jakej|kolik|které|který)\b.{0,30}\b" + _PRIPAD
+        + r".{0,30}\b" + _PRIPAD_TY,
+        r"\b" + _PRIPAD_TY + r"\s+(za\s+|teď\s+|zrovna\s+)?" + _PRIPAD,
+        r"\b(otevřen|uzavřen|vyřešen|nevyřešen|rozdělan|běžící)\w*\s+" + _PRIPAD,
+    ],
+    handler=_cmd_pripady,
+    help_text="Koláčovy případy: běžící, poslední uzavřené a jak dlouho typicky trvají",
+)
+
+
 register(
     "hledani",
     slash_aliases=["hledani", "hledání", "hledej", "webshare", "ws"],
