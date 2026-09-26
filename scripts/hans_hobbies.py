@@ -298,13 +298,47 @@ def _topic_from_teddy_note(note: str) -> str:
     return ""
 
 
+# ── HANS_INTEREST_NO_ECHO_V1 (26. 9.) — ZÁJMY BEZ OZVĚNY VLASTNÍHO STUDIA ──
+# Změřeno 26. 9.: za 30 dní šlo 18 % podkladů koníčků z dialogů s Koláčem,
+# jejichž téma dosadilo AKTIVNÍ STUDIUM (`hans_dialog` priorita „study“) —
+# „hudba“ 202× (5.–18. 9. = program Hudba), „fotbal“ 129×. Studium tak
+# vyrábělo důkaz zájmu o sebe sama (kruh studium → dialog → koníček →
+# zaujetí → studium); `_topic_engagement` navíc počítal i vlastní study_note.
+# Literatura: degenerate feedback loop (Jiang a kol. 2019) — důkazy vyrobené
+# samotným systémem nepočítat, opakování téhož podnětu nesčítat.
+# Rozhodnutí uživatele: Kodi (co sleduje rodina) ZŮSTÁVÁ jako okno do světa,
+# ale ČÁSTEČNĚ — váha 0,5 (i četba spuštěná televizí `[kodi]`).
+KODI_VAHA = 0.5
+
+
+def studijni_temata(conn) -> set:
+    """Normalizovaná témata a pod-témata všech studijních programů."""
+    from scripts.hans_study import _norm as _sn
+    out = set()
+    try:
+        for t, cur in conn.execute("SELECT topic, curriculum FROM study_program"):
+            out.add(_sn(t or ""))
+            try:
+                out |= {_sn(str(x)) for x in json.loads(cur or "[]")}
+            except Exception:
+                pass
+    except Exception:
+        pass
+    out.discard("")
+    return out
+
+
+def tema_dialogu(note: str) -> str:
+    return _topic_from_teddy_note(note)
+
+
 def gather_topics(diary_db_path: str, window_days: int = 30,
                   min_count: int = 3) -> List[tuple]:
     """Vrátí [(téma, count)] opakujících se témat napříč streamy. Read-only."""
     since = time.time() - window_days * 86400
     counts: dict = {}
 
-    def _bump(topic: str, by: int = 1):
+    def _bump(topic: str, by: float = 1):
         t = (topic or "").strip()
         if len(t) < 3:
             return
@@ -325,11 +359,23 @@ def gather_topics(diary_db_path: str, window_days: int = 30,
                 "SELECT title FROM kolac_cases WHERE opened_at > ?",
                 (since,)).fetchall():
             _bump(title, 2)
-        # dialogy: téma z note
-        for note, in conn.execute(
-                "SELECT note FROM diary WHERE event_type='teddy_dialog' "
-                "AND ts > ?", (since,)).fetchall():
-            _bump(_topic_from_teddy_note(note), 1)
+        # dialogy: téma z note — HANS_INTEREST_NO_ECHO_V1: téma ze studia se
+        # nepočítá, téže téma za den jen jednou, dialog o TV titulu ×0,5
+        from scripts.hans_study import _norm as _sn
+        _stud = studijni_temata(conn)
+        _tv = {(t or "").strip().lower() for t, in conn.execute(
+            "SELECT title FROM diary WHERE event_type IN ('kodi_playing',"
+            "'movie_browsed') AND ts > ?", (since - window_days * 86400,))}
+        _videno = set()
+        for note, den in conn.execute(
+                "SELECT note, date(ts,'unixepoch','localtime') FROM diary "
+                "WHERE event_type='teddy_dialog' AND ts > ?", (since,)).fetchall():
+            _t = _topic_from_teddy_note(note)
+            if not _t or _sn(_t) in _stud or (_t.lower(), den) in _videno:
+                continue
+            _videno.add((_t.lower(), den))
+            _tl = _t.lower()
+            _bump(_t, KODI_VAHA if (_tl in _tv or "přemýšlel o filmu" in _tl) else 1)
         # web/filmy/kodi: titulky
         # HANS_HOBBY_NO_GOAL_READS_V1 (2.9.) — čtení, které si OBJEDNAL aktIVNÍ
         # CÍL (`[goal]` v note), se do koníčků nepočítá. Jinak si cíl vyrobí
@@ -343,12 +389,20 @@ def gather_topics(diary_db_path: str, window_days: int = 30,
         # 111 → 91 v okně 30 dní, práh `min_count` 3 to nepřekročí ani tak).
         # Je to pojistka DOPŘEDU, aby si příští cíl koníček nevyrobil.
         # Týž filtr má od 28.8. `hans_distillation._select_candidates`.
+        _videno2 = set()   # HANS_INTEREST_NO_ECHO_V1 — titul 1× za den
         for evt in ("web_read", "movie_browsed", "kodi_playing"):
-            _kde = "SELECT title FROM diary WHERE event_type=? AND ts > ?"
+            _kde = ("SELECT title, note, date(ts,'unixepoch','localtime') "
+                    "FROM diary WHERE event_type=? AND ts > ?")
             if evt == "web_read":
                 _kde += " AND COALESCE(note,'') NOT LIKE '[goal]%'"
-            for title, in conn.execute(_kde, (evt, since)).fetchall():
-                _bump(title, 1)
+            for title, note, den in conn.execute(_kde, (evt, since)).fetchall():
+                _k = ((title or "").strip().lower(), den, evt == "web_read")
+                if _k in _videno2:
+                    continue
+                _videno2.add(_k)
+                _tv_w = (evt != "web_read"
+                         or (note or "").startswith("[kodi]"))
+                _bump(title, KODI_VAHA if _tv_w else 1)
     except Exception as e:
         _log.warning("gather_topics failed: %s", e)
     finally:
@@ -391,7 +445,7 @@ def distill_hobbies(config: dict, diary_db_path: str,
     if known:
         known_block = ("UŽ ZNÁMÉ KONÍČKY (při shodě použij přesný název):\n"
                        + "\n".join(f"- {h.name}" for h in known) + "\n\n")
-    topics_block = "\n".join(f"- {t} (×{c})" for t, c in topics)
+    topics_block = "\n".join(f"- {t} (×{c:g})" for t, c in topics)
     prompt = f"{known_block}TÉMATA:\n{topics_block}"
 
     cfg = (config.get("hobbies", {}) or {})

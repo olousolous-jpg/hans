@@ -1072,22 +1072,31 @@ def _topic_engagement(diary_db_path: str, examples) -> int:
             # HANS_ENGAGEMENT_DEDUP_V1 — čtení dedup na (titul, den), dialogy
             # a studijní poznámky po řádcích. Důvod v docstringu funkce.
             _blob = ("(coalesce(title,'')||coalesce(note,'')||coalesce(data,''))")
-            _sql = (
-                "SELECT ("
-                "  SELECT COUNT(DISTINCT coalesce(title,'')||'|'||"
-                "         date(ts,'unixepoch','localtime'))"
-                "  FROM diary WHERE event_type IN ('web_read','reading_takeaway')"
-                "  AND " + _blob + " LIKE ?"
-                ") + ("
-                "  SELECT COUNT(*)"
-                "  FROM diary WHERE event_type IN ('study_note','teddy_dialog')"
-                "  AND " + _blob + " LIKE ?"
-                ")"
-            )
+            # HANS_INTEREST_NO_ECHO_V1 (26. 9.) — bez vlastních study_note
+            # (studium dokládalo zájem o sebe sama), dialog s tématem ze
+            # studia se nepočítá, dialog 1× za (téma, den), četba spuštěná
+            # televizí `[kodi]` ×0,5. Důvod u KODI_VAHA v hans_hobbies.
+            from scripts.hans_hobbies import (studijni_temata, tema_dialogu,
+                                              KODI_VAHA)
+            _stud = studijni_temata(conn)
+            # (titul, den) JEDNOU — přečtení `[kodi]` i výpisek bez značky
+            # jsou tentýž podnět (jinak 0,5 + 1 a zaujetí by stouplo)
+            _cist = ("SELECT coalesce(title,''), "
+                     "date(ts,'unixepoch','localtime'), "
+                     "MAX(CASE WHEN coalesce(note,'') LIKE '[kodi]%' THEN 1 ELSE 0 END) "
+                     "FROM diary WHERE event_type IN ('web_read','reading_takeaway') "
+                     "AND " + _blob + " LIKE ? GROUP BY 1, 2")
+            _dial = ("SELECT note, date(ts,'unixepoch','localtime') FROM diary "
+                     "WHERE event_type='teddy_dialog' AND " + _blob + " LIKE ?")
+            vazene = 0.0
             for ex in exs:
                 _like = '%' + ex + '%'
-                n = conn.execute(_sql, (_like, _like)).fetchone()
-                total += int(n[0]) if n else 0
+                for _t, _d, _kodi in conn.execute(_cist, (_like,)):
+                    vazene += KODI_VAHA if _kodi else 1.0
+                vazene += len({(tema_dialogu(n).lower(), d) for n, d in
+                               conn.execute(_dial, (_like,))
+                               if _norm(tema_dialogu(n)) not in _stud})
+            total = int(round(vazene))
         finally:
             conn.close()
     except Exception:
