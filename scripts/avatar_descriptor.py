@@ -191,7 +191,7 @@ def _top_themes(diary_db_path: str, limit: int = 6) -> list:
         conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path, uri=True, timeout=3.0)
         rows = conn.execute(
             "SELECT name FROM hobbies WHERE status='active' "
-            "ORDER BY evidence_count DESC LIMIT ?", (int(limit),)).fetchall()
+            "ORDER BY sila DESC, evidence_count DESC LIMIT ?", (int(limit),)).fetchall()
         return [r[0] for r in rows if r and r[0]]
     except Exception as _e:
         _log.debug("_top_themes: %s", _e)

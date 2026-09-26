@@ -1029,7 +1029,7 @@ def _openalex_research(config: dict, query: str, n: int = 3,
     return out[:max_chars]
 
 
-def _topic_engagement(diary_db_path: str, examples) -> int:
+def _topic_engagement(diary_db_path: str, examples, polocas_dni: float = None) -> int:
     """OBJEM zájmu o koníček = počet zmínek jeho konkrétních instancí (examples)
     napříč čtenými/dialogovými/studijními eventy. Na rozdíl od evidence_count
     (= jen délka trvání) zachytí, jak moc Hanse téma reálně zaměstnává.
@@ -1083,20 +1083,34 @@ def _topic_engagement(diary_db_path: str, examples) -> int:
             # jsou tentýž podnět (jinak 0,5 + 1 a zaujetí by stouplo)
             _cist = ("SELECT coalesce(title,''), "
                      "date(ts,'unixepoch','localtime'), "
-                     "MAX(CASE WHEN coalesce(note,'') LIKE '[kodi]%' THEN 1 ELSE 0 END) "
+                     "MAX(CASE WHEN coalesce(note,'') LIKE '[kodi]%' THEN 1 ELSE 0 END), "
+                     "MAX(ts) "
                      "FROM diary WHERE event_type IN ('web_read','reading_takeaway') "
                      "AND " + _blob + " LIKE ? GROUP BY 1, 2")
-            _dial = ("SELECT note, date(ts,'unixepoch','localtime') FROM diary "
+            _dial = ("SELECT note, date(ts,'unixepoch','localtime'), ts FROM diary "
                      "WHERE event_type='teddy_dialog' AND " + _blob + " LIKE ?")
+            # HANS_HOBBY_SILA_V1 — `polocas_dni` = podnět starý N dní má
+            # poloviční váhu (síla koníčku); None = bez vyhasínání (dosavadní
+            # zaujetí pro výběr studia a Severku).
+            _ted = time.time()
+
+            def _vh(t):
+                if not polocas_dni:
+                    return 1.0
+                return 0.5 ** (max(0.0, _ted - float(t or _ted)) / 86400.0 / polocas_dni)
             vazene = 0.0
             for ex in exs:
                 _like = '%' + ex + '%'
-                for _t, _d, _kodi in conn.execute(_cist, (_like,)):
-                    vazene += KODI_VAHA if _kodi else 1.0
-                vazene += len({(tema_dialogu(n).lower(), d) for n, d in
-                               conn.execute(_dial, (_like,))
-                               if _norm(tema_dialogu(n)) not in _stud})
-            total = int(round(vazene))
+                for _t, _d, _kodi, _ts in conn.execute(_cist, (_like,)):
+                    vazene += (KODI_VAHA if _kodi else 1.0) * _vh(_ts)
+                _dny = {}
+                for n, d, _ts in conn.execute(_dial, (_like,)):
+                    if _norm(tema_dialogu(n)) in _stud:
+                        continue
+                    _k = (tema_dialogu(n).lower(), d)
+                    _dny[_k] = max(_dny.get(_k, 0.0), float(_ts or 0))
+                vazene += sum(_vh(t) for t in _dny.values())
+            total = (round(vazene, 2) if polocas_dni else int(round(vazene)))
         finally:
             conn.close()
     except Exception:

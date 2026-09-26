@@ -2221,7 +2221,7 @@ def _hansovy_konicky(db: str) -> str:
         _r = _c.execute(
             "SELECT name, evidence_count FROM hobbies "
             "WHERE COALESCE(status,'') <> 'dropped' "
-            "ORDER BY evidence_count DESC LIMIT 6").fetchall()
+            "ORDER BY sila DESC, evidence_count DESC LIMIT 6").fetchall()
         _c.close()
     except Exception:
         return ""

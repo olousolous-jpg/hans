@@ -77,6 +77,78 @@ def _podobnost(a: str, b: str) -> float:
                               _bez_diakritiky(b)).ratio()
 
 
+# ── HANS_HOBBY_EXAMPLES_V1 (26. 9.) — PŘÍKLADY KONÍČKŮ, KTERÉ SEDÍ ─────────
+# Změřeno 26. 9.: příklady byly (a) ZAMRZLÉ — ukládalo se prvních 20, nové se
+# po naplnění nedostaly dovnitř; (b) vymyšlené nebo obecné („Design“ u Designu,
+# věty „Dříve jsem přemýšlel o filmu 'X'.“); (c) jedno téma u více koníčků
+# („Tančící figurky“ — Sherlockova povídka — u fotografie, japonské kultury
+# i rostlin). Síla koníčku se počítá NAD příklady, takže chyba se přenáší.
+# Porovnání významu (bge-m3) s názvem koníčku ZKOUŠENO A ZAMÍTNUTO: film či
+# album se slovu „filmy“/„hudba“ nepodobá (Marketa Lazarová 0,31, The Fat of
+# the Land 0,34) a Tančící figurky nechytil. Soudce (qwen2.5:7b) s kontextem
+# z deníku: zjevné chyby vyřadil všechny, mýlí se ~12 % — převážně vyhodí
+# správný příklad (bezpečnější strana).
+_PRIKLAD_FILM = re.compile(r"^Dříve jsem přemýšlel o filmu ['„\"](.+?)['“\"]\.?$")
+_PRIKLAD_PREDPONA = re.compile(r"^Seznam dílů (?:seriálu|pořadu)\s+", re.I)
+# zástupné náměty dialogu s Koláčem (`hans_dialog`: weather/observation/free,
+# pečivo) — podnět okolí, ne zájem; „počasí venku“ jinak vyrobilo koníček „počasí“
+_PRIKLAD_PRYC = re.compile(r"^(Zprávy:|Události(?: v regionech)?$|počasí venku$|co je v místnosti$|"
+                           r"dnešní den$|pečivo \()", re.I)
+
+
+def cisti_priklad(x: str, hobby: str = "") -> str:
+    """Kanonický tvar příkladu, nebo '' když to příklad není."""
+    t = (x or "").strip()
+    m = _PRIKLAD_FILM.match(t)
+    if m:
+        t = m.group(1).strip()
+    t = _PRIKLAD_PREDPONA.sub("", t).strip()
+    if len(t) < 3 or _PRIKLAD_PRYC.match(t) or (
+            hobby and _podobnost(_norm(t), _norm(hobby)) >= _MERGE_AUTO):
+        return ""                 # vč. překlepu ve vlastním názvu („historia…“)
+    return t
+
+
+_SOUDCE_SYSTEM = (
+    "Rozhoduješ, jestli konkrétní téma patří pod koníček (je jeho příkladem). "
+    "Téma je název článku, pořadu, filmu nebo námětu, ke kterému dostaneš krátký "
+    "kontext z deníku. Patří jen tehdy, když je téma OBSAHEM toho koníčku (film "
+    "o hradech patří pod hrady; detektivní povídka nepatří pod rostliny jen kvůli "
+    "slovu v názvu).")
+
+
+def _kontext_tematu(conn, t: str) -> str:
+    try:
+        r = conn.execute(
+            "SELECT event_type, substr(replace(coalesce(nullif(note,''),data,''),"
+            "char(10),' '),1,220) FROM diary WHERE title=? AND event_type IN "
+            "('kodi_playing','movie_opinion','web_read','reading_takeaway',"
+            "'movie_browsed','book_reflection') ORDER BY ts DESC LIMIT 1",
+            (t,)).fetchone()
+    except Exception:
+        r = None
+    return ("%s: %s" % r) if r else "(bez záznamu v deníku)"
+
+
+def soudce_prikladu(config: dict, hobby: str, tema: str, kontext: str):
+    """True/False; None = soudce nedostupný (herní mód, LLM dole)."""
+    try:
+        from scripts.ollama_client import ollama_generate
+        raw = ollama_generate(
+            str((config.get("hobbies", {}) or {}).get("judge_model", "qwen2.5:7b")),
+            "Koníček: %s\nTéma: %s\nKontext: %s" % (hobby, tema, kontext),
+            system=_SOUDCE_SYSTEM, config=config, timeout=60, keep_alive=300,
+            format={"type": "object", "properties": {"patri": {"type": "boolean"}},
+                    "required": ["patri"]},
+            options={"temperature": 0, "num_predict": 20})
+        if not raw:
+            return None
+        return bool(json.loads(raw).get("patri"))
+    except Exception as e:
+        _log.debug("soudce příkladu: %s", e)
+        return None
+
+
 def _load_examples(raw) -> list:
     if not raw:
         return []
@@ -132,6 +204,11 @@ class HobbyStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_hobbies_norm ON hobbies(name_norm)")
+            # HANS_HOBBY_SILA_V1 — síla = zaujetí s vyhasínáním (poločas 30 d)
+            try:
+                db.execute("ALTER TABLE hobbies ADD COLUMN sila REAL NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # TRENDS_HISTORY_V1 — časová stopa evidence_count (graf růstu zájmu).
             db.execute("""
                 CREATE TABLE IF NOT EXISTS hobby_history (
@@ -231,11 +308,11 @@ class HobbyStore:
                     _log.info("hobby NEW [%s]: %.50s", rid, name)
                     return rid
                 rid = row["id"]
-                merged = _load_examples(row["examples"])
-                seen = {_norm(x) for x in merged}
-                for e in examples:
-                    if _norm(e) not in seen:
-                        merged.append(e); seen.add(_norm(e))
+                # HANS_HOBBY_EXAMPLES_V1 — NEJNOVĚJŠÍ první (dřív se po 20
+                # položkách nic nového nedostalo dovnitř)
+                stare = _load_examples(row["examples"])
+                nove = {_norm(e) for e in examples}
+                merged = list(examples) + [x for x in stare if _norm(x) not in nove]
                 conn.execute(
                     "UPDATE hobbies SET evidence_count=evidence_count+1, last_seen=?, "
                     "examples=? WHERE id=?",
@@ -252,13 +329,41 @@ class HobbyStore:
             _log.warning("HobbyStore.add_or_reinforce failed: %s", e)
             return None
 
+    def prepocitej_silu(self, polocas_dni: float = 30.0) -> dict:
+        """HANS_HOBBY_SILA_V1 (26. 9.) — SÍLA KONÍČKU ROZLIŠUJE.
+        `evidence_count` rostl +1 za každou noc, kdy model koníček zmínil,
+        a nikdy neklesal: 12 koníčků mělo 64–84 bez ohledu na skutečný zájem.
+        Síla = zaujetí (`hans_study._topic_engagement`: bez ozvěny studia,
+        1 podnět za den, Kodi ×0,5) nad příklady, s vyhasínáním — podnět
+        starý `polocas_dni` má poloviční váhu (literatura o degenerate
+        feedback loops: decay místo věčného součtu). `evidence_count` zůstává
+        jako VYTRVALOST (gate trvalých koníčků), pořadí řídí síla."""
+        from scripts.hans_study import _topic_engagement
+        out = {}
+        try:
+            conn = self._connect()
+            try:
+                for r in conn.execute("SELECT id, name, examples FROM hobbies "
+                                      "WHERE status='active'").fetchall():
+                    s = float(_topic_engagement(self._diary_path,
+                                                _load_examples(r["examples"]),
+                                                polocas_dni=polocas_dni) or 0)
+                    conn.execute("UPDATE hobbies SET sila=? WHERE id=?", (s, r["id"]))
+                    out[r["name"]] = s
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("prepocitej_silu: %s", e)
+        return out
+
     def top_hobbies(self, limit: int = 10) -> List[Hobby]:
         try:
             conn = self._connect()
             try:
                 rows = conn.execute(
                     "SELECT * FROM hobbies WHERE status='active' "
-                    "ORDER BY evidence_count DESC, last_seen DESC LIMIT ?",
+                    "ORDER BY sila DESC, evidence_count DESC, last_seen DESC LIMIT ?",
                     (limit,)).fetchall()
                 return [Hobby(r) for r in rows]
             finally:
@@ -279,7 +384,7 @@ class HobbyStore:
                 rows = conn.execute(
                     "SELECT * FROM hobbies WHERE status='active' "
                     "AND evidence_count >= ? AND first_seen <= ? AND last_seen >= ? "
-                    "ORDER BY evidence_count DESC",
+                    "ORDER BY sila DESC, evidence_count DESC",
                     (min_evidence, min_first, min_last)).fetchall()
                 return [Hobby(r) for r in rows]
             finally:
@@ -339,7 +444,7 @@ def gather_topics(diary_db_path: str, window_days: int = 30,
     counts: dict = {}
 
     def _bump(topic: str, by: float = 1):
-        t = (topic or "").strip()
+        t = cisti_priklad(topic)     # HANS_HOBBY_EXAMPLES_V1 — kanonický tvar
         if len(t) < 3:
             return
         k = _norm(t)
@@ -371,11 +476,13 @@ def gather_topics(diary_db_path: str, window_days: int = 30,
                 "SELECT note, date(ts,'unixepoch','localtime') FROM diary "
                 "WHERE event_type='teddy_dialog' AND ts > ?", (since,)).fetchall():
             _t = _topic_from_teddy_note(note)
-            if not _t or _sn(_t) in _stud or (_t.lower(), den) in _videno:
+            if not _t or _sn(_t) in _stud or (_t.lower(), den) in _videno \
+                    or not cisti_priklad(_t):        # zástupný námět dialogu
                 continue
             _videno.add((_t.lower(), den))
-            _tl = _t.lower()
-            _bump(_t, KODI_VAHA if (_tl in _tv or "přemýšlel o filmu" in _tl) else 1)
+            _film = "přemýšlel o filmu" in _t.lower()
+            _t = cisti_priklad(_t)                   # „…o filmu 'X'.“ → „X“
+            _bump(_t, KODI_VAHA if (_film or _t.lower() in _tv) else 1)
         # web/filmy/kodi: titulky
         # HANS_HOBBY_NO_GOAL_READS_V1 (2.9.) — čtení, které si OBJEDNAL aktIVNÍ
         # CÍL (`[goal]` v note), se do koníčků nepočítá. Jinak si cíl vyrobí
@@ -473,6 +580,16 @@ def distill_hobbies(config: dict, diary_db_path: str,
         return 0
     written = 0
     _max = int(cfg.get("max_per_run", 12))
+    # HANS_HOBBY_EXAMPLES_V1 — příklad jen ze SKUTEČNÝCH témat, jen u jednoho
+    # koníčku, jen se souhlasem soudce; koníček bez platného příkladu se
+    # neposílí (tvrzení modelu bez důkazu). Soudce nedostupný → fail-closed.
+    _temata = {_norm(cisti_priklad(t)): cisti_priklad(t) for t, _ in topics
+               if cisti_priklad(t)}
+    _prideleno = set()
+    try:
+        _kc = sqlite3.connect("file:%s?mode=ro" % diary_db_path, uri=True, timeout=5.0)
+    except Exception:
+        _kc = None
     for it in items[:_max]:
         if not isinstance(it, dict):
             continue
@@ -481,9 +598,38 @@ def distill_hobbies(config: dict, diary_db_path: str,
             continue
         ex = it.get("examples")
         ex = ex if isinstance(ex, list) else ([ex] if ex else [])
-        if store.add_or_reinforce(name, ex):
+        platne, stopa = [], []
+        for e in ex:
+            c = cisti_priklad(str(e), name)
+            k = _norm(c)
+            if not c or k not in _temata or k in _prideleno:
+                stopa.append("%s:%s" % (str(e)[:30], "mimo témata" if c and k not in _temata
+                                        else ("už jinde" if c else "není příklad")))
+                continue
+            v = soudce_prikladu(config, name, _temata[k],
+                                _kontext_tematu(_kc, _temata[k]) if _kc else "")
+            if v:
+                platne.append(_temata[k]); _prideleno.add(k)
+            else:
+                stopa.append("%s:%s" % (_temata[k][:30], "soudce ne" if v is False
+                                        else "soudce nedostupný"))
+        if not platne:
+            _log.info("distill_hobbies: '%s' bez platného příkladu → neposiluji %s",
+                      name, stopa[:6])
+            continue
+        if store.add_or_reinforce(name, platne):
             written += 1
+            _log.info("distill_hobbies: '%s' ← %s (vyřazeno %s)", name, platne,
+                      stopa[:6])
+    if _kc is not None:
+        _kc.close()
     _log.info("distill_hobbies: zpracováno %d koníčků z %d témat", written, len(topics))
+    try:   # HANS_HOBBY_SILA_V1 — síla po nočním zobecnění
+        _s = store.prepocitej_silu(float(cfg.get("sila_polocas_dni", 30)))
+        _log.info("distill_hobbies: síla %s", {k: round(v, 1) for k, v in
+                  sorted(_s.items(), key=lambda kv: -kv[1])[:8]})
+    except Exception as e:
+        _log.warning("distill_hobbies: přepočet síly: %s", e)
     return written
 
 

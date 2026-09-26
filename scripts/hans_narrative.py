@@ -61,7 +61,7 @@ def gather(db_path: str, period_days: int = 7, min_importance: int = 6) -> dict:
         try:
             for name, ec in con.execute(
                     "SELECT name, evidence_count FROM hobbies "
-                    "ORDER BY evidence_count DESC LIMIT 8").fetchall():
+                    "ORDER BY sila DESC, evidence_count DESC LIMIT 8").fetchall():
                 out["hobbies"].append((name, ec))
         except Exception:
             pass
