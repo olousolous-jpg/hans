@@ -1183,8 +1183,11 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
         return None, None, None
     w = WebReader(config)
     art = None
+    # HANS_STUDY_MDN_V1 — webová témata nejdřív z MDN (praktický zdroj)
+    if _je_web_tema(sub, topic) and _cfg(config).get("mdn_enabled", True):
+        art = _mdn_clanek(config, sub, topic, art_max)
     try:
-        for q in _search_queries(sub, topic):
+        for q in ([] if art else _search_queries(sub, topic)):
             art = w.wikipedia_article(q, lang=lang, max_chars=art_max)
             if art and (art.get("text") or "").strip():
                 if q != sub:
@@ -1217,10 +1220,13 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
             return None, None, "__transient__"
         return None, None, None
 
-    art = _overeny_clanek(config, w, sub, topic, art, art_max)  # HANS_STUDY_ARTICLE_JUDGE_V1
+    if art.get("zdroj") != "mdn":   # MDN už soudce vybral
+        art = _overeny_clanek(config, w, sub, topic, art, art_max)  # HANS_STUDY_ARTICLE_JUDGE_V1
     used_lang = art.get("lang", lang)
     parts = [f"[Hlavní článek: {art['page_title']}]\n{art['text']}"]
-    if sub_n > 0:
+    if _je_web_tema(sub, topic) and _cfg(config).get("wcag_enabled", True):
+        parts += _wcag_casti(sub, topic)       # HANS_STUDY_WCAG_V1
+    if sub_n > 0 and art.get("zdroj") != "mdn":   # pododkazy jsou z Wikipedie
         try:
             links = w.wikipedia_lead_links(art["page_title"], lang=used_lang,
                                            limit=sub_n + 3)
@@ -1357,15 +1363,7 @@ def _overeny_clanek(config: dict, w, sub: str, topic: str, art: dict,
             pass
     try:
         from scripts.ollama_client import ollama_generate
-        en = json.loads(ollama_generate(
-            str(_cfg(config).get("judge_model", "qwen2.5:7b")),
-            "Topic: %s\nSubtopic: %s" % (topic, sub),
-            system="Translate the Czech study subtopic into a short English "
-                   "Wikipedia search query (2-5 words).",
-            config=config, timeout=60, keep_alive=300,
-            format={"type": "object", "properties": {"en": {"type": "string"}},
-                    "required": ["en"]},
-            options={"temperature": 0, "num_predict": 40}) or "{}").get("en", "")
+        en = _en_dotaz(config, topic, sub)
         if en:
             r = w._get("https://en.wikipedia.org/w/api.php", params={
                 "action": "query", "list": "search", "srsearch": en,
@@ -1407,6 +1405,155 @@ def _overeny_clanek(config: dict, w, sub: str, topic: str, art: dict,
             "url": "https://%s.wikipedia.org/wiki/%s" % (
                 vyber[0], _rq.utils.quote(vyber[1].replace(" ", "_"))),
             "text": text[:art_max]}
+
+
+# ── HANS_STUDY_MDN_V1 (26. 9.) — WEBOVÁ TÉMATA Z MDN ─────────────────────────
+# Pilot 26. 9.: z Wikipedie vzešlo na 3 web pod-témata 6 pravidel, ověřitelné
+# ~1 („Základy HTML a CSS“ → článek *HTML editor*, „Typografie pro web“ →
+# *Plochý design*). MDN (Mozilla, CC-BY-SA) na 3 články 19 pravidel, konkrétních
+# (kontrast 4,5:1, max-width obrázků, relativní breakpointy). Wikipedie popisuje,
+# CO web design je; MDN, JAK se dělá. Vybírá týž soudce (nad shrnutím z MDN).
+_WEB_TEMA = re.compile(
+    r"\b(web\w*|html\w*|css|javascript\w*|js|ux|ui|wcag|responziv\w*|"
+    r"pristupnost\w*|frontend|front-end|prohlizec\w*|design system\w*|"
+    r"designov\w* system\w*)\b", re.I)
+
+
+def _je_web_tema(sub: str, topic: str) -> bool:
+    import unicodedata as _ud
+    t = "".join(c for c in _ud.normalize("NFKD", "%s %s" % (sub, topic))
+                if not _ud.combining(c))
+    return bool(_WEB_TEMA.search(t))
+
+
+def _en_dotaz(config: dict, topic: str, sub: str) -> str:
+    """Krátký anglický vyhledávací dotaz k pod-tématu ('' při selhání)."""
+    try:
+        from scripts.ollama_client import ollama_generate
+        return (json.loads(ollama_generate(
+            str(_cfg(config).get("judge_model", "qwen2.5:7b")),
+            "Topic: %s\nSubtopic: %s" % (topic, sub),
+            system="Translate the Czech study subtopic into a short English "
+                   "search query (2-5 words).",
+            config=config, timeout=60, keep_alive=300,
+            format={"type": "object", "properties": {"en": {"type": "string"}},
+                    "required": ["en"]},
+            options={"temperature": 0, "num_predict": 40}) or "{}").get("en", "")
+            or "").strip()
+    except Exception as e:
+        _log.debug("_en_dotaz: %s", e)
+        return ""
+
+
+# HANS_STUDY_WCAG_V1 (26. 9.) — MĚŘITELNÉ HRANICE jsou ve WCAG, ne na MDN.
+# Test 26. 9.: 4 web pod-témata z MDN = 7 rozumných pravidel, měřitelných 0
+# (MDN vrací přehledové stránky). Kritéria WCAG 2.2 „Understanding“ čísla nesou
+# (kontrast 4,5:1, řádkování 1,5, řádek ≤ 80 znaků, reflow 320 px, cíl 24 px).
+# Sada pro vizuální design je malá a stálá → katalog podle klíčových slov;
+# bere se ZAČÁTEK stránky (znění kritéria + účel), čísla jsou tam.
+_WCAG = "https://www.w3.org/WAI/WCAG22/Understanding/%s.html"
+_WCAG_MAPA = (
+    (r"kontrast|barv|barev|color|colour", ("contrast-minimum", "use-of-color", "non-text-contrast")),
+    (r"typograf|pism|font|text|citel|radk", ("visual-presentation", "text-spacing", "resize-text")),
+    (r"responziv|mobil|rozvrz|layout|mrizk", ("reflow", "target-size-minimum")),
+    (r"pristupn|wcag|ux|ui|ovlad|navigac|formular|interakt|tlacit",
+     ("contrast-minimum", "text-spacing", "target-size-minimum", "visual-presentation")),
+)
+
+
+def _wcag_casti(sub: str, topic: str, max_chars: int = 4000) -> list:
+    import html as _h
+    import requests as _rq
+    import unicodedata as _ud
+    t = "".join(c for c in _ud.normalize("NFKD", sub.lower())
+                if not _ud.combining(c))
+    slugy = []
+    for vzor, ss in _WCAG_MAPA:
+        if re.search(vzor, t):
+            slugy += [x for x in ss if x not in slugy]
+    out = []
+    for sl in slugy[:4]:
+        try:
+            r = _rq.get(_WCAG % sl, headers=_UA, timeout=20)
+            m = re.search(r"<main[\s\S]*?</main>", r.text)
+            x = re.sub(r"<(script|style)[\s\S]*?</\1>", "", m.group(0) if m else r.text)
+            x = re.sub(r"\s+", " ", _h.unescape(re.sub(r"<[^>]+>", " ", x))).strip()
+            if len(x) > 400:
+                out.append("[WCAG 2.2: %s]\n%s" % (sl, x[:max_chars]))
+        except Exception as e:
+            _log.debug("WCAG %s: %s", sl, e)
+    if out:
+        _log.info("study: '%s' + WCAG %s", sub, slugy[:4])
+    return out
+
+
+_MDN = "https://developer.mozilla.org"
+
+
+def _mdn_text(doc: dict) -> str:
+    """Tělo MDN článku (index.json) jako prostý text s mezititulky."""
+    import html as _h
+    out = []
+    for b in doc.get("body") or []:
+        v = b.get("value") or {}
+        if v.get("title"):
+            out.append("\n## %s\n" % v["title"])
+        c = v.get("content") or ""
+        if c:
+            c = re.sub(r"<(script|style)[\s\S]*?</\1>", "", c)
+            out.append(_h.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c))).strip())
+    return "\n".join(x for x in out if x.strip())
+
+
+def _mdn_clanek(config: dict, sub: str, topic: str, art_max: int):
+    """Nejlepší MDN článek k pod-tématu (soudce nad shrnutím), nebo None."""
+    import requests as _rq
+    en = _en_dotaz(config, topic, sub)
+    if not en:
+        return None
+    try:
+        r = _rq.get(_MDN + "/api/v1/search", params={"q": en, "locale": "en-US",
+                                                     "size": 6},
+                    headers=_UA, timeout=15)
+        docs = (r.json() or {}).get("documents") or []
+    except Exception as e:
+        _log.info("study: MDN hledání '%s' selhalo: %s", en, e)
+        return None
+    # až N schválených článků: přehledová stránka čísla nemá, konkrétní
+    # („Color contrast“) ano — pilot 26. 9.: 1 článek = 0 měřitelných pravidel
+    ano, cast, stopa = [], [], []
+    for d in docs[:6]:
+        url = d.get("mdn_url") or ""
+        if not url or "/Glossary/" in url:      # slovníček = jedna věta, málo látky
+            continue
+        v = _soudce_clanku(config, topic, sub, d.get("title", ""),
+                           d.get("summary", ""), "MDN")
+        stopa.append("%s=%s" % (d.get("title"), v))
+        (ano if v == "ano" else cast if v == "castecne" else []).append(d)
+    vybrane = (ano + cast)[:int(_cfg(config).get("mdn_articles", 3))]
+    if not vybrane:
+        _log.info("study: '%s' — MDN (%s) nic vhodného %s", sub, en, stopa)
+        return None
+    casti = []
+    for d in vybrane:
+        try:
+            doc = _rq.get(_MDN + d["mdn_url"] + "/index.json", headers=_UA,
+                          timeout=20).json().get("doc") or {}
+            t = _mdn_text(doc)
+        except Exception as e:
+            _log.info("study: MDN článek %s nestažen: %s", d.get("mdn_url"), e)
+            continue
+        if len(t) >= 400:
+            casti.append("[MDN: %s]\n%s" % (d.get("title"), t))
+    text = "\n\n".join(casti)
+    if len(text) < 800:
+        return None
+    hlavni = vybrane[0]
+    _log.info("study: '%s' → MDN %s (%d zn) %s", sub,
+              [d.get("title") for d in vybrane], len(text), stopa)
+    return {"page_title": hlavni.get("title"), "title": hlavni.get("title"),
+            "url": _MDN + hlavni["mdn_url"], "text": text[:max(art_max, 20000)],
+            "lang": "en", "zdroj": "mdn"}
 
 
 # ── Studijní poznámka (LLM zpracuje čtení na poznámku v 1. osobě) ───────────
@@ -2040,6 +2187,13 @@ class StudyStore:
 
         # 3a) HANS_STUDY_SOURCES_KEEP_V1 — ulož celý materiál i odkaz
         self._save_source(prog, idx, topic, sub, _main, source_url, material)
+        # HANS_PRIRUCKA_V1 — u webového tématu si z nastudovaného vytáhni pravidla
+        if _je_web_tema(sub, topic) and _cfg(config).get("prirucka_enabled", True):
+            try:
+                from scripts import hans_prirucka as _hp
+                _hp.vytahni(config, topic, sub, material, source_url, self._diary_path)
+            except Exception as e:
+                _log.warning("study: příručka '%s' selhala: %s", sub, e)
 
         # 3b) per-práce výpisky z odborných prací (HANS_RESEARCH_PAPER_TAKEAWAY_V1)
         try:
