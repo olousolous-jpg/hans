@@ -494,6 +494,108 @@ def _volne_misto(cesta: str) -> int:
         return 0
 
 
+def _spust_mimo_hanse(prikaz: str) -> None:
+    """HANS_WEBSHARE_RESUME_V1 (27. 9.) — stahování jako VLASTNÍ jednotka systemd.
+
+    `nohup` + nová session restart Hanse NEPŘEŽIJE: služba má `KillMode=
+    control-group` a systemd při restartu zabije celou skupinu procesů.
+    Doloženo 27. 9.: „Somrák s brokárnou“ se zastavil na 266 MB z 2,87 GB
+    v 15:00:14 — přesně při restartu kvůli nahrávání mikrofonu — a Hans dál
+    hlásil „stahuji“. `systemd-run --user` spustí curl mimo skupinu Hanse.
+    Když systemd-run nejde, zůstává dosavadní způsob."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["systemd-run", "--user", "--collect", "--quiet",
+             "--unit", "hans-stahovani-%d" % int(time.time() * 1000),
+             "sh", "-c", prikaz],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15)
+        if r.returncode == 0:
+            return
+        log.warning("webshare: systemd-run selhal (%s), spouštím postaru",
+                    (r.stderr or b"").decode("utf-8", "replace")[:120])
+    except Exception as e:
+        log.warning("webshare: systemd-run nejde (%s), spouštím postaru", e)
+    subprocess.Popen(["nohup", "sh", "-c", prikaz],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     stdin=subprocess.DEVNULL, start_new_session=True)
+
+
+def _curl_bezi(cesta_part: str) -> bool:
+    """Běží curl, který zapisuje tenhle .part? Čte /proc přímo — `pgrep -f`
+    by našel i sám sebe (vzor v cmdline), past doložená v CLAUDE.md."""
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % d, "rb") as f:
+                arg = f.read().split(b"\0")
+        except Exception:
+            continue
+        if arg and os.path.basename(arg[0]) == b"curl" and \
+                cesta_part.encode("utf-8") in arg:
+            return True
+    return False
+
+
+def hlidej_stahovani(config: dict) -> list:
+    """HANS_WEBSHARE_RESUME_V1 — rozdělané stahování, které NEBĚŽÍ a jehož
+    `.part` se `nav_po_s` nezměnil, naváž (`curl -C -`). Vrací hlášky do logu.
+    Pojistka proti smyčce: nejvýš `max_navazani` pokusů na úlohu."""
+    c = _cfg(config)
+    po_s = float(c.get("nav_po_s", 180))
+    max_n = int(c.get("max_navazani", 20))
+    zpravy = []
+    for u in ulohy():
+        if u.get("kde") != "pi":
+            continue
+        cesta = u.get("cesta") or ""
+        part = cesta + ".part"
+        if not cesta or os.path.exists(cesta) or not os.path.exists(part):
+            continue
+        try:
+            stari = time.time() - os.path.getmtime(part)
+            mam = os.path.getsize(part)
+        except OSError:
+            continue
+        if stari < po_s or _curl_bezi(part):
+            continue
+        n = int(u.get("navazano", 0))
+        if n >= max_n:
+            continue
+        try:
+            url = odkaz(config, u.get("ident", ""))    # čerstvý odkaz, starý mohl vypršet
+        except Exception as e:
+            zpravy.append("stahování „%s“ stojí, odkaz nezískán (%s)" % (u.get("nazev"), e))
+            continue
+        logf = cesta + ".log"
+        # Webshare (volný účet) NEUMÍ navazovat: curl skončí „(33) HTTP server
+        # does not seem to support byte ranges. Cannot resume.“ (doloženo 27. 9.).
+        # Pak nezbývá než .part smazat a stáhnout znovu od začátku.
+        try:
+            with open(logf, "rb") as f:
+                f.seek(max(0, os.path.getsize(logf) - 600))
+                konec_logu = f.read().decode("utf-8", "replace")
+        except Exception:
+            konec_logu = ""
+        od_zacatku = bool(u.get("bez_navazani")) or "Cannot resume" in konec_logu
+        if od_zacatku:
+            prikaz = ("rm -f %s; curl -sSL --retry 5 --retry-delay 30 -o %s %s >>%s 2>&1 "
+                      "&& mv -f %s %s" % (_q(part), _q(part), _q(url), _q(logf), _q(part), _q(cesta)))
+        else:
+            prikaz = ("curl -sSL --retry 5 --retry-delay 30 -C - -o %s %s >>%s 2>&1 "
+                      "&& mv -f %s %s" % (_q(part), _q(url), _q(logf), _q(part), _q(cesta)))
+        _spust_mimo_hanse(prikaz)
+        _aktualizuj_ulohu(cesta, navazano=n + 1, navazano_ts=time.time(),
+                          bez_navazani=od_zacatku)
+        zpravy.append("stahování „%s“ stálo %d min na %s z %s → %s (pokus %d)" % (
+            u.get("nazev"), int(stari // 60), velikost_str(mam),
+            velikost_str(int(u.get("velikost") or 0)),
+            "server neumí navázat, stahuji ZNOVU od začátku" if od_zacatku else "navazuji",
+            n + 1))
+    return zpravy
+
+
 def stahni_na_pi(config: dict, ident: str, nazev: str, velikost: int = 0) -> dict:
     """Stáhni na PI na pozadí. Přesun na PC obstará `presun_na_pc` až potom.
 
@@ -529,9 +631,7 @@ def stahni_na_pi(config: dict, ident: str, nazev: str, velikost: int = 0) -> dic
     vnitrni = ("curl -sSL --retry 5 --retry-delay 30 -C - -o %s %s >>%s 2>&1 "
                "&& mv -f %s %s" % (_q(cesta + ".part"), _q(url), _q(logf),
                                    _q(cesta + ".part"), _q(cesta)))
-    subprocess.Popen(["nohup", "sh", "-c", vnitrni],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     stdin=subprocess.DEVNULL, start_new_session=True)
+    _spust_mimo_hanse(vnitrni)   # HANS_WEBSHARE_RESUME_V1
     cil_pc = "%s/%s" % (str(c.get("out_dir") or "/mnt/D/Hans_stazene").rstrip("/"),
                         jmeno)
     uloha = {"ident": ident, "nazev": jmeno, "cesta": cesta, "kde": "pi",

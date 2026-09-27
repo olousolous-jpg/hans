@@ -1479,6 +1479,11 @@ class HansRoutine:
         """
         try:
             from scripts import hans_webshare as _ws
+            # HANS_WEBSHARE_RESUME_V1 — zastavené stahování naváž (1× za minutu)
+            if time.time() - getattr(self, "_ws_hlidac_ts", 0) >= 60:
+                self._ws_hlidac_ts = time.time()
+                for _z in _ws.hlidej_stahovani(self.config):
+                    _log.info("webshare: %s", _z)
             if not _ws.hotove_ke_presunu():
                 return
             for zprava in _ws.presun_hotove(self.config):
