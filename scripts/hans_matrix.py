@@ -268,7 +268,13 @@ class MatrixBridge:
 
     def _is_full(self, uid: str) -> bool:
         u = self._users.get(str(uid))
-        return (u.get("role", "full") == "full") if u else True
+        full = (u.get("role", "full") == "full") if u else True
+        # HANS_PRAVA_V1 (27. 9.) — oprávnění k akcím z admin panelu.
+        try:
+            from scripts.hans_prava import muze as _pm
+            return full and _pm(self.config, self._person_for(uid), "akce")
+        except Exception:
+            return full
 
     def _in_quiet_hours(self) -> bool:
         h = time.localtime().tm_hour

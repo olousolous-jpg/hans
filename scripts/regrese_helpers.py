@@ -891,3 +891,86 @@ def lekce_citace(dotaz: str, tazatel: str) -> str:
     r = lessons_for_topic("data/hans_diary.db", dotaz, limit=3,
                           bez_citace=(tazatel == "cizi"))
     return "cituje" if any("kachn" in x.lower() for x in r) else "necituje"
+
+
+# ── HANS_PRAVA_V1 (27. 9.) — oprávnění známých osob ──────────────────────────
+def prava(cesta: str, tazatel: str) -> str:
+    """Dostane známá osoba data JINÉ známé osoby? Vrátí 'smi' / 'odmita'.
+    tazatel: 'spravce' | 'clen' | 'host' | 'clen_vyjimka' (člen s povolenými
+    cizími rozhovory, kartou a nitkami) | 'vypnuto' (pravidla vypnutá, člen).
+    cesta: 'rozhovory' | 'karta' | 'zajmy' | 'nitky_zavrit' | 'akce'."""
+    import copy
+    import types
+    from scripts import chat_commands as cc, hans_recall as hr
+    import scripts.cz_names as czn
+    cfg = copy.deepcopy(_cfg())
+    kp = cfg.get("known_persons") or {}
+    spr = str(((cfg.get("matrix") or {}).get("as_person")) or "").lower()
+    ostatni = [k for k in kp if k != spr]
+    if len(ostatni) < 2:
+        return "?"
+    ja = spr if tazatel == "spravce" else ostatni[0]
+    on = ostatni[1]
+    cfg["pristup"] = {"enabled": tazatel != "vypnuto"}
+    if tazatel == "host":
+        kp[ja]["pristup"] = {"role": "host"}
+    elif tazatel == "clen_vyjimka":
+        kp[ja]["pristup"] = {"povoleno": {"cizi_rozhovory": True,
+                                          "karta_osoby": True,
+                                          "nitky_zajmy": True}}
+    elif tazatel != "spravce":
+        kp[ja].pop("pristup", None)
+    puvodni = czn._load_config
+    czn._load_config = lambda: cfg
+    try:
+        h = types.SimpleNamespace(config=cfg, _thread_ctx=None)
+        from scripts.hans_prava import ODMITNUTI
+        if cesta == "rozhovory":
+            ins = kp[on].get("ins") or ((kp[on].get("nom") or on)[:-1] + "ou")
+            r = cc._cmd_rozhovory(h, ja, "o čem jsi mluvil s %s?" % ins)
+            return "odmita" if r == ODMITNUTI else (
+                "smi" if r.startswith("Rozhovory s osobou") else "jine")
+        if cesta == "karta":
+            db = cfg.get("diary_db") or "data/hans_diary.db"
+            from scripts.hans_relationships import Relationships
+            card = Relationships(cfg).get(on)
+            if not card or not (card.characterization or "").strip():
+                return "?"
+            r = hr.person_card(db, "co víš o %s?" % (kp[on].get("nom") or on),
+                               cfg, asker=ja)
+            return "smi" if card.characterization.strip()[:40] in r else "odmita"
+        if cesta == "zajmy":
+            r = cc._cmd_zajmy(h, ja, on)
+            return "odmita" if r == ODMITNUTI else "smi"
+        if cesta == "nitky_zavrit":
+            import sqlite3
+            db = cfg.get("diary_db") or "data/hans_diary.db"
+            c = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
+            row = c.execute("SELECT id FROM person_threads WHERE lower(person)=? "
+                            "AND status!='open' LIMIT 1", (on,)).fetchone()
+            c.close()
+            if not row:
+                return "?"
+            # uzavřená nitka → obsluha by nic nezměnila ani při „smí“
+            r = cc._cmd_nitky(h, ja, "zavři %d" % row[0])
+            return "odmita" if r == ODMITNUTI else "smi"
+        if cesta == "akce":
+            r = cc._cizi_nesmi("vypnipc", "", ja)
+            return "smi" if not r else "odmita"
+    finally:
+        czn._load_config = puvodni
+    return "?"
+
+
+def partner_rozhovoru_nalezen(veta: str) -> bool:
+    """HANS_PRAVA_V1 — najde „s <jiná známá osoba>“? (jméno se dosadí z configu
+    za <J7> v 7. pádě, za <J1> v 1. pádě)."""
+    from scripts import chat_commands as cc
+    cfg = _cfg()
+    kp = cfg.get("known_persons") or {}
+    spr = str(((cfg.get("matrix") or {}).get("as_person")) or "").lower()
+    on = [k for k in kp if k != spr][0]
+    nom = kp[on].get("nom") or on
+    ins = kp[on].get("ins") or (nom[:-1] + "ou")
+    return bool(cc._partner_rozhovoru(veta.replace("<J7>", ins).replace("<J1>", nom),
+                                      cfg, spr))

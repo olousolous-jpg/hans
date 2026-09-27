@@ -262,6 +262,9 @@ _CTENI_BEZ_ARG = {  # příkaz → argumenty, které jsou jen výpis
 }
 
 
+_BEZ_SVOLENI = "K tomu ode mne nemáte svolení. Snad mi to prominete."  # HANS_PRAVA_V1
+
+
 def _cizi_nesmi(cmd_id: str, args, name) -> str:
     """Vrátí odmítnutí pro cizího u mutujícího příkazu, jinak ''."""
     if cmd_id in _JEN_ZNAMYM:
@@ -283,6 +286,13 @@ def _cizi_nesmi(cmd_id: str, args, name) -> str:
     try:
         from scripts.cz_names import is_known_person as _ikp
         if name and _ikp(name):
+            # HANS_PRAVA_V1 (27. 9.) — známému bez oprávnění k akcím
+            # (čtecí příkazy mají vlastní kategorie, sem nepatří).
+            if cmd_id not in _JEN_ZNAMYM_CTENI:
+                from scripts.cz_names import _load_config as _lc
+                from scripts.hans_prava import muze as _pm
+                if not _pm(_lc(), name, "akce"):
+                    return _BEZ_SVOLENI
             return ""
     except Exception:
         pass
@@ -2154,9 +2164,27 @@ def _cmd_nitky(handler, name, args) -> str:
     cmd = parts[0].lower() if parts else ""
     rest = parts[1].strip() if len(parts) > 1 else ""
 
+    # HANS_PRAVA_V1 (27. 9.) — nitky jiných osob jen s oprávněním.
+    try:
+        from scripts.hans_prava import muze as _pm
+        _jen_ja = not _pm(cfg, name or "", "nitky_zajmy", o_kom="")
+    except Exception:
+        _jen_ja = False
+    _ja = str(name or "").strip().lower()
     if cmd in _NITKY_CLOSE:
         if not rest.isdigit():
             return "Uveďte id: /nitky zavři <id> (viz /nitky)."
+        if _jen_ja:
+            try:
+                _c0 = _s.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
+                _r0 = _c0.execute("SELECT lower(person) FROM person_threads "
+                                  "WHERE id=?", (int(rest),)).fetchone()
+                _c0.close()
+            except Exception:
+                _r0 = None
+            if not _r0 or _r0[0] != _ja:
+                from scripts.hans_prava import ODMITNUTI
+                return ODMITNUTI
         try:
             from scripts.hans_threads import ThreadStore
             ok = ThreadStore(cfg, db).close(int(rest), resolution="ručně uzavřeno")
@@ -2169,11 +2197,16 @@ def _cmd_nitky(handler, name, args) -> str:
     try:
         conn = _s.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
         conn.row_factory = _s.Row
+        _podm = [] if include_closed else ["status='open'"]
+        _par = ()
+        if _jen_ja:                     # HANS_PRAVA_V1
+            _podm.append("lower(person)=?")
+            _par = (_ja,)
         sql = ("SELECT id,person,topic,follow_up,status,times_surfaced "
                "FROM person_threads "
-               + ("" if include_closed else "WHERE status='open' ")
+               + (("WHERE " + " AND ".join(_podm) + " ") if _podm else "")
                + "ORDER BY person, updated_ts DESC")
-        rows = conn.execute(sql).fetchall()
+        rows = conn.execute(sql, _par).fetchall()
         conn.close()
     except Exception as e:
         return "Nitky nedostupné: %s" % e
@@ -2312,6 +2345,16 @@ def _cmd_zajmy(handler, name, args) -> str:
         # jisté, že se na sebe ptát smí.
         if not who and not _PTA_SE_NA_VSECHNY.search(_q or ""):
             who = str(name or "").strip().lower()
+    # HANS_PRAVA_V1 (27. 9.) — zájmy jiných osob jen s oprávněním; výpis
+    # „všech“ se bez něj zúží na tazatele.
+    try:
+        from scripts.hans_prava import muze as _pm, ODMITNUTI as _odm
+        if who and not _pm(cfg, name or "", "nitky_zajmy", o_kom=who):
+            return _odm
+        if not who and not _pm(cfg, name or "", "nitky_zajmy", o_kom=""):
+            who = str(name or "").strip().lower()
+    except Exception:
+        pass
     try:
         conn = _s.connect("file:%s?mode=ro" % db, uri=True, timeout=3.0)
         conn.row_factory = _s.Row
@@ -4560,6 +4603,28 @@ register(
 )
 
 
+# „s <jménem>“ / „se <S…/Z…/Š…/Ž…>“ a jméno v 7. pádě (-ou/-em/-ím). Holé „se“
+# je zvratné („proč se <jméno> musela…“) — změřeno na 1 613 větách: bez
+# omezení 4 falešné nálezy, všechny zvratné.
+_PARTNER_PAT = re.compile(
+    r"\b(?:s\s+|se\s+(?=[sszšžSZŠŽ]))([^\W\d_]{2,}(?:ou|em|ím|ým))\b",
+    re.IGNORECASE)
+
+
+def _partner_rozhovoru(q: str, cfg: dict, tazatel) -> str:
+    """HANS_PRAVA_V1 — klíč JINÉ známé osoby za předložkou „s/se“, jinak ''."""
+    try:
+        from scripts.cz_names import find_known_person
+    except Exception:
+        return ""
+    ja = str(tazatel or "").strip().lower()
+    for m in _PARTNER_PAT.finditer(q or ""):
+        k = find_known_person(m.group(1), cfg)
+        if k and k != ja:
+            return k
+    return ""
+
+
 def _cmd_rozhovory(handler, name, args) -> str:  # HANS_CHAT_SUMMARY_V1
     """Sumář toho, o čem se TAZATEL s Hansem bavil (deterministicky z deníku).
     Časová reference v dotazu („v pátek", „27. dubna 2026", „minulý týden")
@@ -4631,6 +4696,26 @@ def _cmd_rozhovory(handler, name, args) -> str:  # HANS_CHAT_SUMMARY_V1
                         "vymýšlet." % _tp)
     except Exception:
         pass
+    # HANS_PRAVA_V1 (27. 9.) — „o čem jsi mluvil s <jiná známá osoba>?“
+    # Dřív se vrátil rozhovor TAZATELE (špatná odpověď); teď rozhovor té
+    # osoby, smí-li tazatel do cizích rozhovorů, jinak odmítnutí.
+    try:
+        from scripts.hans_prava import zapnuto as _pz
+        _jiny = _partner_rozhovoru(q, cfg, name) if _pz(cfg) else ""
+    except Exception:
+        _jiny = ""
+    if _jiny:   # vypnutá pravidla = beze změny (dřívější chování)
+        from scripts.hans_prava import muze as _pm, ODMITNUTI as _odm
+        if not _pm(cfg, name or "", "cizi_rozhovory", o_kom=_jiny):
+            return _odm
+        try:
+            from scripts.cz_names import display_name as _dn
+            _jm = _dn(_jiny, cfg) or _jiny
+        except Exception:
+            _jm = _jiny
+        _o = chat_summary(_recall_db(handler), _jiny, q, config=cfg)
+        return ("Rozhovory s osobou %s:\n%s" % (_jm, _o)) if _o else (
+            "S osobou %s nemám zapsaný žádný rozhovor." % _jm)
     topic = _extract_conv_topic(q)
     if topic:
         out = topic_conversation(_recall_db(handler), name, topic)

@@ -1637,5 +1637,9 @@
         "cooldown_s": 600,
         "max_switches_h": 3,
         "switch_verify_s": 30
+    },
+    "pristup": {
+        "enabled": true,
+        "role_defaults": {}
     }
 }

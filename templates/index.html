@@ -169,6 +169,7 @@ button.btn:hover { opacity: 0.85; }
       <button data-tab="conversations" onclick="showTab('conversations')">💬 Konverzace</button>
       <button data-tab="works" onclick="showTab('works')">🛠️ Hansova práce</button>
       <button data-tab="questions" onclick="showTab('questions')">❓ Otázky<span id="q-nav-badge" style="background:var(--yellow);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:0.7em;margin-left:auto;display:none">0</span></button>
+      <button data-tab="users" onclick="showTab('users')">🔐 Uživatelé</button>
       <button data-tab="cfg-identity" onclick="showTab('cfg-identity')">⚙ Nastavení</button>
       <button data-tab="log" onclick="showTab('log')">📋 Log</button>
     </nav>
@@ -418,6 +419,29 @@ button.btn:hover { opacity: 0.85; }
   </div>
 </div>
 
+<!-- ── UŽIVATELÉ — HANS_PRAVA_V1 (27. 9.) ──────────────────────────────────── -->
+<div id="tab-users" class="tab-content">
+  <div class="card">
+    <p style="margin:0 0 10px;opacity:.8;font-size:.9rem">
+      Co která známá osoba smí vidět a dělat. Týká se jen dat <b>o jiných</b> osobách —
+      svoje vidí každý. Cizí lidé nedostanou nic z toho bez ohledu na nastavení.
+      Spolehlivě se osoba pozná na Matrixu (podle účtu); hlas zatím mluví za výchozího mluvčího.
+    </p>
+    <label style="display:block;margin-bottom:12px">
+      <input type="checkbox" id="pr-enabled"> Pravidla zapnutá
+      <span style="opacity:.7;font-size:.85rem">(vypnuto = všichni známí vidí vše jako dřív)</span>
+    </label>
+    <div style="overflow-x:auto">
+      <table id="pr-table"><thead></thead><tbody></tbody></table>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-neutral" onclick="loadPristup()">↺ Zrušit změny</button>
+      <button class="btn btn-primary" onclick="savePristup()">💾 Uložit</button>
+      <span id="pr-status" style="font-size:.85rem"></span>
+    </div>
+  </div>
+</div>
+
 <!-- ── NASTAVENÍ (schema-driven, sidebar — SCHEMA_CATEGORIES_V1) ───────────────── -->
 <div id="tab-cfg-identity" class="tab-content">
   <div class="schema-shell">
@@ -487,7 +511,7 @@ let logTimer = null;
 const PAGE_TITLES = {
   dashboard: 'Dashboard', diary: 'Deník', faces: 'Obličeje', objects: 'Objekty',
   conversations: 'Konverzace', works: 'Hansova práce', questions: 'Otázky',
-  'cfg-identity': 'Nastavení', log: 'Log',
+  'cfg-identity': 'Nastavení', log: 'Log', users: 'Uživatelé',
 };
 function showTab(name) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -502,7 +526,7 @@ function showTab(name) {
   const loaders = {
     'diary': loadDiaryCards, 'faces': loadFaces, 'objects': loadObjects,
     'conversations': loadConversations, 'log': loadLog, 'questions': loadQuestions,
-    'works': loadWorks,
+    'works': loadWorks, 'users': loadPristup,
   };
   if (loaders[name]) loaders[name]();
 }
@@ -1869,6 +1893,54 @@ async function _qReassign(qid, target) {
 // tabech). Backend endpointy /api/config/save_default + load_default zůstávají →
 // feature lze vrátit tlačítkem do schema toolbaru.
 
+
+// ── HANS_PRAVA_V1 — záložka Uživatelé ──────────────────────────────────────
+let _pr = null;
+const _PR_ROLE = {spravce: 'správce', clen: 'člen', host: 'host'};
+async function loadPristup() {
+  const st = document.getElementById('pr-status'); st.textContent = '';
+  try {
+    _pr = await (await fetch('/api/pristup')).json();
+  } catch (e) { st.textContent = '⚠ ' + e; return; }
+  document.getElementById('pr-enabled').checked = !!_pr.enabled;
+  const th = document.querySelector('#pr-table thead');
+  th.innerHTML = '<tr><th>Osoba</th><th>Role</th>' +
+    _pr.kategorie.map(k => '<th style="font-size:.8rem;max-width:150px">' + k.popis + '</th>').join('') + '</tr>';
+  const tb = document.querySelector('#pr-table tbody'); tb.innerHTML = '';
+  _pr.osoby.forEach((o, i) => {
+    const tr = document.createElement('tr');
+    const sel = '<select data-i="' + i + '" onchange="_prRole(this)">' +
+      _pr.role.map(r => '<option value="' + r + '"' + (r === o.role ? ' selected' : '') + '>' + _PR_ROLE[r] + '</option>').join('') + '</select>';
+    tr.innerHTML = '<td>' + o.jmeno.replace(/</g, '&lt;') + '</td><td>' + sel + '</td>' +
+      _pr.kategorie.map(k => '<td style="text-align:center"><input type="checkbox" data-i="' + i +
+        '" data-k="' + k.klic + '"' + (o.povoleno[k.klic] ? ' checked' : '') +
+        (o.role === 'spravce' ? ' disabled title="Správce smí vše"' : '') + '></td>').join('');
+    tb.appendChild(tr);
+  });
+}
+function _prRole(sel) {
+  // nová role = výchozí zaškrtnutí té role (výjimky se nastaví ručně)
+  const i = +sel.dataset.i, r = sel.value, d = _pr.vychozi[r] || {};
+  document.querySelectorAll('#pr-table input[data-i="' + i + '"]').forEach(cb => {
+    cb.checked = r === 'spravce' ? true : !!d[cb.dataset.k];
+    cb.disabled = r === 'spravce';
+  });
+}
+async function savePristup() {
+  const st = document.getElementById('pr-status');
+  const osoby = _pr.osoby.map((o, i) => {
+    const pov = {};
+    document.querySelectorAll('#pr-table input[data-i="' + i + '"]').forEach(cb => pov[cb.dataset.k] = cb.checked);
+    return {klic: o.klic, role: document.querySelector('#pr-table select[data-i="' + i + '"]').value, povoleno: pov};
+  });
+  if (!osoby.some(o => o.role === 'spravce') && !confirm('Nikdo nebude správce. Opravdu uložit?')) return;
+  st.textContent = 'Ukládám…';
+  const r = await fetch('/api/pristup', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled: document.getElementById('pr-enabled').checked, osoby})});
+  if (!r.ok) { st.textContent = '⚠ Uložení selhalo (' + r.status + ')'; return; }
+  st.textContent = '✓ Uloženo — Hans si změnu načte do pár sekund.';
+  loadPristup().then(() => { st.textContent = '✓ Uloženo — Hans si změnu načte do pár sekund.'; });
+}
 </script>
 </body>
 </html>

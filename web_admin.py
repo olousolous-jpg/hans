@@ -142,6 +142,41 @@ def save_config(cfg: dict) -> bool:
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
+# ── HANS_PRAVA_V1 (27. 9.) — oprávnění osob (záložka „Uživatelé") ─────────
+@app.get("/api/pristup")
+def get_pristup():
+    from scripts import hans_prava as _hp
+    return _hp.prehled(load_config())
+
+
+@app.post("/api/pristup")
+async def post_pristup(request: Request):
+    """Uloží roli a výjimky osob. Do privátní části (known_persons) se píše
+    jen to, co se od výchozího stavu role liší — změna výchozích hodnot pak
+    dopadne i na osoby bez výjimek."""
+    from scripts import hans_prava as _hp
+    body = await request.json()
+    cfg = load_config()
+    kp = cfg.get("known_persons", {}) or {}
+    kat = [k for k, _ in _hp.KATEGORIE]
+    for o in body.get("osoby", []) or []:
+        k = str(o.get("klic", ""))
+        if k not in kp or not isinstance(kp[k], dict):
+            continue
+        r = str(o.get("role", "clen"))
+        if r not in _hp.ROLE:
+            raise HTTPException(400, "neznámá role")
+        vych = dict(_hp._VYCHOZI[r])
+        vych.update(((cfg.get("pristup", {}) or {}).get("role_defaults", {}) or {}).get(r) or {})
+        pov = {x: bool((o.get("povoleno") or {}).get(x)) for x in kat}
+        vyj = {x: v for x, v in pov.items() if v != bool(vych.get(x))}
+        kp[k]["pristup"] = {"role": r, "povoleno": vyj} if r != "spravce" else {"role": r}
+    cfg.setdefault("pristup", {})["enabled"] = bool(body.get("enabled", True))
+    if not save_config(cfg):
+        raise HTTPException(500, "uložení selhalo")
+    return _hp.prehled(load_config())
+
+
 # ── Hans-Koláč dialog trigger ───────────────────────────────────────────────
 # DIALOG_TRIGGER_ENDPOINT_PATCH
 @app.post("/api/dialog/trigger")

@@ -2225,6 +2225,15 @@ class AgentRouter:
                     log.info("HANS_STRANGER_NO_MUTATE_V1: agent %s od neznámého "
                              "(%s) odmítnuto", aid, name)
                     return "Tohle mohu udělat jen pro svou domácnost."
+                # HANS_PRAVA_V1 (27. 9.) — známý bez oprávnění k akcím.
+                try:
+                    from scripts.hans_prava import muze as _pm
+                    _smi = _pm(getattr(handler, "config", None) or self.config,
+                               name, "akce")
+                except Exception:
+                    _smi = True
+                if not _smi:
+                    return "K tomu ode mne nemáte svolení. Snad mi to prominete."
             args = {k: (decision.get("args", {}) or {}).get(k)
                     for k in action.args}
             h = _args_hash(aid, args)

@@ -3667,6 +3667,14 @@ def person_card(db_path: str, query: str, config: dict,
                 if fam:
                     head += " (%s)" % fam
                 ch = (card.characterization or "").strip()
+                # HANS_PRAVA_V1 (27. 9.) — Hansovy postřehy o JINÉ osobě jen
+                # s oprávněním; jinak zůstane jméno, role a rodina.
+                try:
+                    from scripts.hans_prava import muze as _pm
+                    if ch and not _pm(config, asker or "", "karta_osoby", o_kom=pid):
+                        ch = ""
+                except Exception:
+                    pass
                 if ch:
                     head += " " + (ch[:400] + ("…" if len(ch) > 400 else ""))
                 return head

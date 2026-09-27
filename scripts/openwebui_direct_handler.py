@@ -1313,7 +1313,16 @@ class OpenWebUIDirectHandler:
                     _q_nopfx = _pcre.sub(r"^\s*\S+\s+se\s+pt[áa]:\s*", "",
                                          str(_text))
                     from scripts.hans_recall import asks_about_person as _aap2
-                    _pc = (person_card(_dbp_kc, _q_nopfx, self.config)
+                    # HANS_PRAVA_V1 — tazatel jde dál, karta podle oprávnění.
+                    # Cizímu (a bez jména) se neposílá, ať se tahle cesta
+                    # nezmění pro vypnutá pravidla: odmítnutí řeší jiná brána.
+                    try:
+                        from scripts.cz_names import is_known_person as _ikp_pc
+                        _asker_pc = name if (name and _ikp_pc(name, self.config)) else ""
+                    except Exception:
+                        _asker_pc = ""
+                    _pc = (person_card(_dbp_kc, _q_nopfx, self.config,
+                                       asker=_asker_pc)
                            if _aap2(_q_nopfx, self.config) else "")
                 except Exception:
                     _pc = ""
