@@ -1725,6 +1725,29 @@ _ART_VYSVETL = (r"(?:\bpro[cč]\b|\bjen\s+(?:abys|vysv[eě]tl|vysvetl)"
 
 _ART_MINULE = (r"(?:namaloval|namalovala|nakreslil|nakreslila"
                r"|vytvo[řr]il|vytvo[řr]ila)\w*")
+# HANS_ART_CONTRACTED_PAST_V1 (27. 9.) — stažené „namalovals / nakreslils /
+# namalovalas“ = „namaloval jsi“ (jsi je v koncovce -s), takže výjimka pro
+# minulý čas s „jsi/jste“ je minula. Doloženo testem: „namalovals uz nekdy
+# neco takovyho?“ spustilo FLUX s námětem „uz nekdy neco takovyho“ a chat byl
+# minuty zablokovaný („Zrovna maluji“). V 1 646 reálných replikách 0×, ale
+# cena výskytu je nejvyšší ze všech falešných spuštění (viz NOT_PAST níž).
+# HANS_ART_REQUEST_FORM_V1 (27. 9.) — malovat JEN na tvar, který je ŽÁDOST:
+# rozkaz (namaluj/nakresli/namalujte…), budoucí 2. os. (namaluješ/nakreslíš?)
+# nebo infinitiv po žádosti („můžeš / zkus / chci / mohl bys … namalovat“).
+# Doloženo 27. 9. dvakrát za večer: „namalovals…?“ a „co Vás vedlo k tomu,
+# abyste se ho pokusil nakreslit?“ → FLUX + chat blokovaný pro všechny.
+# Výjimky pro minulý čas (NOT_PAST, CONTRACTED_PAST) každá zachytila jeden
+# tvar; tohle obrací logiku. 📏 172 reálných povelů /namaluj: ztráta 0
+# (vč. „zkusíme namalovat…“, „nezkusíš namalovat…?“, překlepů namalij/namakuj).
+_ART_ZADOST = (
+    r"(?:\b(?:nama\w{0,3}j\w*|nakresl(?:i|ete|[íi][šs]|[íi]te)|namaluje[šs]|namalujete"
+    r"|p[řr]ekresli\w*|p[řr]emaluj\w*)\b"
+    r"|\b(?:m[ůu][žz]e[šs]|m[ůu][žz]ete|mohl[ai]?|um[íi][šs]|um[íi]te|zkus|zkuste"
+    r"|zkus[íi]me|zkus[íi][šs]|nezkus[íi][šs]|zkus[íi]te|chci|cht[ěe]la?|chce[šs]|chcete"
+    r"|bys|byste|pros[íi]m|pot[řr]ebuju|myslela?|poj[ďd]|poj[ďd]me)\b"
+    r"(?:\W+\w+){0,4}?\W+(?:namal\w*|nakresl\w*|nakres\w*))")
+_ART_MINULE_STAZENE = (r"\b(?:namaloval|namalovala|nakreslil|nakreslila"
+                       r"|vytvo[řr]il|vytvo[řr]ila)s\b")
 
 
 register(
@@ -1758,10 +1781,14 @@ register(
     nl_patterns=[r"^(?!.*\b(?:jsi|jste)\b.*\b" + _ART_MINULE + r")"
                  r"(?!.*\b" + _ART_MINULE + r".*\b(?:jsi|jste)\b)"
                  r"(?!.*" + _ART_VYSVETL + r")"          # HANS_ART_EXPLAIN_NOT_REQUEST_V1
+                 r"(?!.*" + _ART_MINULE_STAZENE + r")"   # HANS_ART_CONTRACTED_PAST_V1
+                 r"(?=.*" + _ART_ZADOST + r")"            # HANS_ART_REQUEST_FORM_V1
                  r".*\bnama[kl]\w*",
                  r"^(?!.*\b(?:jsi|jste)\b.*\b" + _ART_MINULE + r")"
                  r"(?!.*\b" + _ART_MINULE + r".*\b(?:jsi|jste)\b)"
                  r"(?!.*" + _ART_VYSVETL + r")"          # HANS_ART_EXPLAIN_NOT_REQUEST_V1
+                 r"(?!.*" + _ART_MINULE_STAZENE + r")"   # HANS_ART_CONTRACTED_PAST_V1
+                 r"(?=.*" + _ART_ZADOST + r")"            # HANS_ART_REQUEST_FORM_V1
                  r".*\bnakresl\w*",
                  r"vytvoř\s+obr",
                  r"\bp[řr]ekresli", r"\bp[řr]emaluj",
@@ -1897,6 +1924,7 @@ register(
         # Vzory výš znaly jen TYKÁNÍ a jen „namaloval"
         # [[test-both-grammatical-persons]].
         r"\b" + _ART_MINULE + r"\s+(jsi|jste)\b",
+        _ART_MINULE_STAZENE,                     # HANS_ART_CONTRACTED_PAST_V1
         r"\b(co|jak[ée]|kolik)\b.*\b(jsi|jste)\b.*\b" + _ART_MINULE,
         r"(posledn[íi]|nov[ýy])\s+obraz\b",
         # HANS_COUNT_ANSWER_V1 (13. 9.) — „kolik obrazu mas?“ nema sloveso
@@ -5829,6 +5857,10 @@ def _je_kolac_bez_nalezu(msg: str) -> bool:
     return bool(_KOLAC_SLOVO.search(m)) and not _NALEZ_SLOVA.search(m)
 
 
+_ELIPSA = re.compile(
+    r"^(?:a|no\s+a|tak\s+a|a\s+tak)\s+(?:jak\w*|kdy|pro[cč]|kdo|kolik|kde|co)\b", re.I)
+
+
 def _je_navazujici_dotaz(msg: str) -> bool:
     """Krátká věta se zájmenem, které ukazuje na předchozí repliku."""
     try:
@@ -5838,6 +5870,13 @@ def _je_navazujici_dotaz(msg: str) -> bool:
         f = (msg or "").lower()
     if _TAZACI_ZAJMENO.search(f) or _SCHOPNOST_DOTAZ.search(f):
         return True          # HANS_THREAD_NO_LIST_V3 — bez délkového limitu
+    # HANS_THREAD_ELLIPSIS_V1 (27. 9.) — eliptická otázka bez zájmena: „a jaký
+    # byl?“, „a jak dopadl?“, „a proč?“. Doloženo testem: „a jaky byl“ (o filmu)
+    # → LLM router /vzpominka = nejstarší záznam deníku. Změřeno na 1 645 reálných
+    # replikách: 10 vět nově navazujících („a co jsi zjistil?“, „a kdo se dívá?“),
+    # žádná nechce výpis z `_VYPISOVE_CMDS` → nic se neztratí.
+    if len((msg or "").split()) <= 4 and _ELIPSA.search(f):
+        return True
     return len((msg or "").split()) <= 9 and bool(_ZPETNE_ZAJMENO.search(f))
 
 
