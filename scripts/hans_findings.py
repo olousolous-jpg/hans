@@ -284,6 +284,19 @@ def _oslov(asker, config=None) -> str:
         return (asker or "pane")
 
 
+def _je_test_osoba(asker, config=None) -> bool:
+    """HANS_FINDINGS_TEST_NO_QUEUE_V1 (27. 9.) — testovací identita (`config.test_persons`)
+    nesmí nic poslat do noční čekárny. Doloženo 27. 9.: „zkouška“ a „Marek“ tam měly
+    26 nálezů, 22 z nich noc OVĚŘILA a zapsala do paměti jako Hansovu četbu —
+    ačkoli testovací identita do deníku ani RAG nepíše (`HANS_TEST_PERSON_V1`).
+    Stejný predikát jako `_oslov`."""
+    try:
+        return (asker or "").strip().lower() in [
+            str(x).strip().lower() for x in ((config or {}).get("test_persons") or [])]
+    except Exception:
+        return False
+
+
 def correction_text(row: dict, asker: Optional[str] = None,
                     config: Optional[dict] = None) -> str:
     oslov = _oslov(asker, config)
@@ -396,6 +409,9 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
         # migraci; kdyby to nekdy vadilo, patri to do schematu.
         "namesake": _namesake,
     }
+    if _je_test_osoba(asker, config):   # HANS_FINDINGS_TEST_NO_QUEUE_V1
+        _log.info("instant_lookup: '%s' od testovací identity → čekárna ne", topic)
+        return _render_provisional(row, asker, config, mel_zapisky)
     try:
         add_finding(db_path, asker=asker or "", query=query, topic=topic,
                     source="wikipedia", resolved_title=row["resolved_title"],
@@ -432,8 +448,14 @@ def _render_provisional(row: dict, asker: Optional[str],
         summary += ("\n\n(Poznámka: heslo přesně na „%s\" jsem nenašel, tohle je "
                     "nejbližší nález „%s\" — může jít o něco úplně jiného.)"
                     % (row.get("topic") or "", src))
-    return (_PROVISIONAL_TMPL_ZAPISKY if mel_zapisky
-            else _PROVISIONAL_TMPL) % {   # HANS_LOOKUP_HAD_NOTES_V1
+    _tmpl = _PROVISIONAL_TMPL_ZAPISKY if mel_zapisky else _PROVISIONAL_TMPL
+    if _je_test_osoba(asker, config):   # HANS_FINDINGS_TEST_NO_QUEUE_V1 — nic nesliby
+        _tmpl = _tmpl.replace(
+            "Berte to zatím s rezervou — ještě jsem si to neověřil a nezapsal do paměti. "
+            "Udělám to v noci a kdyby to nesedělo, ráno se ozvu.",
+            "Berte to s rezervou — je to jen rychlé dohledání, do paměti si ho neukládám "
+            "a ověřovat ho nebudu.")
+    return _tmpl % {   # HANS_LOOKUP_HAD_NOTES_V1
         "oslov": oslov,
         "source": "Wikipedie — heslo „%s\"" % src,
         "summary": summary,
