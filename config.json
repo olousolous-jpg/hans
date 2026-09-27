@@ -800,7 +800,15 @@
         "wishlist_weight": 0.7
     },
     "knowledge": {
-        "enabled": true
+        "enabled": true,
+        "relax_semantic": {
+            "enabled": true,
+            "threshold": 0.48,
+            "model": "bge-m3:latest",
+            "keep_alive": "10m",
+            "timeout_s": 6,
+            "_note": "HANS_RELAX_SEMANTIC_V1 (27. 9.): relaxovaný nález fulltextu zápisků musí k otázce patřit významem (bge-m3 kosinus ≥ práh), jinak se zahodí → poctivé „nemám zapsáno“. Ručně 160 dvojic: práh 0,48 = šum 4 %, souvisejících zůstane 72 %. Backlog SLABE_PODKLADY_27_09."
+        }
     },
     "async_recognizer": {
         "min_face_area": 0.005

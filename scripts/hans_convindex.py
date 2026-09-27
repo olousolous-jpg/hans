@@ -835,6 +835,56 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
     return None
 
 
+def _vyznamove_souvisi(query: str, rows: list) -> list:
+    """HANS_RELAX_SEMANTIC_V1 (27. 9.) — RELAXOVANÝ nález musí k otázce patřit
+    VÝZNAMEM (bge-m3, kosinus otázka × „titul. text[:500]“ ≥ práh).
+
+    Proč: relaxace ubírá slova, dokud něco nesedne, a nález pak jde modelu jako
+    „TOHLE MÁŠ VE SVÝCH ZÁPISCÍCH“ → grounded → A1 mlčí ([[partial-grounding-
+    disables-abstention]]). Doloženo 27. 9.: „Jaký byl film, který jsem si včera
+    přehrával?“ → Sherlock Holmes, „Zprávy“, „Násilí“ → model domyslel děj.
+    📏 707 reálných otázek: 31 % dostane podklad jen z relaxace. Lexikálně to
+    rozlišit NEJDE (filtr vzácného slova chybuje oběma směry). Ručně označeno
+    160 dvojic: dnes projde šum 117/117; s prahem 0,48 projde 5/117 (4 %) a zůstane
+    31/43 souvisejících (72 %); AUC 0,86 a 0,996 na odložené sadě.
+    Vyřazený nález = poctivé „nemám zapsáno“ / okamžité dohledání.
+    Nedostupný model nebo herní mód → nálezy beze změny (dnešní chování)."""
+    try:
+        from scripts import config_io
+        c = ((config_io.load(hlasit=False).get("knowledge", {}) or {})
+             .get("relax_semantic", {}) or {})
+        if not c.get("enabled", True):
+            return rows
+        cfg = config_io.load(hlasit=False)
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            return rows
+        import json as _j, urllib.request as _u
+        import numpy as _np
+        url = (cfg.get("openwebui_chat", {}) or {}).get("base_url", "")
+        if not url:
+            return rows
+        texty = [query] + ["%s. %s" % (r[3] or "", (r[4] or "")[:500]) for r in rows]
+        req = _u.Request(url + "/api/embed", data=_j.dumps(
+            {"model": c.get("model", "bge-m3:latest"), "input": texty,
+             "keep_alive": c.get("keep_alive", "10m")}).encode(),
+            headers={"Content-Type": "application/json"})
+        with _u.urlopen(req, timeout=float(c.get("timeout_s", 6))) as r:
+            E = _np.array(_j.load(r)["embeddings"], dtype=_np.float32)
+        E /= _np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
+        sim = E[1:] @ E[0]
+        prah = float(c.get("threshold", 0.48))
+        out = [r for r, s in zip(rows, sim) if s >= prah]
+        if len(out) < len(rows):
+            _log.info("HANS_RELAX_SEMANTIC_V1: vyřazeno %d z %d relaxovaných nálezů "
+                      "(práh %.2f) %s", len(rows) - len(out), len(rows), prah,
+                      ["%s=%.2f" % (str(r[3])[:30], s) for r, s in zip(rows, sim)])
+        return out
+    except Exception as e:
+        _log.debug("HANS_RELAX_SEMANTIC_V1: kontrola nedostupná (%s) — beze změny", e)
+        return rows
+
+
 def _bez_sumu_relaxace(query: str, rows: list, relaxovano: bool) -> list:
     """HANS_KNOWLEDGE_RELAX_NOISE_V1 (15. 9.) — z RELAXOVANEHO nalezu vyhod balast.
 
@@ -1002,6 +1052,8 @@ def search(query: str, limit: int = 8, source: Optional[str] = None,
                     break
         if kind == "knowledge" and rows:   # HANS_KNOWLEDGE_RELAX_NOISE_V1
             rows = _bez_sumu_relaxace(query, [tuple(r) for r in rows], _relax)
+        if kind == "knowledge" and rows and _relax:   # HANS_RELAX_SEMANTIC_V1
+            rows = _vyznamove_souvisi(query, [tuple(r) for r in rows])
         return [tuple(r) for r in rows]
     except Exception as e:
         _log.warning("convindex search selhal: %s", e)
