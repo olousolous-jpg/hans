@@ -169,6 +169,7 @@ button.btn:hover { opacity: 0.85; }
       <button data-tab="conversations" onclick="showTab('conversations')">💬 Konverzace</button>
       <button data-tab="works" onclick="showTab('works')">🛠️ Hansova práce</button>
       <button data-tab="questions" onclick="showTab('questions')">❓ Otázky<span id="q-nav-badge" style="background:var(--yellow);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:0.7em;margin-left:auto;display:none">0</span></button>
+      <button data-tab="mysleni" onclick="showTab('mysleni')">🧠 Myšlení</button>
       <button data-tab="users" onclick="showTab('users')">🔐 Uživatelé</button>
       <button data-tab="cfg-identity" onclick="showTab('cfg-identity')">⚙ Nastavení</button>
       <button data-tab="log" onclick="showTab('log')">📋 Log</button>
@@ -419,6 +420,58 @@ button.btn:hover { opacity: 0.85; }
   </div>
 </div>
 
+<!-- ── MYŠLENÍ — živý strom rozhodování (HANS_STOPA_V1/ZIVE_V1/KOLAC_V1) ───── -->
+<style>
+#ms-box { position: relative; height: 72vh; min-height: 420px; overflow: hidden; border-radius: 10px; background: #181825; border: 1px solid #313244; cursor: grab; touch-action: none; }
+#ms-box.tahni { cursor: grabbing; }
+#ms-svg { width: 100%; height: 100%; display: block; }
+.ms-ovl { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.ms-ovl button { padding: 4px 10px; font-size: 13px; background: #313244; color: #cdd6f4; border: 0; border-radius: 6px; cursor: pointer; }
+.ms-ovl button.hl { background: #89b4fa; color: #1e1e2e; font-weight: 600; }
+#ms-info { position: absolute; bottom: 8px; left: 8px; right: 8px; font-size: 12px; color: #bac2de; background: rgba(24,24,37,.88); padding: 6px 8px; border-radius: 6px; min-height: 1.4em; }
+.ms-hrana { fill: none; stroke: #3a3a50; stroke-width: 1.2; }
+.ms-hrana.svit { stroke: #a6e3a1; stroke-width: 3; }
+.ms-uzel circle { fill: #45475a; stroke: #585b70; stroke-width: 1; }
+.ms-uzel text { fill: #7f849c; font-size: 12px; dominant-baseline: middle; }
+.ms-uzel.svit circle { fill: #bac2de; stroke: #a6e3a1; stroke-width: 2; }
+.ms-uzel.svit text { fill: #cdd6f4; }
+.ms-uzel.cil circle { fill: #a6e3a1; stroke: #a6e3a1; r: 8; }
+.ms-uzel.cil text { fill: #a6e3a1; font-weight: 700; }
+.ms-uzel.volba text { font-size: 11px; }
+.ms-uzel.potlacen circle { fill: #fab387; stroke: #fab387; }
+.ms-uzel.potlacen text { fill: #fab387; }
+.ms-uzel.vrstva text { font-size: 14px; font-weight: 700; fill: #bac2de; }
+.ms-uzel.koren text { font-size: 14px; font-weight: 700; fill: #f5c2e7; }
+.ms-uzel.ted circle { fill: #f9e2af; stroke: #f9e2af; animation: mspulz .8s ease-in-out infinite; }
+.ms-uzel.ted text { fill: #f9e2af; font-weight: 700; }
+@keyframes mspulz { 50% { r: 10; opacity: .55; } }
+#ms-zive { display: none; color: #f9e2af; font-weight: 700; font-size: 13px; }
+#ms-zive::before { content: "● "; animation: mspulz2 1s infinite; }
+@keyframes mspulz2 { 50% { opacity: .2; } }
+.ms-leg { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; opacity: .8; }
+.ms-leg span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.ms-l-cil::before { background: #a6e3a1; } .ms-l-zk::before { background: #bac2de; } .ms-l-ted::before { background: #f9e2af; } .ms-l-ne::before { background: #45475a; }
+#ms-odpoved { margin-top: 10px; font-size: .9rem; white-space: pre-wrap; display: none; max-height: 30vh; overflow-y: auto; }
+</style>
+<div id="tab-mysleni" class="tab-content">
+  <div class="card">
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <label style="font-size:.9rem"><input type="checkbox" id="ms-sledovat" checked> sledovat živě (chat, Matrix, rozhovor s Koláčem)</label>
+      <span id="ms-zive">Hans právě přemýšlí</span>
+      <select id="ms-nedavne" style="margin-left:auto;max-width:420px"></select>
+    </div>
+    <div class="ms-leg" style="margin-bottom:8px">
+      <span class="ms-l-ted">právě tady</span><span class="ms-l-zk">prošel</span><span class="ms-l-cil">tady vznikla odpověď</span><span class="ms-l-ne">sem nedošel</span>
+    </div>
+    <div id="ms-box">
+      <svg id="ms-svg"><g id="ms-g"></g></svg>
+      <div class="ms-ovl"><button id="ms-play" class="hl">▶ Přehrát</button><button id="ms-cesta">⌖ Na cestu</button><button id="ms-vse">⤢ Celý strom</button><button id="ms-plus">+</button><button id="ms-minus">−</button></div>
+      <div id="ms-info">Čekám na dotaz. Kolečkem přibližuj, tažením posouvej, na uzel najeď pro podrobnosti.</div>
+    </div>
+    <div id="ms-odpoved"></div>
+  </div>
+</div>
+
 <!-- ── UŽIVATELÉ — HANS_PRAVA_V1 (27. 9.) ──────────────────────────────────── -->
 <div id="tab-users" class="tab-content">
   <div class="card">
@@ -511,7 +564,7 @@ let logTimer = null;
 const PAGE_TITLES = {
   dashboard: 'Dashboard', diary: 'Deník', faces: 'Obličeje', objects: 'Objekty',
   conversations: 'Konverzace', works: 'Hansova práce', questions: 'Otázky',
-  'cfg-identity': 'Nastavení', log: 'Log', users: 'Uživatelé',
+  'cfg-identity': 'Nastavení', log: 'Log', users: 'Uživatelé', mysleni: 'Jak Hans přemýšlí',
 };
 function showTab(name) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -526,7 +579,7 @@ function showTab(name) {
   const loaders = {
     'diary': loadDiaryCards, 'faces': loadFaces, 'objects': loadObjects,
     'conversations': loadConversations, 'log': loadLog, 'questions': loadQuestions,
-    'works': loadWorks, 'users': loadPristup,
+    'works': loadWorks, 'users': loadPristup, 'mysleni': () => window.msOtevri && window.msOtevri(),
   };
   if (loaders[name]) loaders[name]();
 }
@@ -1941,6 +1994,188 @@ async function savePristup() {
   st.textContent = '✓ Uloženo — Hans si změnu načte do pár sekund.';
   loadPristup().then(() => { st.textContent = '✓ Uloženo — Hans si změnu načte do pár sekund.'; });
 }
+
+// ── MYŠLENÍ — živý strom (HANS_STOPA_V1 / ZIVE_V1 / KOLAC_V1) ──────────────
+(function () {
+  const $ = id => document.getElementById(id);
+  const NS = "http://www.w3.org/2000/svg";
+  const sv = (tag, a) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const lidsky = z => (z || "").replace(/_V\d+$/, "").toLowerCase().replace(/_/g, " ");
+  const STROMY = {}; let POSL = null, VYK = null, ANIM = null, TR = { x: 40, y: 0, k: 1 };
+  let ZIVE_ID = null, ZIVE_SIG = "", TIMER = null, NAPOSLEDY = null;
+
+  async function strom(druh) {
+    druh = druh || "chat";
+    if (STROMY[druh]) return STROMY[druh];
+    try { const j = await (await fetch("/api/chat/strom?druh=" + druh)).json(); if (j.ready) STROMY[druh] = j.strom; } catch (e) {}
+    return STROMY[druh];
+  }
+
+  function postav(st, d) {
+    const kroky = {}; (d ? d.kroky : []).forEach(k => { kroky[k.znacka + "@" + k.od] = k; });
+    const volby = (d && d.volby) || {}; const pripojeno = new Set();
+    const nazevKorene = d ? (d.druh === "kolac" ? "🧸 " : "") + "„" + (d.zprava || "").slice(0, 40) + "“" : "dotaz";
+    const koren = { id: "koren", nazev: nazevKorene, typ: "koren", deti: [], stav: d ? "svit" : "", t: 0 };
+    st.vrstvy.forEach((v, vi) => {
+      const vn = { id: "v:" + v.nazev, nazev: v.nazev, typ: "vrstva", deti: [], stav: "", t: null };
+      if (vi === 0 && d) { vn.stav = "svit"; vn.t = 0; }
+      v.kroky.forEach(k => {
+        const kd = kroky[k.znacka + "@" + k.od];
+        const kn = { id: "k:" + k.znacka + "@" + k.od, nazev: k.popisek || lidsky(k.znacka), typ: "krok", deti: [],
+          stav: kd ? (kd.stav === "zachytil" ? "cil" : kd.stav === "zkousen" ? "svit" : "") : "", t: kd ? kd.t : null,
+          info: kd ? (k.znacka + " · ř. " + k.od + (kd.log && kd.log.length ? " · " + kd.log.map(x => x.zprava).join(" | ") : "")) : k.znacka };
+        for (const klic in st.volby) {
+          const vo = st.volby[klic];
+          if (vo.vrstva !== v.nazev || vo.za !== k.znacka || pripojeno.has(klic)) continue;
+          pripojeno.add(klic);
+          let vyb = null, pot = null;
+          if (klic === "agent" && volby.agent) { vyb = volby.agent.vysledek === "návrh" ? volby.agent.akce : null;
+            if (volby.agent.router && volby.agent.router !== vyb) pot = volby.agent.router; }
+          else if (klic === "podklad" && volby.podklad) vyb = volby.podklad.cesta;
+          else vyb = volby[klic] || null;
+          const moz = vo.moznosti.length ? vo.moznosti : (vyb ? [vyb] : []);
+          if (!moz.length) continue;
+          const g = { id: "g:" + klic, nazev: vo.nazev + (vo.moznosti.length ? " (" + vo.moznosti.length + ")" : ""), typ: "skupina", deti: [], stav: (vyb || pot) ? "svit" : "", t: kn.t };
+          moz.forEach(m => g.deti.push({ id: "o:" + klic + ":" + m, nazev: m, typ: "volba", deti: [],
+            stav: m === vyb ? "cil" : m === pot ? "potlacen" : "", t: kn.t,
+            info: m === pot ? "router navrhl, pravidla akci potlačila (jistota " + (volby.agent && volby.agent.jistota) + ")" :
+              (m === vyb && klic === "agent" ? "zvolená akce, jistota " + volby.agent.jistota : m) }));
+          kn.deti.push(g);
+        }
+        vn.deti.push(kn);
+      });
+      if (vn.deti.some(x => x.stav)) { vn.stav = "svit"; const ts = vn.deti.filter(x => x.t != null).map(x => x.t); vn.t = ts.length ? Math.min(...ts) : 0; }
+      koren.deti.push(vn);
+    });
+    return koren;
+  }
+
+  function rozloz(koren) {
+    const DX = [0, 230, 470, 760], R = 20; let radek = 0; const uzly = [], hrany = [];
+    (function jdi(n, hl, rod) {
+      n.x = DX[Math.min(hl, 3)] + (hl > 3 ? (hl - 3) * 200 : 0);
+      const deti = (n.typ === "skupina" && !n.stav && !n.rozbal) ? [] : n.deti;
+      if (!deti.length) n.y = radek++ * R;
+      else { deti.forEach(c => jdi(c, hl + 1, n)); n.y = (deti[0].y + deti[deti.length - 1].y) / 2; }
+      uzly.push(n); if (rod) hrany.push([rod, n]);
+    })(koren, 0, null);
+    return { uzly, hrany };
+  }
+
+  function kresli(d, rozbalene) {
+    const st = STROMY[(d && d.druh) || "chat"]; if (!st) return;
+    POSL = d; const koren = postav(st, d);
+    (function z(n) { if (rozbalene && rozbalene[n.id]) n.rozbal = true; n.deti.forEach(z); })(koren);
+    VYK = rozloz(koren); const g = $("ms-g"); g.innerHTML = "";
+    VYK.hrany.forEach(([a, b]) => { const mx = (a.x + b.x) / 2;
+      const p = sv("path", { d: `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`, class: "ms-hrana" }); b.hrana = p; g.append(p); });
+    VYK.uzly.forEach(n => {
+      const u = sv("g", { class: "ms-uzel " + n.typ, transform: `translate(${n.x},${n.y})` });
+      u.append(sv("circle", { r: n.typ === "volba" ? 3.5 : n.typ === "krok" ? 5 : 7 }));
+      const t = sv("text", { x: 10 }); t.textContent = n.nazev + (n.typ === "skupina" ? (n.stav || n.rozbal ? " ▾" : " ▸") : ""); u.append(t);
+      u.addEventListener("mouseenter", () => { $("ms-info").textContent = (n.nazev || "") + (n.info ? " — " + n.info : "") + (n.t != null && n.stav ? ` · ${n.t.toFixed(2)} s` : ""); });
+      if (n.typ === "skupina") u.addEventListener("click", ev => { ev.stopPropagation(); const r = rozb(); r[n.id] = !r[n.id]; kresli(POSL, r); });
+      n.el = u; g.append(u);
+    });
+    rozsvit(Infinity); aplikuj();
+  }
+  const rozb = () => { const r = {}; (VYK ? VYK.uzly : []).forEach(n => { if (n.rozbal) r[n.id] = true; }); return r; };
+  const poradi = () => VYK.uzly.filter(n => n.stav).sort((a, b) => (a.t ?? 0) - (b.t ?? 0) || a.x - b.x);
+  function rozsvit(doI) {
+    const svit = new Set(poradi().slice(0, doI).map(n => n.id));
+    VYK.uzly.forEach(n => { const on = svit.has(n.id);
+      n.el.classList.toggle("svit", on && n.stav === "svit"); n.el.classList.toggle("cil", on && n.stav === "cil");
+      n.el.classList.toggle("potlacen", on && n.stav === "potlacen");
+      if (n.hrana) n.hrana.classList.toggle("svit", on && n.stav !== "potlacen"); });
+  }
+  function ted(klic) {
+    if (!VYK) return "";
+    VYK.uzly.forEach(n => n.el.classList.toggle("ted", !!klic && n.id === "k:" + klic));
+    const n = klic && VYK.uzly.find(x => x.id === "k:" + klic); return n ? n.nazev : "";
+  }
+  function prehrat() {
+    if (!VYK) return; clearInterval(ANIM); const por = poradi(); let i = 0; rozsvit(0); naCestu();
+    ANIM = setInterval(() => { i++; rozsvit(i); const n = por[i - 1];
+      if (n) $("ms-info").textContent = "→ " + n.nazev + (n.t != null ? ` (${n.t.toFixed(2)} s)` : "");
+      if (i >= por.length) clearInterval(ANIM); }, Math.max(60, Math.min(250, 5000 / Math.max(1, por.length))));
+  }
+  const aplikuj = () => $("ms-g").setAttribute("transform", `translate(${TR.x},${TR.y}) scale(${TR.k})`);
+  function prizpusob(uzly) {
+    const box = $("ms-box").getBoundingClientRect(); if (!uzly.length || !box.width) return;
+    const xs = uzly.map(n => n.x), ys = uzly.map(n => n.y);
+    const x0 = Math.min(...xs) - 20, x1 = Math.max(...xs) + 260, y0 = Math.min(...ys) - 30, y1 = Math.max(...ys) + 30;
+    TR.k = Math.min(2.2, Math.max(0.15, Math.min(box.width / (x1 - x0), (box.height - 40) / (y1 - y0))));
+    TR.x = -x0 * TR.k + 10; TR.y = -y0 * TR.k + 10 + ((box.height - 40) - (y1 - y0) * TR.k) / 2; aplikuj();
+  }
+  const naCestu = () => { if (VYK) prizpusob(VYK.uzly.filter(n => n.stav)); };
+
+  function odpoved(d) {
+    const o = $("ms-odpoved");
+    if (!d || !d.odpoved) { o.style.display = "none"; return; }
+    o.style.display = "block"; o.textContent = (d.druh === "kolac" ? "" : (d.osoba || "") + ": " + (d.zprava || "") + "\nHans: ") + d.odpoved;
+  }
+  async function nacti(id, sPrehranim) {
+    let d = null;
+    for (let i = 0; i < 5 && !d; i++) {
+      const j = await (await fetch("/api/chat/stopa?id=" + encodeURIComponent(id))).json();
+      if (j.ready) d = j.stopa; else await new Promise(r => setTimeout(r, 700));
+    }
+    if (!d) return;
+    await strom(d.druh); kresli(d); odpoved(d);
+    if (sPrehranim) prehrat(); else naCestu();
+  }
+  async function nedavne() {
+    try {
+      const s = await (await fetch("/api/chat/stopy?limit=30")).json(), sel = $("ms-nedavne");
+      sel.innerHTML = '<option value="">— poslední dotazy —</option>' + s.map(x =>
+        `<option value="${x.id}">${new Date(x.ts * 1000).toLocaleTimeString("cs-CZ")} · ${x.druh === "kolac" ? "🧸 " : ""}${(x.osoba || "").replace(/</g, "&lt;")}: ${(x.zprava || "").replace(/</g, "&lt;")}</option>`).join("");
+    } catch (e) {}
+  }
+  async function zive() {
+    if (!$("tab-mysleni").classList.contains("active") || document.hidden || !$("ms-sledovat").checked) return;
+    let j; try { j = await (await fetch("/api/chat/zive")).json(); } catch (e) { return; }
+    if (!j.ready) return; const d = j.stopa;
+    if (d.bezi) {
+      const sig = d.id + "|" + d.kroky.filter(k => k.stav !== "nedosel").length + "|" + d.ted + "|" + JSON.stringify(d.volby || {});
+      if (sig === ZIVE_SIG) return;
+      const novy = d.id !== ZIVE_ID; ZIVE_ID = d.id; ZIVE_SIG = sig; clearInterval(ANIM);
+      await strom(d.druh);
+      kresli(d, novy ? null : rozb()); if (novy) { naCestu(); odpoved(null); $("ms-zive").style.display = "inline"; }
+      const kde = ted(d.ted);
+      $("ms-info").textContent = "● živě · " + (d.osoba || "") + " (" + (d.kanal || "") + "): „" + (d.zprava || "").slice(0, 60) + "“" + (kde ? " → teď: " + kde : "") + ` · ${(Date.now() / 1000 - d.ts).toFixed(1)} s`;
+    } else if (ZIVE_ID && d.id === ZIVE_ID) {
+      ZIVE_ID = null; ZIVE_SIG = ""; $("ms-zive").style.display = "none";
+      await nacti(d.id, false); nedavne();
+      $("ms-info").textContent = "✓ hotovo za " + (d.trvani_s ?? "?") + " s · " + (d.osoba || "") + ": „" + (d.zprava || "").slice(0, 60) + "“";
+    }
+  }
+
+  (function panZoom() {
+    const box = $("ms-box"); let tah = null;
+    box.addEventListener("wheel", e => { e.preventDefault(); const r = box.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top, k = Math.min(4, Math.max(0.08, TR.k * Math.exp(-e.deltaY * 0.0015)));
+      TR.x = mx - (mx - TR.x) * (k / TR.k); TR.y = my - (my - TR.y) * (k / TR.k); TR.k = k; aplikuj(); }, { passive: false });
+    box.addEventListener("pointerdown", e => { if (e.target.closest(".ms-ovl")) return; tah = { x: e.clientX, y: e.clientY, tx: TR.x, ty: TR.y }; box.classList.add("tahni"); box.setPointerCapture(e.pointerId); });
+    box.addEventListener("pointermove", e => { if (!tah) return; TR.x = tah.tx + e.clientX - tah.x; TR.y = tah.ty + e.clientY - tah.y; aplikuj(); });
+    box.addEventListener("pointerup", () => { tah = null; box.classList.remove("tahni"); });
+    const zoom = f => { const r = box.getBoundingClientRect(), mx = r.width / 2, my = r.height / 2, k = Math.min(4, Math.max(0.08, TR.k * f));
+      TR.x = mx - (mx - TR.x) * (k / TR.k); TR.y = my - (my - TR.y) * (k / TR.k); TR.k = k; aplikuj(); };
+    $("ms-plus").onclick = () => zoom(1.3); $("ms-minus").onclick = () => zoom(1 / 1.3);
+    $("ms-vse").onclick = () => VYK && prizpusob(VYK.uzly); $("ms-cesta").onclick = naCestu; $("ms-play").onclick = prehrat;
+    $("ms-nedavne").onchange = e => { if (e.target.value) nacti(e.target.value, true); };
+  })();
+
+  window.msOtevri = async function () {
+    await strom("chat"); nedavne();
+    if (!POSL) {   // poslední hotová stopa, jinak prázdný strom
+      try { const j = await (await fetch("/api/chat/zive")).json();
+        if (j.ready && !j.stopa.bezi) { await strom(j.stopa.druh); kresli(j.stopa); odpoved(j.stopa); naCestu(); }
+        else { kresli(null); prizpusob(VYK.uzly); } } catch (e) {}
+    } else naCestu();
+    clearInterval(TIMER); TIMER = setInterval(zive, 300);
+  };
+  if (location.hash === "#mysleni") setTimeout(() => showTab("mysleni"), 0);
+})();
 </script>
 </body>
 </html>

@@ -703,7 +703,7 @@ class HansDialog:
                         self._idle_active and
                         not _base_busy and
                         time.time() - self._last_dialog >= self._dialog_interval):
-                    self._run_dialog()
+                    self._run_dialog_stopa()
             except Exception as e:
                 _log.error("Dialog error: %s", e)
             self._stop.wait(30.0)
@@ -785,7 +785,7 @@ class HansDialog:
             time.sleep(2.0)  # kratka pauza
             self._last_dialog = time.time()  # zabran dvojimu spusteni
             self._dialog_count = 0  # pripad
-            self._run_dialog()
+            self._run_dialog_stopa()
             self._last_dialog = time.time()  # reset po dokonceni
         _t.Thread(target=_delayed_dialog, daemon=True).start()
 
@@ -821,6 +821,21 @@ class HansDialog:
         if not self._movies_cache:
             return None
         return random.choice(self._movies_cache)
+
+    def _run_dialog_stopa(self):
+        """HANS_STOPA_KOLAC_V1 (27. 9.) — rozhovor s Koláčem přes stopu (živý
+        strom v adminu). Chyba stopy = rozhovor proběhne jako bez ní."""
+        if (self.config.get("stopa", {}) or {}).get("enabled", True):
+            try:
+                from scripts import hans_stopa as _hs
+                from scripts.hans_kolac import kolac_name as _kn
+                _k = _kn(self.config)
+            except Exception:
+                _hs, _k = None, "Koláč"
+            if _hs is not None:
+                return _hs.spust(self._run_dialog, druh="kolac", kanal="kolac",
+                                 osoba=_k, zprava="rozhovor s %s" % _k)
+        return self._run_dialog()
 
     def _run_dialog(self):
         if not self._dialog_lock.acquire(blocking=False):
@@ -1636,7 +1651,7 @@ class HansDialog:
         def _run():
             self._last_dialog = 0  # obejít interval check
             try:
-                self._run_dialog()
+                self._run_dialog_stopa()
             except Exception as e:
                 _log.error("trigger_dialog: %s", e)
         _th.Thread(target=_run, daemon=True).start()
@@ -1651,7 +1666,7 @@ class HansDialog:
         import threading as _th
         def _run():
             self._last_dialog = 0
-            self._run_dialog()
+            self._run_dialog_stopa()
         _th.Thread(target=_run, daemon=True).start()
 
     def deactivate_toaster_mode(self):

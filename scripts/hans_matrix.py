@@ -622,6 +622,13 @@ class MatrixBridge:
         try:
             if self._handler is not None and hasattr(self._handler,
                                                      "send_chat_message"):
+                # HANS_STOPA_ZIVE_V1 (27. 9.) — stopa i pro Matrix (živý strom
+                # v adminu /mysleni); chyba stopy = dotaz proběhne jako bez ní
+                if (self.config.get("stopa", {}) or {}).get("enabled", True):
+                    from scripts import hans_stopa as _hs
+                    return _hs.spust(self._handler.send_chat_message, person,
+                                     text, channel="matrix", kanal="matrix",
+                                     osoba=person, zprava=text)
                 return self._handler.send_chat_message(person, text,
                                                        channel="matrix")
         except Exception as e:

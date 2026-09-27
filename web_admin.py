@@ -142,41 +142,6 @@ def save_config(cfg: dict) -> bool:
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
-# ── HANS_PRAVA_V1 (27. 9.) — oprávnění osob (záložka „Uživatelé") ─────────
-@app.get("/api/pristup")
-def get_pristup():
-    from scripts import hans_prava as _hp
-    return _hp.prehled(load_config())
-
-
-@app.post("/api/pristup")
-async def post_pristup(request: Request):
-    """Uloží roli a výjimky osob. Do privátní části (known_persons) se píše
-    jen to, co se od výchozího stavu role liší — změna výchozích hodnot pak
-    dopadne i na osoby bez výjimek."""
-    from scripts import hans_prava as _hp
-    body = await request.json()
-    cfg = load_config()
-    kp = cfg.get("known_persons", {}) or {}
-    kat = [k for k, _ in _hp.KATEGORIE]
-    for o in body.get("osoby", []) or []:
-        k = str(o.get("klic", ""))
-        if k not in kp or not isinstance(kp[k], dict):
-            continue
-        r = str(o.get("role", "clen"))
-        if r not in _hp.ROLE:
-            raise HTTPException(400, "neznámá role")
-        vych = dict(_hp._VYCHOZI[r])
-        vych.update(((cfg.get("pristup", {}) or {}).get("role_defaults", {}) or {}).get(r) or {})
-        pov = {x: bool((o.get("povoleno") or {}).get(x)) for x in kat}
-        vyj = {x: v for x, v in pov.items() if v != bool(vych.get(x))}
-        kp[k]["pristup"] = {"role": r, "povoleno": vyj} if r != "spravce" else {"role": r}
-    cfg.setdefault("pristup", {})["enabled"] = bool(body.get("enabled", True))
-    if not save_config(cfg):
-        raise HTTPException(500, "uložení selhalo")
-    return _hp.prehled(load_config())
-
-
 # ── Hans-Koláč dialog trigger ───────────────────────────────────────────────
 # DIALOG_TRIGGER_ENDPOINT_PATCH
 @app.post("/api/dialog/trigger")
@@ -1681,6 +1646,105 @@ async def chat_poll(id: str):
         except Exception:
             pass
     return {"ready": False}
+
+
+# ── HANS_STOPA_V1 (27. 9.) — vizualizace „jak Hans přemýšlí“ ─────────────
+# Stopy píše Hans (`scripts/hans_stopa.py`) do data/stopy/<id>.json.
+# ── HANS_PRAVA_V1 (27. 9.) — oprávnění osob (záložka „Uživatelé") ─────────
+@app.get("/api/pristup")
+def get_pristup():
+    from scripts import hans_prava as _hp
+    return _hp.prehled(load_config())
+
+
+@app.post("/api/pristup")
+async def post_pristup(request: Request):
+    """Uloží roli a výjimky osob. Do privátní části (known_persons) se píše
+    jen to, co se od výchozího stavu role liší — změna výchozích hodnot pak
+    dopadne i na osoby bez výjimek."""
+    from scripts import hans_prava as _hp
+    body = await request.json()
+    cfg = load_config()
+    kp = cfg.get("known_persons", {}) or {}
+    kat = [k for k, _ in _hp.KATEGORIE]
+    for o in body.get("osoby", []) or []:
+        k = str(o.get("klic", ""))
+        if k not in kp or not isinstance(kp[k], dict):
+            continue
+        r = str(o.get("role", "clen"))
+        if r not in _hp.ROLE:
+            raise HTTPException(400, "neznámá role")
+        vych = dict(_hp._VYCHOZI[r])
+        vych.update(((cfg.get("pristup", {}) or {}).get("role_defaults", {}) or {}).get(r) or {})
+        pov = {x: bool((o.get("povoleno") or {}).get(x)) for x in kat}
+        vyj = {x: v for x, v in pov.items() if v != bool(vych.get(x))}
+        kp[k]["pristup"] = {"role": r, "povoleno": vyj} if r != "spravce" else {"role": r}
+    cfg.setdefault("pristup", {})["enabled"] = bool(body.get("enabled", True))
+    if not save_config(cfg):
+        raise HTTPException(500, "uložení selhalo")
+    return _hp.prehled(load_config())
+
+
+@app.get("/mysleni")
+async def mysleni_page():
+    # strom je od 27. 9. záložkou dashboardu (bez vnořeného okna a chatu)
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/#mysleni")
+
+
+@app.get("/api/chat/stopa")
+async def chat_stopa(id: str = "posledni"):
+    import re as _re
+    p = Path("data/stopy") / (_re.sub(r"[^A-Za-z0-9_-]", "", id) + ".json")
+    if not p.exists():
+        return {"ready": False}
+    try:
+        return {"ready": True, "stopa": json.loads(p.read_text(encoding="utf-8"))}
+    except Exception:
+        return {"ready": False}
+
+
+@app.get("/api/chat/strom")
+async def chat_strom(druh: str = "chat"):
+    # HANS_STOPA_V1 — úplný strom možností; HANS_STOPA_KOLAC_V1 — i pro Koláče
+    p = Path("data/stopy") / ("strom.json" if druh == "chat" else
+                              "strom_%s.json" % ("kolac" if druh == "kolac" else "chat"))
+    if not p.exists():
+        return {"ready": False}
+    try:
+        return {"ready": True, "strom": json.loads(p.read_text(encoding="utf-8"))}
+    except Exception:
+        return {"ready": False}
+
+
+@app.get("/api/chat/zive")
+async def chat_zive():
+    """HANS_STOPA_ZIVE_V1 — průběžný stav právě zpracovávaného dotazu
+    (`bezi`: true), po skončení poslední hotová stopa (`bezi`: false)."""
+    p = Path("data/stopy/zive.json")
+    try:
+        return {"ready": True, "stopa": json.loads(p.read_text(encoding="utf-8"))}
+    except Exception:
+        return {"ready": False}
+
+
+@app.get("/api/chat/stopy")
+async def chat_stopy(limit: int = 15):
+    out = []
+    for f in sorted(Path("data/stopy").glob("*.json"), key=lambda f: f.stat().st_mtime,
+                    reverse=True):
+        if f.name in ("posledni.json", "zive.json") or f.name.startswith("strom"):
+            continue
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            out.append({"id": d.get("id"), "ts": d.get("ts"), "osoba": d.get("osoba"),
+                        "druh": d.get("druh", "chat"),
+                        "zprava": (d.get("zprava") or "")[:80]})
+        except Exception:
+            continue
+        if len(out) >= limit:
+            break
+    return out
 
 
 @app.post("/api/web_read")  # WEBADMIN_V2 — fix 404 (chyběl decorator)

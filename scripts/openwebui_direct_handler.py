@@ -341,7 +341,15 @@ class OpenWebUIDirectHandler:
         # pozdravy, AŽ POTOM vyslov — opraví zobrazené i mluvené najednou.
         try:
             # HANS_CHAT_CHANNEL_AWARE_V1 — tag zprávy channelem 'web'
-            resp = self.send_chat_message(person, message, channel="web")
+            # HANS_STOPA_V1 — stopa dotazu pro vizualizaci (web admin /mysleni);
+            # jakákoli chyba stopy = dotaz proběhne jako bez ní
+            if (self.config.get("stopa", {}) or {}).get("enabled", True):
+                from scripts import hans_stopa as _hs
+                resp = _hs.spust(self.send_chat_message, person, message,
+                                 channel="web", rid=rid, kanal="web",
+                                 osoba=person, zprava=message)
+            else:
+                resp = self.send_chat_message(person, message, channel="web")
         except Exception as e:
             resp = f"(chyba: {e})"
         resp = self._collapse_repeated_greetings(resp or "")
