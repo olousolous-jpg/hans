@@ -2474,6 +2474,23 @@ class AgentRouter:
             "z textu (titul filmu/knihy). Buď konzervativní — při pochybnosti "
             "action=null.")
         prompt = f"{ctx}\nPOSLEDNÍ zpráva ({name}): {message}\n\nJSON:"
+        # HANS_AGENT_EARLY_STOP_V1 (27. 9.) — v 90 % zpráv router akci nenajde,
+        # a přesto dopisoval zdůvodnění i text návrhu (~80 tokenů, 2,2 s).
+        # Rozhodnutí (action, args, confidence) stojí v JSONu PŘED „reason“,
+        # takže se generování zastaví tam. Změřeno na 44 reálných zprávách:
+        # rozhodnutí 44/44 stejné, výstup 2,17 → 0,62 s. Našel-li akci, běží
+        # plné volání jako dřív (text návrhu je potřeba); nejde-li krátký
+        # výstup přečíst, taky. `agent.early_stop` false = původní chování.
+        if (self.config.get("agent", {}) or {}).get("early_stop", True):
+            kratke = ollama_generate(
+                self.model, prompt, system=system, config=self.config,
+                timeout=self.timeout, keep_alive=-1,
+                options={"temperature": self.temperature,
+                         "num_predict": self.num_predict,
+                         "stop": ['"reason"']})
+            m = re.search(r'"action"\s*:\s*(null|"([^"]*)")', kratke or "")
+            if m and not m.group(2):
+                return None          # žádná akce — hotovo bez dopisování
         raw = ollama_generate(
             self.model, prompt, system=system, config=self.config,
             timeout=self.timeout, keep_alive=-1,

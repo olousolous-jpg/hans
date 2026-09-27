@@ -571,6 +571,18 @@ def fix_addressee(text: str, partner: str, config: Optional[dict] = None):
                 text = _nove
     except Exception:
         pass
+    # HANS_ADDRESS_PANE_WOMAN_V1 (27. 9.) — pevně psané odpovědi oslovují
+    # „pane“ bez ohledu na tazatele (v chat_commands ~150×, v agentovi ~46×).
+    # Známé ŽENĚ se samostatné „pane“ přepíše na „paní“. Změřeno: ženám zatím
+    # 1 z 21 odpovědí; s účty na Matrixu to přibude. Titul se jménem („pane
+    # Petře“) sem nepatří — ten řeší vzory výš. Cizímu rod neznáme → beze změny.
+    try:
+        if person_gender(str(partner).strip(), config) == "žena":
+            _pn = re.compile(r"\b([Pp])ane\b(?!\s+[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])")
+            text, _cp = _pn.subn(lambda m: m.group(1) + "aní", text)
+            n += _cp
+    except Exception:
+        pass
     return text, n
 
 

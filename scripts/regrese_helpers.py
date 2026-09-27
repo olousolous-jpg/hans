@@ -974,3 +974,44 @@ def partner_rozhovoru_nalezen(veta: str) -> bool:
     ins = kp[on].get("ins") or (nom[:-1] + "ou")
     return bool(cc._partner_rozhovoru(veta.replace("<J7>", ins).replace("<J1>", nom),
                                       cfg, spr))
+
+
+# ── HANS_ADDRESS_PANE_WOMAN_V1 (27. 9.) ──────────────────────────────────────
+def pane_zene(text: str, kdo: str) -> str:
+    """fix_addressee nad `text` pro tazatele `kdo` = 'zena' | 'muz' | 'cizi'
+    (známá žena / známý muž z configu, nebo neznámé jméno)."""
+    from scripts.cz_names import fix_addressee
+    cfg = _cfg()
+    kp = cfg.get("known_persons") or {}
+    pick = {"zena": "žena", "muz": "muž"}.get(kdo)
+    jm = next((k for k, v in kp.items() if (v or {}).get("gender") == pick), None) \
+        if pick else "Neznamy Host"
+    if not jm:
+        return "?"
+    return fix_addressee(text, jm, cfg)[0]
+
+
+# ── HANS_AGENT_EARLY_STOP_V1 (27. 9.) ────────────────────────────────────────
+def router_early_stop(kratke: str, plne: str) -> str:
+    """AgentRouter._route s podvrženými výstupy modelu. Vrátí
+    '<počet volání>:<akce nebo None>'."""
+    import types
+    from scripts import hans_agent as ha
+    import scripts.ollama_client as oc
+    volani = []
+    puvodni = oc.ollama_generate
+
+    def fake(model, prompt, system=None, **k):
+        stop = (k.get("options") or {}).get("stop")
+        volani.append(bool(stop))
+        return kratke if stop else plne
+    oc.ollama_generate = fake
+    try:
+        cfg = _cfg()
+        r = ha.AgentRouter(cfg)
+        h = types.SimpleNamespace(config=cfg, _hans_idle=None, conv_store=types.SimpleNamespace(
+            get_history=lambda n: [], get_history_scoped=lambda n, ch: []))
+        d = r._route(h, "zkouška", "test")
+    finally:
+        oc.ollama_generate = puvodni
+    return "%d:%s" % (len(volani), (d or {}).get("action"))
