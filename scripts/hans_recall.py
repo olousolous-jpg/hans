@@ -2719,6 +2719,30 @@ def film_knowledge_answer(db_path: str, question: str = "",
             "WHERE event_type='kodi_playing' "
             "AND title=?", (best,)).fetchone()
         notes = [str(n).strip() for _, n in ops if n and str(n).strip()]
+        # HANS_FILM_KODI_FACTS_V1 (27. 9.) — údaje PŘEHRÁVAČE do podkladu.
+        # Doloženo 26. 9.: „co víte o filmu Duna?“ → blok nesl jen „viděl jsi to
+        # 3×“ a model doplnil „1984, David Lynch“, ačkoli záznam přehrávání
+        # měl rok 2021 i režii Villeneuve. Změřeno: z 1 493 titulů má záznam
+        # rok u 611, režii u 506, děj u 959; 305 titulů nemá žádný názor, takže
+        # jim podklad nesl jen počet zhlédnutí.
+        fakta = []
+        try:
+            _kr = conn.execute(
+                "SELECT COALESCE(NULLIF(note,''), data) FROM diary "
+                "WHERE event_type='kodi_playing' AND title=? "
+                "ORDER BY ts DESC LIMIT 1", (best,)).fetchone()
+            for _cast in str((_kr or [""])[0] or "").split(" | "):
+                _m = re.match(r"\s*(rok|žánr|režie|děj)[:\s]\s*(.+)", _cast)
+                if not _m:
+                    continue
+                _k, _v = _m.group(1), _m.group(2).strip()
+                if _k == "děj" and len(_v) > 400:
+                    _cut = max(_v.rfind(". ", 0, 400), _v.rfind("! ", 0, 400),
+                               _v.rfind("? ", 0, 400))
+                    _v = _v[:_cut + 1] if _cut > 100 else _v[:400].rstrip() + "…"
+                fakta.append("%s %s" % (_k, _v) if _k == "rok" else "%s: %s" % (_k, _v))
+        except Exception:
+            fakta = []
         # HANS_FILM_OPINION_PRIVACY_V1 (23. 9.) — CIZIMU tazateli nedavej
         # poznamky, ktere jmenuji cleny domacnosti. Doloženo sadou B 23. 9.:
         # blok s takovou vetou lezel v promptu ciziho (ven neprosla).
@@ -2740,6 +2764,8 @@ def film_knowledge_answer(db_path: str, question: str = "",
         if notes:
             parts.append("Tvé dřívější poznámky a názory:")
             parts.extend(f"- {n}" for n in notes)
+        if fakta:   # HANS_FILM_KODI_FACTS_V1
+            parts.append("Údaje přehrávače o tom, co jsi viděl: " + "; ".join(fakta))
         if seen and seen[0]:
             kdy = _cz_when(seen[1], slovy=True) if seen[1] else "dříve"
             krat = "jednou" if seen[0] == 1 else f"{seen[0]}×"
