@@ -713,6 +713,10 @@ def kamera_cizimu(cesta: str, tazatel: str) -> str:
         s.close()
         rika = ("Nikdo neni" in t) or ("V místnosti vidím" in t)
         return "rika" if rika else "odmita"
+    if cesta == "vidis_me":   # HANS_CAMERA_STRANGER_ASKER_V1 — deterministická cesta
+        from scripts.hans_recall import asker_state_answer, _CAMERA_REFUSAL
+        r = asker_state_answer("vidíš mě přes kameru?", jm, ["<osoba>"], cfg)
+        return "odmita" if r == _CAMERA_REFUSAL else "rika"
     from scripts import hans_agent
     h = types.SimpleNamespace(config=cfg,
                               _agent_inst=types.SimpleNamespace(_raw_name=jm),

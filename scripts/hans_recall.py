@@ -4047,6 +4047,12 @@ def asker_state_answer(query: str, asker: str, present_names, config: dict) -> s
         # protipříkladem při testu — vzor jinak odpověděl výpisem z kamery).
         if __import__("re").search(r"\br[áa]d[aoy]?\b", q, __import__("re").IGNORECASE):
             return ""
+        # HANS_CAMERA_STRANGER_ASKER_V1 (27. 9.) — HANS_CAMERA_STRANGER_V1 platil
+        # jen v agentovi; tahle deterministická cesta ho neznala. Doloženo testem
+        # nováčka: cizí „vidíš mě přes kameru?“ → „kamera je prázdná“, a kdyby
+        # v místnosti někdo byl, dostal by „v místnosti vidím <jména domácnosti>“.
+        if not known:
+            return _CAMERA_REFUSAL
         names = [n for n in (present_names or [])
                  if n and n not in ("Unknown", "?", "")]
         me = [n for n in names

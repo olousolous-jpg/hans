@@ -73,6 +73,12 @@ _CAPABILITIES = [
      "(Wake-on-LAN)", "vypni počítač; /vypnipc; /wol"),
     ("guard", "Umím HLÍDAT místnost, když nejste doma — při pohybu nebo náhlé "
      "změně světla pošlu snímek a video na Matrix", "hlídej dům; /hlidej [stop|stav]"),
+    # HANS_CAP_VOICE_V1 (27. 9.) — hlas tu CHYBĚL. Doloženo testem nováčka:
+    # „jde tě ovládat hlasem?“ → „Ne, ovládání hlasem není funkcí…“, ačkoli
+    # Hans mluví (TTS) a s mikrofonem poslouchá po probouzecím slově.
+    ("voice", "Umím MLUVIT nahlas (vlastním hlasem z reproduktoru) a, když je "
+     "připojený mikrofon, i POSLOUCHAT — stačí mě oslovit probouzecím slovem "
+     "a říct, co potřebujete", "probouzecí slovo + dotaz; odpovídám nahlas"),
     ("translate_doc", "Umím k cizojazyčnému dokumentu, který běží v Kodi, "
      "PŘIPRAVIT ČESKOU ZVUKOVOU STOPU (namluvenou) a uložit ho jako nový soubor. "
      "Trvá to minuty a ozvu se, až bude hotovo",
