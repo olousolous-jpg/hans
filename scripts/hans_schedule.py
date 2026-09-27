@@ -159,8 +159,13 @@ _SEED = [
      "Prectena kapitola [p95 0,6 d]"),
     ("writing_section", "derived", None, None, 4 * 24 * 3600,
      "Kapitola vlastniho dila [p95 2,1 d]"),
-    ("agent_action", "derived", None, None, 4 * 24 * 3600,
-     "Provedena agentni akce [p95 2 d]"),
+    # HANS_SCHEDULE_AGENT_GAP_V1 (27. 9.) — 4 d -> 10 d. Agentní akce NENÍ
+    # rytmus: vzniká, jen když si o ni člověk řekne. p95 2 d byla nafouknutá
+    # testy (23.–25. 9. všechny akce z testů pod reálným jménem, pak uklizené)
+    # → hlídač hlásil „zaostává“, ačkoli agent fungoval. Nejdelší mezera
+    # v historii 8,3 d; 10 d chytí agenta mrtvého týdny, ne tichý týden.
+    ("agent_action", "derived", None, None, 10 * 24 * 3600,
+     "Provedena agentni akce [řízeno uživatelem, max. mezera v historii 8,3 d]"),
     ("teddy_dialog", "derived", None, None, 3 * 24 * 3600,
      "Dialog s Kolacem [p95 0,2 d]"),
 ]
@@ -260,6 +265,11 @@ class ScheduleStore:
             db.execute("UPDATE hans_schedule SET expected_gap_s=? "
                        "WHERE name='curiosity_tick' AND expected_gap_s=?",
                        (12 * 3600, 4 * 3600))
+            # HANS_SCHEDULE_AGENT_GAP_V1 — agent_action 4 d → 10 d (jen z 4 d)
+            db.execute("UPDATE hans_schedule SET expected_gap_s=?, note=? "
+                       "WHERE name='agent_action' AND expected_gap_s=?",
+                       (10 * 24 * 3600, "Provedena agentni akce [řízeno "
+                        "uživatelem, max. mezera v historii 8,3 d]", 4 * 24 * 3600))
             # HANS_STUDY_UNIFY_PERIOD_V1 (18.8.) — totéž pro `period_s`: seed je
             # INSERT OR IGNORE, takže existující řádek si drží 1800 = popis
             # třicetiminutového rytmu, který studium nemá (běží v nočním okně
