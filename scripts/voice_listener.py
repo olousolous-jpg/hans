@@ -281,6 +281,7 @@ class VoiceListener:
                                         self._beep("beep_start")
                                         self._recording.set()
                                         self._open_voice_popup()  # VOICE_TRANSCRIPT_POPUP_V1
+                                        self._kodi_listening_note()  # HANS_WAKE_KODI_NOTE_V1
                                         _hit = True
                                         break
                             except Exception as _pe:
@@ -350,6 +351,32 @@ class VoiceListener:
 
     # ── STT + dispatch ────────────────────────────────────────────────────────
 
+    def _uloz_nahravku(self, audio, text, stt_s):
+        """HANS_VOICE_SAVE_V1 (27. 9.) — sběr pro měření přepisu řeči.
+        Ukládá JEN výpověď po oslovení (wake word / gesto), tedy přesně to, co
+        šlo do STT — nikdy zvuk místnosti. Syrový zvuk PŘED `_denoise`, aby šly
+        modely porovnat i s jiným předzpracováním. Zůstává na Pi: `data/mereni`
+        záloha nebere. Po vyhodnocení SMAZAT (rozhodnutí uživatele 27. 9.).
+        Vypnuto = `voice.save_audio.enabled` false."""
+        c = (self.config.get("voice", {}) or {}).get("save_audio", {}) or {}
+        if not c.get("enabled", False) or audio is None or not len(audio):
+            return
+        try:
+            import json as _json, os as _os
+            d = c.get("dir", "data/mereni/hlas")
+            _os.makedirs(d, exist_ok=True)
+            fn = time.strftime("%Y%m%d_%H%M%S") + ".wav"
+            with open(_os.path.join(d, fn), "wb") as f:
+                f.write(_to_wav_bytes(np.asarray(audio), self.sample_rate))
+            with open(_os.path.join(d, "zaznamy.jsonl"), "a", encoding="utf-8") as f:
+                f.write(_json.dumps({"ts": time.time(), "file": fn,
+                                     "delka_s": round(len(audio) / self.sample_rate, 2),
+                                     "stt_s": round(stt_s, 2), "text": text,
+                                     "stt_url": self.stt_url}, ensure_ascii=False) + "\n")
+            log.info(f"[Voice] STT za {stt_s:.1f} s, uloženo {fn}")
+        except Exception as e:
+            log.warning(f"[Voice] uložení nahrávky selhalo: {e}")
+
     def _process(self, audio: np.ndarray):
         # VOICE_ACK_PHRASE_V1 — Hans řekne krátké uznání (místo pípnutí), v charakteru
         # majordoma. Gender-neutrální (sedí na muže i ženu). TTS cache → po pár užitích
@@ -366,13 +393,72 @@ class VoiceListener:
         except Exception:
             pass
         log.info(f"[Voice] STT {len(audio)/self.sample_rate:.1f}s...")
+        _t0 = time.time()
         text = self._stt(audio)
+        self._uloz_nahravku(audio, text, time.time() - _t0)   # HANS_VOICE_SAVE_V1
         if not text:
             log.info("[Voice] Empty")
             return
         log.info(f"[Voice] Heard: {text}")
         self._voice_popup_msg("Vy (hlas)", text)  # VOICE_TRANSCRIPT_POPUP_V1
         self._dispatch(text)
+
+    def _matrix_copy(self, ch, name, heard, response):
+        """HANS_VOICE_MATRIX_COPY_V1 (28. 9., přání uživatele) — hlasovou výměnu
+        pošli i na Matrix: CO HANS SLYŠEL (přepis) + odpověď. Přepis je tam
+        schválně — 28. 9. „pusť film Predátor“ → „Půst film prelátor“ a bez něj
+        nejde poznat, že vada je v přepisu, ne v Hansovi. Jen osobě, která má
+        Matrix účet (`matrix.as_person` / `matrix.users`); ve vlastním vlákně.
+        Gate voice.matrix_copy."""
+        vcfg = self.config.get("voice", {}) or {}
+        if not vcfg.get("matrix_copy", True) or not response:
+            return
+        mcfg = self.config.get("matrix", {}) or {}
+        maji = {str(mcfg.get("as_person") or "").lower()} | {
+            str((u or {}).get("as_person") or "").lower() for u in (mcfg.get("users") or [])}
+        if str(name or "").lower() not in maji:
+            return
+        mx = getattr(ch, "telegram", None)       # historický název: drží Matrix
+        if mx is None or not getattr(mx, "enabled", False):
+            return
+        zprava = "🎙️ Slyšel jsem: „%s“\n\n%s" % ((heard or "").strip(), response.strip())
+
+        def _run():
+            try:
+                ok = mx.send(zprava)
+                log.info("[Voice] kopie na Matrix: %s", "odeslána" if ok else "NEODESLÁNA")
+            except Exception as e:
+                log.info(f"[Voice] kopie na Matrix selhala: {e!r}")
+        threading.Thread(target=_run, daemon=True, name="voice-matrix-copy").start()
+
+    def _kodi_listening_note(self):
+        """HANS_WAKE_KODI_NOTE_V1 (28. 9., přání uživatele) — po rozpoznání
+        probouzecího slova krátká hláška „Poslouchám…“ vpravo nahoře v Kodi,
+        stejně jako upozornění na už viděný film (HANS_KODI_SEEN_BEFORE_V1:
+        GUI.ShowNotification, Hansova tvář). Ve vlastním vlákně — Kodi nesmí
+        zdržet nahrávání. Gate voice.kodi_wake_notify."""
+        vcfg = self.config.get("voice", {}) or {}
+        if not vcfg.get("kodi_wake_notify", True):
+            return
+
+        def _run():
+            try:
+                k = getattr(self, "_kodi_note_client", None)
+                if k is None:
+                    from scripts.kodi_client import KodiClient
+                    k = self._kodi_note_client = KodiClient(self.config)
+                kc = getattr(k, "_kcfg", {}) or {}
+                ok = k.notify(getattr(k, "_persona", "Hans"),
+                              str(vcfg.get("kodi_wake_text", "Poslouchám…")),
+                              float(vcfg.get("kodi_wake_display_s", 6)),
+                              image=kc.get("seen_before_image",
+                                           "special://home/addons/service.hans.suggest"
+                                           "/media/hans_face.png"))
+                log.info("[Voice] Kodi hláška poslouchám: %s",
+                         "ukázáno" if ok else "Kodi neodpověděl")
+            except Exception as e:
+                log.info(f"[Voice] Kodi hláška selhala: {e!r}")
+        threading.Thread(target=_run, daemon=True, name="wake-kodi-note").start()
 
     def _open_voice_popup(self, name=None):  # VOICE_TRANSCRIPT_POPUP_V1
         """Při aktivačním slově otevři okno s přepisem (co Hans slyšel + říká),
@@ -432,6 +518,7 @@ class VoiceListener:
             if not response:
                 return
             log.info(f"[Voice] ← {response[:80]}")
+            self._matrix_copy(ch, name, text, response)   # HANS_VOICE_MATRIX_COPY_V1
             try:  # VOICE_TRANSCRIPT_POPUP_V1 — Hansovu odpověď do přepisu
                 from scripts.hans_persona import persona_name as _pn
                 self._voice_popup_msg(_pn(self.config), response)
