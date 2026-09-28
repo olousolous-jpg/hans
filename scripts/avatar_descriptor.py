@@ -274,7 +274,10 @@ def generate_descriptor(config: dict, diary_db_path: str,
     raw = ollama_generate(
         model, user, system=_SYSTEM, config=config, timeout=timeout,
         keep_alive=0,  # MODEL_KEEPALIVE_TIERS_V1 — descriptor model on-demand
-        options={"temperature": temp})
+        # HANS_AVATAR_NUM_CTX_V1 (27. 9.) — qwen2.5:7b bez num_ctx = 4 096 tok;
+        # server 10., 17. a 24. 9. uřízl prompt 4 299–4 506 tok (týdně po Severce).
+        options={"temperature": temp,
+                 "num_ctx": int(acfg.get("descriptor_num_ctx", 8192))})
     if raw is None:
         # HANS_AVATAR_DEFERRED_V1 — ollama_generate vrací None při výpadku mozku
         # i herním módu → to NENÍ vadný výstup, ale nedostupný mozek. Odlož tiše

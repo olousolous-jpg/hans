@@ -314,6 +314,48 @@ _SYSTEM = (
 )
 
 
+# HANS_COMMIT_GROUNDED_V1 (27. 9.) — slib se uloží, jen když ho Hans OPRAVDU
+# řekl: aspoň 60 % slov slibu leží v jedné jeho větě a ta věta má sloveso
+# v 1. osobě budoucího času. Změřeno 27. 9. na 6 dnech (po opravě okna):
+# model vytáhl 26 „slibů“, produkční filtr (`_is_operational`) pustil 18 —
+# mezi nimi 9× „zjistím, jak vypadá obraz…“ (věty, které Hans nevyslovil)
+# a otázku tazatele, na kterou Hans rovnou odpověděl. S touto kontrolou 3.
+_SLIB_SLOVESO = re.compile(
+    r"\b(zjist[ií]m|nastuduj[iu]|prostuduj[iu]|namaluj[iu]|p[řr]ipomen[ue]|"
+    r"pod[ií]v[aá]m\s+se|ozvu\s+se|ud[ěe]l[aá]m|pust[ií]m\s+se|dohled[aá]m|"
+    r"pokus[ií]m\s+se|prozkoum[aá]m|p[řr]iprav[ií]m|nap[ií][šs]u|sd[ěe]l[ií]m|"
+    r"vyhled[aá]m|zam[ěe][řr][ií]m\s+se|pov[ií]m|dám\s+v[ěe]d[ěe]t)\b", re.I)
+_SLOVO4 = re.compile(r"[a-zA-ZÀ-ž]{4,}")
+
+
+def _kmeny_slibu(t: str) -> set:
+    return {w.lower()[:5] for w in _SLOVO4.findall(t or "")}
+
+
+def _hansovy_vety(notes: list, persona_name: str) -> list:
+    """Věty z Hansových replik (víceřádkové repliky pokračují do další řeči)."""
+    vety, jeho = [], False
+    for n in notes:
+        for radek in (n or "").splitlines():
+            m = re.match(r"^([^\s:]{1,20}):\s?(.*)$", radek)
+            if m:
+                jeho = (m.group(1) == persona_name)
+                radek = m.group(2)
+            if jeho:
+                vety += [v for v in re.split(r"(?<=[.!?])\s+", radek) if v.strip()]
+    return vety
+
+
+def _slib_zaznel(promise: str, vety: list) -> bool:
+    k = _kmeny_slibu(promise)
+    if not k or not _SLIB_SLOVESO.search(promise or ""):
+        return False
+    for v in vety:
+        if len(k & _kmeny_slibu(v)) / len(k) >= 0.6 and _SLIB_SLOVESO.search(v):
+            return True
+    return False
+
+
 def extract_commitments(config: dict, diary_db_path: str,
                         window_hours: float = 26.0) -> int:
     """Noční krok: z human_chat vytáhne Hansovy vlastní sliby → tabulka
@@ -350,13 +392,21 @@ def extract_commitments(config: dict, diary_db_path: str,
     for person, notes in dialogs.items():
         if written >= max_per_night:
             break
-        transcript = "\n\n".join(notes)[:4000]
+        # HANS_COMMIT_NUM_CTX_V1 (27. 9.) — bez num_ctx platilo 2 048 tokenů
+        # z Modelfile OpenEuroLLM. Server Ollama od 1. 9. uřízl 13× prompt
+        # 2 113–2 592 tok (keep=5 → zahodil STŘED, tj. skoro celé zadání) a
+        # model místo slibů psal „Tento dialog je fascinující…“: 6 dnů z 6
+        # změřených = 0 slibů. Navíc `[:4000]` bral ZAČÁTEK dne (notes ASC),
+        # takže u 25 z 60 dní×osob se konec dne vůbec nečetl → bere se KONEC.
+        _max_zn = int(cfg.get("transcript_chars", 12000))
+        transcript = "\n\n".join(notes)[-_max_zn:]
         if not transcript.strip():
             continue
         try:
             raw = ollama_generate(model=model, prompt=transcript, system=system,
                                   config=config, timeout=timeout, keep_alive=0,
-                                  options={"temperature": 0.1})
+                                  options={"temperature": 0.1,
+                                           "num_ctx": int(cfg.get("num_ctx", 8192))})
         except Exception as e:
             _log.warning("extract_commitments LLM (%s): %s", person, e)
             continue
@@ -378,6 +428,9 @@ def extract_commitments(config: dict, diary_db_path: str,
                     continue
                 promise = str(it.get("promise", "") or "").strip()
                 if len(promise) < 8:
+                    continue
+                if not _slib_zaznel(promise, _hansovy_vety(notes, pname)):
+                    _log.info("commitment odfiltrován (Hans to neřekl): %.60s", promise)
                     continue
                 if _is_operational(promise, config):
                     _log.info("commitment odfiltrován (provozní): %.60s", promise)
@@ -599,6 +652,33 @@ def mark_announced(diary_db_path: str, ids: List[int]) -> int:
             pass
 
 
+def expire_unfulfillable(diary_db_path: str, days: float = 14.0) -> int:
+    """HANS_COMMIT_EXPIRE_V1 (27. 9.) — slib, který NIC nedotáhne, po `days`
+    zavři jako 'dropped'. Plnění bere jen research/paint s námětem a reminder
+    má vlastní cestu; slib bez druhu nebo bez námětu zůstával 'open' navždy
+    a Hans ho vypisoval na „co jsi mi slíbil?“. Změřeno 27. 9.: 6 takových,
+    nejstarší ze 17. 7. (i „přesunu to na počítač“ a dávno hotové studium).
+    Vrátí počet zavřených."""
+    try:
+        db = sqlite3.connect(diary_db_path, timeout=5.0)
+        _init(db)
+        cur = db.execute(
+            "UPDATE commitments SET status='dropped', done_ts=?, "
+            "result='nesplnitelné automaticky (bez druhu nebo námětu)' "
+            "WHERE status='open' AND created_ts < ? AND (kind='' OR "
+            "(kind IN ('research','paint') AND topic=''))",
+            (time.time(), time.time() - float(days) * 86400.0))
+        db.commit()
+        n = cur.rowcount or 0
+        db.close()
+    except Exception as e:
+        _log.warning("expire_unfulfillable: %s", e)
+        return 0
+    if n:
+        _log.info("sliby: zavřeno %d nesplnitelných (starší %g dní)", n, days)
+    return n
+
+
 def fulfill_commitments(config: dict, diary_db_path: str, limit: int = 3) -> int:
     """HANS_COMMIT_FULFILL_V1 — dotáhni sliby, které lze splnit AKCÍ:
       research → dohledej topic na Wikipedii (GROUNDED result);
@@ -614,6 +694,8 @@ def fulfill_commitments(config: dict, diary_db_path: str, limit: int = 3) -> int
             return 0  # VRAM patří hře
     except Exception:
         pass
+    expire_unfulfillable(diary_db_path, float(((config or {}).get("commitments", {})
+                                               or {}).get("expire_days", 14)))
     try:
         db = sqlite3.connect(diary_db_path, timeout=5.0)
         _init(db)
