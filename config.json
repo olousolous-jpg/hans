@@ -1644,6 +1644,18 @@
         "max_switches_h": 3,
         "switch_verify_s": 30
     },
+    "hobbies": {
+        "learning_progress": {
+            "enabled": true,
+            "window_days": 60,
+            "last_n": 10,
+            "min_n": 3,
+            "sim_min": 0.45,
+            "margin_min": 0.05,
+            "common_share": 0.08,
+            "_note": "HANS_LEARNING_PROGRESS_V1 (27. 9.): novost pojmů v četbě koníčku (web_read, přiřazeno bge-m3) → síla i výběr studia × (0,5 + LP). Méně než min_n článků za window_days = neutrální 1,0. Backlog LEARNING_PROGRESS_27_09."
+        }
+    },
     "pristup": {
         "enabled": true,
         "role_defaults": {}

@@ -187,6 +187,7 @@ class Hobby:
 class HobbyStore:
     def __init__(self, config: dict, diary_db_path: str):
         self._diary_path = diary_db_path
+        self._config = config or {}   # HANS_LEARNING_PROGRESS_V1
         self._init_db()
 
     def _init_db(self):
@@ -339,6 +340,11 @@ class HobbyStore:
         feedback loops: decay místo věčného součtu). `evidence_count` zůstává
         jako VYTRVALOST (gate trvalých koníčků), pořadí řídí síla."""
         from scripts.hans_study import _topic_engagement
+        # HANS_LEARNING_PROGRESS_V1 — síla × (0,5 + learning progress):
+        # téma, o kterém Hans čte, ale nic nového se nedozví, slábne
+        from scripts import hans_learning as _hl
+        _lp = (_hl.learning_progress(self._config, self._diary_path)
+               if _hl.zapnuto(self._config) else {})
         out = {}
         try:
             conn = self._connect()
@@ -348,6 +354,7 @@ class HobbyStore:
                     s = float(_topic_engagement(self._diary_path,
                                                 _load_examples(r["examples"]),
                                                 polocas_dni=polocas_dni) or 0)
+                    s *= _hl.nasobek(_lp, r["name"])
                     conn.execute("UPDATE hobbies SET sila=? WHERE id=?", (s, r["id"]))
                     out[r["name"]] = s
                 conn.commit()
@@ -624,6 +631,16 @@ def distill_hobbies(config: dict, diary_db_path: str,
     if _kc is not None:
         _kc.close()
     _log.info("distill_hobbies: zpracováno %d koníčků z %d témat", written, len(topics))
+    try:   # HANS_LEARNING_PROGRESS_V1 — nová četba ke koníčkům (před silou)
+        from scripts import hans_learning as _hl
+        if _hl.zapnuto(config):
+            _n = _hl.prirad_novou_cetbu(config, diary_db_path)
+            _lp = _hl.learning_progress(config, diary_db_path)
+            _log.info("distill_hobbies: learning progress (přiřazeno %d nových) %s", _n,
+                      {k: (None if v[0] is None else round(v[0], 2), v[1])
+                       for k, v in sorted(_lp.items())})
+    except Exception as e:
+        _log.warning("distill_hobbies: learning progress: %s", e)
     try:   # HANS_HOBBY_SILA_V1 — síla po nočním zobecnění
         _s = store.prepocitej_silu(float(cfg.get("sila_polocas_dni", 30)))
         _log.info("distill_hobbies: síla %s", {k: round(v, 1) for k, v in

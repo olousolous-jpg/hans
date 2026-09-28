@@ -1245,6 +1245,8 @@ def _gather_material(config: dict, sub: str, topic: str, deep: bool = False,
 
     if art.get("zdroj") != "mdn":   # MDN už soudce vybral
         art = _overeny_clanek(config, w, sub, topic, art, art_max)  # HANS_STUDY_ARTICLE_JUDGE_V1
+        if art.get("_odmitnut"):          # HANS_STUDY_SKIP_REJECTED_V1
+            return None, None, "__odmitnuto__"
     used_lang = art.get("lang", lang)
     parts = [f"[Hlavní článek: {art['page_title']}]\n{art['text']}"]
     if _je_web_tema(sub, topic) and _cfg(config).get("wcag_enabled", True):
@@ -1412,6 +1414,14 @@ def _overeny_clanek(config: dict, w, sub: str, topic: str, art: dict,
         if v == "castecne" and not vyber:
             vyber = (lg, t)
     if not vyber:
+        # HANS_STUDY_SKIP_REJECTED_V1 (27. 9.) — odmítnutý článek se už
+        # NESTUDUJE. Doloženo: „Auditorní kortex“ → „Kortizol“ (soudce ne,
+        # nic lepšího) a Hans pak tvrdil, že vnímání hudby souvisí s produkcí
+        # kortizolu. Změřeno 26. 9.: ~15–25 % pod-témat končilo takhle.
+        if _cfg(config).get("skip_rejected_article", True):
+            _log.info("study: '%s' → článek '%s' soudce odmítl, lepší se nenašel "
+                      "→ PŘESKAKUJI (nestuduji z nesouvisejícího) %s", sub, title, stopa)
+            return dict(art, _odmitnut=True)
         _log.info("study: '%s' → článek '%s' soudce odmítl, lepší se nenašel "
                   "(nechávám) %s", sub, title, stopa)
         return art
@@ -2090,9 +2100,15 @@ class StudyStore:
             except Exception:
                 dir_text = ""
             w = float(c.get("direction_bias_weight", 0.5))
+            # HANS_LEARNING_PROGRESS_V1 — přednost koníčku, kde se Hans
+            # z četby ještě učí (násobek 0,5 + LP; málo dat = 1,0)
+            from scripts import hans_learning as _hl
+            _lp = (_hl.learning_progress(config, self._diary_path)
+                   if _hl.zapnuto(config) else {})
 
             def _score(h):
                 eng = _topic_engagement(self._diary_path, h.examples)
+                eng *= _hl.nasobek(_lp, h.name)
                 if dir_text:
                     aff = _direction_affinity(dir_text, h.name, h.examples)
                     return eng * (1.0 + w * aff)
@@ -2172,6 +2188,10 @@ class StudyStore:
         if not material and _main == "__transient__":
             _log.info("Studijní session odložena: Wikipedia dočasně nedostupná")
             return None
+        if not material and _main == "__odmitnuto__":
+            # HANS_STUDY_SKIP_REJECTED_V1 — soudce článek odmítl a lepší není:
+            # další noci by dopadly stejně, přeskoč hned (bez 3 prázdných pokusů)
+            prog["fail_count"] = max_fail - 1
         if not material:
             # HANS_STUDY_SKIP_V1 — pro toto pod-téma se nenašlo čtení (nejspíš
             # špatná formulace v kurikulu). Počítej selhání; po max_fail NOCÍCH
