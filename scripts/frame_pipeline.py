@@ -165,6 +165,27 @@ class FramePipeline:
         return ctx
 
     # ── Voting + dedup + downstream consumers ────────────────────────────
+    def _hold_stats(self, raw, held, now):
+        """DRZENI_JMENA_V1 — minutový souhrn do system.logu (sběr dat)."""
+        s = getattr(self, "_hold_st", None)
+        if s is None:
+            s = self._hold_st = {"t0": now, "n": 0, "jm": 0, "drz": 0, "preb": 0}
+        s["n"] += 1
+        _non = raw in (None, "", "?", "...", "Unknown", "unknown")
+        if not _non:
+            s["jm"] += 1
+        if held:
+            s["drz" if _non else "preb"] += 1
+        if now - s["t0"] >= 60.0:
+            _grace = getattr(self.ctrl, "_track_grace_hits", 0)
+            self.ctrl._track_grace_hits = 0
+            import logging as _lg
+            _lg.getLogger("frame_pipeline").info(
+                "držení jména za minutu: hlasování %d, se jménem ze snímku %d, "
+                "drženo %d, přebito většinou %d, navázané stopy %d",
+                s["n"], s["jm"], s["drz"], s["preb"], _grace)
+            self._hold_st = {"t0": now, "n": 0, "jm": 0, "drz": 0, "preb": 0}
+
     def recognize_and_vote(self, ctx, main_frame, now):
         """
         Per-track weighted voting (ArcFace + Cluster DB) + dedup +
@@ -352,7 +373,16 @@ class FramePipeline:
                 except Exception:
                     pass  # nikdy ať logging nepoloží hlavní loop
 
-                track.set_decision(final_name, final_conf)
+                # DRZENI_JMENA_V1 — 0 v configu = původní chování
+                _hold_min = int(_rt.get('track_hold_min', 0))
+                _held = track.set_decision(
+                    final_name, final_conf, _hold_min,
+                    float(_rt.get('track_hold_s', 0.0)), now)
+                if _hold_min > 0:
+                    if _held:
+                        _vote_log.info("HOLD tid=%s snimek=%s -> %s",
+                                       tid, final_name or "?", track.decision)
+                    self._hold_stats(final_name, _held, now)
                 # Pouzij potvrzene rozhodnuti pokud existuje
                 if track.decision:
                     ctx.identities[i] = (track.decision, track.decision_conf)

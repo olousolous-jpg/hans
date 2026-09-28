@@ -2731,7 +2731,25 @@ class PicamDisplayController:
         return (cx, cy)
 
     def _assign_track_ids(self, boxes: list, prev: dict) -> dict:
+        # DRZENI_JMENA_V1 (krok 2): stopa se dřív párovala jen s PŘEDCHOZÍM
+        # snímkem — jeden snímek bez tváře = nová stopa a 5 snímků „…“.
+        # 27. 9.: 263 ze 474 stop skončilo a do 2 s začala nová. Nespárované
+        # stopy se teď pamatují `track_grace_s` (0 = původní chování).
+        _grace = float(self.config.get('recognition_tuning', {})
+                       .get('track_grace_s', 0.0))
+        _now = time.time()
+        _gone = getattr(self, '_tracks_gone', {})
+        _cand = list(prev.items())
+        if _grace > 0:
+            _live = set(prev.values())
+            _gone = {t: (k, ts) for t, (k, ts) in _gone.items()
+                     if _now - ts <= _grace and t not in _live}
+            _cand += [(k, t) for t, (k, ts) in _gone.items()]
         if not boxes:
+            if _grace > 0:
+                for k, t in prev.items():
+                    _gone[t] = (k, _now)
+                self._tracks_gone = _gone
             return {}
         new_map = {}
         used_tids = set()
@@ -2741,7 +2759,7 @@ class PicamDisplayController:
             best_dist = 0.15
             cur_cx = (box[0] + box[2]) / 2
             cur_cy = (box[1] + box[3]) / 2
-            for old_key, tid in prev.items():
+            for old_key, tid in _cand:
                 if tid in used_tids:
                     continue
                 old_cx, old_cy = old_key
@@ -2752,9 +2770,18 @@ class PicamDisplayController:
             if best_tid is not None:
                 used_tids.add(best_tid)
                 new_map[bkey] = best_tid
+                if best_tid in _gone:
+                    self._track_grace_hits = getattr(self, '_track_grace_hits', 0) + 1
             else:
                 new_map[bkey] = self._next_track_id
                 self._next_track_id += 1
+        if _grace > 0:
+            for k, t in prev.items():
+                if t not in used_tids:
+                    _gone[t] = (k, _now)
+            for t in used_tids:
+                _gone.pop(t, None)
+            self._tracks_gone = _gone
         return new_map
 
     @staticmethod

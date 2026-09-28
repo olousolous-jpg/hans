@@ -16,6 +16,10 @@ class FaceTrack:
         self.last_seen      = time.time()
         self.decision       = None
         self.decision_conf  = 0.0
+        # DRZENI_JMENA_V1: kolikrát stopa dostala které jméno (+ poslední jistota)
+        self.name_votes     = {}
+        self.name_conf      = {}
+        self.name_ts        = {}
         self.frame_count    = 0
         self.max_embeddings = max_embeddings
         self.decision_after = decision_after
@@ -74,9 +78,39 @@ class FaceTrack:
     def ready(self):
         return self.frame_count >= self.decision_after
 
-    def set_decision(self, name, confidence):
+    def set_decision(self, name, confidence, hold_min=0, hold_s=0.0, now=None):
+        """DRZENI_JMENA_V1 — stopa drží PŘEVLÁDAJÍCÍ jméno.
+
+        Dřív jméno přepsal každý snímek, i „Unknown“ — jméno blikalo, ačkoli
+        tvář byla pořád v záběru. Změřeno 27. 9. na jednom večeru (45 196
+        hlasování): se jménem 39 %; držet většinové jméno po >=3 potvrzeních
+        → 48 % → 55 % při hold_s 5 (6 % drženého proti většině stopy).
+        ⚠️ BEZ časového limitu to vyšlo na 85 %, ale zisk tvořila hlavně
+        stopa, která celý večer vracela „Unknown“ (15 316×) a jméno měla jen
+        202×. Taková stopa by si pak jméno držela hodiny, proto se jméno drží
+        nejvýš hold_s sekund od posledního potvrzení.
+        Detail backlog `DRZENI_JMENA_27_09`. hold_min <= 0 = původní chování. Vrací True, když rozhodnutí
+        neodpovídá jménu z tohoto snímku (drženo nebo přebito většinou).
+        """
+        if hold_min <= 0:
+            self.decision      = name
+            self.decision_conf = confidence
+            return False
+        if name not in (None, "", "?", "...", "Unknown", "unknown"):
+            self.name_votes[name] = self.name_votes.get(name, 0) + 1
+            self.name_conf[name]  = confidence
+            self.name_ts[name]    = now if now is not None else time.time()
+        if self.name_votes:
+            top = max(self.name_votes, key=self.name_votes.get)
+            _t = now if now is not None else time.time()
+            if (self.name_votes[top] >= hold_min
+                    and (hold_s <= 0 or _t - self.name_ts[top] <= hold_s)):
+                self.decision      = top
+                self.decision_conf = confidence if name == top else self.name_conf[top]
+                return top != name
         self.decision      = name
         self.decision_conf = confidence
+        return False
 
 
 # ======================================================================

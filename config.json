@@ -71,7 +71,13 @@
         "vote_thresh_pc": 0.5,
         "pc_vote2_weight": 0.3,
         "_pc_vote2_note": "PC_VOTE2_V1 (11.8.): druhý hlas = pózové centroidy nad TÝMIŽ float embeddingy (jiná agregace, ne jiný model). Váha 0.3 je změřené optimum. Den-holdout: 1 hlas 67.4 %/5.8 % záměn, 2 hlasy 66.8 %/3.5 %, 3 hlasy 66.8 %/3.2 % (třetí se nevyplatí). Nezvedá úspěšnost, SRÁŽÍ ZÁMĚNY o 40 %. Přestavět: tools/build_pc_clusters.py --write",
-        "cluster_rescue": false
+        "cluster_rescue": false,
+        "track_hold_min": 3,
+        "track_grace_s": 1.0,
+        "_track_hold_note": "DRZENI_JMENA_V1 (27. 9.): stopa drží převládající jméno, jakmile ho potvrdí track_hold_min rozhodnutí, nejvýš track_hold_s s od posledního potvrzení (hold_min 0 = vypnuto, jméno přepíše každý snímek). track_grace_s = jak dlouho se pamatuje stopa, jejíž tvář vypadla (0 = jen předchozí snímek). Změřeno na jednom večeru: se jménem 48 % → 55 % při 5 s (57 % při 10 s), drženého proti většině stopy 6 %. Bez časového limitu 85 %, ale hlavně díky stopě, která byla celý večer Unknown. Sběr dat: system.log 'držení jména za minutu', recognition.log 'HOLD tid='. Backlog DRZENI_JMENA_27_09.",
+        "track_hold_s": 5.0,
+        "diag_log_backups": 10,
+        "_diag_log_backups_note": "27. 9.: 3 → 10. recognition.log přibývá ~25 MB/den, se 3 zálohami držel jen 2–3 dny — málo na vyhodnocení stínu AdaFace (ADAFACE_SHADOW_V1, řádky SHADOW). 10 × 20 MB ≈ 9 dní."
     },
     "enrollment": {
         "enrollment_frames": 30,
