@@ -306,6 +306,34 @@ def asks_capability_list(message: str) -> bool:
     return bool(_CAP_LIST_PAT.search(message or ""))
 
 
+# HANS_FILM_NEEDS_PLAY_WORD_V1 (28. 9.) — nabídka PUSTIT film potřebuje oporu
+# v AKTUÁLNÍ větě: sloveso přehrávání, „film“, nebo slovo z titulu. Doloženo
+# 28. 9.: nesmysl z přepisu hlasu („Je a tým se větí…“) → router si z historie
+# vzal předchozí „pusť Predátora“ a nabídl ho znovu s jistotou 0,95.
+# Táž třída jako HANS_CAP_QUESTION_NOT_ORDER_V1 (titul z historie), obecněji.
+# Změřeno na 758 reálných větách: z 46 voleb kodi_play_film by padlo 8, z toho
+# 6 správně (otázky „o čem byl film…“, zmínky), 2 sporné → „ukaž“ povoleno.
+_PLAY_WORD_PAT = re.compile(
+    r"\b(pus[tť]\w*|p[řr]ehra\w*|zapn\w*|zapni|spus[tť]\w*|film\w*|kino|"
+    r"kouk\w*|pod[íi]va\w*|sledova\w*|vid[ěe]t|uka[žz]\w*|dej\s+(?:mi\s+)?"
+    r"(?:film|tam|na)|/film)\b", re.IGNORECASE)
+
+
+def _film_bez_opory(message: str, args=None) -> bool:
+    """True = věta nemá sloveso přehrávání ani slovo z titulu → titul je z historie."""
+    msg = message or ""
+    if _PLAY_WORD_PAT.search(msg):
+        return False
+    import unicodedata as _ud
+
+    def _fold(s):
+        return "".join(c for c in _ud.normalize("NFKD", (s or "").lower())
+                       if not _ud.combining(c))
+    fm = _fold(msg)
+    tit = _fold(str((args or {}).get("titul") or ""))
+    return not any(w[:5] in fm for w in re.findall(r"\w{4,}", tit))
+
+
 def _asks_capability(message: str, args=None) -> bool:
     """True = věta se PTÁ, jestli to Hans umí, a NEjmenuje předmět akce.
 
@@ -1951,6 +1979,11 @@ class AgentRouter:
              podminka=lambda s, aid, msg, dec, h: _asks_capability(
                  msg, dec.get("args") or {}),
              verdikt=None, duvod="ptá se na schopnost, nejmenuje předmět"),
+        # HANS_FILM_NEEDS_PLAY_WORD_V1 — titul z historie bez opory ve větě
+        dict(marker="HANS_FILM_NEEDS_PLAY_WORD_V1", akce=("kodi_play_film",),
+             podminka=lambda s, aid, msg, dec, h: _film_bez_opory(
+                 msg, dec.get("args") or {}),
+             verdikt=None, duvod="věta nežádá přehrání ani nejmenuje film"),
         # HANS_PRESENCE_ASK_V1 — dotaz na přítomnost konkrétní osoby patří VŽDY
         # na who_home, i v ukecané formě. Přepisujeme jen mezi `report_*` akcemi,
         # aby guard neukradl skutečný příkaz.
