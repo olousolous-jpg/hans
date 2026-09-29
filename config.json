@@ -500,9 +500,9 @@
         ],
         "min_recording_seconds": 1.5,
         "wake_enabled": true,
-        "wake_model": "data/models/cs_hej_hansi.onnx",
+        "wake_model": "data/models/cs_hej_hansi_z.onnx",
         "wake_threshold": 0.5,
-        "_wake_note": "WAKE_WORD_OWW_V1: hands-free aktivace přes openWakeWord (lokálně). wake_model = název .onnx v openwakeword resources nebo cesta k vlastnímu modelu. HEJ_HANSI_V1 (28. 9.): vlastní české „hej Hansi“ (trénink na PC, HEJ_HANSI_27_09), hey_jarvis odstraněn na pokyn uživatele. Model je v data/models (gitignored, zdroj ~/hans_wake/training/output na PC). Práh 0,5: zásahy mají skóre 0,97–1,00, zbytek ~0,001 → práh skoro nerozhoduje. Trenér (syntetika): recall 0,82, 3,7 falešných/h. wake_words výše jsou OBSOLETNÍ.",
+        "_wake_note": "WAKE_WORD_OWW_V1: hands-free aktivace přes openWakeWord (lokálně). wake_model = název .onnx v openwakeword resources nebo cesta k vlastnímu modelu. HEJ_HANSI_V1 (28. 9.): vlastní české „hej Hansi“ (trénink na PC, HEJ_HANSI_27_09), hey_jarvis odstraněn na pokyn uživatele. Model je v data/models (gitignored, zdroj ~/hans_wake/training/output na PC). Práh 0,5: zásahy mají skóre 0,97–1,00, zbytek ~0,001 → práh skoro nerozhoduje. Trenér (syntetika): recall 0,82, 3,7 falešných/h. wake_words výše jsou OBSOLETNÍ. 28. 9. 20:40 → cs_hej_hansi_z (dotrénováno i na „hej Hanzi“ — v běžné řeči zní S jako Z; „Hanzi“ vyřazeno z negativ). Trenér: recall 0,77, 1,6 falešných/h (dřív 0,82 / 3,7 na snazší sadě). Nahrávky uživatele: 4 z 90s (dřív 3), 0 falešných na 60 s šumu + 31 nahrávkách.",
         "transcript_popup": true,
         "save_audio": {
             "enabled": true,
