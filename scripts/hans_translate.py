@@ -215,7 +215,10 @@ def _pc_hash(cfg, pc_path) -> str:
 def _stt(cfg, config, pc_path, workdir) -> str:
     """Poslední možnost. Whisper běží na PC, zvuk se tam i extrahuje."""
     v = (config or {}).get("voice", {}) or {}
-    url, tok = v.get("stt_url"), v.get("stt_token")
+    # HANS_STT_TURBO_V1 (29. 9.) — turbo služba má pevně češtinu (-l cs);
+    # cizojazyčný film musí jít na původní STT s automatickým jazykem.
+    url = v.get("stt_url_translate") or v.get("stt_url_fallback") or v.get("stt_url")
+    tok = v.get("stt_token")
     if not url:
         raise RuntimeError("STT není nastaveno (voice.stt_url)")
     _pc(cfg, f"ffmpeg -v error -y -i {_q(pc_path)} -ac 1 -ar 16000 /tmp/hans_stt.wav", 900)

@@ -6,7 +6,7 @@ Použití:
                          # spustí nahrávání → STT → LLM → TTS
 """
 
-import io, struct, subprocess, sys, time, logging, threading, queue
+import io, re, struct, subprocess, sys, time, logging, threading, queue
 import requests
 import numpy as np
 
@@ -34,6 +34,32 @@ def _to_wav_bytes(pcm: np.ndarray, sr: int) -> bytes:
     return buf.getvalue()
 
 
+# HANS_STT_TURBO_V1 — známé výmysly Whisperu na tichu/šumu a přepis tvořený
+# jen samotným oslovením (nahrávka bez dotazu) → prázdno. Záměrně úzké:
+# celá výpověď musí být výmysl, jinak se nic nemaže.
+_VYMYSLY_RE = re.compile(
+    r"^\W*(titulky\s+(vytvo[řr]il|p[řr]ipravil|pro\b|:).*|.*johnyx.*|.*amara\.org.*|"
+    r"(hej|hey|ahoj)?\W*han[szc]i\W*(han[szc]i\W*)*)\W*$", re.I)
+
+
+# HANS_STT_TURBO_V1 — přepsala poslední výpověď jen záloha (base, 70 % chyb)?
+# Čte `_skip_memory` v handleru: takovou výměnu si Hans do paměti nebere.
+_POSLEDNI_ZALOHOU = False
+
+
+def posledni_prepis_zalohou() -> bool:
+    return _POSLEDNI_ZALOHOU
+
+
+def _je_vymysl(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if not re.search(r"\w", t):          # jen tečky a interpunkce
+        return True
+    return bool(_VYMYSLY_RE.match(t))
+
+
 class VoiceListener:
 
     def __init__(self, config: dict, chat_handler):
@@ -51,12 +77,19 @@ class VoiceListener:
         self.stt_url      = vcfg.get("stt_url",
                             "http://127.0.0.1:8080/api/v1/audio/transcriptions")
         self.stt_token    = vcfg.get("stt_token", "")
+        # HANS_STT_TURBO_V1 (29. 9.) — záloha (původní base na CPU) pro herní
+        # mód a výpadek PC/tunelu.
+        self.stt_url_fallback = vcfg.get("stt_url_fallback", "")
         self.alsa_device  = vcfg.get("alsa_device", "plughw:3,0")
         self._spk_device  = config.get("tts", {}).get("alsa_device", "plughw:2,0")
         self.sample_rate  = int(vcfg.get("sample_rate", 16000))
         self.max_speech_s = float(vcfg.get("max_speech_seconds", 12.0))
         self.silence_s    = float(vcfg.get("silence_seconds", 1.5))
         self.min_rec_s    = float(vcfg.get("min_recording_seconds", 1.0))
+        # HANS_VOICE_LEAD_IN_V1 (29. 9.) — kolik času má člověk po oslovení,
+        # než začne mluvit; ticho do konce se počítá až od začátku řeči.
+        self.lead_in_s    = float(vcfg.get("lead_in_seconds", 5.0))
+        self._holdoff_s   = float(vcfg.get("wake_holdoff_seconds", 1.2))  # HANS_WAKE_HOLDOFF_V1
         self.vad_mode     = int(vcfg.get("vad_aggressiveness", 2))
         self.default_name = vcfg.get("default_speaker", "")  # PORTABILITY: z configu
         self.get_visible_person = None
@@ -185,19 +218,59 @@ class VoiceListener:
             return pcm
 
     def _stt(self, pcm: np.ndarray) -> str:
+        # HANS_STT_TURBO_V1 (29. 9.) — primárně whisper.cpp turbo na PC (tunel),
+        # při herním módu nebo selhání záloha. Řízený test 20 vět: chybovost
+        # slov turbo 11–12 % × base 70 % (backlog STT_TEST_29_09).
+        # Turbo dostává SUROVÝ zvuk: odšumění mu škodí (29. 9. živě „Kolik
+        # kehojin“ × bez odšumění „Kolik je hodin?“; offline 11 × 12 vět z 20
+        # bez chyby) a na Pi trvá ~2,5 s. Odšumění zůstává jen pro zálohu (base).
         try:
-            pcm = self._denoise(pcm)
-            wav     = _to_wav_bytes(pcm, self.sample_rate)
-            headers = {"Authorization": f"Bearer {self.stt_token}"} if self.stt_token else {}
-            resp    = requests.post(
-                self.stt_url, headers=headers,
-                files={"file": ("speech.wav", wav, "audio/wav")},
-                data={"model": "whisper-1", "language": "cs"},
-                timeout=15)
-            if resp.status_code == 200:
-                return resp.json().get("text", "").strip()
+            wav_raw = _to_wav_bytes(pcm, self.sample_rate)
         except Exception as e:
-            print(f"[Voice] STT error: {e}")
+            log.info(f"[Voice] STT příprava zvuku selhala: {e}")
+            return ""
+        _wav_den = []
+
+        def _wav_pro(url):
+            if url == self.stt_url:
+                return wav_raw
+            if not _wav_den:
+                try:
+                    _wav_den.append(_to_wav_bytes(self._denoise(pcm), self.sample_rate))
+                except Exception:
+                    _wav_den.append(wav_raw)
+            return _wav_den[0]
+        headers = {"Authorization": f"Bearer {self.stt_token}"} if self.stt_token else {}
+        cesty = [self.stt_url]
+        try:
+            from scripts.ollama_client import game_mode_on
+            if game_mode_on() and self.stt_url_fallback:
+                cesty = []                  # při hře grafiku nebereme
+        except Exception:
+            pass
+        if self.stt_url_fallback and self.stt_url_fallback not in cesty:
+            cesty.append(self.stt_url_fallback)
+        global _POSLEDNI_ZALOHOU
+        for i, url in enumerate(cesty):
+            _POSLEDNI_ZALOHOU = (url != self.stt_url)
+            try:
+                resp = requests.post(
+                    url, headers=headers,
+                    files={"file": ("speech.wav", _wav_pro(url), "audio/wav")},
+                    data={"model": "whisper-1", "language": "cs",
+                          "response_format": "json"},
+                    timeout=10 if i < len(cesty) - 1 else 15)
+                if resp.status_code == 200:
+                    text = resp.json().get("text", "").strip()
+                    if i > 0:
+                        log.info("[Voice] STT přes zálohu (%s)" % url.split("/")[2])
+                    if _je_vymysl(text):
+                        log.info(f"[Voice] STT výmysl zahozen: {text!r}")
+                        return ""
+                    return text
+                log.info(f"[Voice] STT HTTP {resp.status_code} ({url.split('/')[2]})")
+            except Exception as e:
+                log.info(f"[Voice] STT chyba ({url.split('/')[2]}): {e}")
         return ""
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -246,6 +319,36 @@ class VoiceListener:
                 _busy = (self._processing.is_set()
                          or (self._tts is not None
                              and self._tts.is_speaking()))
+                # WAKE_DIAG_V1 (29. 9.) — přeskakování detekce se dřív nikde
+                # neobjevilo; hlas se pak „neslyšel" bez stopy. Hlásí se, když
+                # trvá déle než 10 s, i s důvodem.
+                if _busy and self._oww is not None:
+                    _od = getattr(self, "_busy_od", 0.0) or time.time()
+                    self._busy_od = _od
+                    if time.time() - _od > 10 and not getattr(self, "_busy_hlaseno", False):
+                        self._busy_hlaseno = True
+                        log.info("[Voice] wake přeskakován >10 s (%s)" % (
+                            "zpracovávám řeč" if self._processing.is_set() else "mluvím"))
+                else:
+                    if getattr(self, "_busy_hlaseno", False):
+                        log.info("[Voice] wake zase poslouchá (po %.0f s)"
+                                 % (time.time() - getattr(self, "_busy_od", time.time())))
+                    self._busy_od = 0.0
+                    self._busy_hlaseno = False
+                # HANS_WAKE_HOLDOFF_V1 (29. 9.) — po skončení vlastní řeči ještě
+                # chvíli neposlouchat: reproduktor dohrává a dozvuk probudil Hanse
+                # sám (21:47:59, skóre 0,98, nikdo nemluvil). Zvuk se zahodí
+                # a detektor i jeho zásobník se vynulují.
+                if _busy:
+                    self._holdoff_do = time.time() + float(getattr(self, "_holdoff_s", 1.2))
+                elif time.time() < getattr(self, "_holdoff_do", 0.0):
+                    _busy = True
+                    self._wake_buf = None
+                    try:
+                        if self._oww is not None:
+                            self._oww.reset()
+                    except Exception:
+                        pass
                 if self._oww is not None and self._running and not _busy:
                     # WAKE_WORD_CHUNK_FIX_V1 — bufferuj a krm oww 1280-vzorkovými
                     # (80ms) bloky; jednotlivé pipe framy bývají <400 vzorků →
@@ -287,6 +390,9 @@ class VoiceListener:
                             except Exception as _pe:
                                 log.info(f"[Voice] wake predict ERR: {_pe!r}")
                         self._wake_buf = None if _hit else _cat[_i:]
+                        if not _hit and _bmax >= 0.2:            # WAKE_DIAG_V1
+                            log.info("[Voice] wake blízko: %.2f (%s, práh %.2f)"
+                                     % (_bmax, _bname, self._wake_threshold))
                 else:
                     # Vyprázdni frontu aby se nehromadily staré frames
                     while not _q.empty():
@@ -298,6 +404,7 @@ class VoiceListener:
             speech_frames = []
             silent_frames = 0
             speech_start  = time.time()
+            _mluvil = False     # HANS_VOICE_LEAD_IN_V1 — začal už člověk mluvit?
 
             log.info("[Voice] Recording...")
 
@@ -318,20 +425,30 @@ class VoiceListener:
                 else:
                     is_speech = np.abs(np.frombuffer(frame, dtype=np.int16)).mean() > 300
 
+                elapsed = time.time() - speech_start
                 if is_speech:
                     silent_frames = 0
+                    # prvních 0,5 s dozní samotné oslovení — to za začátek řeči nebereme
+                    if elapsed >= 0.5:
+                        _mluvil = True
                 else:
                     silent_frames += 1
-
-                elapsed = time.time() - speech_start
                 if self._stop_requested and elapsed >= self.min_rec_s:
                     log.info(f"[Voice] Done — {elapsed:.1f}s (gesture released)")
                     break
                 if elapsed > self.max_speech_s:
                     log.info(f"[Voice] Done — {elapsed:.1f}s (maxlen)")
                     break
-                if silent_frames >= max_silent and elapsed >= self.min_rec_s:
+                # HANS_VOICE_LEAD_IN_V1 (29. 9.) — dřív skončilo po 1,2 s ticha i tehdy,
+                # když člověk po „hej Hanzi“ teprve čekal na odezvu (nahrávka 1,7 s,
+                # přepis prázdný, věta se nenahrála). Ticho do konce platí až po
+                # začátku řeči; kdo nezačne do `lead_in_seconds`, nahrávka skončí.
+                if (_mluvil and silent_frames >= max_silent
+                        and elapsed >= self.min_rec_s):
                     log.info(f"[Voice] Done — {elapsed:.1f}s (silence)")
+                    break
+                if not _mluvil and elapsed >= self.lead_in_s:
+                    log.info(f"[Voice] Done — {elapsed:.1f}s (nikdo nezačal mluvit)")
                     break
 
             # Resetuj trigger

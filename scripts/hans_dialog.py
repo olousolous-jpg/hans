@@ -721,7 +721,7 @@ class HansDialog:
         import random as _r
         text = _r.choice(comments)
         _log.info("Hans: %s", text)
-        if self.tts:
+        if self.tts and self._cti_nahlas():  # HANS_DIALOG_SILENT_V1
             with self._tts_lock:
                 try:
                     self.tts.speak(text)
@@ -755,7 +755,7 @@ class HansDialog:
             ]
             text = _r.choice(comments)
             _log.info("Kvantový komentář: %s", text)
-            if self.tts:
+            if self.tts and self._cti_nahlas():  # HANS_DIALOG_SILENT_V1
                 with self._tts_lock:
                     try:
                         self.tts.speak(text)
@@ -1106,7 +1106,9 @@ class HansDialog:
                     _db.commit()
                     _db.close()
 
-            if self.tts and getattr(self.tts, "enabled", False):
+            # HANS_DIALOG_SILENT_V1 (29. 9.) — rozhovor s Koláčem se nahlas nečte: předčítání
+            # drží TTS „mluví“ a probouzecí slovo je po tu dobu hluché (uživatel ho nepotřebuje).
+            if self._cti_nahlas() and self.tts and getattr(self.tts, "enabled", False):
                 self._speak_dialog(dialog)
 
         except Exception as e:
@@ -1210,6 +1212,10 @@ class HansDialog:
             if self.tts and getattr(self.tts, "enabled", False):
                 self._speak_dialog(prepis)
         return True
+
+    def _cti_nahlas(self) -> bool:
+        """HANS_DIALOG_SILENT_V1 — číst rozhovory s Koláčem nahlas? (config hans_dialog.cti_nahlas)"""
+        return bool((self.config.get("hans_dialog", {}) or {}).get("cti_nahlas", True))
 
     def _speak_dialog(self, dialog: str):
         """Přečti dialog nahlas — Hans i Kolač s různými hlasy."""

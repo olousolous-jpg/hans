@@ -508,7 +508,15 @@
             "enabled": true,
             "dir": "data/mereni/hlas",
             "_note": "HANS_VOICE_SAVE_V1 (27. 9., rozhodnutí uživatele): ukládá KAŽDOU výpověď po oslovení (wake word/gesto) jako WAV + zaznamy.jsonl (přepis, stt_s) kvůli měření přesnosti a rychlosti přepisu řeči. Jen to, co šlo do STT, nikdy zvuk místnosti. data/mereni záloha nebere. Po vyhodnocení SMAZAT a vypnout."
-        }
+        },
+        "remember": true,
+        "_remember_note": "HANS_VOICE_NO_MEMORY_V1 (28. 9.) → 29. 9. ZAPNUTO po nasazení whisper.cpp turbo (HANS_STT_TURBO_V1, 11–12 % chyb). Výpověď přepsaná jen zálohou (base, herní mód/výpadek PC) do paměti nejde dál.",
+        "lead_in_seconds": 5.0,
+        "_note_lead_in": "HANS_VOICE_LEAD_IN_V1 (29. 9.): kolik sekund po oslovení čekat, než člověk začne mluvit. Ticho do konce (silence_seconds) se počítá až od začátku řeči.",
+        "stt_url": "http://127.0.0.1:8767/inference",
+        "_note_stt": "HANS_STT_TURBO_V1 (29. 9.): stt_url = whisper.cpp turbo na PC přes SSH tunel (hans-face-tunnel, port 8767, služba hans-stt na PC); stt_url_fallback = původní base v OpenWebUI (herní mód, výpadek). Test 20 vět: 11–12 % × 70 % chyb.",
+        "wake_holdoff_seconds": 1.2,
+        "_note_holdoff": "HANS_WAKE_HOLDOFF_V1 (29. 9.): po skončení Hansovy řeči tolik sekund neposlouchat probouzecí slovo (dozvuk reproduktoru ho probudil sám)."
     },
     "face_preprocess": {
         "enabled": true,
@@ -624,7 +632,9 @@
         "_note_stance_challenge_fresh_days": "Jak starý smí být poslední výskyt postoje. Mrtvý postoj nemá smysl zpochybňovat.",
         "line_max_chars": 800,
         "_note_line_max_chars": "HANS_KOLAC_LINE_SEAM_V1: strop délky jedné repliky. Přes něj se řez položí na KONEC VĚTY, ne doprostřed slova. Dřív natvrdo 300 a 159 ze 180 useknutých replik mělo přesně 300 znaků.",
-        "_note_line_num_predict": "HANS_TEXT_LIMITS_V1 (25. 9.): 120 tokenů utínalo ~2,6 % replik kolem 350–400 zn (pod znakovým stropem, takže šev nezabral). Sonda bez limitu: 40/40 replik dokončeno, medián 180, p90 240, max 404 zn → 250 tokenů / 800 zn s rezervou; šev zůstává jen pojistka."
+        "_note_line_num_predict": "HANS_TEXT_LIMITS_V1 (25. 9.): 120 tokenů utínalo ~2,6 % replik kolem 350–400 zn (pod znakovým stropem, takže šev nezabral). Sonda bez limitu: 40/40 replik dokončeno, medián 180, p90 240, max 404 zn → 250 tokenů / 800 zn s rezervou; šev zůstává jen pojistka.",
+        "cti_nahlas": false,
+        "_note_cti_nahlas": "HANS_DIALOG_SILENT_V1 (29. 9.): rozhovory s Koláčem a komentáře k jeho odchodu/návratu se nečtou nahlas. Předčítání drželo TTS ve stavu „mluví“ a probouzecí slovo bylo po tu dobu hluché. Deník i Myšlení beze změny."
     },
     "room_observer": {
         "enabled": true,

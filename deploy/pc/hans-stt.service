@@ -1,0 +1,22 @@
+[Unit]
+Description=Hans — přepis řeči (whisper.cpp large-v3-turbo, Vulkan)
+After=network-online.target
+
+[Service]
+Type=simple
+# HANS_STT_TURBO_V1 (29. 9.) — řízený test 20 vět: chybovost slov 11–12 %
+# proti 70 % u původního base (faster-whisper na CPU v OpenWebUI).
+# Jen na 127.0.0.1 — Pi se připojuje SSH tunelem (hans-face-tunnel, port 8767).
+# VRAM ~0,76 GB trvale; při herním módu Hans posílá přepis na zálohu (CPU).
+# --vad je nutné: bez něj model na tichu vymýšlí „Titulky vytvořil…“.
+Environment=LD_LIBRARY_PATH=%h/stt_test/whisper.cpp-master/build/bin
+ExecStart=%h/stt_test/whisper.cpp-master/build/bin/whisper-server \
+  -m %h/stt_test/ggml-large-v3-turbo-q5_0.bin -l cs \
+  --vad --vad-model %h/stt_test/ggml-silero-v5.1.2.bin \
+  --host 127.0.0.1 --port 8767
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=default.target
