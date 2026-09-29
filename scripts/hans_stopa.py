@@ -171,6 +171,11 @@ def _mapa_pod(func, model, owner):
         _mapy[klic] = None
         return None
     kroky, realne, sub, ret_r = [], {}, {}, set()
+    # Pomocné řádky, které přidává generátor rozdělení (volání podmetody,
+    # `if _r is not _POKRACUJ:`, `return _r`, `return _POKRACUJ`) se provedou
+    # VŽDY — do „provedených“ se nepočítají, jinak by krok před nimi vypadal
+    # jako zkoušený, i když jeho kód neproběhl (v originále tam nebyly).
+    leseni = set()
 
     def projdi(f, zaklad, hloubka):
         ln_list, st = inspect.getsourcelines(f)
@@ -179,6 +184,11 @@ def _mapa_pod(func, model, owner):
             ln = st + i
             v = (ln,) if zaklad is None else zaklad + (ln - st + 1,)
             realne[v] = ln                     # každý řádek (i návrat v podmetodě)
+            _ls = l.strip()
+            if (_ls in ("return _r", "return _POKRACUJ", "if _r is not _POKRACUJ:")
+                    or re.fullmatch(r"(?:_r = )?self\.(?:%s)\w+\(ctx\)" % "|".join(
+                        re.escape(p) for p in PODMETODY), _ls)):
+                leseni.add(v)
             if l.strip() == "return _r":
                 ret_r.add((f.__code__, ln))
             mm = _ZNACKA.match(l)
@@ -201,7 +211,8 @@ def _mapa_pod(func, model, owner):
     del sub[func.__code__]
     konec = (start + len(lines),)
     realne[konec] = start + len(lines)
-    m = {"kroky": kroky, "konec": konec, "realne": realne, "sub": sub, "ret_r": ret_r}
+    m = {"kroky": kroky, "konec": konec, "realne": realne, "sub": sub, "ret_r": ret_r,
+         "leseni": leseni}
     _mapy[klic] = m
     return m
 
@@ -264,7 +275,8 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
     def _lokal(frame, event, arg):
         if event == "line":
             stav["radek"] = _v(frame.f_lineno)
-            provedeno.setdefault(_v(frame.f_lineno), round(time.time() - stav["t0"], 3))
+            if not (pod and _v(frame.f_lineno) in pod["leseni"]):
+                provedeno.setdefault(_v(frame.f_lineno), round(time.time() - stav["t0"], 3))
             if druh == "kolac" and "tema" not in stav:   # téma hned (živý strom)
                 try:
                     t = frame.f_locals.get("topic")
@@ -309,7 +321,8 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
         v = zaklad + (frame.f_lineno - st + 1,)
         if event == "line":
             stav["radek"] = v
-            provedeno.setdefault(v, round(time.time() - stav["t0"], 3))
+            if v not in pod["leseni"]:
+                provedeno.setdefault(v, round(time.time() - stav["t0"], 3))
         elif event == "return":
             _cmd_z(frame)
             if (frame.f_code, frame.f_lineno) not in pod["ret_r"]:
