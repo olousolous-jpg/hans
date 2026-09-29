@@ -193,6 +193,16 @@ from scripts.pc_remote import wake
 print('  WOL na NAS: %s' % ('odeslano' if wake(mac='${NAS_WOL_MAC}') else 'SELHALO'))" 2>/dev/null \
             || echo "  (WOL nedostupny)"
     fi
+    # BACKUP_NAS_AUTOMOUNT_HEAL_V1 (29. 9.) — automount, kterému jednou selže
+    # připojení (NAS usnul, I/O error), zůstane ve stavu `failed` a systemd už
+    # nic nezkouší → všech 6 pokusů by selhalo. Doloženo 29. 9. 17:09.
+    _nas_kotva="$(dirname "$NAS_DEST")"
+    _am=$(systemd-escape -p --suffix=automount "$_nas_kotva" 2>/dev/null || true)
+    if [ -n "$_am" ] && [ "$(systemctl is-failed "$_am" 2>/dev/null)" = "failed" ]; then
+        echo "  automount $_am ve stavu failed → obnovuji"
+        sudo -n systemctl reset-failed "$_am" "${_am%.automount}.mount" 2>/dev/null || true
+        sudo -n systemctl start "$_am" 2>/dev/null || true
+    fi
     NAS_TRIES="${NAS_TRIES:-6}"
     NAS_WAIT="${NAS_WAIT:-20}"
     OFFSITE_FAIL=1
