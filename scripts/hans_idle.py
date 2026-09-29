@@ -658,7 +658,11 @@ class HansIdle:
                                                mark_announced, correction_text)
         except Exception:
             return
-        rows = unannounced_corrections(dbp, limit=5)
+        # HANS_CORRECTION_PRESENT_FIRST_V1 (28. 9.) — dřív limit=5 PŘED filtrem
+        # přítomných: 5 nejstarších zamítnutí patřilo „Uživatel“ a testovacím
+        # identitám (nikdy doma) → opravy skutečné osoby (13. a 16. 9.) se na
+        # řadu nedostaly nikdy (announced=0 u všech 9). Filtr až nad celou frontou.
+        rows = unannounced_corrections(dbp, limit=200)
         if not rows:
             return
         present = {str(n).strip().lower() for n in known}
