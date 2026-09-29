@@ -824,11 +824,15 @@ class HansIdle:
                                                   mark_reported, _norm)
         except Exception:
             return
-        rows = unreported_results(dbp, limit=10)  # (id,person,topic,text,result,kind)
+        # HANS_COMMIT_QUEUE_PRESENT_FIRST_V1 (29. 9.) — táž past jako ranní
+        # opravy (HANS_CORRECTION_PRESENT_FIRST_V1): malý LIMIT PŘED filtrem na
+        # přítomné → položky nepřítomných/testovacích osob by frontu ucpaly.
+        # Celá fronta, filtr, pak původní velikost dávky.
+        rows = unreported_results(dbp, limit=200)  # (id,person,topic,text,result,kind)
         if not rows:
             return
         present = {_norm(n) for n in known}
-        mine = [r for r in rows if _norm(r[1]) in present]
+        mine = [r for r in rows if _norm(r[1]) in present][:10]
         if not mine:
             return
         name = str(mine[0][1]).capitalize()
@@ -920,11 +924,11 @@ class HansIdle:
                                                   mark_reminder_delivered, _norm)
         except Exception:
             return
-        rows = due_reminders(dbp, limit=5)  # (id, person, topic, text)
+        rows = due_reminders(dbp, limit=200)  # HANS_COMMIT_QUEUE_PRESENT_FIRST_V1
         if not rows:
             return
         present = {_norm(n) for n in known}
-        mine = [r for r in rows if _norm(r[1]) in present]
+        mine = [r for r in rows if _norm(r[1]) in present][:5]
         if not mine:
             return
         name = str(mine[0][1]).capitalize()

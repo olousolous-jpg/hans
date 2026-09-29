@@ -62,7 +62,7 @@ def _pc_put(cfg, local, remote, timeout=None):
 def _pc_get(cfg, remote, local):
     subprocess.run(["scp", "-q", "-i", os.path.expanduser(cfg.get("pc_key", "~/.ssh/hans_pc")),
                     f"{cfg.get('pc_user','user')}@{cfg.get('pc_host','192.168.1.10')}:{remote}", local],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, timeout=3600)   # HANS_SCP_TIMEOUT_V1
 
 
 def _q(p: str) -> str:

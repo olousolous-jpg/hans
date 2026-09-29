@@ -99,14 +99,15 @@ def _synth_piper_remote(srt_path, out_wav, cfg) -> None:
            "-o", "StrictHostKeyChecking=no", f"{user}@{host}"]
     rem = "/tmp/hans_piper_track"
 
-    subprocess.run(ssh + [f"mkdir -p {rem}"], check=True, capture_output=True)
+    # HANS_SCP_TIMEOUT_V1 (29. 9.) — bez timeoutu by usnulé PC nechalo vlákno viset navždy
+    subprocess.run(ssh + [f"mkdir -p {rem}"], check=True, capture_output=True, timeout=60)
     here = os.path.dirname(os.path.abspath(__file__))
     for f in (os.path.join(here, "srt_track.py"),
               os.path.join(os.path.dirname(here), "deploy", "pc", "hans_piper_track.py")):
         subprocess.run(["scp", "-q", "-i", key, f, f"{user}@{host}:{rem}/"],
-                       check=True, capture_output=True)
+                       check=True, capture_output=True, timeout=120)
     subprocess.run(["scp", "-q", "-i", key, srt_path, f"{user}@{host}:{rem}/in.srt"],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, timeout=120)
 
     voice = os.path.join(cfg.get("piper_voices_dir", "~/piper/voices"),
                          cfg.get("piper_voice", "cs_CZ-kasandra-medium") + ".onnx")
@@ -116,7 +117,7 @@ def _synth_piper_remote(srt_path, out_wav, cfg) -> None:
     if r.returncode != 0:
         raise RuntimeError(f"piper na PC selhal: {r.stderr[-400:]}")
     subprocess.run(["scp", "-q", "-i", key, f"{user}@{host}:{rem}/out.wav", out_wav],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, timeout=1800)
 
 
 # ── veřejné rozhraní ─────────────────────────────────────────────────────────

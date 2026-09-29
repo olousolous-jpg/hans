@@ -494,6 +494,7 @@ class Memory:
         person: Optional[str] = None,
         event_types: Optional[list] = None,
         limit: int = 100,
+        vynechat: Optional[list] = None,
     ) -> list[dict]:
         """T6B — diary v ABSOLUTNÍM okně [start_ts, end_ts] (pro encounter summary)."""
         sql = ("SELECT id, ts, event_type, title, data, note FROM diary "
@@ -503,6 +504,14 @@ class Memory:
             ph = ",".join(["?"] * len(event_types))
             sql += f" AND event_type IN ({ph})"
             params.extend(event_types)
+        # HANS_ENCOUNTER_SUMMARY_LIMIT_V1 (29. 9.) — šum vyřadit V SQL, ne až za
+        # LIMITem: u delšího setkání bylo prvních 40 záznamů samé `person_seen`
+        # a souhrn vznikl z ničeho / z části (30 dní: 23 setkání bez souhrnu,
+        # 24 z neúplných záznamů). [[filter-after-limit-is-a-dead-gate]]
+        if vynechat:
+            ph = ",".join(["?"] * len(vynechat))
+            sql += f" AND event_type NOT IN ({ph})"
+            params.extend(vynechat)
         if person:
             sql += " AND (title LIKE ? OR data LIKE ? OR note LIKE ?)"
             pat = f"%{person}%"
@@ -680,7 +689,8 @@ class Memory:
 
             # Sesbírej diary epizody v okně (mimo person_seen — to je šum)
             rows = self.recall_diary_window(
-                start_ts=start, end_ts=end, person=person, limit=40
+                start_ts=start, end_ts=end, person=person, limit=40,
+                vynechat=["person_seen"],        # HANS_ENCOUNTER_SUMMARY_LIMIT_V1
             )
             interesting = [
                 r for r in rows
