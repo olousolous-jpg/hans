@@ -1,0 +1,10 @@
+[Unit]
+Description=Hans: záloha PC každou neděli (doběhne i po zapnutí, když PC spalo)
+
+[Timer]
+OnCalendar=Sun 10:00
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
