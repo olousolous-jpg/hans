@@ -1040,3 +1040,9 @@ def vzhled_predmet(text: str):
     from scripts.bridge_commands import _VZHLED_RE
     m = _VZHLED_RE.search(text or "")
     return (m.group("a") or m.group("b")).strip(" ?!.,") if m else None
+
+
+def qd_kontrola_ok(otazka: str, sql: str) -> bool:
+    """HANS_QUERY_DIARY_V1 — projde dotaz deterministickou kontrolou významu?"""
+    from scripts.hans_query_diary import kontrola
+    return kontrola(otazka, sql) == ""
