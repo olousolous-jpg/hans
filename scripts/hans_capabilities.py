@@ -93,6 +93,11 @@ _CAPABILITIES = [
      "odstraním lidi v pozadí, zasněžím, udělám z ní olejomalbu. Úprava trvá "
      "několik minut a potřebuje zapnutý počítač s grafikou",
      "fotka + otázka nebo pokyn v Matrixu"),
+    # HANS_ENTITY_IMAGE_CHAT_V1 (29. 9.) — obrázek k osobě/místu/dílu z Wikipedie.
+    ("entity_image", "K osobám, místům a dílům, o kterých jsem si četl na Wikipedii, "
+     "si ukládám i jejich obrázek (portrét, fotku, plakát). Na Matrixu ho na požádání "
+     "ukážu i s krátkým popisem — jen u věcí, které znám, a jen když článek obrázek má",
+     "„jak vypadá <jméno>?“ nebo „ukaž mi fotku <jméno>“ v Matrixu"),
     ("translate_doc", "Umím k cizojazyčnému dokumentu, který běží v Kodi, "
      "PŘIPRAVIT ČESKOU ZVUKOVOU STOPU (namluvenou) a uložit ho jako nový soubor. "
      "Trvá to minuty a ozvu se, až bude hotovo",

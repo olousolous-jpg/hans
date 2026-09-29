@@ -1015,3 +1015,10 @@ def router_early_stop(kratke: str, plne: str) -> str:
     finally:
         oc.ollama_generate = puvodni
     return "%d:%s" % (len(volani), (d or {}).get("action"))
+
+
+def vzhled_predmet(text: str):
+    """HANS_ENTITY_IMAGE_CHAT_V1 — co by most hledal jako entitu (jen vzor, bez DB)."""
+    from scripts.bridge_commands import _VZHLED_RE
+    m = _VZHLED_RE.search(text or "")
+    return (m.group("a") or m.group("b")).strip(" ?!.,") if m else None

@@ -80,6 +80,8 @@ def handle(text: str, ctx: BridgeCtx) -> bool:
             return True
         if handle_command(text, ctx):
             return True
+        if _appearance(text, ctx):          # HANS_ENTITY_IMAGE_CHAT_V1
+            return True
         intent = detect_intent(text)
         if intent == "paint":
             # namaluj NOVÝ obraz → padni do chatu (render na pozadí), obraz
@@ -290,6 +292,101 @@ def _pick_mode(text: str) -> str:
     if re.search(r"náhod|nahod|nějak|nejak|random|jin[ýé]|jakýkoliv|jakykoliv", t):
         return "random"
     return "latest"
+
+
+# ── HANS_ENTITY_IMAGE_CHAT_V1 (29. 9.) — „jak vypadá X?“ → obrázek entity ──────
+# Přání uživatele: k osobě (místu, dílu), o které Hans ví, ukázat i obrázek
+# (ukládá `hans_entity_images`). Brána = X je ZNÁMÁ entita typu osoba/místo/
+# dílo; jinak se nic neděje a zpráva jde dál. Změřeno 29. 9.: v historii 0
+# skutečných dotazů na vzhled, obě shody vzoru falešné („jak vypadal
+# normalizační proces…“, „ukaž jakýkoliv dokument…“) → proto brána entitou.
+# „obraz/obrázek“ ZÁMĚRNĚ ne: „ukaž mi obraz“ = Hansova malba (`artwork`).
+_VZHLED_RE = re.compile(
+    r"\bjak\s+(?:asi\s+)?vypad(?:[áa]|al[aoy]?|aj[íi])\s+(?P<a>.{3,80})"
+    r"|\b(?:uk[aá][zž]\w*|m[uů][žz]e[sš]\s+mi\s+uk[aá]zat|m[uů][žz]ete\s+mi\s+uk[aá]zat|"
+    r"mohl[a]?\s+(?:bys|byste)\s+mi\s+uk[aá]zat|po[sš]li\w*|po[sš]lete)"
+    r"\s+(?:mi\s+|n[aá]m\s+)?(?:n[ěe]jakou\s+)?(?:fotk\w*|fotografi\w*|podobizn\w*|portr[ée]t\w*)"
+    r"\s+(?P<b>.{3,80})", re.IGNORECASE)
+
+
+def _vzhled_dohledej(config: dict, db: str, st, predmet: str):
+    """HANS_ENTITY_IMAGE_LOOKUP_V1 (29. 9., pokyn uživatele) — neznámou osobu/
+    místo/dílo dohledej na Wikipedii HNED (jako malování, HANS_ART_PERSON_WIKI_
+    LOOKUP_V1). Pojistka = TÁŽ kontrola jako noční ověření nálezů
+    (`hans_findings._verify_one`: znovu týž článek, podobnost názvu, úsudek
+    modelu). Typ se určí z úvodu PŘED zápisem → pojem/událost se neuloží."""
+    try:
+        from scripts.web_reader import WebReader
+        from scripts.hans_findings import _verify_one
+        from scripts.hans_entities import _classify
+        from scripts.hans_entity_images import ETYPES
+        lang = (config.get("curiosity", {}) or {}).get("wiki_lang", "cs")
+        art = WebReader(config).wikipedia_article(predmet, lang=lang, max_chars=1500)
+        if not art or not (art.get("text") or "").strip():
+            return None
+        ok, duvod = _verify_one(config, {"topic": predmet,
+                                         "resolved_title": art.get("title") or "",
+                                         "raw_text": art.get("text") or ""})
+        if not ok:
+            _log.info("bridge: vzhled %r — heslo %r neprošlo (%s)",
+                      predmet, art.get("title"), duvod)
+            return None
+        # typ z úvodu (stejně jako capture_from_reading) ještě PŘED zápisem
+        _uvod = re.split(r"\n\s*==", art["text"], maxsplit=1)[0]
+        from scripts.hans_entities import _first_sentence
+        _gl = ""
+        for _odst in [x for x in _uvod.split("\n\n") if x.strip()][:3]:
+            _g = _first_sentence(_odst)
+            if _g and re.search(r"\b(je|byl|byla|bylo|jsou|patří|označuje)\b", _g, re.I):
+                _gl = _g
+                break
+        if _classify(_gl) not in ETYPES:
+            return None
+        st.capture_from_reading(art["title"], art["text"], url=art.get("url", ""),
+                                lang=art.get("lang", lang))
+        for et in ETYPES:
+            ent = st.resolve(art["title"], etype=et)
+            if ent:
+                _log.info("bridge: vzhled %r → dohledáno a uloženo %r (%s)",
+                          predmet, ent.get("name"), et)
+                return ent
+    except Exception as e:
+        _log.warning("bridge vzhled dohledání: %s", e)
+    return None
+
+
+def _appearance(text: str, ctx: BridgeCtx) -> bool:
+    m = _VZHLED_RE.search(text or "")
+    if not m:
+        return False
+    predmet = (m.group("a") or m.group("b") or "").strip(" ?!.,")
+    try:
+        from scripts.hans_entities import EntityStore
+        from scripts.hans_entity_images import ETYPES, ensure_image
+        db = _diary_path(ctx.config)
+        st = EntityStore(ctx.config, db)
+        ent = None
+        for et in ETYPES:
+            ent = st.resolve(predmet, etype=et)
+            if ent:
+                break
+        if not ent:
+            ent = _vzhled_dohledej(ctx.config, db, st, predmet)
+        if not ent:
+            return False                        # neznámá věc → běžný hovor
+        path = ensure_image(ctx.config, db, ent)
+    except Exception as e:
+        _log.warning("bridge vzhled: %s", e)
+        return False
+    jmeno = ent.get("name") or predmet
+    if not path:
+        ctx.send("K %s nemám obrázek — článek na Wikipedii žádný nemá." % jmeno)
+        return True
+    popis = (ent.get("gloss") or "").strip()
+    ctx.send_photo(path, ("%s\n(obrázek: Wikipedie)" % popis) if popis
+                   else "%s (obrázek: Wikipedie)" % jmeno)
+    _log.info("bridge: vzhled %r → obrázek entity %s", predmet, jmeno)
+    return True
 
 
 # ── obsah ────────────────────────────────────────────────────────────────────

@@ -2062,9 +2062,19 @@ def _resolve_entity(config: dict, db_path: str, subject: str):
     return None
 
 
-def _fetch_person_ref(config: dict, ent: dict) -> Optional[str]:
+def _fetch_person_ref(config: dict, ent: dict, db: str = "") -> Optional[str]:
     """Stáhni portrét osoby z Wikipedie (dle source URL entity), zmenši pro SDXL.
     Vrací lokální cestu nebo None (osoba bez obrázku → fallback na text)."""
+    # HANS_ENTITY_IMAGE_V1 (29. 9.) — obrázek se k entitě UKLÁDÁ (data/
+    # entity_images/) a příště se nestahuje; dřív šel do /tmp a byl smazán.
+    if db:
+        try:
+            from scripts.hans_entity_images import ensure_image
+            _ulozeny = ensure_image(config, db, ent)
+            if _ulozeny:
+                return _resize_to_temp(_ulozeny)
+        except Exception as _eie:
+            _log.debug("art: uložený obrázek entity: %s", _eie)
     title = ent.get("source_title") or ent.get("name") or ""
     if not title:
         return None
@@ -2684,7 +2694,7 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             # Wiki obrázek = ta osoba). etype='postava' klasifikace zůstává
             # (neškodná metadata), jen NEROUTUJE na img2img.
             if _ent and _ent.get("etype") == "osoba":
-                _ref = _fetch_person_ref(config, _ent)
+                _ref = _fetch_person_ref(config, _ent, diary_db_path)
                 if _ref:
                     _r = paint_person_from_photo(
                         config, diary_db_path, subject, _ref, style,
@@ -2716,7 +2726,7 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
                     _log.info("art: místo '%s' nese scénu → text-grounded malba",
                               _pnm)
                 else:
-                    _pref = _fetch_person_ref(config, _pent)   # funkce je generická
+                    _pref = _fetch_person_ref(config, _pent, diary_db_path)   # funkce je generická
                     if _pref:
                         _r = paint_place_from_photo(
                             config, diary_db_path, subject, _pref, style,

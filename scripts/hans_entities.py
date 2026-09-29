@@ -268,13 +268,30 @@ _PERSON = re.compile(
     r"redaktor|redaktorka|scenárista|scenáristka|dramaturg|dramaturgyně|"
     r"moderátor|moderátorka|producent|producentka|překladatel|překladatelka|"
     r"kreslíř|kreslířka|ilustrátor|ilustrátorka|rozvědčík|špion|konstruktér|"
-    r"dabér|dabérka|kameraman|zpravodaj|reportér|učitel|učitelka|profesor"
+    r"dabér|dabérka|kameraman|zpravodaj|reportér|učitel|učitelka|profesor|"
+    # HANS_ENTITY_PERSON_WORDS_V1 (29. 9.) — chyběly sporty a další povolání:
+    # tenista Becker/Lendl skončili jako `pojem` → malování nehledalo portrét.
+    # Změřeno na 543 entitách s glosou: +4 osoby (tenistka, volejbalistka,
+    # motocyklový závodník, tenista), 0 omylů. Obecné „-ista“ zkoušeno: méně (3).
+    r"tenista|tenistka|hokejistka|cyklista|cyklistka|šachista|šachistka|"
+    r"volejbalista|volejbalistka|basketbalista|basketbalistka|házenkář|"
+    r"házenkářka|plavec|plavkyně|boxer|boxerka|zápasník|zápasnice|golfista|"
+    r"golfistka|veslař|veslařka|závodník|závodnice|pilot|pilotka|kosmonaut|"
+    r"kosmonautka|astronaut|astronautka|biatlonista|biatlonistka|skokan|"
+    r"skokanka|běžec|běžkyně|trenér|trenérka|krasobruslař|krasobruslařka|"
+    r"gymnasta|gymnastka|tanečník|tanečnice|houslista|houslistka|klavírista|"
+    r"klavíristka|dirigent|dirigentka|kytarista|kytaristka|bubeník|komik|"
+    r"komička|youtuber|youtuberka|model|modelka"
     r")\b", re.IGNORECASE)
 _PLACE = _n(r"měst|hrad|zámek|hora|řek|jezer|stát|obec|vesnic|ostrov|pohoří|"
             r"kraj|region|čtvrť|náměstí|budov|katedrál|stavb|pyramid|pevnost|"
             r"tvrz|klášter|chrám|most|amfiteátr|ulic|přítok|park|"
             # HANS_ENTITY_CLASSIFY_V4 (26.8.) — doloženo backfillem faktů:
-            r"osad|samot|lokalit|nalezišt")
+            r"osad|samot|lokalit|nalezišt|"
+            # HANS_ENTITY_PLACE_WORDS_V1 (29. 9.) — „Eiffelova věž je … věž“ byla
+            # `pojem` → bez obrázku. Změřeno na 543 entitách: 0 změn. „kostel/
+            # kaple“ ZÁMĚRNĚ ne: obecný článek „Katedrála“ by se stal místem.
+            r"věž|rozhledn|palác|stadion|letišt|nádraž|muze")
 _WORK = _n(r"film|kniha|knih|román|romanet|oper|skladb|album|píseň|písn|obraz|"
            r"báseň|básn|hra|seriál|dílo|díl|hymn|časopis|komedie|komiks|"
            r"muzikál|symfoni|povídk|sbírk|pohádk|epos|dobrodružství|pořad|"
@@ -410,6 +427,13 @@ class EntityStore:
                     # doplň glos jen když chybí (neplýtvej, neměň definici)
                     if (not (_gloss or "").strip()) and gloss:
                         new_gloss = gloss
+                        # HANS_ENTITY_ETYPE_ON_GLOSS_V1 (29. 9.) — typ se dřív
+                        # určil jen při PRVNÍM zápisu; entita bez glosy zůstala
+                        # `pojem` navždy, i když se glosa doplnila později.
+                        # Výslovně zadaný typ (etype=…) ani jiný než výchozí se nemění.
+                        if etype is None:
+                            c.execute("UPDATE entities SET etype=? WHERE id=? "
+                                      "AND etype='pojem'", (_classify(gloss), _id))
                     c.execute(
                         "UPDATE entities SET last_ts=?, evidence_count=?, "
                         "gloss=?, aliases=?, source=COALESCE(NULLIF(source,''),?),"
@@ -447,12 +471,20 @@ class EntityStore:
         if _INDEX_PAGE.search(title or ""):
             _log.debug("entity: %r je index/rozcestník → nezachytávám", title)
             return False
-        gloss = _first_sentence(raw_text or "")
         # glos musí opravdu vypadat definičně (obsahuje „je/byl" apod.),
         # jinak je to náhodná první věta → radši bez glosu (jen jméno+zdroj).
-        if gloss and not re.search(r"\b(je|byl|byla|bylo|jsou|patří|označuje)\b",
-                                   gloss, re.IGNORECASE):
-            gloss = ""
+        # HANS_ENTITY_GLOSS_HATNOTE_V1 (29. 9.) — článek může začínat
+        # poznámkou („Statistiky … obsahuje článek …“, Ivan Lendl) → definice
+        # je až v dalším odstavci. Hledá se jen v ÚVODU (před prvním „==“):
+        # věta ze sekce „Zajímavosti“ by udělala z filmu postavu (změřeno).
+        gloss = ""
+        _uvod = re.split(r"\n\s*==", raw_text or "", maxsplit=1)[0]
+        for _odst in [x for x in _uvod.split("\n\n") if x.strip()][:3]:
+            _g = _first_sentence(_odst)
+            if _g and re.search(r"\b(je|byl|byla|bylo|jsou|patří|označuje)\b",
+                                _g, re.IGNORECASE):
+                gloss = _g
+                break
         return self.upsert(title, gloss, source=url,
                            source_title=title, lang=lang)
 
