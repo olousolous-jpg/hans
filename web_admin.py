@@ -532,7 +532,11 @@ async def get_config():
     c = load_config()
     if isinstance(c, dict) and "_error" not in c:
         c["zalohy_env"] = _zalohy_env_cti()
-    return c
+    # WEB_CONFIG_NO_SA_DROP_V1 (29. 9.) — přímo JSONResponse, ne přes
+    # jsonable_encoder: ten má sqlalchemy_safe a MLČKY zahodí každý klíč
+    # začínající „_sa“ (doloženo: `_save_note` v configu web nikdy neviděl,
+    # a původní uložení celého objektu ho pak ze souboru smazalo).
+    return JSONResponse(content=c)
 
 
 # SCHEMA_DRIVEN_TABS_V1 — sdílené schéma polí (stejné jako Tkinter ConfigGUI)
