@@ -498,12 +498,8 @@ button.btn:hover { opacity: 0.85; }
 <!-- ── NASTAVENÍ (schema-driven, sidebar — SCHEMA_CATEGORIES_V1) ───────────────── -->
 <div id="tab-cfg-identity" class="tab-content">
   <div class="schema-shell">
-    <aside class="schema-side">
-      <input id="schema-search" type="text" placeholder="🔍 Hledat v nastavení..."
-             oninput="schemaSearch(this.value)" autocomplete="off">
-      <div class="schema-side-title">Kategorie</div>
-      <nav id="schema-cats" class="schema-cats"></nav>
-    </aside>
+    <!-- WEB_SETTINGS_ESSENTIAL_V1 (29. 9.) — jedna stránka s důležitými volbami, bez kategorií -->
+    <nav id="schema-cats" class="schema-cats" style="display:none"></nav>
     <div class="schema-main">
       <div class="schema-toolbar">
         <h2 id="schema-cat-title">Nastavení</h2>
@@ -672,6 +668,7 @@ function renderSchema(groups, cats) {
   });
   schemaSections = [...secs];
   if (cats.length) showSchemaCategory(cats[0].name);
+  if (typeof populateAll === 'function' && cfg && Object.keys(cfg).length) populateAll();
 }
 
 function showSchemaCategory(cat) {
@@ -2175,6 +2172,7 @@ async function savePristup() {
     clearInterval(TIMER); TIMER = setInterval(zive, 300);
   };
   if (location.hash === "#mysleni") setTimeout(() => showTab("mysleni"), 0);
+  if (location.hash === "#nastaveni") setTimeout(() => showTab("cfg-identity"), 0);   // WEB_SETTINGS_ESSENTIAL_V1
 })();
 </script>
 </body>

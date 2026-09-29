@@ -479,9 +479,60 @@ async def index(request: Request):
     return HTMLResponse(html)
 
 
+# WEB_SETTINGS_ESSENTIAL_V1 — cíl zálohy žije v env souboru služby, ne v configu
+_ZALOHY_ENV = Path.home() / ".config" / "hans-backup.env"
+_ZALOHY_KLICE = ("NAS_DEST", "KEEP", "NAS_WOL_MAC")
+
+
+def _zalohy_env_cti() -> dict:
+    out = {k: "" for k in _ZALOHY_KLICE}
+    try:
+        for r in _ZALOHY_ENV.read_text(encoding="utf-8").splitlines():
+            r = r.strip()
+            if r and not r.startswith("#") and "=" in r:
+                k, v = r.split("=", 1)
+                if k.strip() in out:
+                    out[k.strip()] = v.strip().strip('"')
+    except Exception:
+        pass
+    return out
+
+
+def _zalohy_env_zapis(nove: dict) -> None:
+    """Přepíše jen dané řádky KLÍČ=hodnota; komentáře a ostatní klíče nechá být."""
+    stare = _zalohy_env_cti()
+    zmeny = {k: str(v).strip() for k, v in (nove or {}).items()
+             if k in _ZALOHY_KLICE and str(v).strip() != stare.get(k, "")}
+    if not zmeny:
+        return
+    for v in zmeny.values():
+        if any(c in v for c in "\n\r'\"`$;"):
+            raise ValueError("nepovolený znak v nastavení zálohy")
+    try:
+        radky = _ZALOHY_ENV.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        radky = []
+    hotovo = set()
+    for i, r in enumerate(radky):
+        s = r.strip()
+        if s and not s.startswith("#") and "=" in s:
+            k = s.split("=", 1)[0].strip()
+            if k in zmeny:
+                radky[i] = "%s=%s" % (k, zmeny[k])
+                hotovo.add(k)
+    radky += ["%s=%s" % (k, v) for k, v in zmeny.items() if k not in hotovo]
+    import shutil as _sh, time as _t
+    if _ZALOHY_ENV.exists():
+        _sh.copy(_ZALOHY_ENV, str(_ZALOHY_ENV) + ".pred_webem_%d" % int(_t.time()))
+    _ZALOHY_ENV.write_text("\n".join(radky) + "\n", encoding="utf-8")
+
+
 @app.get("/api/config")
 async def get_config():
-    return load_config()
+    c = load_config()
+    if isinstance(c, dict) and "_error" not in c:
+        c["zalohy_env"] = _zalohy_env_cti()
+    return c
 
 
 # SCHEMA_DRIVEN_TABS_V1 — sdílené schéma polí (stejné jako Tkinter ConfigGUI)
@@ -489,7 +540,7 @@ async def get_config():
 def get_config_schema():
     from scripts import config_schema
     return {"groups": config_schema.web_groups(),
-            "categories": config_schema.categories()}
+            "categories": []}   # WEB_SETTINGS_ESSENTIAL_V1 — bez vnořených kategorií
 
 
 @app.post("/api/config")
@@ -498,7 +549,33 @@ async def post_config(request: Request):
         body = await request.json()
         # Validace JSON
         json.dumps(body)
-        ok = save_config(body)
+        _env = body.pop("zalohy_env", None) if isinstance(body, dict) else None
+        if _env is not None:
+            _zalohy_env_zapis(_env)      # WEB_SETTINGS_ESSENTIAL_V1
+        # WEB_SETTINGS_ESSENTIAL_V1 — neukládat celý objekt z prohlížeče: vezmi
+        # čerstvý config ze souboru a přepiš jen pole, která stránka ukazuje.
+        # (Celý objekt z prohlížeče 29. 9. ztratil klíč, který stránka neznala.)
+        from scripts import config_schema as _cs
+        cerstvy = load_config()
+        if not isinstance(cerstvy, dict) or "_error" in cerstvy:
+            raise ValueError("config nejde načíst — neukládám")
+        for g in _cs.web_groups():
+            for f in g["fields"]:
+                cesta = f["path"].split(".")
+                if cesta[0] == "zalohy_env":
+                    continue
+                src = body
+                for c in cesta:
+                    src = src.get(c) if isinstance(src, dict) else None
+                    if src is None:
+                        break
+                if src is None:
+                    continue
+                dst = cerstvy
+                for c in cesta[:-1]:
+                    dst = dst.setdefault(c, {})
+                dst[cesta[-1]] = src
+        ok = save_config(cerstvy)
         return {"ok": ok}
     except Exception as e:
         raise HTTPException(400, str(e))

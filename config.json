@@ -1684,5 +1684,13 @@
             "paint": 8
         },
         "_note": "HANS_HEAVY_QUEUE_V1 (28. 9.): fronta náročných úloh (úprava fotky, malba na požádání) — jedna naráz, spouští se jen při volném PC (ComfyUI, ne hra, ne ~/.hans_nevypinat, volná RAM min_free_gb podle druhu). Dlužné obrazy HANS_ART_RETRY_V1 sdílí zámek i kontrolu."
+    },
+    "zalohy_hlidac": {
+        "enabled": true,
+        "pi_nas_dir": "/mnt/nas-hans/Hans_backups",
+        "pi_max_dni": 3,
+        "pc_ok_file": "/mnt/nas-hans/hans_pc_restic/POSLEDNI_OK",
+        "pc_max_dni": 10,
+        "_note": "HANS_BACKUP_WATCH_V1: hlídač stáří záloh (hans_zalohy.py), hlásí na Matrix jednou denně po 22:30."
     }
 }

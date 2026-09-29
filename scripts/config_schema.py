@@ -880,6 +880,97 @@ def sections():
     return sorted(secs)
 
 
+# ── WEB_SETTINGS_ESSENTIAL_V1 (29. 9.) — web ukazuje jen to, co má cenu měnit ──
+# Pokyn uživatele: nechat adresy, zálohy, Koláče, Severku a pár přepínačů,
+# zrušit vnořené kategorie. Plné GROUPS výše zůstávají pro ostatní spotřebitele
+# (Tkinter ConfigGUI, sections()); cokoli dalšího jde upravit v config.json.
+# `zalohy_env.*` není v configu — web_admin je čte/píše do ~/.config/hans-backup.env.
+ESSENTIAL_GROUPS = [
+    {"id": "sit", "title": "Síť a adresy", "icon": "🌐",
+     "intro": "Adresy strojů v domácí síti. Po změně restartuj Hanse.",
+     "fields": [
+        {"path": "pc_remote.host", "label": "PC — IP adresa (SSH)", "type": "text", "restart": True},
+        {"path": "wol_pc_ip", "label": "PC — IP pro probuzení (WOL)", "type": "text", "restart": True},
+        {"path": "wol_pc_mac", "label": "PC — MAC adresa (WOL)", "type": "text", "restart": True},
+        {"path": "openwebui_direct.base_url", "label": "Ollama / chat — URL", "type": "text", "restart": True},
+        {"path": "knowledge.base_url", "label": "Znalosti (RAG) — URL", "type": "text", "restart": True},
+        {"path": "intent.base_url", "label": "Rozpoznání záměru — URL", "type": "text", "restart": True},
+        {"path": "self_insight.reasoning_url", "label": "Úvahový model — URL", "type": "text", "restart": True},
+        {"path": "hans_avatar.comfyui_url", "label": "ComfyUI (malování) — URL", "type": "text", "restart": True},
+        {"path": "voice.stt_url", "label": "Přepis řeči (STT) — URL", "type": "text", "restart": True},
+        {"path": "translate.pc_host", "label": "Překlad — PC", "type": "text", "restart": True},
+        {"path": "kodi.host", "label": "Kodi — IP adresa", "type": "text", "restart": True},
+        {"path": "kodi.port", "label": "Kodi — port", "type": "number", "restart": True},
+        {"path": "router.host", "label": "Router — IP adresa", "type": "text", "restart": True},
+        {"path": "matrix.homeserver", "label": "Matrix server", "type": "text", "restart": True},
+     ]},
+    {"id": "zalohy", "title": "Zálohy", "icon": "💾",
+     "intro": ("Noční záloha Pi (03:33) a hlídač stáří záloh (hlásí na Matrix, když záloha zestárne). "
+               "Záloha PC běží na PC (restic, neděle)."),
+     "fields": [
+        {"path": "zalohy_env.NAS_DEST", "label": "Cíl zálohy Pi na NASu", "type": "text",
+         "tip": "Adresář (připojený NAS) nebo uživatel@stroj:cesta pro rsync."},
+        {"path": "zalohy_env.KEEP", "label": "Kolik lokálních záloh držet", "type": "text"},
+        {"path": "zalohy_env.NAS_WOL_MAC", "label": "MAC NASu (probuzení před zálohou)", "type": "text"},
+        {"path": "zalohy_hlidac.enabled", "label": "Hlídač záloh zapnutý", "type": "bool"},
+        {"path": "zalohy_hlidac.pi_nas_dir", "label": "Kde hlídač hledá zálohy Pi", "type": "text"},
+        {"path": "zalohy_hlidac.pi_max_dni", "label": "Záloha Pi smí být stará (dní)", "type": "number"},
+        {"path": "zalohy_hlidac.pc_ok_file", "label": "Značka poslední zálohy PC", "type": "text"},
+        {"path": "zalohy_hlidac.pc_max_dni", "label": "Záloha PC smí být stará (dní)", "type": "number"},
+     ]},
+    {"id": "kolac", "title": "Koláč", "icon": "🧸",
+     "fields": [
+        {"path": "hans_idle.quantum_kolac", "label": "Kvantový Koláč", "type": "bool",
+         "tip": "Koláč je přítomen i nepřítomen zároveň — Hans to komentuje."},
+        {"path": "hans_dialog.toaster_mode", "label": "Švitorka mód", "type": "bool",
+         "tip": "Rozhovory s Koláčem se točí kolem pečiva."},
+        {"path": "hans_dialog.two_minds", "label": "Koláč má vlastní mysl", "type": "bool"},
+        {"path": "hans_dialog.cti_nahlas", "label": "Číst rozhovory s Koláčem nahlas", "type": "bool",
+         "tip": "Během předčítání Hans neslyší „hej Hanzi“."},
+        {"path": "hans_idle.force_teddy_visible", "label": "Koláč vždy „viditelný“", "type": "bool"},
+        {"path": "hans_idle.dialog_interval_min", "label": "Rozhovor s Koláčem každých (min)", "type": "number"},
+        {"path": "hans_dialog.kolac_name", "label": "Jméno společníka", "type": "text"},
+     ]},
+    {"id": "severka", "title": "Severka a identita", "icon": "🧭",
+     "intro": "Severka navrhuje změny Hansovy identity; nic se nepoužije bez schválení (/severka).",
+     "fields": [
+        {"path": "severka.cadence_days", "label": "Jak často Severka posuzuje (dní)", "type": "number"},
+        {"path": "severka.min_days_since_change", "label": "Brzda po změně identity (dní)", "type": "number"},
+        {"path": "persona.name", "label": "Jméno", "type": "text", "restart": True},
+        {"path": "persona.core", "label": "Identita (CORE)", "type": "textarea", "rows": 4,
+         "managed_by": "severka", "tip": "Mění ji Severka; ruční úprava přepíše i její návrh."},
+     ]},
+    {"id": "hlas", "title": "Hlas", "icon": "🔊",
+     "fields": [
+        {"path": "tts.enabled", "label": "Hans mluví nahlas", "type": "bool"},
+        {"path": "tts.volume", "label": "Hlasitost", "type": "number"},
+        {"path": "voice.enabled", "label": "Poslech zapnutý", "type": "bool", "restart": True},
+        {"path": "voice.wake_enabled", "label": "Probouzecí slovo „hej Hanzi“", "type": "bool", "restart": True},
+        {"path": "voice.wake_threshold", "label": "Práh probouzecího slova (0–1)", "type": "number", "float": True, "step": 0.05,
+         "tip": "Nižší = citlivější, ale víc falešných probuzení."},
+        {"path": "voice.default_speaker", "label": "Výchozí mluvčí", "type": "text"},
+     ]},
+    {"id": "provoz", "title": "Provoz", "icon": "🛠",
+     "fields": [
+        {"path": "matrix.enabled", "label": "Zprávy na Matrix", "type": "bool", "restart": True},
+        {"path": "matrix.quiet_start_hour", "label": "Klid od (hodina)", "type": "number"},
+        {"path": "matrix.quiet_end_hour", "label": "Klid do (hodina)", "type": "number"},
+        {"path": "pc_night_shutdown.enabled", "label": "Vypínat PC v noci", "type": "bool"},
+        {"path": "wol_pc_enabled", "label": "Budit PC (WOL)", "type": "bool"},
+        {"path": "foto.edit_enabled", "label": "Úpravy fotek z Matrixu", "type": "bool"},
+        {"path": "maker.enabled", "label": "Noční tvorba děl", "type": "bool"},
+        {"path": "kodi.enabled", "label": "Napojení na Kodi", "type": "bool", "restart": True},
+        {"path": "router.auto_switch", "label": "Router: automatické přepnutí VPN", "type": "bool"},
+     ]},
+]
+
+
 def web_groups():
-    """JSON-serializovatelná podoba pro webadmin frontend."""
-    return groups()
+    """JSON-serializovatelná podoba pro webadmin frontend (WEB_SETTINGS_ESSENTIAL_V1)."""
+    out = []
+    for g in ESSENTIAL_GROUPS:
+        gg = dict(g)
+        gg["fields"] = [_normalize(f) for f in g["fields"]]
+        gg["category"] = ""
+        out.append(gg)
+    return out
