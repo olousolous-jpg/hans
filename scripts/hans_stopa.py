@@ -150,6 +150,62 @@ def _mapa(func, model=("self._stream_message(",)):
     return m
 
 
+# HANS_STOPA_PODMETODY_V1 (29. 9.) — rozdělení `send_chat_message` do podmetod
+# (`_sc_*`, HANS_HANDLER_SPLIT_V1) by stopu slepilo: settrace sledoval jen její
+# rámec a kroky četl z jejího zdrojáku. Teď se značky podmetody VLOŽÍ na místo
+# volání (virtuální pořadí = n-tice: řádek hlavní funkce `(ř,)`, řádek podmetody
+# `(ř_volání, posun)`, rekurzivně) a její rámce se sledují taky. Navenek
+# (`od`, `do`, `navrat_radek`, log) zůstávají SKUTEČNÁ čísla řádků souboru.
+# Bez podmetod se použije původní `_mapa` → chování beze změny.
+PODMETODY = ("_sc_",)
+_VOLANI_POD = re.compile(r"self\.((?:%s)\w+)\(" % "|".join(re.escape(p) for p in PODMETODY))
+
+
+def _mapa_pod(func, model, owner):
+    """None, když funkce podmetody nevolá; jinak dict s virtuálními kroky."""
+    klic = ("pod", func.__code__)
+    if klic in _mapy:
+        return _mapy[klic]
+    lines, start = inspect.getsourcelines(func)
+    if not any(_VOLANI_POD.search(l) for l in lines):
+        _mapy[klic] = None
+        return None
+    kroky, realne, sub, ret_r = [], {}, {}, set()
+
+    def projdi(f, zaklad, hloubka):
+        ln_list, st = inspect.getsourcelines(f)
+        sub[f.__code__] = (zaklad, st)
+        for i, l in enumerate(ln_list):
+            ln = st + i
+            v = (ln,) if zaklad is None else zaklad + (ln - st + 1,)
+            realne[v] = ln                     # každý řádek (i návrat v podmetodě)
+            if l.strip() == "return _r":
+                ret_r.add((f.__code__, ln))
+            mm = _ZNACKA.match(l)
+            if mm:
+                z = mm.group(1)
+                if not (kroky and kroky[-1][1] == z):
+                    kroky.append((v, z))
+                    realne[v] = ln
+            elif any(p in l for p in model):
+                kroky.append((v, "__MODEL__"))
+                realne[v] = ln
+            if hloubka < 6:
+                for jm in _VOLANI_POD.findall(l):
+                    g = getattr(owner, jm, None)
+                    g = getattr(g, "__func__", g)
+                    if g is not None and hasattr(g, "__code__") and g.__code__ not in sub:
+                        projdi(g, v, hloubka + 1)
+
+    projdi(func, None, 0)
+    del sub[func.__code__]
+    konec = (start + len(lines),)
+    realne[konec] = start + len(lines)
+    m = {"kroky": kroky, "konec": konec, "realne": realne, "sub": sub, "ret_r": ret_r}
+    _mapy[klic] = m
+    return m
+
+
 class _Sber(logging.Handler):
     def __init__(self, tid, stav):
         super().__init__(level=logging.INFO)
@@ -175,6 +231,13 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
         kroky, konec_fn = _mapa(func, DRUHY[druh]["model"])
     except Exception:
         return bound_method(*args, **kwargs)
+    pod = None                                   # HANS_STOPA_PODMETODY_V1
+    try:
+        pod = _mapa_pod(func, DRUHY[druh]["model"], type(bound_method.__self__))
+    except Exception:
+        pod = None
+    if pod:
+        kroky, konec_fn = pod["kroky"], pod["konec"]
     code = func.__code__
     stav = {"t0": time.time(), "radek": 0, "navrat": None, "prikaz": None,
             "agent": None, "druh": druh}
@@ -185,10 +248,23 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
     except Exception:
         agent_code = None
 
+    def _v(ln):
+        return (ln,) if pod else ln
+
+    def _cmd_z(frame):
+        try:
+            c = frame.f_locals.get("_cmd")
+            if not c and pod:
+                c = getattr(frame.f_locals.get("ctx"), "_cmd", None)
+            if c:
+                stav["prikaz"] = str(c[0] if isinstance(c, (tuple, list)) else c)
+        except Exception:
+            pass
+
     def _lokal(frame, event, arg):
         if event == "line":
-            stav["radek"] = frame.f_lineno
-            provedeno.setdefault(frame.f_lineno, round(time.time() - stav["t0"], 3))
+            stav["radek"] = _v(frame.f_lineno)
+            provedeno.setdefault(_v(frame.f_lineno), round(time.time() - stav["t0"], 3))
             if druh == "kolac" and "tema" not in stav:   # téma hned (živý strom)
                 try:
                     t = frame.f_locals.get("topic")
@@ -197,11 +273,12 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
                 except Exception:
                     pass
         elif event == "return":
-            stav["navrat"] = frame.f_lineno
+            stav["navrat"] = _v(frame.f_lineno)
+            if pod and (code, frame.f_lineno) in pod["ret_r"] and stav.get("_pod_navrat"):
+                stav["navrat"] = stav["_pod_navrat"]      # odpověď vznikla v podmetodě
+            _cmd_z(frame)
             try:
-                c = frame.f_locals.get("_cmd")
-                if c:
-                    stav["prikaz"] = str(c[0] if isinstance(c, (tuple, list)) else c)
+                pass
                 if druh == "kolac":             # HANS_STOPA_KOLAC_V1
                     t = frame.f_locals.get("topic")
                     if t is not None:
@@ -227,9 +304,23 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
                 pass
         return _agent
 
+    def _podlokal(frame, event, arg):             # HANS_STOPA_PODMETODY_V1
+        zaklad, st = pod["sub"][frame.f_code]
+        v = zaklad + (frame.f_lineno - st + 1,)
+        if event == "line":
+            stav["radek"] = v
+            provedeno.setdefault(v, round(time.time() - stav["t0"], 3))
+        elif event == "return":
+            _cmd_z(frame)
+            if (frame.f_code, frame.f_lineno) not in pod["ret_r"]:
+                stav["_pod_navrat"] = v
+        return _podlokal
+
     def _globalni(frame, event, arg):
         if frame.f_code is code:
             return _lokal
+        if pod and frame.f_code in pod["sub"]:
+            return _podlokal
         if agent_code is not None and frame.f_code is agent_code:
             return _agent
         return None
@@ -249,7 +340,7 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
             try:
                 d = _sestav(rid_z, kanal, osoba, zprava, None, None, stav,
                             dict(provedeno), kroky, konec_fn, list(sber.zaznamy),
-                            bezi=True)
+                            bezi=True, realne=pod["realne"] if pod else None)
                 _zapis_atomicky(DIR / "zive.json", d)
             except Exception:
                 pass
@@ -272,8 +363,9 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
         stav["podklad"] = None
     try:
         _uloz(rid_z, kanal, osoba, zprava, vysledek, chyba, stav, provedeno,
-              kroky, konec_fn, sber.zaznamy)
-        _uloz_strom(func, kroky, druh)
+              kroky, konec_fn, sber.zaznamy, realne=pod["realne"] if pod else None)
+        _uloz_strom(func, [(_realny(v, pod["realne"]), z) for v, z in kroky]
+                    if pod else kroky, druh)
     except Exception as e:
         logging.getLogger("hans_stopa").debug("stopa neuložena: %s", e)
     if chyba is not None:
@@ -288,8 +380,17 @@ def _zapis_atomicky(p: Path, data: dict):
     tmp.replace(p)
 
 
+def _realny(x, realne):
+    """HANS_STOPA_PODMETODY_V1 — virtuální pozice → skutečný řádek souboru."""
+    if not isinstance(x, tuple):
+        return x
+    if x in realne:
+        return realne[x]
+    return x[-1] if len(x) == 1 else None
+
+
 def _sestav(rid, kanal, osoba, zprava, vysledek, chyba, stav, provedeno, kroky,
-            konec_fn, zaznamy, bezi=False):
+            konec_fn, zaznamy, bezi=False, realne=None):
     """Data stopy. `bezi` = průběžný stav: bez „zachytil“, s krokem `ted`."""
     V = DRUHY[stav.get("druh", "chat")]["vrstvy"]
     hranice = [(z, v) for v, z in V if z]
@@ -308,16 +409,24 @@ def _sestav(rid, kanal, osoba, zprava, vysledek, chyba, stav, provedeno, kroky,
             s = "zkousen"
         else:
             s = "nedosel"
+        _nula = (0,) if realne is not None else 0
         out.append({"znacka": z, "popisek": POPISKY.get(z, ""), "vrstva": vrstva,
                     "od": od, "do": do, "stav": s,
                     "t": min((provedeno[r] for r in radky), default=None),
-                    "log": [x for x in zaznamy if od <= (x["radek"] or 0) < do]})
-    pred = [x for x in zaznamy if not any(k["od"] <= (x["radek"] or 0) < k["do"] for k in out)]
+                    "log": [x for x in zaznamy if od <= (x["radek"] or _nula) < do]})
+    _nula = (0,) if realne is not None else 0
+    pred = [x for x in zaznamy if not any(k["od"] <= (x["radek"] or _nula) < k["do"] for k in out)]
     ted = None
     if bezi:
-        r = stav.get("radek") or 0
-        ted = next((k["znacka"] + "@" + str(k["od"]) for k in out
+        r = stav.get("radek") or _nula
+        ted = next((k["znacka"] + "@" + str(_realny(k["od"], realne or {})) for k in out
                     if k["od"] <= r < k["do"]), None)
+    if realne is not None:                       # HANS_STOPA_PODMETODY_V1
+        for k in out:
+            k["od"], k["do"] = _realny(k["od"], realne), _realny(k["do"], realne)
+            k["log"] = [dict(x, radek=_realny(x["radek"], realne)) for x in k["log"]]
+        pred = [dict(x, radek=_realny(x["radek"], realne)) for x in pred]
+        navrat = _realny(navrat, realne) if navrat is not None else None
     if stav.get("druh") == "kolac" and stav.get("tema"):   # HANS_STOPA_KOLAC_V1
         zprava = stav["tema"]
     data = {"bezi": bezi, "ted": ted, "id": rid or time.strftime("%Y%m%d_%H%M%S"), "ts": stav["t0"],
@@ -334,9 +443,9 @@ def _sestav(rid, kanal, osoba, zprava, vysledek, chyba, stav, provedeno, kroky,
 
 
 def _uloz(rid, kanal, osoba, zprava, vysledek, chyba, stav, provedeno, kroky,
-          konec_fn, zaznamy):
+          konec_fn, zaznamy, realne=None):
     data = _sestav(rid, kanal, osoba, zprava, vysledek, chyba, stav, provedeno,
-                   kroky, konec_fn, zaznamy)
+                   kroky, konec_fn, zaznamy, realne=realne)
     DIR.mkdir(parents=True, exist_ok=True)
     p = DIR / (re.sub(r"[^A-Za-z0-9_-]", "", str(data["id"])) + ".json")
     p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
