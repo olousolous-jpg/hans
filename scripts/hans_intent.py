@@ -107,6 +107,26 @@ _REFLECTIVE_PAT = re.compile(
     re.I)
 
 
+# HANS_REFLECTIVE_CHOICE_V1 (28. 9.) — otázka na Hansovu VOLBU, PREFERENCI nebo
+# ARGUMENT je úvahová. Doloženo testem 28. 9.: „nepřipadá vám, že kdyby to bylo
+# vrozené, měli bychom všichni stejný vkus?“ → A1 → „K tomuhle nemám spolehlivý
+# záznam“. Z 9 abstinencí A1 v logu (~50 dní) 4 takové („jakou skladbu bys dal
+# k dílu o hradech?“, „který historický čas tě láká?“, „který stadion je
+# nejzajímavější?“); ostatní („proč sis vybral zrovna…?“) jsou poctivé — důvod
+# není zapsaný — a NEsedají. Kondicionál jen s TÁZACÍM slovem volby, jinak by
+# vzal zdvořilé žádosti („dal bys mi seznam?“). Doporučení filmu/knihy VYŇATO —
+# tam je opora v knihovně potřeba. 📏 1 278 reálných vět: nově 1 („co bys vybral ty?“).
+_REFLECTIVE_CHOICE_PAT = re.compile(
+    r"\b(?:jak[ýyáaéeouo]\w*|kter[ýyáaéeouo]\w*|co)\b[^?]{0,40}?\b(?:bys|byste)\s+"
+    r"(?:(?:si|mi|n[áa]m|k\s+\w+)\s+)?(?:dal[a]?|vybral[a]?|zvolil[a]?|p[řr]idal[a]?|"
+    r"zahr[áa]l[a]?|p[řr]e[čc]etl[a]?|namaloval[a]?|slo[žz]il[a]?)\b"
+    r"|\bnep[řr][íi]pad[áa]\s+(?:ti|v[áa]m)\b|\bp[řr][íi]pad[áa]\s+(?:ti|v[áa]m),?\s+[žz]e\b"
+    r"|\bkter[ýyáaéeo]\w*\b[^?]{0,50}\b(?:t[ěe]|v[áa]s)\s+(?:nejv[íi]c\s+|nejvice\s+)?"
+    r"(?:l[áa]k[áa]|l[áa]kal|zaj[íi]m[áa]|bav[íi]|nal[áa]k[áa])\w*"
+    r"|\bkter[ýyáaéeo]\w*\b[^?]{0,60}\bnej(?:zaj[íi]mav|kr[áa]sn|obl[íi]ben|milej)\w*", re.I)
+_REFLECTIVE_CHOICE_EXC = re.compile(r"doporu[čc]|film|knih|seri[áa]l", re.I)
+
+
 def is_reflective_ask(text: str) -> bool:
     """Ptá se uživatel na Hansovu ÚVAHU či vlastní prožitek (ne na zápisky)?
 
@@ -117,8 +137,12 @@ def is_reflective_ask(text: str) -> bool:
     if not text:
         return False
     t = str(text)
-    return bool(_REFLECTIVE_PAT.search(t)
-                or _REFLECTIVE_PAT.search(_deaccent(t)))
+    d = _deaccent(t)
+    if _REFLECTIVE_PAT.search(t) or _REFLECTIVE_PAT.search(d):
+        return True
+    return bool((_REFLECTIVE_CHOICE_PAT.search(t) or _REFLECTIVE_CHOICE_PAT.search(d))
+                and not (_REFLECTIVE_CHOICE_EXC.search(t)
+                         or _REFLECTIVE_CHOICE_EXC.search(d)))
 
 
 # ── HANS_MEMORY_ASK_V1 (6.9.) — DOTAZ NA TO, CO UZIVATEL DRIV REKL ──────────

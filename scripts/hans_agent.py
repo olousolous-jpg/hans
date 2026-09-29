@@ -2257,6 +2257,12 @@ class AgentRouter:
                 if not _znamy:
                     log.info("HANS_STRANGER_NO_MUTATE_V1: agent %s od neznámého "
                              "(%s) odmítnuto", aid, name)
+                    # HANS_STRANGER_GOODNIGHT_V1 (28. 9.) — „přeji vám dobrou
+                    # noc“ od cizího router čte jako hans_sleep; odmítnutí
+                    # „Tohle mohu udělat jen pro svou domácnost“ je pak absurdní.
+                    # Uspat Hanse cizí stejně nesmí → žádná akce, běžná odpověď.
+                    if aid == "hans_sleep":
+                        return None
                     return "Tohle mohu udělat jen pro svou domácnost."
                 # HANS_PRAVA_V1 (27. 9.) — známý bez oprávnění k akcím.
                 try:
