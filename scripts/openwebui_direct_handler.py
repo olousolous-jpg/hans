@@ -197,6 +197,10 @@ def je_vlastni_tvorba(text: str) -> bool:
     return bool(_NEFAKT_TYP_RE.search(str(text or "")[:300]))
 
 
+# HANS_HANDLER_SPLIT_V1 — značka „skupina doběhla bez return, pokračuj“
+_POKRACUJ = object()
+
+
 class OpenWebUIDirectHandler:
 
     def __init__(self, config: dict):
@@ -1253,12 +1257,14 @@ class OpenWebUIDirectHandler:
         anti-konfab prompt + fakta. Volná zpráva / nic nenalezeno → ''.
         Defenzivní: cokoliv chybí/selže → '' (grounding se tiše přeskočí).
         """
-        self._tazatel_ted = name or ""   # HANS_ENTITY_NOT_ASKER_V1
+        import types as _types_nt
+        ctx = _types_nt.SimpleNamespace(name=name)
+        self._tazatel_ted = ctx.name or ""   # HANS_ENTITY_NOT_ASKER_V1
         # user může být tuple (system,user) nebo string — vytáhni text
-        _text = user
+        ctx._text = user
         if isinstance(user, tuple) and len(user) == 2:
-            _text = user[1]
-        if not _text or not str(_text).strip():
+            ctx._text = user[1]
+        if not ctx._text or not str(ctx._text).strip():
             return ''
 
         # HANS_THREAD_V1 — navazující věta si nese předmět z předchozí
@@ -1266,8 +1272,8 @@ class OpenWebUIDirectHandler:
         # s originálem: _build_grounding se volá i mimo hlavní chat cestu.
         try:
             _tc = getattr(self, '_thread_ctx', None)
-            if _tc and str(_tc[0]) == str(_text) and _tc[1] != _tc[0]:
-                _text = _tc[1]
+            if _tc and str(_tc[0]) == str(ctx._text) and _tc[1] != _tc[0]:
+                ctx._text = _tc[1]
         except Exception as _tiche:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 645)",
@@ -1282,7 +1288,46 @@ class OpenWebUIDirectHandler:
         # Nulovat je NUTNÉ: bez toho by zvětralá věta z minulého tahu
         # klasifikovala tah další.
         self._f1_query = None
+        _r = self._gr_znas(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_nedavne(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_zdroj(ctx)
+        if _r is not _POKRACUJ:
+            return _r
 
+        ctx._intent = getattr(self, 'intent', None)
+        ctx._knowledge = getattr(self, 'knowledge', None)
+        if ctx._intent is None or ctx._knowledge is None:
+            return ''   # nezapojeno → tiše nic
+        _r = self._gr_nazor(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_rozhovor(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_sliby(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_film(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_studium_proc(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_knihovna(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_obraz(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._gr_rag(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+
+    def _gr_znas(self, ctx):
         # HANS_KNOWLEDGE_CHECK_V1 (18.7.) — „znáš X?" / „co víš o X?" když X
         # NENÍ v paměti (deník/entities). Bez tohoto hans-czech halucinuje
         # „mám v paměti záznamy" i pro věci, o kterých nikdy neslyšel (doložený
@@ -1293,7 +1338,7 @@ class OpenWebUIDirectHandler:
             from scripts.hans_recall import (
                 is_knowledge_check_query, knowledge_check_answer,
                 reading_recall_answer, person_card)
-            if is_knowledge_check_query(str(_text)):
+            if is_knowledge_check_query(str(ctx._text)):
                 _dbp_kc = (self.config.get("diary_db")
                            or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                            or "data/hans_diary.db")
@@ -1319,14 +1364,14 @@ class OpenWebUIDirectHandler:
                 try:
                     import re as _pcre
                     _q_nopfx = _pcre.sub(r"^\s*\S+\s+se\s+pt[áa]:\s*", "",
-                                         str(_text))
+                                         str(ctx._text))
                     from scripts.hans_recall import asks_about_person as _aap2
                     # HANS_PRAVA_V1 — tazatel jde dál, karta podle oprávnění.
                     # Cizímu (a bez jména) se neposílá, ať se tahle cesta
                     # nezmění pro vypnutá pravidla: odmítnutí řeší jiná brána.
                     try:
                         from scripts.cz_names import is_known_person as _ikp_pc
-                        _asker_pc = name if (name and _ikp_pc(name, self.config)) else ""
+                        _asker_pc = ctx.name if (ctx.name and _ikp_pc(ctx.name, self.config)) else ""
                     except Exception:
                         _asker_pc = ""
                     _pc = (person_card(_dbp_kc, _q_nopfx, self.config,
@@ -1344,11 +1389,11 @@ class OpenWebUIDirectHandler:
                 # Změřeno: 3 reálné takové věty, u žádné filmový záznam není →
                 # film_knowledge vrátí None a jde se dál beze změny.
                 import re as _re_f
-                if _re_f.search(r"\bfilm\w*|\bseri[aá]l\w*", str(_text), _re_f.I):
+                if _re_f.search(r"\bfilm\w*|\bseri[aá]l\w*", str(ctx._text), _re_f.I):
                     try:
                         from scripts.hans_recall import film_knowledge_answer as _fka
-                        _fr0 = _fka(_dbp_kc, self._bez_tazatele(_text),
-                                    asker=name or "")
+                        _fr0 = _fka(_dbp_kc, self._bez_tazatele(ctx._text),
+                                    asker=ctx.name or "")
                     except Exception:
                         _fr0 = None
                     if _fr0:
@@ -1357,11 +1402,11 @@ class OpenWebUIDirectHandler:
                 # HANS_READING_RECALL_V1 — nejdřív deterministicky dohledej, co
                 # si o tom Hans SÁM přečetl (declension-safe, obchází flaky RAG
                 # na tenkých souhrnech). Má přednost před „nemám záznam".
-                _rr = reading_recall_answer(_dbp_kc, str(_text))
+                _rr = reading_recall_answer(_dbp_kc, str(ctx._text))
                 if _rr:
                     self._vysledek_groundingu('grounded', 'reading_recall')
                     return _rr
-                _kc = knowledge_check_answer(_dbp_kc, str(_text))
+                _kc = knowledge_check_answer(_dbp_kc, str(ctx._text))
                 if _kc:
                     self._vysledek_groundingu('grounded', 'reading_recall_tema')
                     return _kc
@@ -1370,7 +1415,9 @@ class OpenWebUIDirectHandler:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 709)",
                 "_build_grounding: blok kontextu selhal (ř. 709): %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_nedavne(self, ctx):
         # HANS_RECENT_ACTIVITY_V1 (18.7.) — „co jsi se dnes dozvěděl / co sis
         # zapsal / co jsi dnes dělal"? Deterministický recall Hansovy vlastní
         # aktivity za posledních N dní (default 1). Opravuje false-negative
@@ -1380,12 +1427,12 @@ class OpenWebUIDirectHandler:
         try:
             from scripts.hans_recall import (
                 is_recent_activity_query, recent_activity_answer)
-            if is_recent_activity_query(str(_text)):
+            if is_recent_activity_query(str(ctx._text)):
                 _dbp_ra = (self.config.get("diary_db")
                            or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                            or "data/hans_diary.db")
                 # HANS_RECENT_ACTIVITY_YESTERDAY_V1 — text nese ČASOVÉ OKNO
-                _ra = recent_activity_answer(_dbp_ra, days=1, text=str(_text))
+                _ra = recent_activity_answer(_dbp_ra, days=1, text=str(ctx._text))
                 if _ra:
                     self._vysledek_groundingu('grounded', 'nedavna_aktivita')
                     return _ra
@@ -1393,7 +1440,9 @@ class OpenWebUIDirectHandler:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 729)",
                 "_build_grounding: blok kontextu selhal (ř. 729): %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_zdroj(self, ctx):
         # HANS_SOURCE_QUERY_V1 — „odkud to víš / kde jsi to četl / máš zdroj"?
         # MUSÍ BÝT PRVNÍ (dřív než _intent/_knowledge gate) — dotaz na
         # provenienci NEpotřebuje intent/RAG infrastrukturu; přebije obecnou
@@ -1403,7 +1452,7 @@ class OpenWebUIDirectHandler:
         try:
             from scripts.hans_recall import is_source_query, sources_reply
             _log_dbg = logging.getLogger(__name__)
-            if is_source_query(str(_text)):
+            if is_source_query(str(ctx._text)):
                 _dbp_s = (self.config.get("diary_db")
                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                           or "data/hans_diary.db")
@@ -1411,16 +1460,13 @@ class OpenWebUIDirectHandler:
                 _log_dbg.info('HANS_SOURCE_QUERY_V1: match → sources_reply grounding')
                 # HANS_SOURCE_REFERENT_SCOPE_V1 — mluvčí musí dojít až dolů,
                 # jinak fallback sáhne po replice dané NĚKOMU JINÉMU.
-                return sources_reply(_dbp_s, user_text=str(_text), asker=name)
+                return sources_reply(_dbp_s, user_text=str(ctx._text), asker=ctx.name)
         except Exception as _sqe:
             logging.getLogger(__name__).warning(
                 'HANS_SOURCE_QUERY_V1 check selhal: %s', _sqe)
+        return _POKRACUJ
 
-        _intent = getattr(self, 'intent', None)
-        _knowledge = getattr(self, 'knowledge', None)
-        if _intent is None or _knowledge is None:
-            return ''   # nezapojeno → tiše nic
-
+    def _gr_nazor(self, ctx):
         # HANS_OPINION_GROUNDING_G1_V1 — názorový/filosofický dotaz NENÍ
         # faktický: patří do imaginativního registru (postoje, ne RAG/A1).
         # Musí PŘED intent klasifikací — „co si myslíš o X?" intent chybně
@@ -1428,25 +1474,27 @@ class OpenWebUIDirectHandler:
         # hrozil ANTIKONFAB_NOFACTS + A1 abstinence.
         try:
             from scripts.hans_opinion import is_opinion_query as _ioq
-            if _ioq(str(_text)):
+            if _ioq(str(ctx._text)):
                 self._vysledek_groundingu('opinion', 'nazor')
                 return ''
         except Exception as _tiche:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 767)",
                 "_build_grounding: blok kontextu selhal (ř. 767): %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_rozhovor(self, ctx):
         # HANS_CHAT_RECALL_V2 — recall PŘEDCHOZÍHO rozhovoru („pamatuješ na X",
         # „mluvili jsme o…", „co jsi navrhl"). Sémantický RAG vágní recall často
         # nedohledá (uložené repliky ≠ znění dotazu) → deterministicky prohledej
         # skutečný human_chat. PŘEDNOST (real data), obchází RAG práh + šum.
         try:
             from scripts.hans_recall import is_recall_query, conversation_recall
-            if is_recall_query(str(_text)):
+            if is_recall_query(str(ctx._text)):
                 _dbp_r = (self.config.get("diary_db")
                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                           or "data/hans_diary.db")
-                _rc = conversation_recall(_dbp_r, str(_text), person=name)
+                _rc = conversation_recall(_dbp_r, str(ctx._text), person=ctx.name)
                 if _rc:
                     self._vysledek_groundingu('grounded', 'chat_recall')
                     _blk = "\n\n".join("[Dřívější rozhovor — %s]\n%s" % (kdy, note)
@@ -1458,7 +1506,9 @@ class OpenWebUIDirectHandler:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 788)",
                 "_build_grounding: blok kontextu selhal (ř. 788): %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_sliby(self, ctx):
         # HANS_COMMITMENTS_V1 — „co jsi mi slíbil?" → deterministicky z uložených
         # SLIBŮ (ne hledání v textu); prázdno → honestní „nic", NE výmysl.
         try:
@@ -1466,7 +1516,7 @@ class OpenWebUIDirectHandler:
             _dbp_c = (self.config.get("diary_db")
                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                       or "data/hans_diary.db")
-            _cr = _commit_ans(_dbp_c, str(_text), person=name)
+            _cr = _commit_ans(_dbp_c, str(ctx._text), person=ctx.name)
             if _cr:
                 self._vysledek_groundingu('grounded', 'zavazky')
                 return _cr
@@ -1474,7 +1524,9 @@ class OpenWebUIDirectHandler:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 802)",
                 "_build_grounding: blok kontextu selhal (ř. 802): %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_film(self, ctx):
         # HANS_FILM_RECALL_V1 — dotaz na FILM podle názvu: dohledej Hansovy
         # VLASTNÍ deníkové záznamy (movie_opinion/kodi_playing) o tom filmu, ať
         # nezapře, co ví (doložený případ „Proud krve"). RAG kolekce hans_filmy
@@ -1489,8 +1541,8 @@ class OpenWebUIDirectHandler:
             # „Zkouska“: 5 ze 7 spusteni film_recall za 4 dny). Tentyz odrez
             # jako u entit (HANS_ENTITY_STRIP_ASKER_V1). Zmereno na 91
             # filmovych vetach × 3 jmenech: 84 rozdilu proti hole vete → 0.
-            _fr = _film_recall(_dbp_f, self._bez_tazatele(_text),
-                               asker=name or "")  # HANS_FILM_OPINION_PRIVACY_V1
+            _fr = _film_recall(_dbp_f, self._bez_tazatele(ctx._text),
+                               asker=ctx.name or "")  # HANS_FILM_OPINION_PRIVACY_V1
             if _fr:
                 self._vysledek_groundingu('grounded', 'film_recall')
                 return _fr
@@ -1498,7 +1550,9 @@ class OpenWebUIDirectHandler:
             log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(__name__), "_build_grounding(ř. 818)",
                 "_build_grounding: blok kontextu selhal (ř. 818): %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_studium_proc(self, ctx):
         # HANS_BOOK_RECOMMEND_GROUNDED_V1 (13. 9.) — zadost o doporuceni cetby
         # dostane SKUTECNOU knihovnu, ne fantazii.
         # ⚠️ MUSI STAT PRED VETVI INTENTU: „co bys mi doporucil precist?" se
@@ -1507,7 +1561,7 @@ class OpenWebUIDirectHandler:
         # Doloženo 13. 9. zive: prvni umisteni (vedle `_kodi_cast_fact`) NEZABRALO
         # — v logu `GROUNDING: self_state ← self_state`. [[verify-it-actually-flows]]
         try:   # HANS_STUDY_WHY_TOPIC_V1
-            _pu = self._puvod_studia_fact(str(_text))
+            _pu = self._puvod_studia_fact(str(ctx._text))
             if _pu:
                 self._vysledek_groundingu('grounded', 'studium_puvod')
                 return _pu
@@ -1515,9 +1569,11 @@ class OpenWebUIDirectHandler:
             log_once(
                 logging.getLogger(__name__), "_build_grounding(studium_puvod)",
                 "_build_grounding: blok původu studia selhal: %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_knihovna(self, ctx):
         try:
-            _kn = self._knihovna_fact(str(_text), name)  # HANS_BOOK_RECOMMEND_FOLLOWUP_V1
+            _kn = self._knihovna_fact(str(ctx._text), ctx.name)  # HANS_BOOK_RECOMMEND_FOLLOWUP_V1
             if _kn:
                 self._vysledek_groundingu('grounded', 'knihovna')
                 return _kn
@@ -1525,9 +1581,11 @@ class OpenWebUIDirectHandler:
             log_once(
                 logging.getLogger(__name__), "_build_grounding(knihovna)",
                 "_build_grounding: blok knihovny selhal: %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_obraz(self, ctx):
         try:   # HANS_ARTWORK_CONTENT_GROUNDED_V1
-            _ob = self._obraz_fact(str(_text))
+            _ob = self._obraz_fact(str(ctx._text))
             if _ob:
                 self._vysledek_groundingu('grounded', 'obraz')
                 return _ob
@@ -1535,144 +1593,16 @@ class OpenWebUIDirectHandler:
             log_once(
                 logging.getLogger(__name__), "_build_grounding(obraz)",
                 "_build_grounding: blok obrazu selhal: %s", _tiche)
+        return _POKRACUJ
 
+    def _gr_rag(self, ctx):
         try:
             # 1) intent — je dotaz faktický?
-            res = _intent.classify(str(_text))
-            if not res.is_factual:
-                # HANS_SELF_STATE_V1 (5.8.) — volná konverzace ještě NEZNAMENÁ
-                # „bez faktů". Když se ptá NA HANSE („jak se máš?", „co jsi
-                # dnes dělal?"), dej mu jeho VLASTNÍ dnešek z deníku. Bez toho
-                # model plodil vatu („Službu plním, a to je pro mne
-                # dostatečné") nebo komoleniny („historii zeleného, pana").
-                # Nálada + její důvod už v promptu jsou (mood_ctx), tohle
-                # dodává CO dnes reálně dělal. Detektor sdílený s agentem.
-                try:
-                    from scripts.hans_intent import is_about_self
-                    if is_about_self(str(_text), self.config):
-                        from scripts.hans_recall import self_state_facts
-                        _dbp_ss = (self.config.get("diary_db")
-                                   or (self.config.get("hans_idle", {}) or {}).get("diary_db")
-                                   or "data/hans_diary.db")
-                        _mo = _mr = ""
-                        try:
-                            _hi_m = getattr(self, '_hans_idle', None)
-                            _mobj = getattr(_hi_m, '_mood', None) if _hi_m else None
-                            if _mobj is not None:
-                                _mo = getattr(_mobj, 'mood', '') or ''
-                                _mr = getattr(getattr(_mobj, '_state', None),
-                                              'shift_reason', '') or ''
-                        except Exception as _tiche:
-                            log_once(  # HANS_NO_SILENT_CTX_V1
-                                logging.getLogger(__name__), "_build_grounding(ř. 847)",
-                                "_build_grounding: blok kontextu selhal (ř. 847): %s", _tiche)
-                        # HANS_SELF_STATE_AWAKE_V1 — dolož skutečný provozní
-                        # stav (spánek/kamera/hlídání), ať si ho model nedomýšlí.
-                        _rt_state = {}
-                        try:
-                            # ⚠️ Handler `_routine` NEMÁ — drží ho `hans_idle`
-                            # (týž vzorec jako TIME_AWARENESS_V1 na ř. 1342).
-                            # Přímé `getattr(self, "_routine")` by tiše vracelo
-                            # None a stav by se do bloku nikdy nedostal.
-                            _hi_rt = getattr(self, "_hans_idle", None)
-                            _rt = getattr(_hi_rt, "_routine", None) if _hi_rt else None
-                            if _rt is not None:
-                                _rt_state["sleeping"] = bool(
-                                    getattr(_rt, "_sleeping", False))
-                            import json as _js_g
-                            import os as _os_g
-                            _gp = "data/.hans_guard"
-                            if _os_g.path.exists(_gp):
-                                with open(_gp, encoding="utf-8") as _gf:
-                                    _rt_state["guard"] = bool(
-                                        (_js_g.load(_gf) or {}).get("armed"))
-                            else:
-                                _rt_state["guard"] = False
-                        except Exception as _rse:
-                            logging.getLogger(__name__).debug(
-                                'self_state runtime: %s', _rse)
-                        # HANS_SELF_STATE_ASKER_VISIBLE_V1 (15. 9.) — "vidite me na
-                        # kamere?" od cloveka v chatu: Hans rekl "vidim vas", ackoli
-                        # o tah driv "nikoho tu nevidim". Blok o sobe nerikal, kdo
-                        # pred kamerou stoji. Jen pri otazce na videni.
-                        try:
-                            if self._VIDIS_ME_PAT.search(str(_text)):
-                                _hi_pr = getattr(self, "_hans_idle", None)
-                                _pritomni = [str(x).strip().lower() for x in
-                                             (getattr(_hi_pr, "_present_names", None) or [])]
-                                _rt_state["asker_visible"] = bool(
-                                    name and str(name).strip().lower() in _pritomni)
-                        except Exception:
-                            pass
-                        # HANS_MOOD_CAMERA_STRANGER_V1 (24. 9.) — blok o sobe
-                        # bral duvod nalady BEZ filtru, takze obchazel
-                        # HANS_MOOD_REASON_PRIVACY_V1 (doloženo: cizimu „neznama
-                        # tvar“). Tataz brana jako v prompt addition; cizimu
-                        # ani zapnute hlidani (= dum je prazdny).
-                        try:
-                            from scripts.cz_names import is_known_person as _ikp_ss
-                            if not (name and _ikp_ss(name, self.config)):
-                                _rt_state.pop("guard", None)
-                                if _mr and not _mobj._duvod_do_promptu(True):
-                                    _mr = ""
-                                    _mo = "content"   # HANS_MOOD_HIDDEN_NEUTRAL_V1
-                        except Exception:
-                            _mr = ""
-                            _rt_state.pop("guard", None)
-                        _ss = self_state_facts(_dbp_ss, mood=_mo, mood_reason=_mr,
-                                               runtime=_rt_state or None)
-                        if _ss:
-                            logging.getLogger(__name__).info(
-                                'HANS_SELF_STATE_V1 → blok o sobě (%d zn)', len(_ss))
-                            self._vysledek_groundingu('self_state', 'self_state')
-                            return '\n\n' + _ss
-                except Exception as _sse:
-                    logging.getLogger(__name__).debug('self_state: %s', _sse)
-                self._vysledek_groundingu('nonfactual', 'volny_hovor')
-                return ''   # volná konverzace → osobnost, žádný retrieval
-
-            # ── HANS_QUERY_REWRITER_F1_V1 ────────────────────────────────
-            # Rewriter „člověk→počítač" na FAKTICKÉ CESTĚ: rozřeš odkazy,
-            # oprav překlepy, strhni výplňky → vyčištěný explicitní dotaz
-            # pro retrieval. Persona (chat generace) DÁL slyší raw text
-            # výše ve volajícím — bytost, ne asistent. Deferral-safe: None
-            # → drž se originálu (žádná změna chování).
-            _q_for_retrieval = str(_text)
-            try:
-                from scripts.hans_rewriter import (
-                    rewrite_for_retrieval as _f1_rewrite,
-                    is_enabled as _f1_on)
-                if _f1_on(self.config):
-                    _hist = []
-                    if name:
-                        try:
-                            # HANS_CHAT_CHANNEL_AWARE_V1 — měkký filtr
-                            _ch = get_current_channel()
-                            _hist = self.conv_store.get_history(name, channel=_ch) or []
-                        except Exception:
-                            _hist = []
-                    _rw = _f1_rewrite(self.config, str(_text),
-                                      history=_hist, name=name)
-                    if _rw and _rw.strip() and _rw.strip() != str(_text).strip():
-                        # HANS_F1_NOT_ABOUT_ASKER_V1 (16. 9.) — prepis, ktery
-                        # prehodil podmet z Hanse na TAZATELE, je pro retrieval
-                        # k nicemu: FTS hleda, co vi tazatel, misto co delal
-                        # Hans → prazdny podklad → falesne zapreni (15. 9.,
-                        # „co si uz malovai?“ → „Co <tazatel> vi o obrazech?“).
-                        if self._f1_o_tazateli(_rw, name):
-                            logging.getLogger(__name__).info(
-                                'HANS_F1_NOT_ABOUT_ASKER_V1: prepis %r prehodil '
-                                'podmet na tazatele — drzim original', _rw[:60])
-                        else:
-                            logging.getLogger(__name__).info(
-                                'F1: rewrite %r -> %r',
-                                str(_text)[:60], _rw[:60])
-                            _q_for_retrieval = _rw.strip()
-                            # HANS_A1_THREAD_TEXT_V1 — schovej pro A1 gate
-                            self._f1_query = _q_for_retrieval
-            except Exception as _f1e:
-                logging.getLogger(__name__).debug(
-                    'F1: rewriter selhal (%s) — použit originál', _f1e)
+            ctx.res = ctx._intent.classify(str(ctx._text))
+            _r = self._grr_nefakticky(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            self._grr_prepis(ctx)
 
             # HANS_KODI_CAST_FACT_V2 (21.8.) — KDO V TOM HRAJE: odpověz
             # z KNIHOVNY, ne z hlavy. Doloženo 20.8.: „kdo tam hraje?" →
@@ -1687,7 +1617,7 @@ class OpenWebUIDirectHandler:
             # název dodat — táž chyba jako HANS_A1_THREAD_TEXT_V1, kterou
             # jsem týž den opravoval o pár řádků výš.
             try:
-                _cf = self._kodi_cast_fact(str(_q_for_retrieval))
+                _cf = self._kodi_cast_fact(str(ctx._q_for_retrieval))
                 if _cf:
                     self._vysledek_groundingu('grounded', 'obsazeni_kodi')
                     return _cf
@@ -1703,236 +1633,36 @@ class OpenWebUIDirectHandler:
             # entitou i před RAG: je to tvrdý záznam, ne nález z četby.
             # HANS_SELF_STATE_AWAKE_V2 — vlastní režim má přednost úplně první:
             # je to tvrdý běhový fakt, ne nález z paměti.
-            _ent_fact = (self._self_runtime_fact(str(_text))
-                         or self._person_fact(str(_text))
-                         or self._person_fact(_q_for_retrieval)
-                         or self._entity_fact(_q_for_retrieval)
-                         or self._capability_fact(str(_text)))
+            ctx._ent_fact = (self._self_runtime_fact(str(ctx._text))
+                         or self._person_fact(str(ctx._text))
+                         or self._person_fact(ctx._q_for_retrieval)
+                         or self._entity_fact(ctx._q_for_retrieval)
+                         or self._capability_fact(str(ctx._text)))
 
             # 2) vyber kolekce dle třídy (G3B_MULTICOLLECTION_V1 — list)
-            collections = self._GROUNDING_COLLECTION.get(res.intent)
-            if not collections:
+            ctx.collections = self._GROUNDING_COLLECTION.get(ctx.res.intent)
+            if not ctx.collections:
                 # C1 / HANS_PERSON_FACT_V1: i bez RAG kolekce máme-li tvrdý
                 # fakt (entita nebo osoba), vrať ho
-                if _ent_fact:
+                if ctx._ent_fact:
                     self._vysledek_groundingu('grounded', 'karta_osoby')
-                    return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
+                    return '\n\n' + ANTIKONFAB + '\n\n' + ctx._ent_fact
                 return ''
-
-            # 3) query VŠECHNY kolekce PARALELNĚ (fakta roztroušená).
-            #    ThreadPool — query je síťový hop, vlákna se překryjí.
-            #    Celý sken v jednom timeoutu (ne timeout na kolekci).
-            import concurrent.futures as _cf
-            all_chunks = []
-            _skipped_chatlogs = []   # HANS_CHATLOG_NOT_FACT_V1
-            _skipped_own = []        # HANS_OWN_WORK_NOT_FACT_V1
-            _skipped_mimo = []       # HANS_GROUNDING_ANCHOR_V1
-            # HANS_GROUNDING_ANCHOR_V1 (22.8.) — OPORA MUSÍ MLUVIT O TOM,
-            # NA CO SE PTÁM. Změřeno na 919 skutečných dotazech z deníku
-            # proti živému RAGu s produkčními parametry: u dotazů, které
-            # nesou vlastní jméno, obsahoval podklad to jméno **0×** —
-            # ani v jednom ze tří chunků, které jdou do promptu:
-            #   osobnost: 144 groundingů, 22 s vlastním jménem, 0 o něm
-            #   film:      65 groundingů, 12 s vlastním jménem, 0 o něm
-            #   „znáš Xqzybwrt Flurbex?" (smyšlené jméno) ← 0.622 „Kdo je Hans"
-            #   „kdo byl Richard Sorge?"                  ← 0.681 reflexe Design
-            #   „Co víš o Icon of the Seas?"              ← 0.694 Pád do Tichého oceánu
-            # Práh to neuhlídá — všechno je POD strict 0.70; u bge-m3 se
-            # relevantní pásmo se šumem překrývá (varování v hans_knowledge),
-            # takže rozhodnout musí TÉMA, ne vzdálenost. Na takové opoře
-            # pak model postaví celou smyšlenou biografii (Scott Eastwood).
-            # Kotva se počítá z PŘEPSANÉHO dotazu (F1 doplní jméno z vlákna).
-            # Prázdno po filtru = dnešní větev „RAG nic nenašel" → vlastní
-            # zápisky → entita → přiznání. Ověřeno, že tudy přijde ta SPRÁVNÁ
-            # opora: „co víš o filmu Avatar: The Way of Water?" → zápisek
-            # o Avataru; „Co víš o Icon of the Seas?" → 3× zápisek o té lodi;
-            # vztahové karty jdou mimo RAG (`_build_card_fact`), takže
-            # dotaz na člena domácnosti („a co víš o Janě?") zůstává
-            # nedotčený.
-            try:
-                from scripts.hans_convindex import (
-                    kotvy_ve_vete as _kv_fn, nese_kotvu as _nk_fn)
-                _kotvy_dotazu = [_w for _i, _w in
-                                 _kv_fn(str(_q_for_retrieval or _text))]
-            except Exception as _kve:
-                logging.getLogger(__name__).debug(
-                    'HANS_GROUNDING_ANCHOR_V1: kotvy nedostupné: %s', _kve)
-                _kotvy_dotazu, _nk_fn = [], None
-            try:
-                with _cf.ThreadPoolExecutor(
-                        max_workers=len(collections)) as _ex:
-                    _futs = {
-                        _ex.submit(_knowledge.query, _c,
-                                   _q_for_retrieval,
-                                   self._GROUNDING_K,
-                                   self._GROUNDING_MAX_DISTANCE): _c
-                        for _c in collections
-                    }
-                    _done, _pending = _cf.wait(
-                        _futs, timeout=self._GROUNDING_TIMEOUT_S)
-                    for _fut in _done:
-                        try:
-                            _b = _fut.result()
-                            if _b and _b.found:
-                                for _ch in _b.chunks:
-                                    _ch = dict(_ch)
-                                    _ch['collection'] = _futs[_fut]
-                                    # HANS_CHATLOG_NOT_FACT_V1 (19.8.) — CO JSEM
-                                    # ŘEKL NENÍ CO VÍM. Chatové výměny se ukládají
-                                    # do `hans_pripady` (HANS_CHAT_RECALL_V1) a
-                                    # faktická cesta je pak četla jako důkaz —
-                                    # tedy Hansův vlastní výrok se mu vracel jako
-                                    # znalost. Doloženo 19.8.: fabulovaný rok
-                                    # vzniku divadla se uložil 7× a vracel se.
-                                    # ⚠️ Pro `conversation_recall` zůstávají —
-                                    # tam JSOU na místě („o čem jsme mluvili").
-                                    # HANS_CHATLOG_NOT_FACT_V2 (22.8.) — `self.`
-                                    # ⚠️ `_CHATLOG_RE` je ATRIBUT TŘÍDY; holé
-                                    # jméno uvnitř metody je NameError, takže
-                                    # filtr z 19.8. NIKDY neběžel. A protože ho
-                                    # zdejší `except` spolkne, přišla o chunky
-                                    # celá kolekce → RAG „nic nenašel" → padalo
-                                    # se na FTS zápisky. Tudy přišel 21.8. do
-                                    # podkladu o hradu Kost Pátý element.
-                                    _txt = str(_ch.get('text') or '')
-                                    if self._CHATLOG_RE.search(_txt[:200]):  # V3: okno 120→200,
-                                        # sekce „## Rozhovor s …" leží
-                                        # až za titulkem a datem
-                                        _skipped_chatlogs.append(1)
-                                        continue
-                                    # HANS_OWN_WORK_NOT_FACT_V1 (22.8.) —
-                                    # vlastní tvorba není doklad o světě
-                                    # (rozbor u predikátu na začátku modulu).
-                                    if je_vlastni_tvorba(_txt):
-                                        _skipped_own.append(1)
-                                        continue
-                                    # HANS_GROUNDING_ANCHOR_V1 — chunk, který
-                                    # o předmětu dotazu nemluví, není opora.
-                                    if (_kotvy_dotazu and _nk_fn is not None
-                                            and not _nk_fn(_txt,
-                                                           _kotvy_dotazu)):
-                                        _skipped_mimo.append(1)
-                                        continue
-                                    all_chunks.append(_ch)
-                        except Exception as _tiche:
-                            log_once(  # HANS_NO_SILENT_CTX_V1
-                                logging.getLogger(__name__), "_build_grounding(ř. 978)",
-                                "_build_grounding: blok kontextu selhal (ř. 978): %s", _tiche)
-                    if _pending:
-                        logging.getLogger(__name__).info(
-                            'G3B: %d/%d kolekcí nestihlo timeout %ss',
-                            len(_pending), len(collections),
-                            self._GROUNDING_TIMEOUT_S)
-            except Exception as _qe:
-                logging.getLogger(__name__).warning(
-                    'G3B: multi-query selhalo: %s', _qe)
-                return ''
-
-            if _skipped_chatlogs:
-                logging.getLogger(__name__).info(
-                    'HANS_CHATLOG_NOT_FACT_V1: %d kusů z chatu vyřazeno '
-                    'z faktického groundingu', len(_skipped_chatlogs))
-            if _skipped_own:
-                logging.getLogger(__name__).info(
-                    'HANS_OWN_WORK_NOT_FACT_V1: %d kusů vlastní tvorby '
-                    'vyřazeno z faktického groundingu', len(_skipped_own))
-            if _skipped_mimo:
-                logging.getLogger(__name__).info(
-                    'HANS_GROUNDING_ANCHOR_V1: %d kusů mimo téma (%s) '
-                    'vyřazeno z faktického groundingu', len(_skipped_mimo),
-                    ', '.join(_kotvy_dotazu[:3]))
-            # 4) nic relevantního pod prahem → G3C: vrať aspoň anti-konfab
-            #    (bez faktů). Faktický dotaz bez záznamů → Hans NESMÍ
-            #    konfabulovat. Web ověření přijde post-hoc (G.5).
-            if not all_chunks:
-                # HANS_NOTES_BEFORE_ENTITY_V1 (21.8.) — VLASTNÍ ZÁPISKY MAJÍ
-                # PŘEDNOST PŘED ENTITOU. Doloženo 20.8.: na dotaz o svatyni
-                # u Nymburka (Hans o ní ráno četl a zapsal si ji) rozhodla
-                # entitní větev a vrátila „ověřený fakt“ o SVATBĚ — entita se
-                # trefila jen 4znakovým prefixem „svat“. Správný zápisek byl
-                # přitom v FTS na prvním místě, ale FTS se volalo až POD tímhle
-                # returnem, takže se k němu dotaz nikdy nedostal.
-                # Pořadí je teď: co jsem sám četl a zapsal > slovníková glosa.
-                # Změřeno: kde entita rozhoduje správně (Sorge, Jiří z Poděbrad,
-                # Gotika), míří zápisky na tentýž předmět → žádná ztráta C1;
-                # kde zápisky nejsou (Secese), rozhodne dál entita.
-                # HANS_FTS_USES_REWRITE_V1 (21.8.) — hledej v zápiscích podle
-                # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
-                # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
-                # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
-                _kb = self._knowledge_fts_grounding(
-                    str(_q_for_retrieval or _text))
-                if _kb:
-                    # HANS_ENTITY_FACTS_ALSO_WITH_NOTES_V1 (26.8.) — zápisky
-                    # mají přednost, ale STRUKTUROVANÁ FAKTA si s nimi
-                    # NEKONKURUJÍ: je to jeden krátký ověřený řádek z Wikidat,
-                    # ne konkurenční próza. Doloženo: na „v jakém slohu je
-                    # Cardiffský hrad" se entita RESOLVOVALA (ev=21), ale
-                    # vyhrály zápisky → fakt `sloh = novogotika` se zahodil
-                    # a Hans napsal „gotickou stavbou". Kost fungovala jen
-                    # proto, že žádné zápisky neměla.
-                    _fl = self._entity_facts_line(_q_for_retrieval)
-                    if _fl:
-                        _kb = _kb + '\n' + _fl
-                    self._vysledek_groundingu('grounded', 'zapisky_pred_entitou')
-                    return _kb
-                # C1: RAG prázdné, ale entita ve store → autoritativní fakt
-                # (Sorge není v RAG, ale Hans o něm četl → deterministický fakt).
-                if _ent_fact:
-                    logging.getLogger(__name__).info(
-                        'C1: RAG prázdné, entita ze store → grounded pro %r',
-                        str(_text)[:40])
-                    # nálepka byla `chatlog_neni_fakt` — s filtrem chatlogů to
-                    # nemá nic společného a 20.8. to svedlo diagnózu na RAG.
-                    self._vysledek_groundingu('grounded', 'entita_c1')
-                    return '\n\n' + ANTIKONFAB + '\n\n' + _ent_fact
-                # HANS_KNOWLEDGE_FTS_V1 — tudy vede REÁLNÁ cesta k abstinenci
-                # (ověřeno v logu 6.8.: „žádná shoda pod prahem → G3C").
-                # Původní patch mířil jen na druhé místo níž a NIC neopravil.
-                # HANS_FTS_USES_REWRITE_V1 (21.8.) — hledej v zápiscích podle
-                # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
-                # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
-                # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
-                _kb = self._knowledge_fts_grounding(
-                    str(_q_for_retrieval or _text))
-                if _kb:
-                    self._vysledek_groundingu('grounded', 'zapisky_fts')
-                    return _kb
-                # HANS_REFLECTIVE_ASK_V2 (3.9.) — ÚVAHOVÁ otázka se sem nesmí
-                # propadnout. `ANTIKONFAB_NOFACTS` říká modelu „nemáš fakta,
-                # přiznej to", jenže dotaz na vlastní názor žádná fakta
-                # nepotřebuje — odpovídá se z osobnosti. Doloženo testem 3.9.:
-                # „co je podle vás na dokumentování světa to nejtěžší?" →
-                # „K tomuhle nemám spolehlivý záznam a nerad bych si domýšlel."
-                # V1 (30.8.) hlídal jen větev `_tenky`; sem, na
-                # `zapisky_fts_prazdno`, nedosáhl — log to ukázal hned
-                # (`GROUNDING: factual_nofacts ← zapisky_fts_prazdno`).
-                # Týž predikát, žádný nový — a je ÚZKÝ: 0 shod z 1327 reálných
-                # uživatelských replik, takže anti-konfabulaci nerozvolňuje.
-                try:
-                    from scripts.hans_intent import is_reflective_ask as _ira2
-                    if _ira2(str(_text)):
-                        logging.getLogger(__name__).info(
-                            'HANS_REFLECTIVE_ASK_V2: %r je úvahová otázka → '
-                            'osobnost místo abstinence', str(_text)[:50])
-                        self._vysledek_groundingu('nonfactual', 'uvahova_otazka')
-                        return ''
-                except Exception:
-                    pass
-                logging.getLogger(__name__).info(
-                    'G3B: žádná shoda pod prahem pro [%s] %r → anti-konfab bez fakt (G3C)',
-                    res.intent, str(_text)[:40])
-                self._vysledek_groundingu('factual_nofacts', 'zapisky_fts_prazdno')
-                return '\n\n' + ANTIKONFAB_NOFACTS
+            _r = self._grr_hledani(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._grr_nic_pod_prahem(ctx)
+            if _r is not _POKRACUJ:
+                return _r
 
             # 5) seřaď VŠECHNY chunky napříč kolekcemi dle distance,
             #    vezmi nejlepší K (mix kolekcí). distance = společné
             #    měřítko (stejný embedding bge-m3) → férové porovnání.
-            all_chunks.sort(
+            ctx.all_chunks.sort(
                 key=lambda c: (c.get('distance') is None,
                                c.get('distance') if c.get('distance')
                                is not None else 9e9))
-            top = all_chunks[:self._GROUNDING_K]
+            top = ctx.all_chunks[:self._GROUNDING_K]
             _best_dist = top[0].get('distance') if top else None
 
             # HANS_RAGFIRST_STRICT_V1 (#2) — přísný TOP práh.
@@ -1979,15 +1709,15 @@ class OpenWebUIDirectHandler:
             # PRIORITNÍ pravda. Adresujeme podle jména (NE embedding),
             # tvrdá data (role+rodina, BEZ characterization=starý tón).
             # F1 pomáhá: rewriter rozřeší 'kdo je on' → jméno v textu.
-            _card_fact = self._build_card_fact(_q_for_retrieval)
+            _card_fact = self._build_card_fact(ctx._q_for_retrieval)
             if _card_fact:
                 logging.getLogger(__name__).info(
                     'G5A: karta vstříknuta z DB → priorita')
 
             # Skládání priorit: entita (autoritativní) > karta > RAG chunky.
             _parts = []
-            if _ent_fact:
-                _parts.append(_ent_fact)
+            if ctx._ent_fact:
+                _parts.append(ctx._ent_fact)
             if _card_fact:
                 _parts.append(_card_fact)
             if _facts_from_rag:
@@ -2000,7 +1730,7 @@ class OpenWebUIDirectHandler:
                 # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
                 # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
                 _kb = self._knowledge_fts_grounding(
-                    str(_q_for_retrieval or _text))
+                    str(ctx._q_for_retrieval or ctx._text))
                 if _kb:
                     self._vysledek_groundingu('grounded', 'zapisky_fallback')
                     return _kb
@@ -2013,9 +1743,9 @@ class OpenWebUIDirectHandler:
             _cols_used = sorted(set(c.get('collection', '?') for c in top))
             logging.getLogger(__name__).info(
                 'G3B: grounding [%s] best=%.3f, %d chunků z %s, ent=%d card=%d → kontext',
-                res.intent, _best_dist if _best_dist is not None else -1,
+                ctx.res.intent, _best_dist if _best_dist is not None else -1,
                 len(top), '+'.join(_cols_used) if _cols_used else '-',
-                1 if _ent_fact else 0, 1 if _card_fact else 0)
+                1 if ctx._ent_fact else 0, 1 if _card_fact else 0)
             self._vysledek_groundingu('grounded', 'rag')
             return '\n\n' + ANTIKONFAB + '\n\n' + facts
 
@@ -2023,6 +1753,358 @@ class OpenWebUIDirectHandler:
             logging.getLogger(__name__).warning(
                 'G3B: grounding selhalo (%s) — odpovídám bez fakt', _ge)
             return ''
+        return _POKRACUJ
+
+    def _grr_nefakticky(self, ctx):
+        if not ctx.res.is_factual:
+            # HANS_SELF_STATE_V1 (5.8.) — volná konverzace ještě NEZNAMENÁ
+            # „bez faktů". Když se ptá NA HANSE („jak se máš?", „co jsi
+            # dnes dělal?"), dej mu jeho VLASTNÍ dnešek z deníku. Bez toho
+            # model plodil vatu („Službu plním, a to je pro mne
+            # dostatečné") nebo komoleniny („historii zeleného, pana").
+            # Nálada + její důvod už v promptu jsou (mood_ctx), tohle
+            # dodává CO dnes reálně dělal. Detektor sdílený s agentem.
+            try:
+                from scripts.hans_intent import is_about_self
+                if is_about_self(str(ctx._text), self.config):
+                    from scripts.hans_recall import self_state_facts
+                    _dbp_ss = (self.config.get("diary_db")
+                               or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                               or "data/hans_diary.db")
+                    _mo = _mr = ""
+                    try:
+                        _hi_m = getattr(self, '_hans_idle', None)
+                        _mobj = getattr(_hi_m, '_mood', None) if _hi_m else None
+                        if _mobj is not None:
+                            _mo = getattr(_mobj, 'mood', '') or ''
+                            _mr = getattr(getattr(_mobj, '_state', None),
+                                          'shift_reason', '') or ''
+                    except Exception as _tiche:
+                        log_once(  # HANS_NO_SILENT_CTX_V1
+                            logging.getLogger(__name__), "_build_grounding(ř. 847)",
+                            "_build_grounding: blok kontextu selhal (ř. 847): %s", _tiche)
+                    # HANS_SELF_STATE_AWAKE_V1 — dolož skutečný provozní
+                    # stav (spánek/kamera/hlídání), ať si ho model nedomýšlí.
+                    _rt_state = {}
+                    try:
+                        # ⚠️ Handler `_routine` NEMÁ — drží ho `hans_idle`
+                        # (týž vzorec jako TIME_AWARENESS_V1 na ř. 1342).
+                        # Přímé `getattr(self, "_routine")` by tiše vracelo
+                        # None a stav by se do bloku nikdy nedostal.
+                        _hi_rt = getattr(self, "_hans_idle", None)
+                        _rt = getattr(_hi_rt, "_routine", None) if _hi_rt else None
+                        if _rt is not None:
+                            _rt_state["sleeping"] = bool(
+                                getattr(_rt, "_sleeping", False))
+                        import json as _js_g
+                        import os as _os_g
+                        _gp = "data/.hans_guard"
+                        if _os_g.path.exists(_gp):
+                            with open(_gp, encoding="utf-8") as _gf:
+                                _rt_state["guard"] = bool(
+                                    (_js_g.load(_gf) or {}).get("armed"))
+                        else:
+                            _rt_state["guard"] = False
+                    except Exception as _rse:
+                        logging.getLogger(__name__).debug(
+                            'self_state runtime: %s', _rse)
+                    # HANS_SELF_STATE_ASKER_VISIBLE_V1 (15. 9.) — "vidite me na
+                    # kamere?" od cloveka v chatu: Hans rekl "vidim vas", ackoli
+                    # o tah driv "nikoho tu nevidim". Blok o sobe nerikal, kdo
+                    # pred kamerou stoji. Jen pri otazce na videni.
+                    try:
+                        if self._VIDIS_ME_PAT.search(str(ctx._text)):
+                            _hi_pr = getattr(self, "_hans_idle", None)
+                            _pritomni = [str(x).strip().lower() for x in
+                                         (getattr(_hi_pr, "_present_names", None) or [])]
+                            _rt_state["asker_visible"] = bool(
+                                ctx.name and str(ctx.name).strip().lower() in _pritomni)
+                    except Exception:
+                        pass
+                    # HANS_MOOD_CAMERA_STRANGER_V1 (24. 9.) — blok o sobe
+                    # bral duvod nalady BEZ filtru, takze obchazel
+                    # HANS_MOOD_REASON_PRIVACY_V1 (doloženo: cizimu „neznama
+                    # tvar“). Tataz brana jako v prompt addition; cizimu
+                    # ani zapnute hlidani (= dum je prazdny).
+                    try:
+                        from scripts.cz_names import is_known_person as _ikp_ss
+                        if not (ctx.name and _ikp_ss(ctx.name, self.config)):
+                            _rt_state.pop("guard", None)
+                            if _mr and not _mobj._duvod_do_promptu(True):
+                                _mr = ""
+                                _mo = "content"   # HANS_MOOD_HIDDEN_NEUTRAL_V1
+                    except Exception:
+                        _mr = ""
+                        _rt_state.pop("guard", None)
+                    _ss = self_state_facts(_dbp_ss, mood=_mo, mood_reason=_mr,
+                                           runtime=_rt_state or None)
+                    if _ss:
+                        logging.getLogger(__name__).info(
+                            'HANS_SELF_STATE_V1 → blok o sobě (%d zn)', len(_ss))
+                        self._vysledek_groundingu('self_state', 'self_state')
+                        return '\n\n' + _ss
+            except Exception as _sse:
+                logging.getLogger(__name__).debug('self_state: %s', _sse)
+            self._vysledek_groundingu('nonfactual', 'volny_hovor')
+            return ''   # volná konverzace → osobnost, žádný retrieval
+        return _POKRACUJ
+
+    def _grr_prepis(self, ctx):
+        # ── HANS_QUERY_REWRITER_F1_V1 ────────────────────────────────
+        # Rewriter „člověk→počítač" na FAKTICKÉ CESTĚ: rozřeš odkazy,
+        # oprav překlepy, strhni výplňky → vyčištěný explicitní dotaz
+        # pro retrieval. Persona (chat generace) DÁL slyší raw text
+        # výše ve volajícím — bytost, ne asistent. Deferral-safe: None
+        # → drž se originálu (žádná změna chování).
+        ctx._q_for_retrieval = str(ctx._text)
+        try:
+            from scripts.hans_rewriter import (
+                rewrite_for_retrieval as _f1_rewrite,
+                is_enabled as _f1_on)
+            if _f1_on(self.config):
+                _hist = []
+                if ctx.name:
+                    try:
+                        # HANS_CHAT_CHANNEL_AWARE_V1 — měkký filtr
+                        ctx._ch = get_current_channel()
+                        _hist = self.conv_store.get_history(ctx.name, channel=ctx._ch) or []
+                    except Exception:
+                        _hist = []
+                _rw = _f1_rewrite(self.config, str(ctx._text),
+                                  history=_hist, name=ctx.name)
+                if _rw and _rw.strip() and _rw.strip() != str(ctx._text).strip():
+                    # HANS_F1_NOT_ABOUT_ASKER_V1 (16. 9.) — prepis, ktery
+                    # prehodil podmet z Hanse na TAZATELE, je pro retrieval
+                    # k nicemu: FTS hleda, co vi tazatel, misto co delal
+                    # Hans → prazdny podklad → falesne zapreni (15. 9.,
+                    # „co si uz malovai?“ → „Co <tazatel> vi o obrazech?“).
+                    if self._f1_o_tazateli(_rw, ctx.name):
+                        logging.getLogger(__name__).info(
+                            'HANS_F1_NOT_ABOUT_ASKER_V1: prepis %r prehodil '
+                            'podmet na tazatele — drzim original', _rw[:60])
+                    else:
+                        logging.getLogger(__name__).info(
+                            'F1: rewrite %r -> %r',
+                            str(ctx._text)[:60], _rw[:60])
+                        ctx._q_for_retrieval = _rw.strip()
+                        # HANS_A1_THREAD_TEXT_V1 — schovej pro A1 gate
+                        self._f1_query = ctx._q_for_retrieval
+        except Exception as _f1e:
+            logging.getLogger(__name__).debug(
+                'F1: rewriter selhal (%s) — použit originál', _f1e)
+
+    def _grr_hledani(self, ctx):
+        # 3) query VŠECHNY kolekce PARALELNĚ (fakta roztroušená).
+        #    ThreadPool — query je síťový hop, vlákna se překryjí.
+        #    Celý sken v jednom timeoutu (ne timeout na kolekci).
+        import concurrent.futures as _cf
+        ctx.all_chunks = []
+        _skipped_chatlogs = []   # HANS_CHATLOG_NOT_FACT_V1
+        _skipped_own = []        # HANS_OWN_WORK_NOT_FACT_V1
+        _skipped_mimo = []       # HANS_GROUNDING_ANCHOR_V1
+        # HANS_GROUNDING_ANCHOR_V1 (22.8.) — OPORA MUSÍ MLUVIT O TOM,
+        # NA CO SE PTÁM. Změřeno na 919 skutečných dotazech z deníku
+        # proti živému RAGu s produkčními parametry: u dotazů, které
+        # nesou vlastní jméno, obsahoval podklad to jméno **0×** —
+        # ani v jednom ze tří chunků, které jdou do promptu:
+        #   osobnost: 144 groundingů, 22 s vlastním jménem, 0 o něm
+        #   film:      65 groundingů, 12 s vlastním jménem, 0 o něm
+        #   „znáš Xqzybwrt Flurbex?" (smyšlené jméno) ← 0.622 „Kdo je Hans"
+        #   „kdo byl Richard Sorge?"                  ← 0.681 reflexe Design
+        #   „Co víš o Icon of the Seas?"              ← 0.694 Pád do Tichého oceánu
+        # Práh to neuhlídá — všechno je POD strict 0.70; u bge-m3 se
+        # relevantní pásmo se šumem překrývá (varování v hans_knowledge),
+        # takže rozhodnout musí TÉMA, ne vzdálenost. Na takové opoře
+        # pak model postaví celou smyšlenou biografii (Scott Eastwood).
+        # Kotva se počítá z PŘEPSANÉHO dotazu (F1 doplní jméno z vlákna).
+        # Prázdno po filtru = dnešní větev „RAG nic nenašel" → vlastní
+        # zápisky → entita → přiznání. Ověřeno, že tudy přijde ta SPRÁVNÁ
+        # opora: „co víš o filmu Avatar: The Way of Water?" → zápisek
+        # o Avataru; „Co víš o Icon of the Seas?" → 3× zápisek o té lodi;
+        # vztahové karty jdou mimo RAG (`_build_card_fact`), takže
+        # dotaz na člena domácnosti („a co víš o Janě?") zůstává
+        # nedotčený.
+        try:
+            from scripts.hans_convindex import (
+                kotvy_ve_vete as _kv_fn, nese_kotvu as _nk_fn)
+            _kotvy_dotazu = [_w for _i, _w in
+                             _kv_fn(str(ctx._q_for_retrieval or ctx._text))]
+        except Exception as _kve:
+            logging.getLogger(__name__).debug(
+                'HANS_GROUNDING_ANCHOR_V1: kotvy nedostupné: %s', _kve)
+            _kotvy_dotazu, _nk_fn = [], None
+        try:
+            with _cf.ThreadPoolExecutor(
+                    max_workers=len(ctx.collections)) as _ex:
+                _futs = {
+                    _ex.submit(ctx._knowledge.query, _c,
+                               ctx._q_for_retrieval,
+                               self._GROUNDING_K,
+                               self._GROUNDING_MAX_DISTANCE): _c
+                    for _c in ctx.collections
+                }
+                _done, _pending = _cf.wait(
+                    _futs, timeout=self._GROUNDING_TIMEOUT_S)
+                for _fut in _done:
+                    try:
+                        _b = _fut.result()
+                        if _b and _b.found:
+                            for ctx._ch in _b.chunks:
+                                ctx._ch = dict(ctx._ch)
+                                ctx._ch['collection'] = _futs[_fut]
+                                # HANS_CHATLOG_NOT_FACT_V1 (19.8.) — CO JSEM
+                                # ŘEKL NENÍ CO VÍM. Chatové výměny se ukládají
+                                # do `hans_pripady` (HANS_CHAT_RECALL_V1) a
+                                # faktická cesta je pak četla jako důkaz —
+                                # tedy Hansův vlastní výrok se mu vracel jako
+                                # znalost. Doloženo 19.8.: fabulovaný rok
+                                # vzniku divadla se uložil 7× a vracel se.
+                                # ⚠️ Pro `conversation_recall` zůstávají —
+                                # tam JSOU na místě („o čem jsme mluvili").
+                                # HANS_CHATLOG_NOT_FACT_V2 (22.8.) — `self.`
+                                # ⚠️ `_CHATLOG_RE` je ATRIBUT TŘÍDY; holé
+                                # jméno uvnitř metody je NameError, takže
+                                # filtr z 19.8. NIKDY neběžel. A protože ho
+                                # zdejší `except` spolkne, přišla o chunky
+                                # celá kolekce → RAG „nic nenašel" → padalo
+                                # se na FTS zápisky. Tudy přišel 21.8. do
+                                # podkladu o hradu Kost Pátý element.
+                                _txt = str(ctx._ch.get('text') or '')
+                                if self._CHATLOG_RE.search(_txt[:200]):  # V3: okno 120→200,
+                                    # sekce „## Rozhovor s …" leží
+                                    # až za titulkem a datem
+                                    _skipped_chatlogs.append(1)
+                                    continue
+                                # HANS_OWN_WORK_NOT_FACT_V1 (22.8.) —
+                                # vlastní tvorba není doklad o světě
+                                # (rozbor u predikátu na začátku modulu).
+                                if je_vlastni_tvorba(_txt):
+                                    _skipped_own.append(1)
+                                    continue
+                                # HANS_GROUNDING_ANCHOR_V1 — chunk, který
+                                # o předmětu dotazu nemluví, není opora.
+                                if (_kotvy_dotazu and _nk_fn is not None
+                                        and not _nk_fn(_txt,
+                                                       _kotvy_dotazu)):
+                                    _skipped_mimo.append(1)
+                                    continue
+                                ctx.all_chunks.append(ctx._ch)
+                    except Exception as _tiche:
+                        log_once(  # HANS_NO_SILENT_CTX_V1
+                            logging.getLogger(__name__), "_build_grounding(ř. 978)",
+                            "_build_grounding: blok kontextu selhal (ř. 978): %s", _tiche)
+                if _pending:
+                    logging.getLogger(__name__).info(
+                        'G3B: %d/%d kolekcí nestihlo timeout %ss',
+                        len(_pending), len(ctx.collections),
+                        self._GROUNDING_TIMEOUT_S)
+        except Exception as _qe:
+            logging.getLogger(__name__).warning(
+                'G3B: multi-query selhalo: %s', _qe)
+            return ''
+
+        if _skipped_chatlogs:
+            logging.getLogger(__name__).info(
+                'HANS_CHATLOG_NOT_FACT_V1: %d kusů z chatu vyřazeno '
+                'z faktického groundingu', len(_skipped_chatlogs))
+        if _skipped_own:
+            logging.getLogger(__name__).info(
+                'HANS_OWN_WORK_NOT_FACT_V1: %d kusů vlastní tvorby '
+                'vyřazeno z faktického groundingu', len(_skipped_own))
+        if _skipped_mimo:
+            logging.getLogger(__name__).info(
+                'HANS_GROUNDING_ANCHOR_V1: %d kusů mimo téma (%s) '
+                'vyřazeno z faktického groundingu', len(_skipped_mimo),
+                ', '.join(_kotvy_dotazu[:3]))
+        return _POKRACUJ
+
+    def _grr_nic_pod_prahem(self, ctx):
+        # 4) nic relevantního pod prahem → G3C: vrať aspoň anti-konfab
+        #    (bez faktů). Faktický dotaz bez záznamů → Hans NESMÍ
+        #    konfabulovat. Web ověření přijde post-hoc (G.5).
+        if not ctx.all_chunks:
+            # HANS_NOTES_BEFORE_ENTITY_V1 (21.8.) — VLASTNÍ ZÁPISKY MAJÍ
+            # PŘEDNOST PŘED ENTITOU. Doloženo 20.8.: na dotaz o svatyni
+            # u Nymburka (Hans o ní ráno četl a zapsal si ji) rozhodla
+            # entitní větev a vrátila „ověřený fakt“ o SVATBĚ — entita se
+            # trefila jen 4znakovým prefixem „svat“. Správný zápisek byl
+            # přitom v FTS na prvním místě, ale FTS se volalo až POD tímhle
+            # returnem, takže se k němu dotaz nikdy nedostal.
+            # Pořadí je teď: co jsem sám četl a zapsal > slovníková glosa.
+            # Změřeno: kde entita rozhoduje správně (Sorge, Jiří z Poděbrad,
+            # Gotika), míří zápisky na tentýž předmět → žádná ztráta C1;
+            # kde zápisky nejsou (Secese), rozhodne dál entita.
+            # HANS_FTS_USES_REWRITE_V1 (21.8.) — hledej v zápiscích podle
+            # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
+            # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
+            # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
+            _kb = self._knowledge_fts_grounding(
+                str(ctx._q_for_retrieval or ctx._text))
+            if _kb:
+                # HANS_ENTITY_FACTS_ALSO_WITH_NOTES_V1 (26.8.) — zápisky
+                # mají přednost, ale STRUKTUROVANÁ FAKTA si s nimi
+                # NEKONKURUJÍ: je to jeden krátký ověřený řádek z Wikidat,
+                # ne konkurenční próza. Doloženo: na „v jakém slohu je
+                # Cardiffský hrad" se entita RESOLVOVALA (ev=21), ale
+                # vyhrály zápisky → fakt `sloh = novogotika` se zahodil
+                # a Hans napsal „gotickou stavbou". Kost fungovala jen
+                # proto, že žádné zápisky neměla.
+                _fl = self._entity_facts_line(ctx._q_for_retrieval)
+                if _fl:
+                    _kb = _kb + '\n' + _fl
+                self._vysledek_groundingu('grounded', 'zapisky_pred_entitou')
+                return _kb
+            # C1: RAG prázdné, ale entita ve store → autoritativní fakt
+            # (Sorge není v RAG, ale Hans o něm četl → deterministický fakt).
+            if ctx._ent_fact:
+                logging.getLogger(__name__).info(
+                    'C1: RAG prázdné, entita ze store → grounded pro %r',
+                    str(ctx._text)[:40])
+                # nálepka byla `chatlog_neni_fakt` — s filtrem chatlogů to
+                # nemá nic společného a 20.8. to svedlo diagnózu na RAG.
+                self._vysledek_groundingu('grounded', 'entita_c1')
+                return '\n\n' + ANTIKONFAB + '\n\n' + ctx._ent_fact
+            # HANS_KNOWLEDGE_FTS_V1 — tudy vede REÁLNÁ cesta k abstinenci
+            # (ověřeno v logu 6.8.: „žádná shoda pod prahem → G3C").
+            # Původní patch mířil jen na druhé místo níž a NIC neopravil.
+            # HANS_FTS_USES_REWRITE_V1 (21.8.) — hledej v zápiscích podle
+            # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
+            # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
+            # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
+            _kb = self._knowledge_fts_grounding(
+                str(ctx._q_for_retrieval or ctx._text))
+            if _kb:
+                self._vysledek_groundingu('grounded', 'zapisky_fts')
+                return _kb
+            # HANS_REFLECTIVE_ASK_V2 (3.9.) — ÚVAHOVÁ otázka se sem nesmí
+            # propadnout. `ANTIKONFAB_NOFACTS` říká modelu „nemáš fakta,
+            # přiznej to", jenže dotaz na vlastní názor žádná fakta
+            # nepotřebuje — odpovídá se z osobnosti. Doloženo testem 3.9.:
+            # „co je podle vás na dokumentování světa to nejtěžší?" →
+            # „K tomuhle nemám spolehlivý záznam a nerad bych si domýšlel."
+            # V1 (30.8.) hlídal jen větev `_tenky`; sem, na
+            # `zapisky_fts_prazdno`, nedosáhl — log to ukázal hned
+            # (`GROUNDING: factual_nofacts ← zapisky_fts_prazdno`).
+            # Týž predikát, žádný nový — a je ÚZKÝ: 0 shod z 1327 reálných
+            # uživatelských replik, takže anti-konfabulaci nerozvolňuje.
+            try:
+                from scripts.hans_intent import is_reflective_ask as _ira2
+                if _ira2(str(ctx._text)):
+                    logging.getLogger(__name__).info(
+                        'HANS_REFLECTIVE_ASK_V2: %r je úvahová otázka → '
+                        'osobnost místo abstinence', str(ctx._text)[:50])
+                    self._vysledek_groundingu('nonfactual', 'uvahova_otazka')
+                    return ''
+            except Exception:
+                pass
+            logging.getLogger(__name__).info(
+                'G3B: žádná shoda pod prahem pro [%s] %r → anti-konfab bez fakt (G3C)',
+                ctx.res.intent, str(ctx._text)[:40])
+            self._vysledek_groundingu('factual_nofacts', 'zapisky_fts_prazdno')
+            return '\n\n' + ANTIKONFAB_NOFACTS
+        return _POKRACUJ
+
+
 
     def _entity_store(self):
         # HANS_ENTITY_STORE_C1_V1 — lazy singleton EntityStore
@@ -2511,11 +2593,65 @@ class OpenWebUIDirectHandler:
 
     def _build_system(self, name: str, for_greeting: bool = False,
                       user_msg: str = "") -> str:
+        import types as _types_nt
+        ctx = _types_nt.SimpleNamespace(name=name, for_greeting=for_greeting, user_msg=user_msg)
+        self._sy_zaklad(ctx)
+        self._sy_relevance(ctx)
+        self._sy_schopnosti(ctx)
+        self._sy_kolac(ctx)
+        self._sy_mistnost(ctx)
+        self._sy_misto(ctx)
+        self._sy_kalendar(ctx)
+        self._sy_cas(ctx)
+        self._sy_denik(ctx)
+        self._sy_pribeh(ctx)
+        self._sy_studium(ctx)
+        self._sy_smer(ctx)
+        self._sy_napady(ctx)
+        self._sy_kodi(ctx)
+        self._sy_okoli(ctx)
+        self._sy_pamet(ctx)
+        self._sy_nitky(ctx)
+        self._sy_zajmy(ctx)
+        self._sy_otazky(ctx)
+        self._sy_osoba(ctx)
+        self._sy_cetba(ctx)
+        self._sy_myslenky(ctx)
+        self._sy_rutina(ctx)
+        self._sy_telo(ctx)
+        self._sy_nalada(ctx)
+        self._sy_zdravi(ctx)
+        self._sy_vypadek(ctx)
+        self._sy_severka(ctx)
+        self._sy_prohloubeni(ctx)
+        self._sy_lekce(ctx)
+        self._sy_hodnoty(ctx)
+        self._sy_skladani(ctx)
+        # region agent log
+        try:
+            _dbg(
+                location="openwebui_direct_handler.py:_build_system",
+                message="Built system prompt",
+                data={
+                    "has_surroundings": bool(ctx.surr_ctx.strip()),
+                    "has_known_persons": bool(ctx.persons_ctx.strip()),
+                    "chars": len(ctx.system_msg),
+                    "history_turns": self.conv_store.summary(),
+                },
+            )
+        except Exception as _tiche:
+            log_once(  # HANS_NO_SILENT_CTX_V1
+                logging.getLogger(__name__), "_build_system(ř. 2181)",
+                "_build_system: blok kontextu selhal (ř. 2181): %s", _tiche)
+        # endregion
+        return ctx.system_msg
+
+    def _sy_zaklad(self, ctx):
         # PERSONA_REFACTOR_1_4 — jednotný zdroj identity
         from scripts.hans_persona import persona_core
-        system_base = persona_core(self.config)
+        ctx.system_base = persona_core(self.config)
         # Known persons
-        known = self.config.get("known_persons", {})
+        ctx.known = self.config.get("known_persons", {})
         # HANS_PROMPT_HOUSEHOLD_PRIVACY_V1 (8. 9.) — CIZI tazatel nedostane
         # slozeni domacnosti do promptu. `HANS_HOUSEHOLD_PRIVACY_V1` (19. 8.)
         # zavrel `person_card`/`household_card`, ale sam si tehdy zapsal, ze
@@ -2526,14 +2662,14 @@ class OpenWebUIDirectHandler:
         # ⚠️ Gate sepne jen u NEPRÁZDNÉHO neznámého jména. Prázdné jméno
         # (interní cesty bez mluvčího) chování NEMĚNÍ — na to není doloženy
         # případ a širší zásah by mohl vzít kontext legitimním cestám.
-        _asker_cizi = False
-        if name:
+        ctx._asker_cizi = False
+        if ctx.name:
             try:
                 from scripts.cz_names import is_known_person as _ikp
-                _asker_cizi = not _ikp(name, self.config)
+                ctx._asker_cizi = not _ikp(ctx.name, self.config)
             except Exception:
-                _asker_cizi = False
-        if known and _asker_cizi:
+                ctx._asker_cizi = False
+        if ctx.known and ctx._asker_cizi:
             # HANS_STRANGER_PRIVACY_SCOPE_V1 (22. 9.) — ROZSAH ZAKAZU MUSI
             # BYT JEDNOZNACNY. Puvodni zneni "O lidech z tohoto domu
             # NEMLUV" si model pregeneralizoval na "nemohu o domech, ve
@@ -2551,15 +2687,15 @@ class OpenWebUIDirectHandler:
             # pousti "nikoho tu nevidim" dal, protoze V1 tim odmitanim
             # kradl i odpovedi, ktere o lidech vubec nejsou. Rozhodnuti
             # uzivatele 22. 9.: "jen zostrit klauzuli".
-            persons_ctx = (
+            ctx.persons_ctx = (
                 "\n\nMluvíš s někým, koho neznáš (%s). NEMLUV s ním "
                 "o LIDECH, kteří v tomto domě žijí — ani jména, ani role, "
                 "ani rodinné vztahy. Když se na NĚ zeptá, zdvořile odmítni. "
                 "Týká se to jen lidí: o sobě, o svých úvahách a o tom, co jsi "
-                "sám řekl dřív, mluv dál normálně." % name)
-        elif known:
+                "sám řekl dřív, mluv dál normálně." % ctx.name)
+        elif ctx.known:
             lines = []
-            for pname, pdata in known.items():
+            for pname, pdata in ctx.known.items():
                 if isinstance(pdata, dict):
                     g     = pdata.get("gender", "")
                     notes = pdata.get("notes", "").strip()
@@ -2573,26 +2709,28 @@ class OpenWebUIDirectHandler:
                 # je to jen soupis jmen s rody a model si adresáta vybere sám
                 # (doloženo: uživatel se ptal „jak se mas?", Hans odpověděl
                 # „Odpovím vám, paní Jano" — oslovil nepřítomnou třetí osobu).
-                if name and pname == name:
+                if ctx.name and pname == ctx.name:
                     line += "  ← S TOUTO OSOBOU PRÁVĚ MLUVÍŠ"
                 lines.append(line)
-            persons_ctx = "\n\nZnáš tyto osoby z domu:\n" + "\n".join(lines)
+            ctx.persons_ctx = "\n\nZnáš tyto osoby z domu:\n" + "\n".join(lines)
         else:
-            persons_ctx = ""
+            ctx.persons_ctx = ""
         # HANS_GAME_LAUNCH_ATTRIB_V1 — oblíbená hra osoby, se kterou Hans mluví
-        if not for_greeting and name:
-            _fav = self._favorite_game(name)
+        if not ctx.for_greeting and ctx.name:
+            _fav = self._favorite_game(ctx.name)
             if _fav:
-                persons_ctx += (f"\n\n{name} rád(a) hraje na PC: „{_fav}" + "\""
+                ctx.persons_ctx += (f"\n\n{ctx.name} rád(a) hraje na PC: „{_fav}" + "\""
                                 " (často to spouští). Můžeš to přirozeně zmínit, "
                                 "nevnucuj.")
+
+    def _sy_relevance(self, ctx):
         # ── HANS_CTX_RELEVANCE_V1 (19.8.) — ptá se blok, jestli je k něčemu? ──
         # Změřeno na 12 různých dotazech: system prompt měl VŽDY ~14 350 zn
         # (rozptyl 80 zn) a 22 z 23 bloků bylo přítomno pokaždé. Kontext se
         # tedy neřídil otázkou — a grounding (pár set zn) v té zdi zanikl:
         # týž dotaz odpověděl v izolaci správně, živě si vymýšlel rok.
         # ⚠️ PŘI POCHYBNOSTI VKLÁDAT. Radši delší prompt než ztracená schopnost.
-        _relf = (user_msg or "").lower()
+        _relf = (ctx.user_msg or "").lower()
         try:
             import unicodedata as _u
             _relf = "".join(c for c in _u.normalize("NFKD", _relf)
@@ -2602,20 +2740,21 @@ class OpenWebUIDirectHandler:
                 logging.getLogger(__name__), "_build_system(ř. 1477)",
                 "_build_system: blok kontextu selhal (ř. 1477): %s", _tiche)
         import re as _rre
-        _is_knowledge_q = bool(_rre.search(
+        ctx._is_knowledge_q = bool(_rre.search(
             r"\b(co\s+(je|jsou|byl|byla)|kdo\s+(je|byl)|co\s+vis|co\s+ses|"
             r"proc|jak\s+(vznikl|funguje))\b", _relf))
-        _asks_ability = bool(_rre.search(
+        ctx._asks_ability = bool(_rre.search(
             r"\b(umis|umite|dokazes|zvladnes|schopnost|co\s+vsechno|nauc|"
             r"namaluj|namalujes|napis|pust|zapni|vypni|pridej|nastuduj|udelej|"
             r"zaridis|muzes)\b", _relf))
-        _about_tv = bool(_rre.search(
+        ctx._about_tv = bool(_rre.search(
             r"\b(tv|televiz|kodi|film|serial|poust|hraje|sledova|div[áa])", _relf))
-        _about_kolac = bool(_rre.search(r"(kolac|plysak|medv)", _relf))
-        _about_self_day = bool(_rre.search(
+        ctx._about_kolac = bool(_rre.search(r"(kolac|plysak|medv)", _relf))
+        ctx._about_self_day = bool(_rre.search(
             r"(co\s+jsi\s+delal|jak\s+se\s+mas|co\s+je\s+u\s+tebe|jak\s+ses)",
             _relf))
 
+    def _sy_schopnosti(self, ctx):
         # HANS_CAPABILITY_AWARENESS_V1 — Hans ví, co reálně umí (nabízet/dělat,
         # ne odmítat). Faktický seznam. Jen full mód (pozdrav drží brevitu).
         # HANS_CTX_RELEVANCE_V1 — u ČISTĚ ZNALOSTNÍHO dotazu se vynechává
@@ -2631,77 +2770,82 @@ class OpenWebUIDirectHandler:
         # k tomu nepřidává nic než pokušení.
         # ⚠️ U ŽÁDOSTI zůstává (`_asks_ability`) — blok vznikl proto, že Hans
         # odmítl malovat s tím, že „nemá umělecké sklony", a to se nesmí vrátit.
-        cap_ctx = ""
-        if not for_greeting and (_asks_ability
-                                 or (not _is_knowledge_q and not _about_self_day)):
+        ctx.cap_ctx = ""
+        if not ctx.for_greeting and (ctx._asks_ability
+                                 or (not ctx._is_knowledge_q and not ctx._about_self_day)):
             try:
                 from scripts.hans_capabilities import (
                     capabilities_context, recent_gained_context)
-                cap_ctx = capabilities_context()
+                ctx.cap_ctx = capabilities_context()
                 # HANS_CAPABILITY_AWARENESS_V1 (V2) — nedávno získané schopnosti
                 _capdb = (self.config.get("hans_idle", {}) or {}).get(
                     "diary_db", "data/hans_diary.db")
-                cap_ctx += recent_gained_context(_capdb)
+                ctx.cap_ctx += recent_gained_context(_capdb)
             except Exception:
-                cap_ctx = cap_ctx or ""
+                ctx.cap_ctx = ctx.cap_ctx or ""
 
+    def _sy_kolac(self, ctx):
         # Hans dialog s plysákem
         # HANS_CTX_RELEVANCE_V1 — jen když na Koláče přijde řeč nebo se ptáme,
         # co Hans dělal; k dotazu na knihu či počasí nepřispívá (742 zn).
-        teddy_ctx = ""
+        ctx.teddy_ctx = ""
         _hd = getattr(self, '_hans_dialog', None)
-        if _hd and (_about_kolac or _about_self_day or not _is_knowledge_q):
+        if _hd and (ctx._about_kolac or ctx._about_self_day or not ctx._is_knowledge_q):
             _teddy = _hd.get_last_dialog()
             if _teddy:
-                teddy_ctx = '\n\n' + _teddy
+                ctx.teddy_ctx = '\n\n' + _teddy
 
+    def _sy_mistnost(self, ctx):
         # Popis mistnosti
-        room_ctx = ""
+        ctx.room_ctx = ""
         _ro = getattr(self, '_room_observer', None)
         if _ro:
             # HANS_PLACE_STRANGER_V1 (24. 9., pokyn uzivatele) — popis mistnosti
             # (z kamery) ani model domova cizimu ne. Doloženo tazatelem: cizimu
             # Hans popsal okna, gauc, obrazy a dvere do kuchyne.
-            _room = _ro.get_context_string() if not _asker_cizi else ""
+            _room = _ro.get_context_string() if not ctx._asker_cizi else ""
             if _room:
-                room_ctx = '\n\n' + _room
+                ctx.room_ctx = '\n\n' + _room
 
+    def _sy_misto(self, ctx):
         # HANS_PLACE_V1 — smysl pro místo „kde jsem" (groundovaný model domova).
         # Počasí vetkneme jako „za oknem" (živé groundování), když okno znám.
         # Do POZDRAVU se model místa NEdává (na přání uživatele — brevita).
-        place_ctx = ""
+        ctx.place_ctx = ""
         try:
             _ps = (self._place_store()
-                   if not for_greeting and not _asker_cizi else None)  # HANS_PLACE_STRANGER_V1
+                   if not ctx.for_greeting and not ctx._asker_cizi else None)  # HANS_PLACE_STRANGER_V1
             if _ps is not None:
                 _wx = getattr(self, '_weather', None)
                 _wx_str = _wx.get_context_string() if _wx else None
                 _place = _ps.get_context_string(weather_str=_wx_str)
                 if _place:
-                    place_ctx = '\n\n' + _place
+                    ctx.place_ctx = '\n\n' + _place
         except Exception:
-            place_ctx = ""
+            ctx.place_ctx = ""
 
+    def _sy_kalendar(self, ctx):
         # HANS_CALENDAR_V1 — nadcházející události z kalendáře TÉTO osoby (full mód).
         # Soukromí: ukáže jen kalendář osoby, se kterou Hans mluví (name).
-        cal_ctx = ""
+        ctx.cal_ctx = ""
         try:
             from scripts.hans_calendar import is_enabled, CalendarStore
-            if not for_greeting and name and is_enabled(self.config):
+            if not ctx.for_greeting and ctx.name and is_enabled(self.config):
                 _dbp = (self.config.get("diary", {}) or {}).get(
                     "db_path", "data/hans_diary.db")
                 _cs = CalendarStore(self.config, _dbp).context_string(
-                    name, hours=72)
+                    ctx.name, hours=72)
                 if _cs:
-                    cal_ctx = "\n\n" + _cs
+                    ctx.cal_ctx = "\n\n" + _cs
         except Exception:
-            cal_ctx = ""
+            ctx.cal_ctx = ""
 
+    def _sy_cas(self, ctx):
         # Aktuální čas + fáze dne (TIME_AWARENESS_V1)
-        _hi = getattr(self, '_hans_idle', None)
-        time_ctx = ""
+        ctx._hi = getattr(self, '_hans_idle', None)
+        ctx.time_ctx = ""
         try:
-            _rt = getattr(_hi, '_routine', None) if _hi else None
+            _rt = getattr(ctx._hi, '_routine', None) if ctx._hi else None
             _now = datetime.now()
             _DNY = ('pondělí','úterý','středa','čtvrtek','pátek','sobota','neděle')
             _lbl = _rt.phase_label if _rt else ""
@@ -2730,7 +2874,7 @@ class OpenWebUIDirectHandler:
                     f"{_now.day}.{_now.month}.{_now.year}").strip()
             except Exception:
                 _dnes_slovy = ""   # bez modulu zůstane dnešní text s číslicemi
-            time_ctx = (f"\n\nTeď je {_lbl}{_DNY[_now.weekday()]} "
+            ctx.time_ctx = (f"\n\nTeď je {_lbl}{_DNY[_now.weekday()]} "
                         f"{_now.day}.{_now.month}.{_now.year}"
                         + (f", slovy {_dnes_slovy}" if _dnes_slovy else "")
                         + f". Přesný čas je {_now:%H:%M}, tedy {_slovy}. "
@@ -2741,19 +2885,21 @@ class OpenWebUIDirectHandler:
                         # tedy odebere — stejně jako u data rozepsaného slovy.
                         + f" Když zdravíš, patří teď „{_pozdrav}“.")
         except Exception:
-            time_ctx = ""
+            ctx.time_ctx = ""
 
+    def _sy_denik(self, ctx):
         # Hans deník
-        diary_ctx = ""
-        _hi = getattr(self, '_hans_idle', None)
-        if _hi:
-            _diary = _hi.get_diary_context(max_age_h=24)
+        ctx.diary_ctx = ""
+        ctx._hi = getattr(self, '_hans_idle', None)
+        if ctx._hi:
+            _diary = ctx._hi.get_diary_context(max_age_h=24)
             if _diary:
-                diary_ctx = '\n\n' + _diary
+                ctx.diary_ctx = '\n\n' + _diary
 
+    def _sy_pribeh(self, ctx):
         # PERSONA_READS_NARRATIVE_V1 — nejnovější kapitola životního příběhu
         # (kontinuita identity; read-only, nikdy neshodí chat)
-        story_ctx = ""
+        ctx.story_ctx = ""
         try:
             from scripts.hans_narrative import latest_chapter
             _dbp = (self.config.get("diary_db")
@@ -2766,19 +2912,20 @@ class OpenWebUIDirectHandler:
             # (tah, kde Hans cizimu popsal „pohyby pani …“). Cizimu ji vynech:
             # je to persona a kontinuita, ne doklad o svete — `_EVIDENCNI_BLOKY`
             # ji zamerne nemaji, takze se timhle nic faktickeho neztrati.
-            if _chap and not _asker_cizi:
-                story_ctx = ("\n\nKdo se ze mě postupně stává (má poslední "
+            if _chap and not ctx._asker_cizi:
+                ctx.story_ctx = ("\n\nKdo se ze mě postupně stává (má poslední "
                              "autobiografická reflexe — vnitřní kontinuita, "
                              "necituj ji doslovně, jen z ní vychází tvůj tón): "
                              + _chap)
         except Exception:
-            story_ctx = ""
+            ctx.story_ctx = ""
 
+    def _sy_studium(self, ctx):
         # HANS_STUDY_SURFACING_V1 (#2) — Hans přirozeně zmíní svůj studijní
         # program (co studuje / co se dozvěděl). Jen full mód, ne greeting
         # (brevita). Read-only, graceful.
-        study_ctx = ""
-        if not for_greeting:
+        ctx.study_ctx = ""
+        if not ctx.for_greeting:
             try:
                 from scripts.hans_study import study_context_string
                 _dbp2 = (self.config.get("diary_db")
@@ -2786,16 +2933,17 @@ class OpenWebUIDirectHandler:
                          or "data/hans_diary.db")
                 _sc = study_context_string(self.config, _dbp2)
                 if _sc:
-                    study_ctx = ("\n\nMé soukromé studium (zmiň jen když to "
+                    ctx.study_ctx = ("\n\nMé soukromé studium (zmiň jen když to "
                                  "přirozeně zapadne, nevnucuj): " + _sc)
             except Exception:
-                study_ctx = ""
+                ctx.study_ctx = ""
 
+    def _sy_smer(self, ctx):
         # HANS_DIRECTION_V1 — můj vlastní zvolený SMĚR (dopředná aspirace).
         # Dává tón „k čemu vědomě rostu"; na dotaz „kam směřuješ" ať odpoví
         # tímhle, ne konfabulací. Jen full mód, read-only, graceful.
-        direction_ctx = ""
-        if not for_greeting:
+        ctx.direction_ctx = ""
+        if not ctx.for_greeting:
             try:
                 from scripts.hans_direction import active_direction_line
                 _dbd = (self.config.get("diary_db")
@@ -2803,16 +2951,17 @@ class OpenWebUIDirectHandler:
                         or "data/hans_diary.db")
                 _dl = active_direction_line(self.config, _dbd)
                 if _dl:
-                    direction_ctx = ("\n\nMůj vlastní zvolený směr (k čemu "
+                    ctx.direction_ctx = ("\n\nMůj vlastní zvolený směr (k čemu "
                                      "vědomě rostu; zmiň, když se ptají kam "
                                      "směřuji nebo co chci dělat dál): " + _dl)
             except Exception:
-                direction_ctx = ""
+                ctx.direction_ctx = ""
 
+    def _sy_napady(self, ctx):
         # HANS_SYNTHESIS_IDEAS_V1 (#2) — poslední vlastní postřeh (propojení věcí
         # z různých oblastí). Jen full mód, ne pozdrav (brevita). Read-only, graceful.
-        idea_ctx = ""
-        if not for_greeting:
+        ctx.idea_ctx = ""
+        if not ctx.for_greeting:
             try:
                 from scripts.hans_ideas import latest_idea_context
                 _dbp3 = (self.config.get("diary_db")
@@ -2820,27 +2969,29 @@ class OpenWebUIDirectHandler:
                          or "data/hans_diary.db")
                 _ic = latest_idea_context(self.config, _dbp3)
                 if _ic:
-                    idea_ctx = ("\n\nMůj nedávný vlastní postřeh (zmiň jen když to "
+                    ctx.idea_ctx = ("\n\nMůj nedávný vlastní postřeh (zmiň jen když to "
                                 "přirozeně zapadne, nevnucuj): " + _ic)
             except Exception:
-                idea_ctx = ""
+                ctx.idea_ctx = ""
 
+    def _sy_kodi(self, ctx):
         # Kodi kontext
-        kodi_ctx = ""
+        ctx.kodi_ctx = ""
         # HANS_CTX_RELEVANCE_V1 — co běží na TV je u čistě znalostního dotazu
         # („co je zajímavého na gotice") jen šum za 871 zn. U dotazu na TV,
         # film či sledování se vkládá dál.
         _km = getattr(self, '_kodi_monitor', None)
-        if _km and (_about_tv or not _is_knowledge_q):
+        if _km and (ctx._about_tv or not ctx._is_knowledge_q):
             _now_playing = _km.get_now_playing_context()
-            _history     = _km.get_person_history(name)
+            _history     = _km.get_person_history(ctx.name)
             _events      = _km.get_today_events()
             _kodi_parts  = [x for x in [_now_playing, _history, _events] if x]
             if _kodi_parts:
-                kodi_ctx = '\n\n' + '\n'.join(_kodi_parts)
+                ctx.kodi_ctx = '\n\n' + '\n'.join(_kodi_parts)
 
+    def _sy_okoli(self, ctx):
         # Surroundings
-        surr_ctx = ""
+        ctx.surr_ctx = ""
         if self.surroundings_db:
             try:
                 # Zjisti aktualne viditelne osoby
@@ -2855,9 +3006,9 @@ class OpenWebUIDirectHandler:
                 # report_who_is_home z živých dat, ne model z presence hintu.
                 # V pozdravu (for_greeting=True) nefiltrujeme — greeting
                 # legitimně zmíní kdo je v pokoji.
-                if name and not for_greeting and _vis:
-                    if name in _vis:
-                        _vis = [name]   # ponech jen partnera
+                if ctx.name and not ctx.for_greeting and _vis:
+                    if ctx.name in _vis:
+                        _vis = [ctx.name]   # ponech jen partnera
                     else:
                         # partner (např. Telegram) není fyzicky přítomen —
                         # NEuvádět modelu 3. strany ani „nikdo" (klam);
@@ -2869,38 +3020,39 @@ class OpenWebUIDirectHandler:
                 surr = self.surroundings_db.build_llm_context(
                     max_age_s=1800,
                     visible_persons=_vis,
-                    asker_known=not _asker_cizi,   # HANS_PROMPT_HOUSEHOLD_PRIVACY_V1
+                    asker_known=not ctx._asker_cizi,   # HANS_PROMPT_HOUSEHOLD_PRIVACY_V1
                     pan_angle=_pan,
                     weather_str=_wx_str,
                 )
                 if surr:
-                    surr_ctx = f"\n\n{surr}"
+                    ctx.surr_ctx = f"\n\n{surr}"
             except Exception as _tiche:
                 log_once(  # HANS_NO_SILENT_CTX_V1
                     logging.getLogger(__name__), "_build_system(ř. 1742)",
                     "_build_system: blok kontextu selhal (ř. 1742): %s", _tiche)
 
+    def _sy_pamet(self, ctx):
         # Memory — characterization + poslední setkání (T5B_TACTFUL_RECALL_V1)
         # Jen pro plný mód; v RAG módu jde statická paměť přes RAG kolekce.
         # PRINCIP: majordomus VÍ kdy naposledy viděl pána, ale NEŘÍKÁ to.
         #   - characterization: kontext, smí ovlivnit tón
         #   - last_encounter: vnitřní znalost, NEvyslovovat; jen pokud
         #     odstup > práh (čerstvé/open encountery se ignorují)
-        memory_ctx = ""
+        ctx.memory_ctx = ""
         _LAST_SEEN_MIN_GAP_S = 2 * 3600.0  # min. odstup aby "naposledy" dávalo smysl
         _mem = getattr(self, 'memory', None)
         if _mem is not None:
             try:
                 from scripts.hans_memory import _czech_relative_time as _crt
-                _card = _mem.fact(name)
-                _last = _mem.last_encounter(name)  # jen uzavřené (include_open=False)
+                _card = _mem.fact(ctx.name)
+                _last = _mem.last_encounter(ctx.name)  # jen uzavřené (include_open=False)
                 _mparts = []
                 # HANS_LAST_SEEN_NAME_V1 — do promptu patří JMÉNO, ne konfigurační
                 # klíč („jana"); model ho jinak přepíše do odpovědi tak, jak ho vidí.
                 from scripts.cz_names import acc as _cz_acc, display_name as _cz_disp
                 if _card is not None and getattr(_card, 'characterization', ''):
                     _mparts.append(
-                        f"Co o osobě {_cz_disp(name)} víš z dřívějška: "
+                        f"Co o osobě {_cz_disp(ctx.name)} víš z dřívějška: "
                         f"{_card.characterization}")
                 if _last is not None:
                     _ended = _last.get('ended_at') or _last.get('started_at')
@@ -2909,35 +3061,37 @@ class OpenWebUIDirectHandler:
                         _w = _crt(_ended)
                         _mparts.append(
                             f"(Tvá vnitřní znalost — NEVYSLOVUJ to při pozdravu, "
-                            f"slouží jen k vřelosti tónu: {_cz_acc(name)} jsi naposledy "
+                            f"slouží jen k vřelosti tónu: {_cz_acc(ctx.name)} jsi naposledy "
                             f"viděl {_w}.)")   # HANS_LAST_SEEN_NAME_V1: klíč → 4. pád
                 if _mparts:
-                    memory_ctx = '\n\n' + '\n'.join(_mparts)
+                    ctx.memory_ctx = '\n\n' + '\n'.join(_mparts)
             except Exception as _me:
                 print(f"[Chat] memory_ctx build failed: {_me}")
 
+    def _sy_nitky(self, ctx):
         # HANS_THREADS_SURFACING_V1 — otevřené nitky s touto osobou (pasivní
         # kontext; surface_for + mark se dělá v greetingu, tady ať je Hans
         # může přirozeně vplést). Read-only, nikdy neshodí chat.
-        threads_ctx = ""
+        ctx.threads_ctx = ""
         try:
             _tstore = self._thread_store()
             if _tstore is not None:
-                _opn = _tstore.open_threads(name, limit=3)
+                _opn = _tstore.open_threads(ctx.name, limit=3)
                 if _opn:
                     from scripts.hans_threads import format_block
                     _blk = format_block(_opn)
                     if _blk:
-                        threads_ctx = (
+                        ctx.threads_ctx = (
                             "\n\nOtevřené nitky s touto osobou (něco, co dříve"
                             " zmínila a má pokračování — pokud se to hodí do"
                             " rozhovoru, přirozeně se zeptej, jak to dopadlo;"
                             " nevytahuj všechno najednou):\n" + _blk)
         except Exception:
-            threads_ctx = ""
+            ctx.threads_ctx = ""
 
+    def _sy_zajmy(self, ctx):
         # HANS_PERSON_INTERESTS_V1 — co tuto osobu zajímá (Hans přizpůsobí hovor)
-        interests_ctx = ""
+        ctx.interests_ctx = ""
         try:
             from scripts.hans_person_interests import (
                 PersonInterestStore, format_block as _pi_block)
@@ -2948,146 +3102,156 @@ class OpenWebUIDirectHandler:
                         or "data/hans_diary.db")
                 self._pinterest_inst = PersonInterestStore(self.config, _dbp)
                 _pis = self._pinterest_inst
-            _ints = _pis.interests_for(name, limit=6)
+            _ints = _pis.interests_for(ctx.name, limit=6)
             _iblk = _pi_block(_ints)
             if _iblk:
-                interests_ctx = ("\n\nCo " + name + " zajímá (víš z dřívějška,"
+                ctx.interests_ctx = ("\n\nCo " + ctx.name + " zajímá (víš z dřívějška,"
                                  " můžeš na to navázat, ne vyjmenovávat): " + _iblk)
         except Exception:
-            interests_ctx = ""
+            ctx.interests_ctx = ""
 
+    def _sy_otazky(self, ctx):
         # HANS_QUESTIONS_SURFACING_V1 — čekající otázka pro osobu (soft návrh;
         # jen v chatu, NE v greetingu — tam se ptá aktivně). _maybe_surface_question
         # má cooldown + označí asked = self-limiting.
-        qsuggest_ctx = ""
-        if not for_greeting:
+        ctx.qsuggest_ctx = ""
+        if not ctx.for_greeting:
             try:
-                _q = self._maybe_surface_question(name)
+                _q = self._maybe_surface_question(ctx.name)
                 if _q:
-                    qsuggest_ctx = ("\n\nMáš pro tuto osobu připravenou otázku —"
+                    ctx.qsuggest_ctx = ("\n\nMáš pro tuto osobu připravenou otázku —"
                                     " pokud se to do hovoru hodí, přirozeně se"
                                     " zeptej: " + _q.question)
             except Exception:
-                qsuggest_ctx = ""
+                ctx.qsuggest_ctx = ""
 
+    def _sy_osoba(self, ctx):
         # Current person
-        profile = known.get(name, {})
+        profile = ctx.known.get(ctx.name, {})
         if isinstance(profile, dict):
             g     = profile.get("gender", "")
             notes = profile.get("notes", "")
             if g == "žena":
-                current = f"\n\nAktuálně mluvíš s {name}, která je ženského rodu."
+                ctx.current = f"\n\nAktuálně mluvíš s {ctx.name}, která je ženského rodu."
             elif g == "muž":
-                current = f"\n\nAktuálně mluvíš s {name}, který je mužského rodu."
+                ctx.current = f"\n\nAktuálně mluvíš s {ctx.name}, který je mužského rodu."
             else:
-                current = f"\n\nAktuálně mluvíš s {name}."
+                ctx.current = f"\n\nAktuálně mluvíš s {ctx.name}."
             if notes:
-                current += f" {notes}"
+                ctx.current += f" {notes}"
         else:
-            current = f"\n\nAktuálně mluvíš s {name}."
+            ctx.current = f"\n\nAktuálně mluvíš s {ctx.name}."
 
         # HANS_ADDRESSEE_V1 — kontext (deník, myšlenky, RAG) mluví o uživateli ve
         # 3. osobě („pán domu…“). Bez tohoto pravidla to model recykluje a mluví
         # o adresátovi, jako by to byl někdo třetí („Standa tě pozdravuje“).
-        current += (
-            f" {name} je TÁŽ osoba, o které tvé zápisky a myšlenky mluví ve třetí"
-            f" osobě (např. „pán domu“, „{name} přišel“). Teď mluvíš PŘÍMO S NÍ:"
+        ctx.current += (
+            f" {ctx.name} je TÁŽ osoba, o které tvé zápisky a myšlenky mluví ve třetí"
+            f" osobě (např. „pán domu“, „{ctx.name} přišel“). Teď mluvíš PŘÍMO S NÍ:"
             f" oslovuj ji ve druhé osobě (ty/vy) a vokativem."
             f" NIKDY o ní nemluv ve třetí osobě a NIKDY nikomu netlumoč její vzkazy."
         )
         # HANS_ADDRESSEE_V2 (4.8.) — ostatní jména v kontextu jsou TŘETÍ OSOBY.
         # Model si bez tohohle vybral adresáta ze seznamu osob domu podle
         # rodu/persony („paní Jano"), ačkoli psal jinému uživateli.
-        current += (
+        ctx.current += (
             f" Jakákoli JINÁ jména v tomto kontextu jsou třetí osoby, které tu"
             f" teď nepíšou — NEOSLOVUJ je, neodpovídej jim a nepiš jejich jméno"
-            f" do oslovení. Oslovení patří VÝHRADNĚ osobě {name}."
+            f" do oslovení. Oslovení patří VÝHRADNĚ osobě {ctx.name}."
         )
 
-        read_ctx = ""
-        _hi = getattr(self, '_hans_idle', None)
-        if _hi and hasattr(_hi, '_curiosity'):
-            _rc = _hi._curiosity.get_context_string(max_items=2)
+    def _sy_cetba(self, ctx):
+        ctx.read_ctx = ""
+        ctx._hi = getattr(self, '_hans_idle', None)
+        if ctx._hi and hasattr(ctx._hi, '_curiosity'):
+            _rc = ctx._hi._curiosity.get_context_string(max_items=2)
             if _rc:
-                read_ctx = "\n\n" + _rc
+                ctx.read_ctx = "\n\n" + _rc
 
+    def _sy_myslenky(self, ctx):
         # Hansovy vnitřní myšlenky
-        thought_ctx = ""
-        if _hi and hasattr(_hi, '_introspection'):
-            _tc = _hi._introspection.get_context_string(max_items=2)
+        ctx.thought_ctx = ""
+        if ctx._hi and hasattr(ctx._hi, '_introspection'):
+            _tc = ctx._hi._introspection.get_context_string(max_items=2)
             if _tc:
-                thought_ctx = "\n\n" + _tc
+                ctx.thought_ctx = "\n\n" + _tc
 
+    def _sy_rutina(self, ctx):
         # HANS_ROUTINE_CONTEXT_V1 — rutina osoby (kdy obvykle bývá doma)
-        routine_ctx = ""
-        if _hi and hasattr(_hi, '_routine_store'):
+        ctx.routine_ctx = ""
+        if ctx._hi and hasattr(ctx._hi, '_routine_store'):
             try:
-                _rs = _hi._routine_store()
-                _rsum = _rs.summary(name) if _rs is not None else ""
+                _rs = ctx._hi._routine_store()
+                _rsum = _rs.summary(ctx.name) if _rs is not None else ""
                 if _rsum:
-                    routine_ctx = ("\n\nCo víš o jeho/jejím denním rytmu"
+                    ctx.routine_ctx = ("\n\nCo víš o jeho/jejím denním rytmu"
                                    " (kontext, nekomentuj to nahlas bezdůvodně): "
                                    + _rsum)
             except Exception:
-                routine_ctx = ""
+                ctx.routine_ctx = ""
 
+    def _sy_telo(self, ctx):
         # Stav těla a mozku
-        body_ctx = ""
-        if _hi and hasattr(_hi, '_body'):
-            _bc = _hi._body.get_body_context()
-            _br = _hi._body.get_brain_context()
-            if _bc: body_ctx += "\n\n" + _bc
-            if _br: body_ctx += "\n\n" + _br
+        ctx.body_ctx = ""
+        if ctx._hi and hasattr(ctx._hi, '_body'):
+            _bc = ctx._hi._body.get_body_context()
+            _br = ctx._hi._body.get_brain_context()
+            if _bc: ctx.body_ctx += "\n\n" + _bc
+            if _br: ctx.body_ctx += "\n\n" + _br
 
+    def _sy_nalada(self, ctx):
         # Nálada
-        mood_ctx = ""
-        if _hi and hasattr(_hi, '_mood'):
+        ctx.mood_ctx = ""
+        if ctx._hi and hasattr(ctx._hi, '_mood'):
             # HANS_MOOD_HIDE_3RD_PARTY_V1 — v chatu neprozrazuj jméno JINÉ
             # osoby, kterou Hans zrovna vidí (jinak ji osloví uprostřed
             # odpovědi partnerovi). V pozdravu se nefiltruje.
-            _mp = _hi._mood.get_prompt_addition(
-                chat_partner=(name or "") if not for_greeting else "",
-                asker_cizi=_asker_cizi)   # HANS_MOOD_REASON_PRIVACY_V1
+            _mp = ctx._hi._mood.get_prompt_addition(
+                chat_partner=(ctx.name or "") if not ctx.for_greeting else "",
+                asker_cizi=ctx._asker_cizi)   # HANS_MOOD_REASON_PRIVACY_V1
             if _mp:
-                mood_ctx = "\n\n" + _mp
+                ctx.mood_ctx = "\n\n" + _mp
 
+    def _sy_zdravi(self, ctx):
         # HANS_MORNING_HEALTH_V1 — ranní nález z noční kontroly logů.
         # Surfacing až u člověka (greeting/chat), ne hlasitě do prázdna.
-        health_ctx = ""
+        ctx.health_ctx = ""
         try:
-            _mh = getattr(_hi, '_morning_health', None) if _hi else None
+            _mh = getattr(ctx._hi, '_morning_health', None) if ctx._hi else None
             from datetime import datetime as _dt_h
             # GREETING_LEAD_PRIORITY_V1 — v pozdravu se zdraví řeší přes
             # prioritní lead (ne tady), ať se do něj nemíchá víc háčků naráz.
-            if _mh and not for_greeting and _mh.get('date') == _dt_h.now().strftime('%Y-%m-%d'):
-                health_ctx = ("\n\nRáno jsem si při probuzení prošel noční "
+            if _mh and not ctx.for_greeting and _mh.get('date') == _dt_h.now().strftime('%Y-%m-%d'):
+                ctx.health_ctx = ("\n\nRáno jsem si při probuzení prošel noční "
                               "záznamy a něco se mi nezdálo v pořádku: "
                               + _mh.get('summary', '')
                               + " Cítím se kvůli tomu trochu nesvůj. Pokud to "
                               "přijde přirozeně, smím se o tom zmínit.")
         except Exception:
-            health_ctx = ""
+            ctx.health_ctx = ""
 
+    def _sy_vypadek(self, ctx):
         # HANS_DOWNTIME_V1 — všiml-li jsem si při startu, že jsem byl dlouho
         # mimo provoz, zmíním to u příchozí osoby a zeptám se, co se dělo.
-        downtime_ctx = ""
+        ctx.downtime_ctx = ""
         try:
-            _dt = getattr(_hi, '_downtime', None) if _hi else None
+            _dt = getattr(ctx._hi, '_downtime', None) if ctx._hi else None
             # GREETING_LEAD_PRIORITY_V1 — v pozdravu vede výpadek přes prioritní
             # lead (ne tady); tady jen pro běžný chat, ať se pozdrav nemixuje.
-            if _dt and not for_greeting and not _dt.get('answered'):
-                downtime_ctx = ("\n\n" + _dt.get('sentence', '')
+            if _dt and not ctx.for_greeting and not _dt.get('answered'):
+                ctx.downtime_ctx = ("\n\n" + _dt.get('sentence', '')
                                 + " Připadá mi, že jsem něco zmeškal. Pokud to "
                                 "přijde přirozeně, smím se zmínit, že jsem byl "
                                 "mimo, a vlídně se zeptat, co se mezitím dělo.")
                 _dt['surfaced'] = True  # příští zpráva osoby = vyprávění
         except Exception:
-            downtime_ctx = ""
+            ctx.downtime_ctx = ""
 
+    def _sy_severka(self, ctx):
         # SEVERKA_PROACTIVE_NOTIFY_V1 — čeká-li Severčin návrh identity na
         # schválení, Hans se o něm sám zmíní (backstop k Telegram pushi; přežije,
         # dokud uživatel nerozhodne přes /severka). Read-only, graceful.
-        severka_ctx = ""
+        ctx.severka_ctx = ""
         try:
             from scripts.hans_identity import IdentityStore
             _dbp_sv = (self.config.get("diary_db")
@@ -3095,26 +3259,27 @@ class OpenWebUIDirectHandler:
                        or "data/hans_diary.db")
             _pend = IdentityStore(self.config, _dbp_sv).pending()
             if _pend:
-                severka_ctx = ("\n\nMám připravený návrh, jak přehodnotit svou "
+                ctx.severka_ctx = ("\n\nMám připravený návrh, jak přehodnotit svou "
                                "vlastní povahu (kým se stávám) — čeká na "
                                "rozhodnutí uživatele. Pokud to přijde přirozeně, "
                                "smím se zmínit, že o tom přemýšlím a že je to na "
                                "něm (schválit/zamítnout přes „/severka\").")
         except Exception:
-            severka_ctx = ""
+            ctx.severka_ctx = ""
 
+    def _sy_prohloubeni(self, ctx):
         # HANS_STUDY_DEEPEN_V2 — čekající návrh prohloubení (ask-first): Hans se
         # smí zmínit, že vytvořil dílo a navrhuje prohloubit studium, a zeptat se.
-        deepen_ctx = ""
+        ctx.deepen_ctx = ""
         try:
             from scripts.hans_study import StudyStore as _SSd
             _dbp_d = (self.config.get("diary_db")
                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                       or "data/hans_diary.db")
             _dp = _SSd(self.config, _dbp_d).get_pending_deepen()
-            if _dp and not for_greeting:
+            if _dp and not ctx.for_greeting:
                 _p0 = _dp[0]
-                deepen_ctx = ("\n\nVytvořil jsem dílo z tématu „%s“ a při "
+                ctx.deepen_ctx = ("\n\nVytvořil jsem dílo z tématu „%s“ a při "
                               "ohlédnutí vidím, co by chtělo prohloubit (%s). Mám "
                               "připravený návrh, co se k tomu ještě doučit — čeká "
                               "na uživatele. Když to přijde přirozeně, smíš se "
@@ -3122,11 +3287,12 @@ class OpenWebUIDirectHandler:
                               "(schválit / vlastní kritika / ne)." % (
                                   _p0["topic"], (_p0.get("critique") or "")[:120]))
         except Exception:
-            deepen_ctx = ""
+            ctx.deepen_ctx = ""
 
+    def _sy_lekce(self, ctx):
         # HANS_CORRECTION_LEARNING_V1 (#4) — nedávné lekce z korekcí (Hans je
         # má v kontextu, aby chybu neopakoval; read-only, NEmění paměť/postoje).
-        lessons_ctx = ""
+        ctx.lessons_ctx = ""
         try:
             from scripts.hans_lessons import recent_lessons as _rl
             _dbp_l = (self.config.get("diary_db")
@@ -3149,24 +3315,24 @@ class OpenWebUIDirectHandler:
             _topic_les = []
             try:
                 from scripts.hans_lessons import lessons_for_topic as _lft
-                _topic_les = [_l for _l in _lft(_dbp_l, str(user_msg or ""),
+                _topic_les = [_l for _l in _lft(_dbp_l, str(ctx.user_msg or ""),
                                                 limit=3,
-                                                bez_citace=_asker_cizi)
+                                                bez_citace=ctx._asker_cizi)
                               if _l not in _les]   # ..._PRIVACY_V1
             except Exception as _lfte:
                 logging.getLogger(__name__).debug(
                     "lessons_for_topic (chat): %s", _lfte)
-            if _les and not for_greeting:  # GREETING_LEAD_PRIORITY_V1 — lekce do pozdravu nepatří
-                lessons_ctx = ("\n\nNedávno jsi byl opraven / mýlil ses v těchto "
+            if _les and not ctx.for_greeting:  # GREETING_LEAD_PRIORITY_V1 — lekce do pozdravu nepatří
+                ctx.lessons_ctx = ("\n\nNedávno jsi byl opraven / mýlil ses v těchto "
                                "věcech (ber to v potaz, neopakuj tytéž omyly; pokud "
                                "to přijde přirozeně, smíš to pokorně uznat; nic si "
                                "k tomu nevymýšlej):\n- " + "\n- ".join(_les))
         except Exception:
-            lessons_ctx = ""
+            ctx.lessons_ctx = ""
         # HANS_LESSON_TOPIC_PROHIBIT_V1 — vlastní blok, silnější formulace.
         try:
-            if _topic_les and not for_greeting:
-                lessons_ctx += (
+            if _topic_les and not ctx.for_greeting:
+                ctx.lessons_ctx += (
                     "\n\nK TÉMATU DOTAZU UŽ MÁŠ OVĚŘENÉ OPRAVY — tohle PLATÍ "
                     "a je nadřazené tvé paměti:\n- " + "\n- ".join(_topic_les)
                     + "\nŘiď se tím: opak NIKDY netvrď a pokud odpovídáš "
@@ -3178,12 +3344,12 @@ class OpenWebUIDirectHandler:
         # HANS_SELFCRITIQUE_V1 (#6) — vlastní sebekritika (kvalita projevu, z vlastního
         # popudu). Tichý steer „takhle se chci vyjadřovat" — vedle korekčních lekcí,
         # full mód, ne pozdrav. Read-only, graceful.
-        if not for_greeting:
+        if not ctx.for_greeting:
             try:
                 from scripts.hans_selfcritique import recent_selfcritiques as _rsc
                 _scr = _rsc(_dbp_l, hours=120, limit=3)
                 if _scr:
-                    lessons_ctx += ("\n\nSám sis předsevzal zlepšit svůj projev "
+                    ctx.lessons_ctx += ("\n\nSám sis předsevzal zlepšit svůj projev "
                                     "(drž se toho, nevnucuj, nekomentuj to nahlas):"
                                     "\n- " + "\n- ".join(_scr))
             except Exception as _tiche:
@@ -3191,6 +3357,7 @@ class OpenWebUIDirectHandler:
                     logging.getLogger(__name__), "_build_system(ř. 2012)",
                     "_build_system: blok kontextu selhal (ř. 2012): %s", _tiche)
 
+    def _sy_hodnoty(self, ctx):
         # _RAG_MODE_BUILD — pro hans-rag model jen LIVE STATE.
         # Identita má vlastní system prompt v OpenWebUI, statická paměť
         # (deník, vztahové karty, známí lidé) přijde z RAG kolekcí.
@@ -3200,50 +3367,51 @@ class OpenWebUIDirectHandler:
         # se svou hodnotou. Pořadí i to, do které varianty blok patří, je
         # v `_PROMPT_BLOKY` (nahoře v modulu); sonda velikostí čte TOTÉŽ,
         # takže se nemůže rozejít se skutečným promptem jako dřív.
-        _hodnoty = {
-            "system_base": system_base, "time": time_ctx, "persons": persons_ctx,
-            "surr": surr_ctx, "kodi": kodi_ctx, "room": room_ctx,
-            "place": place_ctx, "cal": cal_ctx, "diary": diary_ctx,
-            "story": story_ctx, "study": study_ctx, "direction": direction_ctx,
-            "idea": idea_ctx, "read": read_ctx, "thought": thought_ctx,
-            "body": body_ctx, "mood": mood_ctx, "health": health_ctx,
-            "downtime": downtime_ctx, "severka": severka_ctx,
-            "deepen": deepen_ctx, "lessons": lessons_ctx, "teddy": teddy_ctx,
-            "memory": memory_ctx, "threads": threads_ctx,
-            "interests": interests_ctx, "qsuggest": qsuggest_ctx,
-            "routine": routine_ctx, "cap": cap_ctx, "current": current,
+        ctx._hodnoty = {
+            "system_base": ctx.system_base, "time": ctx.time_ctx, "persons": ctx.persons_ctx,
+            "surr": ctx.surr_ctx, "kodi": ctx.kodi_ctx, "room": ctx.room_ctx,
+            "place": ctx.place_ctx, "cal": ctx.cal_ctx, "diary": ctx.diary_ctx,
+            "story": ctx.story_ctx, "study": ctx.study_ctx, "direction": ctx.direction_ctx,
+            "idea": ctx.idea_ctx, "read": ctx.read_ctx, "thought": ctx.thought_ctx,
+            "body": ctx.body_ctx, "mood": ctx.mood_ctx, "health": ctx.health_ctx,
+            "downtime": ctx.downtime_ctx, "severka": ctx.severka_ctx,
+            "deepen": ctx.deepen_ctx, "lessons": ctx.lessons_ctx, "teddy": ctx.teddy_ctx,
+            "memory": ctx.memory_ctx, "threads": ctx.threads_ctx,
+            "interests": ctx.interests_ctx, "qsuggest": ctx.qsuggest_ctx,
+            "routine": ctx.routine_ctx, "cap": ctx.cap_ctx, "current": ctx.current,
         }
         # HANS_EVIDENCE_V1 — `_hodnoty` byly dosud LOKÁLNÍ a po složení promptu
         # zmizely, takže brzdy o 19 blocích nevěděly. Uchováme je na instanci.
         # ⚠️ Poslední vyhrává: chatový most zpracovává dotazy sériově, takže to
         # sedí; při paralelním zpracování by se to muselo předávat parametrem.
         try:
-            self._posledni_evidence = evidence_text(_hodnoty)
+            self._posledni_evidence = evidence_text(ctx._hodnoty)
         except Exception:
             self._posledni_evidence = ""
 
-        if for_greeting:
+    def _sy_skladani(self, ctx):
+        if ctx.for_greeting:
             # GREETING_LEAN_SYSTEM_V1 — pozdrav drží JEN to nutné k pozdravení:
             # identita, čas, kdo je tu, fyzický a náladový tón (+ vzácný Severka
             # backstop). Obsahové bloky (čtení, deník, narativ, myšlenky, kodi,
             # okolí, vztahové nitky, zájmy, rytmus…) se do dvouvětého pozdravu
             # NEcpou — co Hans zmíní, řídí výhradně user prompt (jediný prioritní
             # lead). Tím pozdrav přestane mixovat nesouvisející věci.
-            system_msg = slozit_prompt(_hodnoty, "g")
+            ctx.system_msg = slozit_prompt(ctx._hodnoty, "g")
         elif "rag" in (self.model_name or "").lower():
-            system_msg = slozit_prompt(_hodnoty, "r")
+            ctx.system_msg = slozit_prompt(ctx._hodnoty, "r")
             # Lehký úvodní prompt — vysvětlí RAG modelu, co tenhle blok je.
-            if system_msg.strip():
-                system_msg = (
+            if ctx.system_msg.strip():
+                ctx.system_msg = (
                     "Následuje aktuální kontext z mých smyslů a "
                     "vnitřního stavu (toto NENÍ historie, ale "
                     "co se děje právě teď):"
-                    + system_msg
+                    + ctx.system_msg
                 )
             else:
-                system_msg = ""
+                ctx.system_msg = ""
         else:
-            system_msg = slozit_prompt(_hodnoty, "f")
+            ctx.system_msg = slozit_prompt(ctx._hodnoty, "f")
             # HANS_PROMPT_SIZE_PROBE_V1 (19.8.) — MĚŘENÍ, ne oprava.
             # Změřeno na 989 reálných dotazech: system prompt má medián 1977 zn,
             # ale MAXIMUM 21 387 a u 40 % dotazů přesáhne 10 000. Grounding
@@ -3254,13 +3422,13 @@ class OpenWebUIDirectHandler:
             # ⚠️ Logují se JEN DÉLKY, žádný obsah — do debug.log nesmí nic
             # osobního ([[privacy-external-outputs]]).
             try:
-                _blocks = {n: _hodnoty.get(n) for n, kde in _PROMPT_BLOKY if "f" in kde}
+                _blocks = {n: ctx._hodnoty.get(n) for n, kde in _PROMPT_BLOKY if "f" in kde}
                 _sizes = {k: len(v or "") for k, v in _blocks.items()}
                 _sizes = {k: v for k, v in _sizes.items() if v}
                 _dbg(
                     location="openwebui_direct_handler.py:_build_system",
                     message="Prompt block sizes",
-                    data={"total": int(len(system_msg)),
+                    data={"total": int(len(ctx.system_msg)),
                           "n_blocks": len(_sizes),
                           "top": dict(sorted(_sizes.items(),
                                              key=lambda x: -x[1])[:8]),
@@ -3272,14 +3440,14 @@ class OpenWebUIDirectHandler:
                     "_build_system: blok kontextu selhal (ř. 2081): %s", _tiche)
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
             # rozvláčnosti (jen chat; greeting má vlastní brevitu).
-            if not for_greeting:
-                system_msg += (
+            if not ctx.for_greeting:
+                ctx.system_msg += (
                     "\n\nVšechno výše je jen tvůj vnitřní kontext — nemusíš"
                     " ho v odpovědi vyjmenovávat ani komentovat. Reaguj"
                     " přirozeně a k věci na to, co bylo právě řečeno;"
                     " z kontextu vytáhni jen to, co se do hovoru hodí.")
                 # HANS_CHAT_ANTICONFAB_V1 — pojistka proti vymýšlení vzpomínek.
-                system_msg += (
+                ctx.system_msg += (
                     "\n\nPAMĚŤ — DŮLEŽITÉ: Když se tě někdo ptá, zda si na něco"
                     " vzpomínáš (dřívější rozhovor, kdy a o čem jste mluvili),"
                     " odpověz POUZE z toho, co MÁŠ výše v kontextu nebo v historii."
@@ -3292,7 +3460,7 @@ class OpenWebUIDirectHandler:
                 # HANS_SOURCE_QUERY_V1 (17.7.): zúženo. Absolutní zákaz odkazů
                 # znemožnil sdílet URL, které Hans REÁLNĚ má (entity.source,
                 # study_seen_works). Teď: zákaz VÝMYSLU, ne zákaz sdílení.
-                system_msg += (
+                ctx.system_msg += (
                     "\n\nNEZNÁMÉ POJMY A ZDROJE — DŮLEŽITÉ: Když se tě někdo"
                     " zeptá „co je X“ a X nemáš výše v kontextu ani tomu"
                     " spolehlivě nerozumíš, NEVYMÝŠLEJ si význam ani fakta —"
@@ -3316,7 +3484,7 @@ class OpenWebUIDirectHandler:
                 # halucinoval „Ano, mám v paměti záznamy a nedávno jsem si jej
                 # pročetl" — LEŽ. Následně „zajímavosti Rimmera?" → „nemám
                 # záznam" = viditelný ROZPOR.
-                system_msg += (
+                ctx.system_msg += (
                     "\n\nPAMĚŤ vs OBECNÁ ZNALOST — KLÍČOVÉ ROZLIŠENÍ:\n"
                     "Když se tě někdo zeptá 'znáš X?' nebo 'co víš o X?',"
                     " nejdřív se podívej ZDA je X výše v kontextu / v tvé paměti"
@@ -3339,7 +3507,7 @@ class OpenWebUIDirectHandler:
                     from scripts import hans_provenance as _prov
                     if (self.config.get('provenance', {}) or {}).get(
                             'enabled', True):
-                        system_msg += "\n\n" + _prov.STEER
+                        ctx.system_msg += "\n\n" + _prov.STEER
                 except Exception as _tiche:
                     log_once(  # HANS_NO_SILENT_CTX_V1
                         logging.getLogger(__name__), "_build_system(ř. 2153)",
@@ -3348,7 +3516,7 @@ class OpenWebUIDirectHandler:
                 # Obraz vznikne JEN příkazem „namaluj …" (ten se zpracuje mimo
                 # tuhle odpověď). Když uživatel dá zpětnou vazbu k obrazu,
                 # naveď ho na příkaz, nepředstírej, že už maluješ.
-                system_msg += (
+                ctx.system_msg += (
                     "\n\nMALOVÁNÍ — DŮLEŽITÉ: Obraz vznikne JEN když uživatel "
                     "napíše příkaz „namaluj …\" / „nakresli …\" — ten spouští "
                     "výtvarnou dílnu mimo tuhle tvou odpověď. V běžné odpovědi "
@@ -3358,24 +3526,7 @@ class OpenWebUIDirectHandler:
                     "„je to špatně\"), poděkuj a NAVEĎ ho: ať řekne „namaluj to "
                     "znovu jako …\" nebo „namaluj mě jako …\" — teprve tím se "
                     "obraz reálně překreslí.")
-        # region agent log
-        try:
-            _dbg(
-                location="openwebui_direct_handler.py:_build_system",
-                message="Built system prompt",
-                data={
-                    "has_surroundings": bool(surr_ctx.strip()),
-                    "has_known_persons": bool(persons_ctx.strip()),
-                    "chars": len(system_msg),
-                    "history_turns": self.conv_store.summary(),
-                },
-            )
-        except Exception as _tiche:
-            log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_system(ř. 2181)",
-                "_build_system: blok kontextu selhal (ř. 2181): %s", _tiche)
-        # endregion
-        return system_msg
+
 
     def _generate_greeting_prompt(self, name: str, duvod=None) -> tuple:
         self._greeting_thread_surfaced = False  # GREETING_THREAD_POPUP_V1

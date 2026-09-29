@@ -211,7 +211,25 @@ def obsazeni_az_za_prepisem() -> bool:
     src = open("scripts/openwebui_direct_handler.py", encoding="utf-8").read()
     i_prepis = src.find("_q_for_retrieval = _rw.strip()")
     i_blok = src.find("self._kodi_cast_fact(")
-    return i_prepis != -1 and i_blok != -1 and i_blok > i_prepis
+    if i_prepis != -1 and i_blok != -1 and i_blok > i_prepis:
+        return True
+    # HANS_HANDLER_SPLIT_V1 (29. 9.) — přepis je ve vytažené metodě; rozhoduje
+    # pořadí ZA BĚHU: její volání musí stát před blokem ve TÉŽE funkci.
+    import ast
+    strom = ast.parse(src)
+    metody = {n.name: n for n in ast.walk(strom) if isinstance(n, ast.FunctionDef)}
+    s_prepisem = [jm for jm, f in metody.items()
+                  if "_q_for_retrieval = _rw.strip()" in ast.get_source_segment(src, f)]
+    for f in metody.values():
+        seg = ast.get_source_segment(src, f)
+        if "self._kodi_cast_fact(" not in seg:
+            continue
+        b = seg.find("self._kodi_cast_fact(")
+        for jm in s_prepisem:
+            v = seg.find("self.%s(" % jm)
+            if v != -1 and v < b:
+                return True
+    return False
 
 
 def veta_se_zmenila(puvodni: str, opravena: str) -> bool:
