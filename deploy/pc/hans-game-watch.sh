@@ -123,7 +123,79 @@ check_leftovers() {
          --data-urlencode "desc=zůstalo ${n} proc: ${names}(GPU ${gpu:-?}%)" >/dev/null 2>&1
 }
 
-log "start (HANS=$HANS poll=${POLL_S}s grace=${GRACE_S}s)"
+# HANS_GAME_STUCK_V1 (27. 9.) — ZASEKLÉ ZBYTKY PO HŘE. Doloženo 26. 9.: hra
+# detekována 00:39 (pressure-vessel), konec se NIKDY neohlásil a herní mód držel
+# až do restartu PC 01:55 — po zavření Cyberpunku zůstaly viset procesy, které
+# vzor GAME_PAT chytá stejně jako hru. Rozlišení: skutečná hra i v menu či na
+# načítací obrazovce PÁLÍ procesor; zaseklý zbytek ne. Když procesy hry za
+# STUCK_WIN_S spotřebují méně než STUCK_CPU_S sekund procesoru, bere se hra za
+# skončenou: mozek se vrátí a Hansovi se nahlásí, co zůstalo (nic se nezabíjí).
+STUCK_WIN_S="${STUCK_WIN_S:-60}"
+STUCK_CPU_S="${STUCK_CPU_S:-1}"     # 1 s CPU za minutu ≈ 1,7 % jednoho jádra
+TCK=$(getconf CLK_TCK 2>/dev/null || echo 100)
+
+# HANS_GAME_STUCK_KILL_V1 (28. 9., pokyn uživatele) — zaseklé zbytky po hře se
+# nejdřív NAHLÁSÍ (jako dosud) a za KILL_AFTER_S je watcher UKONČÍ: celý strom
+# procesů hry (kořeny podle GAME_PAT + potomci), SIGTERM, po 10 s SIGKILL.
+# Ožijí-li mezitím (hra zase pracuje) nebo zmizí samy, ukončení se ruší.
+KILL_AFTER_S="${KILL_AFTER_S:-120}"
+kill_at=0
+
+game_pids() {        # PID procesů hry a všech jejich potomků
+    local procs roots
+    procs=$(ps -eo pid=,args= 2>/dev/null)
+    roots=" $(printf '%s\n' "$procs" | grep -vE '^ *[0-9]+ \[' | grep -viE "$NOTGAME_PAT" \
+             | grep -E "$GAME_PAT" | awk '{print $1}' | tr '\n' ' ') "
+    ps -eo pid=,ppid= 2>/dev/null | awk -v roots="$roots" -v me="$$" '
+        { pp[$1] = $2 }
+        END { for (p in pp) { if (p == me) continue; q = p; n = 0
+                  while (q != "" && n < 64) { if (index(roots, " " q " ")) { print p; break }
+                                              if (!(q in pp)) break; q = pp[q]; n++ } } }'
+}
+kill_leftovers() {
+    local pids names left
+    names=$(game_names)
+    pids=$(game_pids | tr '\n' ' ')
+    [ -z "${pids// /}" ] && return 0
+    kill -TERM $pids 2>/dev/null
+    sleep 10
+    left=$(game_pids | tr '\n' ' ')
+    [ -n "${left// /}" ] && kill -KILL $left 2>/dev/null
+    sleep 1
+    left=$(game_pids | wc -l)
+    log "zaseklé zbytky po hře UKONČENY (${names}) — zbývá ${left} proc"
+    curl -s -m 8 -G "$HANS/api/game/leftover" --data-urlencode "stav=ukonceno" \
+         --data-urlencode "desc=${names}$( [ "$left" -gt 0 ] && echo "(${left} procesů se ukončit nepodařilo)")" \
+         >/dev/null 2>&1
+}
+
+game_cpu_ticks() {   # utime+stime procesů hry I VŠECH jejich potomků
+    # Potomci nutně: samotná herní binárka (…\\Cyberpunk2077.exe pod Wine)
+    # vzor GAME_PAT mít nemusí — bez ní by skutečné hraní vypadalo jako klid.
+    local procs roots all p s=0 t
+    procs=$(ps -eo pid=,args= 2>/dev/null)
+    roots=" $(printf '%s\n' "$procs" | grep -vE '^ *[0-9]+ \[' | grep -viE "$NOTGAME_PAT" \
+             | grep -E "$GAME_PAT" | awk '{print $1}' | tr '\n' ' ') "
+    all=$(ps -eo pid=,ppid= 2>/dev/null | awk -v roots="$roots" '
+        { pp[$1] = $2 }
+        END { for (p in pp) { q = p; n = 0
+                  while (q != "" && n < 64) { if (index(roots, " " q " ")) { print p; break }
+                                              if (!(q in pp)) break; q = pp[q]; n++ } } }')
+    for p in $all; do
+        t=$(sed 's/.*) //' "/proc/$p/stat" 2>/dev/null | awk '{print $12+$13}')
+        [ -n "$t" ] && s=$((s + t))
+    done
+    echo "$s"
+}
+game_names() {       # jména procesů, které vypadají jako hru (do hlášení)
+    local procs
+    procs=$(ps -eo stat=,args= 2>/dev/null)
+    printf '%s\n' "$procs" | grep -vE '^\S+ \[' | grep -viE "$NOTGAME_PAT" | grep -E "$GAME_PAT" \
+        | awk '{c=$2; sub(/.*[\\/]/,"",c); printf "%s[%s] ", c, $1}' | cut -c1-200
+}
+stuck_mark_t=0; stuck_mark_cpu=0
+
+log "start (HANS=$HANS poll=${POLL_S}s grace=${GRACE_S}s stuck=${STUCK_CPU_S}s/${STUCK_WIN_S}s)"
 
 # Úklid při startu: nic se nehraje, ale mozek je paused (zbytek po pádu hry /
 # rebootu) → vrať ho. Zároveň kryje případ, kdy watcher spadl a systemd ho zvedl.
@@ -139,7 +211,37 @@ while true; do
     if game_running; then
         last_seen=$now
         start_pending=0   # hra běží → startovní úklid je bezpředmětný
+        # HANS_GAME_STUCK_KILL_V1 — lhůta po nahlášení vypršela → ukončit
+        if [ "$state" = stuck ] && [ "$kill_at" -gt 0 ] && [ "$now" -ge "$kill_at" ]; then
+            kill_at=0
+            kill_leftovers
+        fi
+        # HANS_GAME_STUCK_V1 — běží hra doopravdy, nebo jen visí zbytky?
+        if [ "$state" != idle ] && [ $((now - stuck_mark_t)) -ge "$STUCK_WIN_S" ]; then
+            cpu=$(game_cpu_ticks)
+            if [ "$stuck_mark_t" -gt 0 ]; then
+                d=$((cpu - stuck_mark_cpu))
+                if [ "$state" = playing ] && [ "$d" -lt $((STUCK_CPU_S * TCK)) ] && [ "$d" -ge 0 ]; then
+                    if resume_brain; then
+                        state=stuck
+                        names=$(game_names)
+                        log "hra NEBĚŽÍ, jen visí zbytky (CPU ${d}/${TCK} s za ${STUCK_WIN_S}s): ${names}→ herní mód VYP"
+                        curl -s -m 8 -G "$HANS/api/game/leftover" \
+                             --data-urlencode "desc=po hře visí: ${names}(herní mód jsem vypnul; za $((KILL_AFTER_S / 60)) minuty je ukončím, pokud znovu neožijí)" >/dev/null 2>&1
+                        kill_at=$((now + KILL_AFTER_S))   # HANS_GAME_STUCK_KILL_V1
+                    fi
+                elif [ "$state" = stuck ] && [ "$d" -ge $((STUCK_CPU_S * TCK * 5)) ]; then
+                    # zbytky ožily nebo se spustila další hra ve stejném prostředí
+                    if pause_brain; then
+                        state=playing; kill_at=0   # HANS_GAME_STUCK_KILL_V1 — ožily → neukončovat
+                        log "zbytky po hře zase pracují (CPU ${d}/${TCK} s) → herní mód ZAP"
+                    fi
+                fi
+            fi
+            stuck_mark_t=$now; stuck_mark_cpu=$cpu
+        fi
         if [ "$state" = idle ]; then
+            stuck_mark_t=0
             # HANS_GAME_POST_VERIFY_V1: stav prepneme AZ kdyz Pi potvrdilo. Pri
             # selhani zustava "idle" -> zkusi se znovu pristi tick (typicky po
             # bootu, nez stoji sit). Log throttlovany na 1x/60 s, at nezaplavi journal.
@@ -151,6 +253,10 @@ while true; do
                 log "POZOR: hra běží ($GAME_MATCH), ale POST /brain/pause NEPROŠEL → zkouším dál"
             fi
         fi
+    elif [ "$state" = stuck ]; then
+        # HANS_GAME_STUCK_V1 — zbytky konečně zmizely (mozek už je vrácený)
+        state=idle; stuck_mark_t=0; kill_at=0
+        log "zaseklé zbytky po hře zmizely"
     elif [ "$state" = playing ] && [ $((now - last_seen)) -ge "$GRACE_S" ]; then
         if resume_brain; then
             state=idle

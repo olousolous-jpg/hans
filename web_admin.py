@@ -624,7 +624,7 @@ def game_launched(title: str = ""):
 
 
 @app.get("/api/game/leftover")
-def game_leftover(desc: str = ""):
+def game_leftover(desc: str = "", stav: str = ""):
     """HANS_GAME_LEFTOVER_V1 — herní watcher hlásí, že po zavření hry zůstalo
     něco viset (osiřelý proces / GPU se neuvolnila). Zapíšeme diagnostický
     deníkový event + hlášku do notify_queue (Hansův most → Matrix, šifrovaně)."""
@@ -648,9 +648,12 @@ def game_leftover(desc: str = ""):
     try:
         with open("data/notify_queue.jsonl", "a", encoding="utf-8") as q:
             q.write(_j.dumps({
-                "text": ("\u26a0\ufe0f Po zavření hry na počítači něco zůstalo "
-                         "viset, pane: %s. Grafika se možná neuvolnila úplně "
-                         "(drží proud / blokuje pozdější vypnutí)." % desc),
+                # HANS_GAME_STUCK_KILL_V1 — watcher zbytky po lhůtě ukončil
+                "text": (("\u2705 Zbytky po hře jsem na počítači ukončil, pane: %s."
+                          % desc) if stav == "ukonceno" else
+                         ("\u26a0\ufe0f Po zavření hry na počítači něco zůstalo "
+                          "viset, pane: %s. Grafika se možná neuvolnila úplně "
+                          "(drží proud / blokuje pozdější vypnutí)." % desc)),
                 "direct": True,
             }, ensure_ascii=False) + "\n")
     except Exception as e:
