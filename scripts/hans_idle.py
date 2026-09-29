@@ -274,6 +274,53 @@ class HansIdle:
                 return False
         if hasattr(self._routine, 'set_notifier'):
             self._routine.set_notifier(_proactive_notify)
+        # HANS_HEAVY_QUEUE_V1 (28. 9.) — fronta náročných úloh (úprava fotky,
+        # malba na požádání). Doručení: fotka zpět do místnosti, odkud přišla;
+        # obraz na Matrix jen osobě, které patří výchozí místnost.
+        def _heavy_deliver(text, photo, job):
+            try:
+                tg = getattr(self.chat, 'telegram', None) if self.chat else None
+                if tg is None or not getattr(tg, 'enabled', False):
+                    _log.warning('heavy_queue: most neběží — výsledek #%s jen na '
+                                 'disku (%s)', job.get('id'), photo)
+                    return False
+                room = (job or {}).get('room') or None
+                # HANS_HEAVY_PAINT_ONE_DELIVERY_V1 (29. 9.) — malbu vyžádanou
+                # přes Matrix hlídá i most (`state['paint']`) a posílá ji s
+                # napojením na 👍/👎 → fronta ji posílala podruhé. Obraz nechat
+                # mostu; při selhání poslat omluvu a hlídání v mostu zrušit.
+                # `tg` je Notifier (obal mostů) → stav hledat i v jeho mostech.
+                _mst = None
+                for _b in [tg] + list(getattr(tg, '_bridges', None) or []):
+                    if isinstance(getattr(_b, '_cmd_state', None), dict):
+                        _mst = _b._cmd_state
+                        break
+                if ((job or {}).get('kind') == 'paint' and isinstance(_mst, dict)
+                        and (_mst.get('paint') or {}).get('pending')):
+                    if photo and __import__('os').path.exists(photo):
+                        _log.info('heavy_queue: #%s obraz doručí most '
+                                  '(s hodnocením)', job.get('id'))
+                        return True
+                    _mst.pop('paint', None)
+                if not room:
+                    _mx = (self.config.get('matrix', {}) or {})
+                    if str((job or {}).get('person') or '').lower() != str(
+                            _mx.get('as_person') or '').lower():
+                        _log.info('heavy_queue: #%s pro %s bez Matrixu → jen '
+                                  'nástěnka', job.get('id'), job.get('person'))
+                        return True
+                if photo and __import__('os').path.exists(photo):
+                    return tg.send_photo(photo, text, room_id=room) if room \
+                        else tg.send_photo(photo, text)
+                return tg.send(text, room_id=room) if room else tg.send(text)
+            except Exception as _hde:
+                _log.warning('heavy_queue doručení: %s', _hde)
+                return False
+        try:
+            from scripts.hans_heavy_queue import start_worker as _hq_start
+            _hq_start(config, _diary_db, _heavy_deliver)
+        except Exception as _hqe:
+            _log.warning('heavy_queue: start selhal: %s', _hqe)
         self._cases   = KolacCases(config, _diary_db)
 
         # HANS_GOALS_STRUCTURE_V1 — Hansovy úkolové cíle (fáze 2b)

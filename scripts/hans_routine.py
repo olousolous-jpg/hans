@@ -1527,11 +1527,19 @@ class HansRoutine:
             if game_mode_on() or not self._brain_up() \
                     or not hans_art.comfy_available(self.config):
                 return
+            # HANS_HEAVY_QUEUE_V1 — táž kontrola zdrojů a TENTÝŽ zámek jako
+            # fronta náročných úloh: dvě náročné věci nikdy naráz
+            from scripts import hans_heavy_queue as _hq
+            if not _hq.zdroje_volne(self.config, "paint")[0]:
+                return
         except Exception:
             return
         cid, person, topic, tries, _styl = rows[0]
 
         def _run():
+            from scripts import hans_heavy_queue as _hq
+            if not _hq.ZAMEK.acquire(blocking=False):
+                return
             self._retry_paint_busy = True
             try:
                 import sqlite3 as _sq
@@ -1570,6 +1578,7 @@ class HansRoutine:
                 _log.warning("HANS_ART_RETRY_V1: %s", e)
             finally:
                 self._retry_paint_busy = False
+                _hq.ZAMEK.release()
         _th.Thread(target=_run, daemon=True, name="art-retry").start()
 
     def _drain_notify_queue(self, path: str = "data/notify_queue.jsonl"):

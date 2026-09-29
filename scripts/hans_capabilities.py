@@ -77,9 +77,22 @@ _CAPABILITIES = [
     # „jde tě ovládat hlasem?“ → „Ne, ovládání hlasem není funkcí…“, ačkoli
     # Hans mluví (TTS) a s mikrofonem poslouchá po probouzecím slově.
     ("voice", "Umím MLUVIT nahlas (vlastním hlasem z reproduktoru) a, když je "
-     "připojený mikrofon, i POSLOUCHAT — stačí říct „hej Hansi“ a pak, co "
-     "potřebujete (na televizi se ukáže, že poslouchám)",
+     "připojený mikrofon, i POSLOUCHAT — BAVIT se se mnou HLASEM jde jen doma "
+     "v místnosti, kde jsem: stačí mě oslovit „hej Hansi“ a říct, co potřebujete "
+     "(na televizi se ukáže, že poslouchám). Na dálku (mimo domov) se se mnou "
+     "mluví jen PSANÍM přes Matrix, ne hlasem",
      "„hej Hansi“ + dotaz; odpovídám nahlas"),   # HEJ_HANSI_V1 (28. 9.)
+    # HANS_CAP_MUSIC_FOTO_V1 (28. 9.) — test rozhovorem: obě schopnosti Hans
+    # ZAPÍRAL známé osobě i cizímu („skládání by vyžadovalo talent…“,
+    # „nemohu přijímat obrázky“), protože tu chyběly (vzor HANS_CAP_VOICE_V1).
+    # Automatické odvození z configu/akcí zkoušeno a ZAMÍTNUTO (věty si
+    # vymýšlely omezení) → ruční seznam; 🔴 PRAVIDLO: každá nová funkce, kterou
+    # lidé mohou použít, sem patří HNED při stavbě (CLAUDE.md, ZPŮSOB PRÁCE).
+    ("photo", "Členové domácnosti mi mohou poslat FOTKU přes Matrix: POSOUDÍM ji "
+     "(„hodí se ta kabelka k šatům?“) nebo ji UPRAVÍM — změním barvu, "
+     "odstraním lidi v pozadí, zasněžím, udělám z ní olejomalbu. Úprava trvá "
+     "několik minut a potřebuje zapnutý počítač s grafikou",
+     "fotka + otázka nebo pokyn v Matrixu"),
     ("translate_doc", "Umím k cizojazyčnému dokumentu, který běží v Kodi, "
      "PŘIPRAVIT ČESKOU ZVUKOVOU STOPU (namluvenou) a uložit ho jako nový soubor. "
      "Trvá to minuty a ozvu se, až bude hotovo",

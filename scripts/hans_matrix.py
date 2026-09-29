@@ -362,6 +362,12 @@ class MatrixBridge:
             self._client.add_event_callback(self._on_reaction, _RE)
         except Exception as _re:
             _log.warning("matrix: reakce nepůjde číst: %s", _re)
+        # HANS_FOTO_V1 (27. 9.) — příchozí fotky (šifrované i ne)
+        try:
+            from nio import RoomMessageImage as _RMI, RoomEncryptedImage as _REI
+            self._client.add_event_callback(self._on_image, (_RMI, _REI))
+        except Exception as _fe:
+            _log.warning("matrix: fotky nepůjde přijímat: %s", _fe)
         # auto-přijetí pozvánky (jen od povolených user_id, nebo když seznam
         # prázdný = důvěřuj — jednouživatelský setup). Bez toho by se bot
         # musel do místnosti připojit ručně.
@@ -572,6 +578,19 @@ class MatrixBridge:
             if isinstance(_fbz, str) and _fbz:     # HANS_ART_REPAINT_V1 — přepsaná žádost
                 text = _fbz
 
+            # HANS_FOTO_V1 — zpráva k nedávno poslané fotce (posudek / úprava)
+            try:
+                from scripts import hans_foto as _hf
+                if not text.startswith("/") and _hf.patri_k_fotce(
+                        person, room.room_id, text, self.config):
+                    odp = await self._s_psanim(room.room_id, self._foto_prace,
+                                               person, room.room_id, text)
+                    if odp:
+                        await self._a_send(odp, room.room_id)
+                    return
+            except Exception as _fe:
+                _log.warning("matrix foto: %s", _fe)
+
             # HANS_BRIDGE_COMMANDS_V1 — příkazy/intenty (jen role 'full'), stejné
             # co Telegram. Běží v EXECUTORU: ctx.send volá self.send, které blokuje
             # na run_coroutine_threadsafe().result() → z loop vlákna by deadlocklo.
@@ -635,13 +654,131 @@ class MatrixBridge:
             _log.warning("matrix → chat selhal: %s", e)
         return None
 
+    # ── HANS_FOTO_V1 (27. 9.) — fotky od známých osob ────────────────────────
+    async def _on_image(self, room, event):
+        """Přijme fotku (i E2E šifrovanou), uloží ji do data/foto/ (nic do deníku
+        ani paměti) a buď hned odpoví na popisek, nebo se zeptá, co s ní."""
+        try:
+            if event.sender == self._client.user_id:
+                return
+            if getattr(event, "server_timestamp", 0) / 1000.0 < self._started_ts:
+                return
+            uid = event.sender
+            if self._users and uid not in self._users:
+                _log.warning("matrix: fotka od neznámého %s — ignoruji", uid)
+                return
+            person = self._person_for(uid)
+            resp = await self._client.download(mxc=event.url)
+            data = getattr(resp, "body", None)
+            if not data:
+                _log.warning("matrix foto: stažení selhalo: %s", resp)
+                return
+            if getattr(event, "key", None):          # E2E — dešifrovat
+                from nio.crypto.attachments import decrypt_attachment
+                data = decrypt_attachment(data, event.key["k"],
+                                          event.hashes["sha256"], event.iv)
+            content = (getattr(event, "source", {}) or {}).get("content", {}) or {}
+            mime = (content.get("info") or {}).get("mimetype", "") or \
+                getattr(event, "mimetype", "")
+            from scripts import hans_foto as _hf
+            _hf.uklid(self.config)
+            _hf.uloz(person, room.room_id, data, mime)
+            # popisek: body je popisek jen tehdy, když se liší od jména souboru
+            body = (getattr(event, "body", "") or "").strip()
+            fn = (content.get("filename") or "").strip()
+            popisek = body if (fn and body and body != fn) else ""
+            if popisek:
+                odp = await self._s_psanim(room.room_id, self._foto_prace,
+                                           person, room.room_id, popisek)
+                if odp:
+                    await self._a_send(odp, room.room_id)
+            elif len(_hf.nedavne(person, room.room_id, 20)) <= 1:
+                # jen na první z dávky (víc fotek naráz = jedna odpověď)
+                await self._a_send(
+                    "Fotku mám. Napište, co s ní — třeba „hodí se ta kabelka "
+                    "k šatům?“, „změň barvu šatů na modrou“, „odmaž lidi "
+                    "v pozadí“ nebo „zasněž to“.", room.room_id)  # HANS_FOTO_EDIT_VERBS_V1
+        except Exception as e:
+            _log.warning("matrix on_image: %s", e)
+
+    def _foto_prace(self, person: str, rid: str, text: str):
+        """Blokující práce nad fotkou (executor). Vrací text odpovědi."""
+        import re
+        from scripts import hans_foto as _hf
+        okno = float(((self.config.get("foto", {}) or {}).get("okno_s", 1800)))
+        if _hf.zamer(text) == "uprava":
+            src = (_hf.nedavne(person, rid, okno, 1, druh="vysledek")
+                   if re.search(r"\b(ještě|jeste|dál|dal|teď|ted|ale)\b", text, re.I)
+                   else []) or _hf.nedavne(person, rid, okno, 1)
+            if not src:
+                return "Nemám od vás žádnou nedávnou fotku, kterou bych upravil."
+            _en = ""                                  # HANS_FOTO_DOPORUCENI_V1
+            if _hf.odkazuje_na_posudek(text):
+                _pos = _hf.posledni_posudek(person, rid, okno)
+                if not _pos:
+                    return ("K téhle fotce jsem zatím nic nedoporučil. Napište prosím, "
+                            "co přesně mám změnit, třeba „změň barvu kabelky na vínovou“.")
+                _en = _hf.pokyn_z_posudku(self.config, _pos, text) or ""
+                if not _en:
+                    return ("V posudku jsem žádnou změnu nenavrhl — barvy mi přišly v "
+                            "pořádku. Napište prosím, co přesně mám změnit.")
+            # HANS_HEAVY_QUEUE_V1 (28. 9.) — úprava se ZAŘADÍ do fronty
+            # náročných úloh (jedna naráz, jen při volném PC); výsledek pošle
+            # pracovník fronty zpět do téže místnosti. Chat se nezablokuje.
+            if not (self.config.get("foto", {}) or {}).get("edit_enabled", True):
+                return _hf._DUVODY["vypnuto"] + " Posoudit ji ale můžu."
+            _en = _en or _hf._pokyn_en(self.config, text) or ""
+            if not _en:
+                return _hf._DUVODY["pokyn"]
+            try:
+                from scripts import hans_heavy_queue as _hq
+                _db = (self.config.get("hans_idle", {}) or {}).get(
+                    "diary_db", "data/hans_diary.db")
+                _jid, _ahead = _hq.enqueue(_db, "photo_edit", person, {
+                    "path": src[-1], "pokyn": text, "en": _en,
+                    "person": person, "room": rid}, room=rid)
+                return ("Zařadil jsem úpravu fotky. %s Trvá to několik minut, "
+                        "pošlu ji sem, jakmile bude hotová." % _hq.poradi_text(_ahead))
+            except Exception as _qe:
+                _log.warning("matrix foto: fronta selhala: %s", _qe)
+                return _hf._DUVODY["chyba"]
+        paths = _hf.k_posudku(person, rid, self.config)   # HANS_FOTO_POSUDEK_SIZE_V1
+        if not paths:
+            return None
+        # HANS_HEAVY_QUEUE_V1 — posudek (qwen2.5vl ~6 GB) nesmí běžet souběžně
+        # s úpravou/malbou (28. 9.: souběh → úprava nedoběhla). Drží TENTÝŽ
+        # zámek; je-li obsazený, zařadí se do fronty za běžící úlohu.
+        from scripts import hans_heavy_queue as _hq
+        if not _hq.ZAMEK.acquire(blocking=False):
+            _db = (self.config.get("hans_idle", {}) or {}).get(
+                "diary_db", "data/hans_diary.db")
+            _jid, _ahead = _hq.enqueue(_db, "photo_review", person, {
+                "paths": paths, "otazka": text, "person": person, "room": rid},
+                room=rid)
+            return ("Právě pracuji na jiné náročné úloze — fotku posoudím hned "
+                    "potom a odpověď pošlu sem. %s" % _hq.poradi_text(_ahead))
+        try:
+            odp = _hf.posud(self.config, paths, text)
+        finally:
+            _hq.ZAMEK.release()
+        if odp:
+            _hf.uloz_posudek(person, rid, odp)        # HANS_FOTO_DOPORUCENI_V1
+        return odp or ("Na fotku se teď nepodívám — nepodařilo se mi ji zpracovat "
+                       "(počítač s grafikou je vypnutý, hraje se na něm, nebo se "
+                       "něco pokazilo). Fotku si nechám, zeptejte se prosím znovu.")
+
     async def _reply_with_typing(self, room_id: str, person: str, text: str):
         """HANS_MATRIX_TYPING_V1 — pošli typing indikátor („Hans píše…"), pusť
         inference v thread poolu (neblokuje event loop → sync běží dál) a typing
         obnovuj, dokud mozek nedomyslí. Server typing timeout je 20 s → obnova á
         15 s pokryje i dlouhou inferenci. Na konci typing vypni."""
+        return await self._s_psanim(room_id, self._safe_handle, person, text)
+
+    async def _s_psanim(self, room_id: str, fn, *args):
+        """Pusť `fn(*args)` v executoru a mezitím drž „Hans píše…“ (vyčleněno
+        z `_reply_with_typing` pro fotky — HANS_FOTO_V1)."""
         loop = asyncio.get_event_loop()
-        fut = loop.run_in_executor(None, self._safe_handle, person, text)
+        fut = loop.run_in_executor(None, fn, *args)
         try:
             while True:
                 try:
@@ -843,6 +980,22 @@ class MatrixBridge:
         # obraz nakonec dokreslí (viditelný přes /obraz).
         wait_s = float((self.config.get("matrix", {}) or {}).get(
             "art_wait_minutes", 20)) * 60
+        # HANS_HEAVY_PAINT_ONE_DELIVERY_V1 (29. 9.) — malba může stát ve frontě
+        # náročných úloh za úpravou fotky (až ~25 min); dokud tam je, nevzdávat
+        # (jinak falešné „nepodařilo se“ a obraz pak dorazí stejně).
+        if now - paint["pending"] > wait_s:
+            try:
+                _hc = sqlite3.connect("file:%s?mode=ro" % self._diary_path(),
+                                      uri=True, timeout=3.0)
+                _aktivni = _hc.execute(
+                    "SELECT COUNT(*) FROM heavy_jobs WHERE kind='paint' AND "
+                    "(status IN ('pending','running') OR (status='done' AND "
+                    "done_ts > ?))", (now - 300,)).fetchone()[0]
+                _hc.close()
+            except Exception:
+                _aktivni = 0
+            if _aktivni:
+                wait_s = now - paint["pending"] + 60
         if now - paint["pending"] > wait_s:  # render se nepovedl / trvá moc dlouho
             self._cmd_state.pop("paint", None)
             self.send("Obraz se mi teď nepodařilo vytvořit, pane. "

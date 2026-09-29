@@ -1664,5 +1664,25 @@
     "pristup": {
         "enabled": true,
         "role_defaults": {}
+    },
+    "foto": {
+        "edit_enabled": true,
+        "keep_days": 7,
+        "hned_s": 300,
+        "okno_s": 1800,
+        "vision_model": "qwen2.5vl:7b",
+        "_note": "HANS_FOTO_V1 (27. 9.): fotky poslané Hansovi na Matrix — posudek (qwen2.5vl EN → hans-czech CZ) a úprava (FLUX Kontext v ComfyUI). Soukromí: jen známé osoby, jen Pi+PC, nic do deníku/paměti, smazání po keep_days. edit_enabled false do prvního živého testu (27. 9. RAM na PC při souběhu s tréninkem).",
+        "render_timeout": 1500,
+        "_render_timeout_note": "HANS_HEAVY_QUEUE_V1 (28. 9.): FLUX Kontext na RX 6800 (fp8 emulováno → převod na fp16) trvá 8,6 min i víc; 600 s nestačilo (2× nedoběhlo i s 24 GB volné RAM)."
+    },
+    "heavy_queue": {
+        "interval_s": 60,
+        "max_attempts": 3,
+        "max_age_h": 24,
+        "min_free_gb": {
+            "photo_edit": 14,
+            "paint": 8
+        },
+        "_note": "HANS_HEAVY_QUEUE_V1 (28. 9.): fronta náročných úloh (úprava fotky, malba na požádání) — jedna naráz, spouští se jen při volném PC (ComfyUI, ne hra, ne ~/.hans_nevypinat, volná RAM min_free_gb podle druhu). Dlužné obrazy HANS_ART_RETRY_V1 sdílí zámek i kontrolu."
     }
 }

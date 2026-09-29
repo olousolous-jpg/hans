@@ -1561,26 +1561,22 @@ def _cmd_namaluj(handler, name, args) -> str:
                 "pane. Prosím upřesněte téma — třeba „namaluj kočku na zdi\" "
                 "nebo „namaluj japonskou zahradu\".")
 
-    if not hans_art.comfy_available(cfg):
-        # HANS_ART_RETRY_V1 — „až bude PC vzhůru, namaluji“ platilo jen slovem
-        try:
-            from scripts.hans_commitments import add_paint_retry
-            add_paint_retry(db, name or "", subj, style)
-        except Exception as _ae:
-            _log.warning("namaluj: uložení dlužného obrazu selhalo: %s", _ae)
-        return ("Rád bych, pane — ale má výtvarná dílna (ComfyUI na PC) teď neběží. "
-                "Poznamenal jsem si to: až bude PC vzhůru, obraz namaluji a pošlu vám ho.")
-
-    def _worker():
-        try:
-            hans_art.paint_subject(cfg, db, subj, style=style, zadal=name or "")
-        except Exception as _e:
-            _log.warning("namaluj render selhal: %s", _e)
-    _t.Thread(target=_worker, daemon=True).start()
+    # HANS_HEAVY_QUEUE_V1 (28. 9.) — malba na požádání jde do FRONTY náročných
+    # úloh (jedna naráz, jen při volném PC; s úpravou fotky se nepotká).
+    # Nahrazuje obě dřívější větve: okamžité vlákno i „dlužný obraz“ při spícím
+    # PC (HANS_ART_RETRY_V1 dál dojede staré sliby, nové už nevznikají).
     _st = (" ve stylu „%s\"" % style) if style else ""
-    return ("S radostí, pane — maluji obraz na téma „%s\"%s. Za chvíli se objeví na "
-            "nástěnce (Co Hans namaloval); chat může být asi minutu zaneprázdněný."
-            % (subj[:70], _st))
+    try:
+        from scripts import hans_heavy_queue as _hq
+        _jid, _ahead = _hq.enqueue(db, "paint", name or "", {
+            "subject": subj, "style": style or "", "person": name or ""})
+    except Exception as _qe:
+        _log.warning("namaluj: fronta selhala: %s", _qe)
+        return ("Omlouvám se, pane — obraz teď nemohu zařadit k namalování. "
+                "Zkuste to prosím za chvíli znovu.")
+    return ("S radostí, pane — obraz na téma „%s\"%s jsem zařadil k namalování. "
+            "%s Hotový se objeví na nástěnce (Co Hans namaloval)."
+            % (subj[:70], _st, _hq.poradi_text(_ahead)))
 
 
 _INSTR_TOKENS = {
