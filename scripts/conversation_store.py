@@ -272,6 +272,17 @@ class ConversationStore:
 
     def add_exchange(self, name: str, user_msg: str, assistant_msg: str,
                      channel: str = None):
+        # HANS_SILENT_WRITE_LOG_V1 — 11 volajících (zkratky v handleru) chybu
+        # zápisu historie spolkne `except: pass`; tady se aspoň zapíše.
+        try:
+            return self._add_exchange(name, user_msg, assistant_msg, channel)
+        except Exception as e:
+            from scripts.logger import tichy_zapis
+            tichy_zapis("conv_store.add_exchange", e)
+            raise
+
+    def _add_exchange(self, name: str, user_msg: str, assistant_msg: str,
+                      channel: str = None):
         data = self._load(name)
         msgs = data.get("messages", [])
         now  = time.time()
@@ -292,6 +303,14 @@ class ConversationStore:
         self._save(name, data)
 
     def add_greeting(self, name: str, greeting_text: str, channel: str = None):
+        try:                                   # HANS_SILENT_WRITE_LOG_V1
+            return self._add_greeting(name, greeting_text, channel)
+        except Exception as e:
+            from scripts.logger import tichy_zapis
+            tichy_zapis("conv_store.add_greeting", e)
+            raise
+
+    def _add_greeting(self, name: str, greeting_text: str, channel: str = None):
         data = self._load(name)
         msgs = data.get("messages", [])
         _g = {"role": "assistant", "content": greeting_text, "ts": time.time()}

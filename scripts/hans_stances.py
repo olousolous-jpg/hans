@@ -189,8 +189,9 @@ class StanceStore:
             conn.execute(
                 "INSERT INTO stance_history (stance_id, ts, confidence, event) "
                 "VALUES (?,?,?,?)", (stance_id, ts, float(confidence), event))
-        except Exception:
-            pass
+        except Exception as _tiche:
+            from scripts.logger import tichy_zapis as _tz  # HANS_SILENT_WRITE_LOG_V1
+            _tz('hans_stances:_hist', _tiche)
 
     def history(self, stance_id: int = None, limit: int = 2000):
         """READ-ONLY časová stopa confidence (pro graf). stance_id=None → vše,

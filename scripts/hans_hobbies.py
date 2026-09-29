@@ -241,8 +241,9 @@ class HobbyStore:
             conn.execute(
                 "INSERT INTO hobby_history (hobby_id, ts, evidence_count, event) "
                 "VALUES (?,?,?,?)", (hobby_id, ts, int(count), event))
-        except Exception:
-            pass
+        except Exception as _tiche:
+            from scripts.logger import tichy_zapis as _tz  # HANS_SILENT_WRITE_LOG_V1
+            _tz('hans_hobbies:_hist', _tiche)
 
     def history(self, hobby_id: int = None, limit: int = 2000):
         """READ-ONLY časová stopa evidence_count (pro graf)."""

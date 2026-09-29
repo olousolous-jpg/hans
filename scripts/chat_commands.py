@@ -2921,8 +2921,9 @@ def _cmd_smer(handler, name, args) -> str:
                     if tg is not None and hasattr(tg, "send_proactive"):
                         try:
                             tg.send_proactive(r["message"])
-                        except Exception:
-                            pass
+                        except Exception as _tiche:
+                            from scripts.logger import tichy_zapis as _tz  # HANS_SILENT_WRITE_LOG_V1
+                            _tz('chat_commands:_cmd_smer', _tiche)
             except Exception as _e:
                 _log.warning("/smer teď selhalo: %s", _e)
         _th.Thread(target=_run, daemon=True).start()

@@ -97,3 +97,43 @@ def log_once(logger, key: str, msg: str, *args) -> None:
         logger.info(msg, *args)
     except Exception:
         pass
+
+
+# ── HANS_SILENT_WRITE_LOG_V1 + HANS_THREAD_EXCEPTHOOK_V1 (29. 9.) ───────────
+# Audit tichých selhání: 68 míst `try: <zápis/doručení> except: pass`. Chyba
+# zápisu do paměti nebo doručení se tak nikdy nikde neobjevila. Místo slepé
+# opravy se ticho mění v data: WARNING při 1. výskytu a pak každý 50. (s
+# počtem), ať je vidět i četnost. Chování volajících se nemění.
+# Vlákna: stderr služby jde do journalu, který na Pi NEUKLÁDÁ nic → pád vlákna
+# nezanechal stopu. `threading.excepthook` ho zapíše do system.log.
+_tiche_pocty: dict = {}
+
+
+def tichy_zapis(misto: str, exc: BaseException) -> None:
+    n = _tiche_pocty.get(misto, 0) + 1
+    _tiche_pocty[misto] = n
+    if n == 1 or n % 50 == 0:
+        try:
+            logging.getLogger("tiche_selhani").warning(
+                "tiché selhání [%s] (%d×): %s: %s", misto, n,
+                type(exc).__name__, str(exc)[:300])
+        except Exception:
+            pass
+
+
+def _vlakno_spadlo(args) -> None:
+    try:
+        import traceback
+        logging.getLogger("tiche_selhani").error(
+            "vlákno %s spadlo: %s", getattr(args.thread, "name", "?"),
+            "".join(traceback.format_exception(
+                args.exc_type, args.exc_value, args.exc_traceback))[-2000:])
+    except Exception:
+        pass
+    _puvodni_hook(args)
+
+
+import threading as _threading
+if getattr(_threading.excepthook, "__name__", "") != "_vlakno_spadlo":
+    _puvodni_hook = _threading.excepthook
+    _threading.excepthook = _vlakno_spadlo

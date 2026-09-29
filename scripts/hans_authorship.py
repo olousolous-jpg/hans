@@ -402,8 +402,9 @@ class AuthorshipStore:
                     collection_key=str(_cfg(config).get("rag_collection", "hans_dila")),
                     doc_id=f"work_{prog['id']}_s{idx}", title=title, text=prose,
                     metadata={"kdy": time.strftime("%Y-%m-%d"), "typ": "dílo"})
-            except Exception:
-                pass
+            except Exception as _tiche:
+                from scripts.logger import tichy_zapis as _tz  # HANS_SILENT_WRITE_LOG_V1
+                _tz('hans_authorship:write_next', _tiche)
         self._update(prog["id"], current_index=idx + 1,
                      sessions_done=int(prog["sessions_done"]) + 1,
                      updated_ts=now, last_session_ts=now)
@@ -453,8 +454,9 @@ class AuthorshipStore:
                                  text=note,
                                  metadata={"kdy": time.strftime("%Y-%m-%d"),
                                            "typ": "dílo-dokončeno"})
-            except Exception:
-                pass
+            except Exception as _tiche:
+                from scripts.logger import tichy_zapis as _tz  # HANS_SILENT_WRITE_LOG_V1
+                _tz('hans_authorship:_complete', _tiche)
         _log.info("authorship: projekt [%d] „%s“ DOKONČEN → %s",
                   prog["id"], prog["title"], path or "(bez souboru)")
         return {"result": "completed", "title": prog["title"], "path": path}
