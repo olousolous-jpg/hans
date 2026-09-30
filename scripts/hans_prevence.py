@@ -144,10 +144,12 @@ def _disk(c, day, klic, cesta):
 def sber_meridel(c, config: dict) -> None:
     day = time.strftime("%Y-%m-%d")
     _disk(c, day, "pi_root", str(_ROOT))
+    c.commit()  # HANS_PREVENTION_NO_NET_LOCK_V1 — spící NAS se probouzí sekundy
     for m in ("/mnt/nas-hans",):
         if os.path.ismount(m):
             _disk(c, day, "nas", m)
     # disky PC — jen když PC běží (jinak SSH jen čeká na timeout)
+    c.commit()  # HANS_PREVENTION_NO_NET_LOCK_V1 — ne přes SSH
     try:
         from scripts.ollama_client import brain_available
         if brain_available(config):
@@ -260,7 +262,13 @@ def sber(config: dict, db_path: str) -> dict:
         c = _db(db_path)
         try:
             n = sber_logu(c)
+            # HANS_PREVENTION_NO_NET_LOCK_V1 (30. 9.) — uzavřít zápis PŘED voláním
+            # po síti. Dřív zůstal zápis do deníku otevřený přes SSH na PC (až 8 s)
+            # a čtení kodi.log (až 60 s) → ostatní zápisy dostaly „database is
+            # locked“ (30. 9. 03:01 se tak ztratila reflexe tvorby).
+            c.commit()
             sber_meridel(c, config)
+            c.commit()
             nk = 0
             try:
                 nk = sber_kodi(c, config)
