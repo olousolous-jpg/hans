@@ -1702,5 +1702,9 @@
         "pc_ok_file": "/mnt/nas-hans/hans_pc_restic/POSLEDNI_OK",
         "pc_max_dni": 10,
         "_note": "HANS_BACKUP_WATCH_V1: hlídač stáří záloh (hans_zalohy.py), hlásí na Matrix jednou denně po 22:30."
+    },
+    "ollama_resident": {
+        "keep_alive_fix": true,
+        "_note": "HANS_OLLAMA_RESIDENT_CTX_V1 (29. 9.): num_ctx u rezidentniho modelu se sjednocuje vzdy; keep_alive=-1 s keep_alive_fix=true. ZAPNUTO 29. 9. ~16:30 po LLAMA_ARG_CACHE_RAM=2048 v override.conf Ollamy na PC (bez nej prompt cache 8 GB zasekavala Ollamu)."
     }
 }

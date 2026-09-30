@@ -647,6 +647,60 @@ def ollama_warmup(
 
 # ── Internals ──────────────────────────────────────────────
 
+# HANS_OLLAMA_RESIDENT_CTX_V1 (29. 9.) — jiné `num_ctx` u REZIDENTNÍHO modelu
+# = Ollama ho uvolní a nahraje znovu (4–8 s, mezitím stojí všechny dotazy).
+# Změřeno v provozu 29. 9. 7:00–12:15: hans-czech 106× přenahrán (okna 16384 /
+# 2048 / 8192 / 12288 od ~20 volajících, kteří si okno zvolili kvůli uříznutí
+# promptu, ne kvůli ceně); dotaz na osobu v 10:51 = 3 přenahrání. Menší okno se
+# proto u rezidentního modelu ZVEDNE na rezidentní (nic se tím neuřízne); větší
+# se nechá (snížení by prompt uřízlo). Volání bez `num_ctx` bere výchozí okno
+# z Modelfile (16384) → nepřenahrává, nesahá se na něj.
+_REZIDENT = None
+# ⚠️ keep_alive=-1 VYPNUTO přepínačem (29. 9. 15:30): trvale nahraný model nechá
+# prompt cache llama-serveru dorůst k 8 GB a Ollama se zasekávala (15:05, 15:25;
+# zrušených požadavků 18/h × dřív 0). Zapnout (`ollama_resident.keep_alive_fix`
+# true) AŽ po `LLAMA_ARG_CACHE_RAM=2048` v override.conf Ollamy na PC.
+_KEEP_FIX = None
+
+
+def _rezidentni() -> tuple:
+    global _REZIDENT, _KEEP_FIX
+    if _REZIDENT is None:
+        try:
+            from scripts import config_io
+            _c = config_io.load()
+            _hd = (_c.get("hans_dialog", {}) or {})
+            _REZIDENT = (str(_hd.get("ollama_model") or "hans-czech:latest"),
+                         int(_hd.get("num_ctx") or 16384))
+            _KEEP_FIX = bool((_c.get("ollama_resident", {}) or {}).get("keep_alive_fix", False))
+        except Exception:
+            _REZIDENT = ("hans-czech:latest", 16384)
+            _KEEP_FIX = False
+    return _REZIDENT
+
+
+def _sjednot_okno(payload: dict) -> None:
+    try:
+        model, okno = _rezidentni()
+        o = payload.get("options")
+        if payload.get("model") == model and isinstance(o, dict) and "num_ctx" in o and int(o["num_ctx"]) < okno:
+            payload["options"] = dict(o, num_ctx=okno)
+    except Exception:
+        pass
+    # `keep_alive` jiné než -1 u rezidentního modelu ho po dotazu UVOLNÍ a příští
+    # dotaz ho nahrává znovu (změřeno: přepis F1 s keep_alive=0 → odpověď +4 s,
+    # pokaždé). Výjimka: během předávky grafiky (noční base dávka, render —
+    # `warmup_paused`) je hans-czech mimo ZÁMĚRNĚ → hodnota volajícího platí.
+    try:
+        model, _ = _rezidentni()
+        if (_KEEP_FIX and payload.get("model") == model
+                and payload.get("keep_alive") not in (-1, "-1")
+                and not warmup_paused()):
+            payload["keep_alive"] = -1
+    except Exception:
+        pass
+
+
 def _post_with_retry(url: str, payload: dict, timeout: int,
                      extractor) -> Optional[str]:
     """HANS_LLM_TRACE_V1 (9. 9.) — měřicí obal nad `_post_with_retry_impl`.
@@ -657,6 +711,7 @@ def _post_with_retry(url: str, payload: dict, timeout: int,
     base-model dávky — hlášky nesou jen URL a mez timeoutu.
     ⚠️ Nesmí změnit chování: měření je v `try/except` a výsledek se vrací
     beze změny, výjimka se propaguje dál."""
+    _sjednot_okno(payload)            # HANS_OLLAMA_RESIDENT_CTX_V1
     _t0 = time.time()
     try:
         _out = _post_with_retry_impl(url, payload, timeout, extractor)
