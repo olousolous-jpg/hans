@@ -3415,6 +3415,54 @@ def _self_state_trvale(conn) -> list:
     return out
 
 
+# HANS_A1_OWN_WORK_IN_PROMPT_V1 (1. 10.) — otázka na VLASTNÍ čin/zážitek
+# („proč sis vybral X“, „co vás zaujalo při tvorbě…“), jejíž předmět stojí
+# v trvalém přehledu děl a studia (= opora je v PROMPTU, ne v RAG).
+_VLASTNI_CIN = re.compile(
+    r"\b(?:(?:vybral|zvolil|vytv[aá][rř]el|vytvo[rř]il|tvo[rř]il|napsal|psal|"
+    r"namaloval|maloval|slo[zž]il|skl[aá]dal|studoval|[cč]etl)\s*(?:jsi|jste|sis|si)?|"
+    r"(?:jsi|jste|sis)\s+(?:si\s+)?(?:vybral|zvolil|vytv[aá][rř]el|vytvo[rř]il|tvo[rř]il|"
+    r"napsal|psal|namaloval|maloval|slo[zž]il|skl[aá]dal|studoval|[cč]etl)|"
+    r"zaujal[oa]?\s+(?:t[eě]|v[aá]s)|(?:t[eě]|v[aá]s)\s+(?:nejv[ií]c\w*\s+)?zaujal[oa]?|"
+    r"tvorb[eěu])\b", re.IGNORECASE)
+_DRUHA_OS = re.compile(r"\b(?:jsi|jste|sis|t[eě]|ti|tob[eě]|tv[uůoáé]\w*|v[aá]s|v[aá]m|"
+                       r"va[sš]\w*)\b", re.IGNORECASE)
+_VLASTNI_STOP = {"proc", "jsi", "jste", "sis", "vybral", "zvolil", "zaujalo",
+                 "zaujal", "nejvice", "pravy", "prave", "tvorbe", "tvorbu", "vas",
+                 "tebe", "kdyz", "jste", "vytvarel", "stranku", "stranky"}
+
+
+# obecná slova nic neukotví („obraz“ ~ „s obrázky“ v přehledu → falešná shoda)
+_VLASTNI_OBECNE = ("obraz", "podtem", "tvor", "stud", "tema", "dil", "prac",
+                   "esej", "knih", "clan", "sekc", "hotov")
+
+
+def predmet_vlastniho_dila(text: str, db_path: str) -> str:
+    """HANS_A1_OWN_WORK_IN_PROMPT_V1 — vrátí slovo z otázky, které stojí
+    v `lasting_facts` („bach“), když se otázka ptá na Hansův vlastní čin.
+    '' = ne. Změřeno na 565 přepisech F1 (~50 dní): 15 má 2. osobu + sloveso
+    vlastního činu, a jen 2 z nich mají předmět v přehledu děl (Bach na webu,
+    tvorba webových stránek) — „co tě zaujalo na Heideggerovi“ nebo „kde jsi
+    četl o Gulagu“ zůstávají pod A1 (opora by byla v paměti, ne v promptu)."""
+    import unicodedata as _ud
+    t = text or ""
+    if not (_VLASTNI_CIN.search(t) and _DRUHA_OS.search(t)):
+        return ""
+    fold = lambda s: "".join(c for c in _ud.normalize("NFD", (s or "").lower())
+                             if _ud.category(c) != "Mn")
+    lf = fold(" ".join(lasting_facts(db_path)))
+    if not lf:
+        return ""
+    lf_slova = set(re.findall(r"\w{4,}", lf))
+    for w in re.findall(r"\w{4,}", fold(t)):
+        if w in _VLASTNI_STOP or w.startswith(_VLASTNI_OBECNE):
+            continue
+        k = w[:4] if len(w) <= 6 else w[:5]
+        if any(x.startswith(k) for x in lf_slova):
+            return w
+    return ""
+
+
 def lasting_facts(db_path: str) -> list:
     """HANS_SELF_STATE_LASTING_V1 — trvalé řádky pro chatový prompt (díla, studium)."""
     conn = None

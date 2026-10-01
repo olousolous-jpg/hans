@@ -5079,6 +5079,30 @@ class OpenWebUIDirectHandler:
                             'HANS_A1_NOT_FOR_OWN_STATE_V1: A1 přeskočena — '
                             'dotaz je %r (opora je v promptu, ne v RAG): %.50s',
                             _st, ctx._raw_message)
+                    # HANS_A1_OWN_WORK_IN_PROMPT_V1 (1. 10.) — „Proč jsi si vybral
+                    # Johann Sebastian Bacha?“ klasifikátor 4/4 čte jako OSOBU
+                    # (Bach), A1 abstinovala a dohledání vrátilo článek o Bachovi
+                    # místo odpovědi o vlastním díle. Přeskočit jen když předmět
+                    # doslova stojí v přehledu děl a studia v promptu.
+                    if not _skip_a1:
+                        try:
+                            from scripts.hans_recall import predmet_vlastniho_dila
+                            _dbp_vd = (self.config.get("diary_db")
+                                       or "data/hans_diary.db")
+                            # přepis F1 kolísá („Proč JSEM si vybral…“, změřeno
+                            # 1. 10.) → i původní věta
+                            _pv = (predmet_vlastniho_dila(_a1_text, _dbp_vd)
+                                   or predmet_vlastniho_dila(ctx._raw_message, _dbp_vd))
+                            if _pv:
+                                _skip_a1 = True
+                                ctx._vlastni_dilo = True
+                                logging.getLogger(__name__).info(
+                                    'HANS_A1_OWN_WORK_IN_PROMPT_V1: A1 přeskočena — '
+                                    'vlastní dílo, %r je v přehledu děl: %.50s',
+                                    _pv, ctx._raw_message)
+                        except Exception as _vde:
+                            logging.getLogger(__name__).debug(
+                                'HANS_A1_OWN_WORK_IN_PROMPT_V1: %s', _vde)
                 except Exception as _ste:
                     logging.getLogger(__name__).debug('self_topic: %s', _ste)
                 # HANS_A1_ONLY_FOR_QUESTIONS_V1 (20. 9.) — ROZKAZ NENÍ DOTAZ.
@@ -5486,7 +5510,11 @@ class OpenWebUIDirectHandler:
             # „oporu" z nesouvisejících chunků (0.651) a výsledek byl přesto
             # bez obsahu; a když je odpověď CELÁ jen přiznáním, není co ztratit.
             try:
+                # HANS_A1_OWN_WORK_IN_PROMPT_V1 — na vlastní dílo se na Wikipedii
+                # nedohledává (1. 10.: „proč sis vybral Bacha“ → model poctivě
+                # přiznal, že důvod nemá zapsaný, a odpověď přepsal článek o Bachovi)
                 if (not ctx._dohledano
+                        and not getattr(ctx, '_vlastni_dilo', False)
                         and getattr(self, '_grounding_outcome', '')
                         in ('factual_nofacts', 'grounded')):
                     from scripts.hans_thread import je_ciste_odrikani
