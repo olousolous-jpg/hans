@@ -88,6 +88,12 @@ _CAPABILITIES = [
     # Automatické odvození z configu/akcí zkoušeno a ZAMÍTNUTO (věty si
     # vymýšlely omezení) → ruční seznam; 🔴 PRAVIDLO: každá nová funkce, kterou
     # lidé mohou použít, sem patří HNED při stavbě (CLAUDE.md, ZPŮSOB PRÁCE).
+    # HANS_NOTAGEN_V1 vypnuto 30. 9. (rozhodnutí uživatele) — skladby k dílům
+    # se nedělají; zůstaly jen notové příklady ke kapitolám (HANS_MUSIC_V1).
+    ("music", "Ke kapitolám o hudbě, které studuji, píšu krátké notové "
+     "příklady. Celé skladby neskládám — ani k dílům, ani na požádání "
+     "v rozhovoru",
+     "automaticky při studiu hudebních témat"),
     ("photo", "Členové domácnosti mi mohou poslat FOTKU přes Matrix: POSOUDÍM ji "
      "(„hodí se ta kabelka k šatům?“) nebo ji UPRAVÍM — změním barvu, "
      "odstraním lidi v pozadí, zasněžím, udělám z ní olejomalbu. Úprava trvá "
@@ -417,12 +423,27 @@ def recent_gained_context(diary_db_path: str = "data/hans_diary.db",
         conn = sqlite3.connect("file:%s?mode=ro" % diary_db_path, uri=True,
                                timeout=3.0)
         rows = conn.execute(
-            "SELECT note FROM diary WHERE event_type='capability_gained' "
+            "SELECT note, data FROM diary WHERE event_type='capability_gained' "
             "AND ts > ? ORDER BY ts DESC LIMIT 4", (since,)).fetchall()
         conn.close()
     except Exception:
         return ""
-    caps = [r[0] for r in rows if r and r[0]]
+    # HANS_CAP_GAINED_CURRENT_TEXT_V1 (30. 9.) — znění z AKTUÁLNÍHO manifestu
+    # podle id (sloupec `data`), ne uložená věta z doby zisku. Doloženo 30. 9.:
+    # skladby k dílům vypnuty a řádek „music“ přepsán, ale chat 10 dní dál
+    # dostával „SKLÁDÁM HUDBU k vlastním dílům…“ z deníku a Hans to tvrdil.
+    # Schopnost, která už v manifestu není, se nenabízí vůbec.
+    try:
+        _ted = {cid: txt for cid, txt, _ in _all_capabilities()}
+    except Exception:
+        _ted = None
+    caps = []
+    for note, cid in rows:
+        if _ted is None:
+            if note:
+                caps.append(note)
+        elif cid in _ted:
+            caps.append("Zjistil jsem u sebe novou schopnost: " + _ted[cid])
     if not caps:
         return ""
     return ("\n\nNEDÁVNO ses u sebe naučil nové schopnosti (klidně to nadšeně "

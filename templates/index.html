@@ -168,6 +168,7 @@ button.btn:hover { opacity: 0.85; }
       <button data-tab="objects" onclick="showTab('objects')">📦 Objekty</button>
       <button data-tab="conversations" onclick="showTab('conversations')">💬 Konverzace</button>
       <button data-tab="works" onclick="showTab('works')">🛠️ Hansova práce</button>
+      <button data-tab="zpravy" onclick="showTab('zpravy')">📰 Zprávy</button>
       <button data-tab="questions" onclick="showTab('questions')">❓ Otázky<span id="q-nav-badge" style="background:var(--yellow);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:0.7em;margin-left:auto;display:none">0</span></button>
       <button data-tab="mysleni" onclick="showTab('mysleni')">🧠 Myšlení</button>
       <button data-tab="users" onclick="showTab('users')">🔐 Uživatelé</button>
@@ -349,6 +350,39 @@ button.btn:hover { opacity: 0.85; }
 </div>
 
 <!-- ── HANSOVA PRÁCE (HANS_MAKER_V1 — vygenerované stránky po verzích) -->
+<!-- HANS_ZPRAVY_SBER_V1 (30. 9.) — sebrané titulky zpráv z více zdrojů -->
+<div id="tab-zpravy" class="tab-content">
+  <div class="filter-bar" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <button class="btn btn-neutral" onclick="loadZpravy()">↺ Obnovit</button>
+    <label style="font-size:0.85rem;color:var(--fg2)">okno
+      <select id="zp-hodin" onchange="loadZpravy()"><option value="24">24 h</option><option value="48" selected>48 h</option><option value="168">7 dní</option></select></label>
+    <label style="font-size:0.85rem;color:var(--fg2)">jazyk
+      <select id="zp-jazyk" onchange="kresliZpravy()"><option value="">vše</option><option value="cs">čeština</option><option value="en">angličtina</option><option value="de">němčina</option><option value="fr">francouzština</option></select></label>
+    <span id="zp-info" style="color:var(--fg2);font-size:0.85rem"></span>
+  </div>
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:8px">Zdroje</div>
+    <div id="zp-zdroje" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px"></div>
+  </div>
+  <div class="card">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
+      <div style="font-weight:600">Hlavní zprávy — nejdéle na špici</div>
+      <select id="zp-vydani" onchange="kresliZpravy()" style="margin-left:auto"><option value="">všechna vydání</option><option value="gn_cz">Česko</option><option value="gn_svet">svět</option><option value="gn_us">USA</option><option value="gn_gb">Británie</option><option value="gn_de">Německo</option><option value="gn_fr">Francie</option></select>
+    </div>
+    <div style="color:var(--fg2);font-size:0.8rem;margin-bottom:10px">Google News řadí podle důležitosti a každá zpráva je shluk téže události z více médií. Bulvár a sport se při sběru zahazují. Číslo = kolik hodinových sběrů byla mezi prvními <span id="zp-n2">5</span>.</div>
+    <div id="zp-hlavni"></div>
+  </div>
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:4px">Kanály médií — nejdéle nahoře</div>
+    <div style="color:var(--fg2);font-size:0.8rem;margin-bottom:10px">Kolikrát při hodinovém sběru patřil titulek mezi prvních <span id="zp-n">5</span> položek svého kanálu. ⚠️ Kanály řadí podle času zveřejnění, ne podle důležitosti — slouží hlavně jako zdroj celých článků.</div>
+    <div id="zp-spicka"></div>
+  </div>
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:8px">Nejnovější</div>
+    <div id="zp-nove"></div>
+  </div>
+</div>
+
 <div id="tab-works" class="tab-content">
   <div class="filter-bar" style="margin-bottom:14px">
     <button class="btn btn-neutral" onclick="loadWorks()">↺ Obnovit</button>
@@ -561,6 +595,7 @@ const PAGE_TITLES = {
   dashboard: 'Dashboard', diary: 'Deník', faces: 'Obličeje', objects: 'Objekty',
   conversations: 'Konverzace', works: 'Hansova práce', questions: 'Otázky',
   'cfg-identity': 'Nastavení', log: 'Log', users: 'Uživatelé', mysleni: 'Jak Hans přemýšlí',
+  zpravy: 'Zprávy — sběr z více zdrojů',
 };
 function showTab(name) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -575,7 +610,7 @@ function showTab(name) {
   const loaders = {
     'diary': loadDiaryCards, 'faces': loadFaces, 'objects': loadObjects,
     'conversations': loadConversations, 'log': loadLog, 'questions': loadQuestions,
-    'works': loadWorks, 'users': loadPristup, 'mysleni': () => window.msOtevri && window.msOtevri(),
+    'works': loadWorks, 'zpravy': loadZpravy, 'users': loadPristup, 'mysleni': () => window.msOtevri && window.msOtevri(),
   };
   if (loaders[name]) loaders[name]();
 }
@@ -1593,6 +1628,71 @@ async function loadTrends() {
 }
 
 // HANS_MAKER_V1 — karta „Hansova práce" (vygenerované stránky po verzích)
+// HANS_ZPRAVY_SBER_V1 — záložka Zprávy
+let _zp = null;
+function zpCas(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000), n = new Date();
+  const hm = d.toLocaleTimeString('cs-CZ', {hour: '2-digit', minute: '2-digit'});
+  return d.toDateString() === n.toDateString() ? hm : d.toLocaleDateString('cs-CZ', {day: 'numeric', month: 'numeric'}) + ' ' + hm;
+}
+function zpOdkaz(r) {
+  const u = String(r.url || '');
+  const bezp = /^https?:\/\//.test(u) ? u.replace(/"/g, '%22') : '#';
+  return `<a href="${bezp}" target="_blank" rel="noopener noreferrer" style="color:var(--fg);text-decoration:none">${esc(r.titulek)}</a>`;
+}
+async function loadZpravy() {
+  try {
+    const h = document.getElementById('zp-hodin').value;
+    _zp = await (await fetch('/api/zpravy?hodin=' + h)).json();
+    kresliZpravy();
+  } catch (e) {
+    document.getElementById('zp-info').textContent = 'Nepodařilo se načíst.';
+  }
+}
+function kresliZpravy() {
+  const d = _zp; if (!d) return;
+  const jaz = document.getElementById('zp-jazyk').value;
+  const filtr = r => !jaz || r.jazyk === jaz;
+  document.getElementById('zp-n').textContent = d.spicka_n || 5;
+  document.getElementById('zp-info').textContent = `sběrů celkem: ${d.sberu || 0}`;
+  document.getElementById('zp-zdroje').innerHTML = (d.zdroje || []).filter(filtr).map(z => {
+    const barva = z.ok === null ? 'var(--fg2)' : (z.ok ? 'var(--green)' : 'var(--red)');
+    const stav = z.ok === null ? 'zatím nesbíráno' : (z.ok ? 'OK' : 'chyba');
+    return `<div style="background:var(--bg3);border-radius:8px;padding:8px 10px;font-size:0.85rem">`
+      + `<div style="font-weight:600">${esc(z.nazev)} <span style="color:var(--fg2);font-weight:400">${esc(z.jazyk)}</span></div>`
+      + `<div style="color:${barva}">● ${stav} <span style="color:var(--fg2)">${zpCas(z.posledni_ts)}</span></div>`
+      + `<div style="color:var(--fg2)">nových v okně: ${z.novych} · 24 h: ${z.ok_24h}/${z.sberu_24h} sběrů</div>`
+      + (z.ok === false && z.chyba ? `<div style="color:var(--red);font-size:0.75rem">${esc(z.chyba)}</div>` : '')
+      + `</div>`;
+  }).join('');
+  document.getElementById('zp-n2').textContent = d.spicka_n || 5;
+
+  const vyd = document.getElementById('zp-vydani').value;
+  const hl = (d.hlavni || []).filter(r => filtr(r) && (!vyd || r.vydani === vyd));
+  document.getElementById('zp-hlavni').innerHTML = hl.length ? hl.map((r, i) => {
+    const cl = (r.clenove || []).map(c => `<div style="font-size:0.8rem;color:var(--fg2)">• ${esc(c[0])} <span style="color:var(--accent2)">${esc(c[1])}</span></div>`).join('');
+    return `<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--bg3)">`
+      + `<div style="min-width:44px;text-align:right;font-weight:600;color:var(--accent)">${r.na_spici}×</div>`
+      + `<div style="flex:1;min-width:0"><div>${esc(r.titulek)}</div>`
+      + `<div style="color:var(--fg2);font-size:0.78rem">${r.kategorie && r.kategorie !== 'zprava' ? `<span style="color:var(--orange)">${r.kategorie === 'bulvar' ? 'bulvár' : 'sport'}</span> · ` : ''}${esc(r.vydani_nazev)} · ${r.pocet_zdroju} médií · nejvýš ${r.nejlepsi_pozice}. · na špici ${zpCas(r.prvni_na_spici_ts)} – ${zpCas(r.posledni_na_spici_ts)}`
+      + ` · <a href="#" onclick="const e=document.getElementById('zp-cl-${i}');e.style.display=e.style.display?'':'none';return false" style="color:var(--accent)">média</a></div>`
+      + `<div id="zp-cl-${i}" style="display:none;margin-top:4px">${cl}</div></div></div>`;
+  }).join('') : '<div style="color:var(--fg2)">Zatím nic.</div>';
+  const sp = (d.spicka || []).filter(filtr);
+  document.getElementById('zp-spicka').innerHTML = sp.length ? sp.map(r =>
+    `<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--bg3)">`
+    + `<div style="min-width:44px;text-align:right;font-weight:600;color:var(--accent)">${r.na_spici}×</div>`
+    + `<div style="flex:1;min-width:0"><div>${zpOdkaz(r)}</div>`
+    + `<div style="color:var(--fg2);font-size:0.78rem">${esc(r.zdroj_nazev)} · ${esc(r.jazyk)} · nejvýš ${r.nejlepsi_pozice}. · na špici ${zpCas(r.prvni_na_spici_ts)} – ${zpCas(r.posledni_na_spici_ts)}</div></div></div>`
+  ).join('') : '<div style="color:var(--fg2)">Zatím nic — po několika hodinových sběrech se tu ukáže, co se drží.</div>';
+  const nv = (d.nove || []).filter(filtr).slice(0, 30);
+  document.getElementById('zp-nove').innerHTML = nv.map(r =>
+    `<div style="padding:4px 0;border-bottom:1px solid var(--bg3);font-size:0.9rem">`
+    + `<span style="color:var(--fg2);font-size:0.78rem;display:inline-block;min-width:130px">${zpCas(r.prvni_ts)} · ${esc(r.zdroj_nazev)}</span> ${zpOdkaz(r)}</div>`
+  ).join('');
+}
+
 async function loadWorks() {
   try {
     const d = await (await fetch('/api/works')).json();
@@ -2172,6 +2272,7 @@ async function savePristup() {
     clearInterval(TIMER); TIMER = setInterval(zive, 300);
   };
   if (location.hash === "#mysleni") setTimeout(() => showTab("mysleni"), 0);
+  if (location.hash === "#zpravy") setTimeout(() => showTab("zpravy"), 0);   // HANS_ZPRAVY_SBER_V1
   if (location.hash === "#nastaveni") setTimeout(() => showTab("cfg-identity"), 0);   // WEB_SETTINGS_ESSENTIAL_V1
 })();
 </script>

@@ -1,0 +1,10 @@
+[Unit]
+Description=Hans — sběr titulků zpráv každou hodinu
+
+[Timer]
+OnCalendar=*-*-* *:17:00
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

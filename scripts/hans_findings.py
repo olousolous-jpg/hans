@@ -299,6 +299,8 @@ def _je_test_osoba(asker, config=None) -> bool:
 
 def correction_text(row: dict, asker: Optional[str] = None,
                     config: Optional[dict] = None) -> str:
+    if row.get("source") == CLAIM_SOURCE:              # HANS_CLAIM_CHECK_V1
+        return claim_correction_text(row, asker, config)
     oslov = _oslov(asker, config)
     return _CORRECTION_TMPL % {
         "oslov": oslov,
@@ -306,6 +308,263 @@ def correction_text(row: dict, asker: Optional[str] = None,
         "reason": row.get("verdict") or "nenašel jsem spolehlivý zdroj",
     }
 
+
+
+# ── HANS_CLAIM_CHECK_V1 (28. 9., přání uživatele) — tvrzení z ÚVAHY ověřit v noci ──
+# Úvahová otázka (HANS_REFLECTIVE_CHOICE_V1) jde k osobnosti BEZ opory, takže
+# model smí fabulovat. Doloženo 28. 9.: „jakou skladbu byste dal k dílu
+# o hradech?“ → Machaut, Hildegarda (správně) a „Ryba — Mistr Kryštof … té
+# doby“ (vymyšlené). Pokyn uživatele: u takové odpovědi dodat, že to v noci
+# ověří, a když to neobstojí, opravit to i v PAMĚTI (volný hovor do ní jde:
+# deník, doslovný záznam v RAG, reflexe).
+# Tok: HNED věta + řádek čekárny (source='uvaha') → V NOCI reasoning model
+# vytáhne tvrzení, ke každému článek Wikipedie, verdikt → vyvrácené: ranní
+# oprava + `lesson_learned` (korekční smyčka, neexpiruje) + oprava záznamu
+# rozhovoru v RAG. Potvrzené se NIKAM nezapisují (nic nového se nedozvěděl).
+CLAIM_SOURCE = "uvaha"
+CLAIM_NOTE = ("Jména a díla, která jsem zmínil, si v noci ověřím — "
+              "kdyby něco nesedělo, ráno se ozvu.")
+_ZAJMENA_VYKANI = {"vy", "vás", "vám", "vámi", "váš", "vaše", "vaši", "vašeho",
+                   "vašemu", "vašem", "vaším", "vašich", "vašim", "vašimi"}
+_NAZEV_RE = re.compile(r"(?<![.!?:\n„\"])\s([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]{2,})")
+_ROK_RE = re.compile(r"\b(1[0-9]{3}|20[0-9]{2})\b")
+_TITUL_RE = re.compile(r"[„\"]([^“\"]{3,60})[“\"]")
+
+
+def claim_names(text: str, vynech=()) -> list:
+    """Vlastní jména uvnitř vět, letopočty a tituly v uvozovkách — signál, že
+    odpověď tvrdí něco ověřitelného o světě. `vynech` = jména persony/tazatele."""
+    t = str(text or "")
+    ven = {str(v).lower() for v in vynech if v} | _ZAJMENA_VYKANI
+    out = []
+    for m in _NAZEV_RE.finditer(t):
+        w = m.group(1)
+        if w.lower() not in ven and not any(w.lower().startswith(v[:5]) for v in ven if len(v) >= 5):
+            out.append(w)
+    out += _ROK_RE.findall(t) + _TITUL_RE.findall(t)
+    seen, res = set(), []
+    for x in out:
+        if x.lower() not in seen:
+            seen.add(x.lower())
+            res.append(x)
+    return res
+
+
+def add_claim_check(db_path: str, *, asker: str, query: str, answer: str,
+                    names: list, chatlog_id: str = "") -> Optional[int]:
+    import json as _json
+    return add_finding(db_path, asker=asker, query=query,
+                       topic=", ".join(names[:6])[:200], source=CLAIM_SOURCE,
+                       resolved_title="", url="", summary=answer,
+                       raw_text=_json.dumps({"chatlog": chatlog_id}, ensure_ascii=False))
+
+
+_CLAIM_EXTRACT_SYS = (
+    "Extract CHECKABLE FACTUAL claims about the real world from the assistant's answer "
+    "(people, works, places, dates, who made what, when). Ignore opinions, feelings, "
+    "hypotheticals and advice. Max 5. For each: entity = the name to look up in an "
+    "encyclopedia (as written, nominative if possible); claim_en = the claim in English; "
+    "claim_cz = the same claim as a short Czech sentence. JSON "
+    "{\"claims\": [{\"entity\": …, \"claim_en\": …, \"claim_cz\": …}]}.")
+# HANS_CLAIM_JUDGE_QUOTE_V1 (29. 9.) — soudce si dřív „pravdu“ domýšlel sám:
+# u neexistujícího Dvořákova „Slavnostního pochodu z Nového světa“ napsal
+# opravu „je součástí 9. symfonie“ (další smyšlenka) a ta šla do lekcí i RAG.
+# Teď: vyvrácení jen s DOSLOVNOU citací z článku (kód ji ověří), a když dílo
+# v článku prostě není → NOT_FOUND = „nepodařilo se doložit“, nic se nedomýšlí.
+# Změřeno 29. 9. na 7 tvrzeních (4 vady, 3 pravdy): 0 vymyšlených oprav,
+# 0 vyvrácených pravd; oba neexistující tituly → NOT_FOUND.
+_CLAIM_JUDGE_SYS = (
+    "You check ONE claim against an encyclopedia article. Verdicts: "
+    "SUPPORTED = the article confirms the claim. "
+    "CONTRADICTED = the article contains a sentence that directly shows the claim is false (e.g. a "
+    "different author, a different date, the correct title of a misnamed work). Then `quote` = that "
+    "sentence copied VERBATIM from the article, and pravda_cz = one short Czech sentence stating ONLY "
+    "what the quote says - add nothing that is not in the quote. "
+    "NOT_FOUND = the claim names a specific work, title or event and the article does not mention it "
+    "anywhere. UNKNOWN = anything else. For verdicts other than CONTRADICTED leave quote and "
+    "pravda_cz empty. JSON {\"verdict\": ..., \"quote\": ..., \"pravda_cz\": ...}.")
+NEDOLOZENO = "to se mi nepodařilo doložit"
+
+
+def _norm_ws(t: str) -> str:
+    return re.sub(r"\s+", " ", t or "").strip().lower()
+
+
+def _reason_json(config: dict, prompt: str, system: str, schema: dict,
+                 num_predict: int = 700):
+    import json as _json
+    from scripts.ollama_client import ollama_generate
+    c = _cfg(config)
+    syn = (config.get("synthesis", {}) or {})
+    model = str(c.get("claim_model") or syn.get("reasoning_model") or "qwen3:30b")
+    opts = {"temperature": 0, "num_ctx": 8192, "num_predict": num_predict}
+    think = None
+    if model.startswith("qwen3"):
+        opts["num_gpu"] = int(syn.get("reasoning_num_gpu", 0))
+        prompt += " /no_think"
+        # HANS_CLAIM_CHECK_NO_THINK_V1 (29. 9.) — samo „/no_think“ nestačí:
+        # Ollama pak JSON vrátí v poli `thinking` a `response` je prázdné
+        # (změřeno živě) → noc 28./29. 9. odložila ověření jako „mozek dole“.
+        think = False
+    raw = ollama_generate(model, prompt, system=system, config=config,
+                          timeout=int(c.get("claim_timeout", 900)), keep_alive=0,
+                          format=schema, options=opts, think=think)
+    if not raw:
+        # HANS_CLAIM_CHECK_HONEST_V1 (29. 9.) — dřív tiché None; noc 28./29. 9.
+        # odložila ověření 3× a v logu nezůstala ani stopa proč.
+        _log.warning("claim_check: %s nevrátil nic (mozek dole / timeout)", model)
+        return None
+    try:
+        return _json.loads(re.sub(r"<think>.*?</think>", "", raw, flags=re.S))
+    except Exception:
+        _log.warning("claim_check: %s vrátil nečitelný JSON: %.200r", model, raw)
+        return None
+
+
+def _verify_claims(config: dict, row: dict):
+    """(True|False|None, důvod, [vyvrácená]) — None = mozek dole."""
+    ans = (row.get("summary") or "").strip()
+    d = _reason_json(config, "Question: %s\n\nAssistant's answer:\n%s" % (
+        row.get("query") or "", ans[:3000]), _CLAIM_EXTRACT_SYS,
+        {"type": "object", "properties": {"claims": {"type": "array", "items": {
+            "type": "object", "properties": {"entity": {"type": "string"},
+                                            "claim_en": {"type": "string"},
+                                            "claim_cz": {"type": "string"}},
+            "required": ["entity", "claim_en", "claim_cz"]}}}, "required": ["claims"]})
+    if d is None:
+        return None, "mozek nedostupný", []
+    claims = [c for c in (d.get("claims") or []) if c.get("entity") and c.get("claim_en")][:5]
+    if not claims:
+        return True, "odpověď neobsahovala ověřitelná tvrzení", []
+    try:
+        from scripts.web_reader import WebReader
+        wr = WebReader(config)
+    except Exception as e:
+        _log.debug("claim_check: WebReader: %s", e)
+        return None, "čtečka nedostupná", []
+    vyvracena, podlozena, nevim = [], 0, 0
+    for cl in claims:
+        art = None
+        for lang in ("cs", "en"):
+            try:
+                art = wr.wikipedia_article(cl["entity"], lang=lang, max_chars=4000)
+            except Exception:
+                art = None
+            if art and (art.get("text") or "").strip():
+                break
+        if not art or not (art.get("text") or "").strip():
+            nevim += 1
+            continue
+        v = _reason_json(config, "Claim: %s\n\nArticle „%s“:\n%s" % (
+            cl["claim_en"], art.get("title") or cl["entity"], art["text"][:3500]),
+            _CLAIM_JUDGE_SYS, {"type": "object", "properties": {
+                "verdict": {"type": "string",
+                            "enum": ["SUPPORTED", "CONTRADICTED", "NOT_FOUND", "UNKNOWN"]},
+                "quote": {"type": "string"},
+                "pravda_cz": {"type": "string"}}, "required": ["verdict", "quote", "pravda_cz"]},
+            num_predict=400)
+        if v is None:
+            return None, "mozek nedostupný", []
+        verd = str(v.get("verdict") or "UNKNOWN")
+        _log.info("claim_check: %s → %s (%s)", cl["claim_en"][:80], verd,
+                  art.get("title"))
+        _q = _norm_ws(v.get("quote"))
+        if verd == "CONTRADICTED" and not (len(_q) >= 15 and _q in _norm_ws(art["text"][:3500])
+                                           and str(v.get("pravda_cz") or "").strip()):
+            _log.info("claim_check: vyvrácení bez doslovné citace → UNKNOWN")
+            verd = "UNKNOWN"                        # HANS_CLAIM_JUDGE_QUOTE_V1
+        if verd == "CONTRADICTED":
+            vyvracena.append({"entity": cl["entity"], "claim": cl.get("claim_cz") or cl["claim_en"],
+                              "correction": str(v.get("pravda_cz") or "").strip(),
+                              "quote": str(v.get("quote") or "").strip(),
+                              "zdroj": art.get("title") or cl["entity"]})
+        elif verd == "NOT_FOUND":
+            _zdroj = art.get("title") or cl["entity"]
+            vyvracena.append({"entity": cl["entity"], "claim": cl.get("claim_cz") or cl["claim_en"],
+                              "correction": "%s (článek „%s“ o tom nic neuvádí)" % (NEDOLOZENO, _zdroj),
+                              "zdroj": _zdroj, "nedolozeno": True})
+        elif verd == "SUPPORTED":
+            podlozena += 1
+        else:
+            nevim += 1
+    if vyvracena:
+        return False, "; ".join("%s → %s" % (x["claim"], x["correction"])
+                                for x in vyvracena)[:400], vyvracena
+    return True, "tvrzení: potvrzeno %d, neověřitelné %d" % (podlozena, nevim), []
+
+
+def _promitni_opravu(config: dict, db_path: str, row: dict, vyvracena: list):
+    """Vyvrácené tvrzení do PAMĚTI: lesson_learned (korekční smyčka) + oprava
+    doslovného záznamu rozhovoru v RAG (hans_pripady)."""
+    import json as _json
+    asker = row.get("asker") or ""
+    try:
+        conn = sqlite3.connect(db_path, timeout=5.0)
+        for x in vyvracena:
+            conn.execute(
+                "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
+                (time.time(), "lesson_learned", asker,
+                 ("Při nočním ověření jsem nedoložil tvrzení „%s“ — článek „%s“ o tom nic neuvádí."
+                  % (x["claim"].rstrip("."), x.get("zdroj") or x["entity"])
+                  if x.get("nedolozeno") else
+                  "Při nočním ověření jsem zjistil, že jsem se spletl: %s" % x["correction"]),
+                 _json.dumps({"claim": x["claim"], "correction": x["correction"],
+                              "entity": x["entity"], "zdroj": "noční ověření (%s)" % x["zdroj"]},
+                             ensure_ascii=False)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        _log.warning("claim_check: lesson zápis selhal: %s", e)
+    try:
+        chatlog = (_json.loads(row.get("raw_text") or "{}") or {}).get("chatlog") or ""
+    except Exception:
+        chatlog = ""
+    if chatlog:
+        try:
+            from scripts.hans_knowledge import HansKnowledge
+            oprava = "\n".join(
+                ("NEDOLOŽENO po nočním ověření: „%s“ — %s" if x.get("nedolozeno") else
+                 "OPRAVA po nočním ověření: „%s“ NEPLATÍ — %s") % (x["claim"], x["correction"])
+                for x in vyvracena)
+            # HANS_CLAIM_JUDGE_QUOTE_V1 — týž tvar jako `_upload_chat_memory`
+            # (dřív se ztratil čas hovoru, štítek `kdy` a jméno persony).
+            import datetime as _dt
+            try:
+                from scripts.hans_persona import persona_name
+                _pn = persona_name(config)
+            except Exception:
+                _pn = "Hans"
+            _kdy = _dt.datetime.fromtimestamp(float(row.get("ts") or time.time())
+                                              ).strftime("%A %-d.%-m.%Y %H:%M")
+            _q = (row.get("query") or "").strip()
+            HansKnowledge(config).upload(
+                collection_key="hans_pripady", doc_id=chatlog,
+                title="Rozhovor s %s: %s" % (asker, _q[:60]),
+                text="Rozhovor s %s (%s):\n[NEOVĚŘENO — vlastní výrok v hovoru, ne ověřený fakt]\n"
+                     "%s: %s\n%s: %s\n\n%s" % (asker, _kdy, asker, _q, _pn,
+                                                (row.get("summary") or "").strip(), oprava),
+                metadata={"kdy": _kdy, "osoba": asker, "typ": "rozhovor", "overeno": False,
+                          "puvod": "vlastni_vyrok", "opraveno": True})
+        except Exception as e:
+            _log.warning("claim_check: oprava RAG selhala: %s", e)
+
+
+def claim_correction_text(row: dict, asker: Optional[str] = None,
+                          config: Optional[dict] = None) -> str:
+    oslov = _oslov(asker, config)
+    casti = []
+    for kus in str(row.get("verdict") or "").split("; "):
+        tvrzeni, _, pravda = kus.partition(" → ")
+        tvrzeni, pravda = tvrzeni.strip().rstrip("."), pravda.strip().rstrip(".")
+        if tvrzeni and pravda and pravda.startswith(NEDOLOZENO):   # HANS_CLAIM_JUDGE_QUOTE_V1
+            casti.append("Tvrdil jsem, že %s — ale %s, beru to zpět." % (tvrzeni, pravda))
+        elif tvrzeni and pravda:
+            casti.append("Tvrdil jsem, že %s — ale ve skutečnosti: %s." % (tvrzeni, pravda))
+    if not casti:
+        casti = [str(row.get("verdict") or "něco nesedělo")]
+    return ("%s, ještě k našemu rozhovoru: slíbil jsem, že si v noci ověřím, co "
+            "jsem zmínil. %s Zapsal jsem si to, ať to příště neopakuji."
+            % (oslov, " ".join(casti)))
 
 # ── 1) OKAMŽITÉ DOHLEDÁNÍ ────────────────────────────────────────────────────
 
@@ -578,6 +837,24 @@ def verify_pending(config: dict, db_path: str, curiosity=None,
 
     ok = 0
     for row in rows:
+        if row.get("source") == CLAIM_SOURCE:          # HANS_CLAIM_CHECK_V1
+            try:
+                v_ok, reason, vyvr = _verify_claims(config, row)
+            except Exception as e:
+                _log.warning("claim_check: ověření #%s selhalo: %s", row.get("id"), e)
+                continue
+            if v_ok is None:
+                _log.info("claim_check: #%s odloženo (%s)", row.get("id"), reason)
+                return "deferred"
+            if v_ok:
+                _set_status(db_path, row["id"], "verified", reason)
+                ok += 1
+            else:
+                _promitni_opravu(config, db_path, row, vyvr)
+                _set_status(db_path, row["id"], "rejected", reason)
+                _log.info("claim_check: VYVRÁCENO #%s (%s) → paměť opravena, ranní oprava",
+                          row.get("id"), reason[:120])
+            continue
         try:
             verdict_ok, reason = _verify_one(config, row)
         except Exception as e:
@@ -599,6 +876,21 @@ def verify_pending(config: dict, db_path: str, curiosity=None,
             _set_status(db_path, row["id"], "rejected", reason)
             _log.info("instant_lookup: ZAMÍTNUTO '%s' (%s) → ranní oprava",
                       row.get("topic"), reason)
+            # HANS_CLAIM_CHECK_V1 — provizorní odpověď UŽ je v paměti (deník
+            # human_chat + reflexe rozhovoru). Samotné neuložení nálezu ji
+            # nezruší → oprava do paměti stejnou cestou jako tvrzení z úvahy.
+            try:
+                _promitni_opravu(config, db_path, row, [{
+                    "entity": row.get("topic") or "",
+                    "claim": "o „%s“ jsem odpověděl podle narychlo nalezeného hesla "
+                             "„%s“: %s" % (row.get("topic") or "",
+                                          row.get("resolved_title") or "",
+                                          (row.get("summary") or "")[:200]),
+                    "correction": "tahle odpověď neobstála při nočním ověření (%s), "
+                                  "neplatí" % reason,
+                    "zdroj": row.get("resolved_title") or "Wikipedie"}])
+            except Exception as _pe:
+                _log.warning("instant_lookup: oprava paměti selhala: %s", _pe)
     return "done:%d/%d" % (ok, len(rows))
 
 

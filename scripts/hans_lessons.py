@@ -60,6 +60,86 @@ _SYSTEM = (
 )
 
 
+# HANS_LESSON_JUDGE_V1 (30. 9.) — lekce jen z výměny, kde ČLOVĚK Hanse opravil.
+# Audit 30. 9.: ~40 % z 30 nejnovějších lekcí nebyla oprava — extrakce brala
+# Hansovu vlastní šablonu („Zítra: mlha…“ → „ověřit předpověď z důvěryhodnějšího
+# zdroje“), souhlas nebo plán. Požadavek na DOSLOVNOU citaci osoby změřen
+# a zamítnut (model cituje Hansovu omluvu → 0/11 skutečných). Změřeno na 23
+# ručně posouzených: soudce nad jednou výměnou (Hans → člověk → Hans) ponechá
+# 9/11 skutečných a pustí 2/12 falešných (dřív 12/12).
+_JUDGE_SYS = (
+    "Dostaneš úryvek rozhovoru člověka s postavou {persona_name}. Rozhodni, jestli "
+    "v něm ČLOVĚK postavu {persona_name} OPRAVIL — tedy řekl nebo naznačil, že "
+    "{persona_name} tvrdil něco nepravdivého, spletl se nebo si něco vymyslel. "
+    "Běžná otázka, pokyn, pochvala ani souhlas NENÍ oprava. Omluva nebo souhlas "
+    "postavy {persona_name} sám o sobě NEDOKAZUJE, že ji člověk opravil. "
+    "Odpověz jediným slovem: ANO nebo NE."
+)
+
+
+def _fold_cs(s: str) -> str:
+    import unicodedata as _ud
+    return re.sub(r"\s+", " ", "".join(
+        c for c in _ud.normalize("NFD", (s or "").lower())
+        if _ud.category(c) != "Mn")).strip()
+
+
+def _vymeny(notes: list, person: str, persona: str) -> list:
+    """Přepis human_chat → [(„Člověk“|persona, text)]; mluvčí jen podle jména."""
+    pn, po = _fold_cs(persona), _fold_cs(person)
+    out = []
+    for n in notes:
+        for ln in str(n or "").splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            m = re.match(r"^([^:\n]{1,25}):\s*(.*)$", s)
+            kdo = _fold_cs(m.group(1)) if m else ""
+            if m and kdo == pn:
+                out.append((persona, m.group(2).strip()))
+            elif m and kdo == po:
+                out.append(("Člověk", m.group(2).strip()))
+            elif out:
+                out[-1] = (out[-1][0], out[-1][1] + " " + s)
+    return out
+
+
+def _usek_opravy(text: str, vymeny: list, persona: str):
+    """Úsek (Hans → člověk → Hans) kolem místa, odkud lekce pochází; None =
+    v přepisu nenalezeno."""
+    def tok(s):
+        return set(w for w in re.findall(r"\w+", _fold_cs(s)) if len(w) > 2)
+    ct = tok(text)
+    if not ct:
+        return None
+    j, best = -1, 0.0
+    for k, (_w, t) in enumerate(vymeny):
+        sc = len(ct & tok(t)) / len(ct)
+        if sc > best:
+            j, best = k, sc
+    if j < 0 or best < 0.3:
+        return None
+    k = j if vymeny[j][0] == "Člověk" else j - 1
+    while k >= 0 and vymeny[k][0] != "Člověk":
+        k -= 1
+    usek = vymeny[max(0, k - 1):k + 2] if k >= 0 else vymeny[max(0, j - 2):j + 1]
+    return "\n".join("%s: %s" % (w, t[:400]) for w, t in usek)
+
+
+def _je_oprava(config: dict, model: str, persona: str, usek: str) -> bool:
+    try:
+        from scripts.ollama_client import ollama_generate
+        raw = ollama_generate(model=model, prompt=usek,
+                              system=_JUDGE_SYS.format(persona_name=persona),
+                              config=config, timeout=120, keep_alive=0,
+                              options={"temperature": 0, "num_predict": 5,
+                                       "num_ctx": 4096})
+    except Exception as e:
+        _log.warning("lesson judge selhal: %s — lekci neukládám", e)
+        return False
+    return (raw or "").strip().upper().startswith("ANO")
+
+
 def _extract_json_array(raw: str):
     """Robustní extrakce JSON pole (toleruje ```json fences)."""
     if not raw:
@@ -160,7 +240,16 @@ def extract_corrections(config: dict, diary_db_path: str,
         # kvůli kterým se to pouští. ZMĚŘENO 24.8.: přepis 5219 zn, oprava
         # „Gutštejn" na pozici 3536 (prošla), „Karlštejn" 4640 a „Kinský" 4936
         # (obě uříznuty). Korekce přichází na konci hovoru, ne na začátku.
-        transcript = "\n\n".join(notes)[-4000:]
+        transcript = "\n\n".join(notes)
+        # HANS_CLAIM_NOTE_NOT_LESSON_V1 (29. 9.) — věta o nočním ověření
+        # (`hans_findings.CLAIM_NOTE`) je šablona, ne korekce. Extrakce z ní
+        # 28. 9. vyrobila lekci s opravou „Ráno se ozvu, pokud by něco nesedělo.“
+        try:
+            from scripts.hans_findings import CLAIM_NOTE as _cn
+            transcript = transcript.replace(_cn, "")
+        except Exception:
+            pass
+        transcript = transcript[-4000:]
         if not transcript.strip():
             continue
         try:
@@ -189,6 +278,22 @@ def extract_corrections(config: dict, diary_db_path: str,
                 continue
             claim = str(it.get("claim", "") or "").strip()
             correction = str(it.get("correction", "") or "").strip()
+            # HANS_LESSON_JUDGE_V1 — uložit jen, když člověk Hanse opravdu opravil
+            try:
+                from scripts.hans_persona import persona_name as _pn3
+                _persona = _pn3(config)
+            except Exception:
+                _persona = "Hans"
+            _usek = _usek_opravy(correction or claim,
+                                 _vymeny(notes, person, _persona), _persona)
+            if not _usek:
+                _log.info("lesson judge: '%.60s' — oprava v přepisu nenalezena, "
+                          "neukládám", lesson)
+                continue
+            if not _je_oprava(config, model, _persona, _usek):
+                _log.info("lesson judge: '%.60s' — není to oprava od člověka, "
+                          "neukládám", lesson)
+                continue
             try:
                 db = sqlite3.connect(diary_db_path, timeout=5.0)
                 db.execute(

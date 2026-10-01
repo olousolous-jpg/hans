@@ -1322,6 +1322,20 @@ async def get_works():
         return {"works": []}
 
 
+@app.get("/api/zpravy")
+async def get_zpravy(hodin: float = 48.0, vse: int = 0):
+    """HANS_ZPRAVY_SBER_V1 (30. 9.) — sebrané titulky zpráv z více zdrojů
+    (`scripts/hans_zpravy.py`, timer `hans-zpravy.timer`). Jen čtení."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent))
+        from scripts.hans_zpravy import prehled
+        return prehled(hodin=max(1.0, min(float(hodin), 24 * 45)), vse=bool(vse))
+    except Exception as e:
+        print(f"[web_admin] get_zpravy error: {e}")
+        return {"zdroje": [], "spicka": [], "nove": [], "sberu": 0, "chyba": str(e)}
+
+
 @app.get("/api/musings")
 async def get_musings(limit: int = 6):
     """Co Hans napsal sám pro sebe (diary event 'musing')."""

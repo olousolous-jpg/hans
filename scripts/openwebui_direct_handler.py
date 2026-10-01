@@ -2981,7 +2981,9 @@ class OpenWebUIDirectHandler:
         # („co je zajímavého na gotice") jen šum za 871 zn. U dotazu na TV,
         # film či sledování se vkládá dál.
         _km = getattr(self, '_kodi_monitor', None)
-        if _km and (ctx._about_tv or not ctx._is_knowledge_q):
+        # HANS_STRANGER_HOUSEHOLD_V1 (30. 9.) — co běží a co se dnes doma
+        # sledovalo je chod domácnosti → cizímu do promptu nic z Kodi.
+        if _km and not ctx._asker_cizi and (ctx._about_tv or not ctx._is_knowledge_q):
             _now_playing = _km.get_now_playing_context()
             _history     = _km.get_person_history(ctx.name)
             _events      = _km.get_today_events()
@@ -3221,7 +3223,8 @@ class OpenWebUIDirectHandler:
             from datetime import datetime as _dt_h
             # GREETING_LEAD_PRIORITY_V1 — v pozdravu se zdraví řeší přes
             # prioritní lead (ne tady), ať se do něj nemíchá víc háčků naráz.
-            if _mh and not ctx.for_greeting and _mh.get('date') == _dt_h.now().strftime('%Y-%m-%d'):
+            # HANS_STRANGER_HOUSEHOLD_V1 — noční nálezy (PC, zálohy) cizímu ne.
+            if _mh and not ctx.for_greeting and not ctx._asker_cizi and _mh.get('date') == _dt_h.now().strftime('%Y-%m-%d'):
                 ctx.health_ctx = ("\n\nRáno jsem si při probuzení prošel noční "
                               "záznamy a něco se mi nezdálo v pořádku: "
                               + _mh.get('summary', '')
@@ -3686,8 +3689,9 @@ class OpenWebUIDirectHandler:
                     _tstore.mark_surfaced(_thr.id)
                     self._greeting_thread_surfaced = True  # GREETING_THREAD_POPUP_V1
                     _lead = True
-            except Exception:
-                pass
+            except Exception as _tiche:
+                from scripts.logger import tichy_zapis as _tz  # HANS_SILENT_WRITE_LOG_V1
+                _tz('openwebui_direct_handler:_generate_greeting_prompt', _tiche)
 
         # 3) HANS_MORNING_HEALTH_V1 — ráno po chybné noci: krátká upřímná zmínka.
         if not _lead:
@@ -4137,6 +4141,28 @@ class OpenWebUIDirectHandler:
         return ("Schváleno, pane. Prohloubím studium „%s“ a příště z něj vytvořím "
                 "lepší dílo." % p0["topic"])
 
+    def _skip_memory(self, name: str) -> bool:
+        """HANS_VOICE_NO_MEMORY_V1 (28. 9.) — výměna nejde do deníku, reflexe
+        ani RAG: testovací identita, NEBO hlas, dokud je přepis nespolehlivý.
+        Změřeno 28. 9.: z 9 hlasových vět v historii 8 nesmysl z přepisu
+        (Whisper base) — „Půst film prelátor“ → chat_reflection „zájem o film
+        Prelátor“. Rozhovor v conv_store (vlákno) zůstává. Přepnout
+        `voice.remember` na true po nasazení přesnějšího přepisu."""
+        if self._is_test_person(name):
+            return True
+        try:
+            if get_current_channel() == "voice":
+                if not bool((self.config.get("voice", {}) or {}).get("remember", False)):
+                    return True
+                # HANS_STT_TURBO_V1 (29. 9.) — přepis ze zálohy (base) je
+                # nespolehlivý (70 % chyb) → do paměti ne, jen do vlákna.
+                from scripts.voice_listener import posledni_prepis_zalohou
+                if posledni_prepis_zalohou():
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _is_test_person(self, name: str) -> bool:
         """HANS_TEST_PERSON_V1 — je tohle testovací identita?
         ⚠️ Zápis chatu do deníku má DVĚ cesty (tenhle helper pro early-return
@@ -4182,7 +4208,7 @@ class OpenWebUIDirectHandler:
         # testovat i navazování), jen se z toho nestává „co Hans ví".
         # ⚠️ ZÁMĚRNĚ jen tenhle jeden zápis: `human_chat` je zdroj pro deník,
         # reflexe i RAG, takže vynechání tady utne celou větev naráz.
-        if self._is_test_person(name):
+        if self._skip_memory(name):                    # HANS_VOICE_NO_MEMORY_V1
             return
         try:
             _note = f"{name}: {user_message}\nHans: {response}"
@@ -4267,15 +4293,66 @@ class OpenWebUIDirectHandler:
         `ch` tag → cross-channel leak (Telegram → web chat „zkus to znova")
         se filtruje. `channel=None` = zpětná kompat.
         """
+        import types as _types_nt
+        ctx = _types_nt.SimpleNamespace(name=name, user_message=user_message, on_sentence=on_sentence, channel=channel)
         # HANS_CHAT_CHANNEL_AWARE_V1 — thread-local pro dispatch/chat_commands.
         try:
-            _channel_local.channel = channel
+            _channel_local.channel = ctx.channel
         except Exception:
             pass
         # ── /note příkaz ──────────────────────────────────────────────────
-        stripped = user_message.strip()
-        if stripped.lower().startswith("/read "):
-            url = stripped[6:].strip()
+        ctx.stripped = ctx.user_message.strip()
+        _r = self._sc_read(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_note(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_url(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        self._sc_vypadek(ctx)
+        _r = self._sc_prikazy(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_malovani_brana(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_stav_tazatele(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_kniha(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_znalosti(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_pamatujes(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_zdroje(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_prohloubeni(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_ceka_malba(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        _r = self._sc_agent(ctx)
+        if _r is not _POKRACUJ:
+            return _r
+        self._sc_podklad(ctx)
+        self._sc_nazor(ctx)
+        self._sc_a1(ctx)
+        self._sc_pojistky(ctx)
+        self._sc_overeni_tvrzeni(ctx)
+        self._sc_ulozeni(ctx)
+        return ctx.response
+
+    def _sc_read(self, ctx):
+        if ctx.stripped.lower().startswith("/read "):
+            url = ctx.stripped[6:].strip()
             if url.startswith("http"):
                 _hi = getattr(self, '_hans_idle', None)
                 if _hi and hasattr(_hi, '_curiosity'):
@@ -4283,37 +4360,43 @@ class OpenWebUIDirectHandler:
                     from scripts.hans_persona import persona_name as _pn  # PERSONA_NAME_CONFIGURABLE_V1
                     return f"\u2713 {_pn(self.config)} si přečte: {url}"
             return "\u26a0 Zadej platnou URL začínající http"
+        return _POKRACUJ
 
-        if stripped.lower().startswith("/note "):
-            note_text = stripped[6:].strip()
+    def _sc_note(self, ctx):
+        if ctx.stripped.lower().startswith("/note "):
+            note_text = ctx.stripped[6:].strip()
             if note_text:
-                self._save_note(name, note_text)
+                self._save_note(ctx.name, note_text)
                 return f"✓ Poznámka uložena: {note_text}"
             else:
                 return "⚠ Použití: /note <text poznámky>"
+        return _POKRACUJ
 
+    def _sc_url(self, ctx):
         # ── HANS_READ_URL_NL_V1 — URL v běžné zprávě s intentem čtení ──────────
         # „zjisti víc o X, tu je odkaz https://…" → Hans stránku přečte, uloží do
         # čtenářské paměti (RAG) a zapamatuje si TÉMA (ne jen 'url'/URL). Bez
         # intentu (URL jen tak zmíněná) se nechytá → normální chat.
-        if not stripped.startswith("/"):
+        if not ctx.stripped.startswith("/"):
             import re as _re_u
-            _um = _re_u.search(r"https?://\S+", stripped)
-            _intent = any(w in stripped.lower() for w in (
+            _um = _re_u.search(r"https?://\S+", ctx.stripped)
+            _intent = any(w in ctx.stripped.lower() for w in (
                 "zjisti", "přečti", "precti", "přečte", "precte", "podívej",
                 "podivej", "mrkni", "koukni", "stáhni", "stahni", "odkaz",
                 "stránk", "stranka", "nastuduj", "prostuduj"))
             if _um and _intent:
                 _url = _um.group(0).rstrip('.,);:!?\'"')
-                _topic = self._extract_read_topic(stripped, _url)
+                _topic = self._extract_read_topic(ctx.stripped, _url)
                 _hi = getattr(self, '_hans_idle', None)
                 if _hi and hasattr(_hi, '_curiosity'):
                     _hi._curiosity.trigger_url(_url, topic=_topic)
                     from scripts.hans_persona import persona_name as _pn
                     lbl = ("téma „%s\"" % _topic) if _topic != "url" else "stránku"
                     return ("Přečtu si %s a zapamatuji si, co tam najdu, %s."
-                            % (lbl, name or "pane"))
+                            % (lbl, ctx.name or "pane"))
+        return _POKRACUJ
 
+    def _sc_vypadek(self, ctx):
         # ── HANS_DOWNTIME_V1 — uzavření smyčky výpadku ───────────────────
         # Hans se u příchozí osoby zmínil o výpadku a zeptal se, co se dělo
         # (downtime_ctx surfaced). První NE-příkazová odpověď osoby = vyprávění
@@ -4322,16 +4405,17 @@ class OpenWebUIDirectHandler:
             _hi = getattr(self, '_hans_idle', None)
             _dt = getattr(_hi, '_downtime', None) if _hi else None
             if (_dt and _dt.get('surfaced') and not _dt.get('answered')
-                    and not stripped.startswith('/')):
+                    and not ctx.stripped.startswith('/')):
                 _dt['answered'] = True
                 _hi._log_entry(
                     'downtime_account',
-                    'Co se dělo, když jsem byl mimo (od %s)' % name,
+                    'Co se dělo, když jsem byl mimo (od %s)' % ctx.name,
                     data=str(_dt.get('gap_hours', '')),
-                    note=user_message[:600])
+                    note=ctx.user_message[:600])
         except Exception:
             pass
 
+    def _sc_prikazy(self, ctx):
         # ── Chat commands (slash + natural language) ─────────────────────
         # CHAT_COMMANDS_DISPATCH_PATCH
         try:
@@ -4345,23 +4429,23 @@ class OpenWebUIDirectHandler:
             _t_turns = []      # musí existovat i když blok níž selže
             try:
                 from scripts import hans_thread as _thr
-                _t_turns = _thr.recent_turns(self, name, channel)
-                _t_res, _t_subj = _thr.resolve_reference(user_message, _t_turns)
-                self._thread_ctx = (user_message, _t_res, _t_subj)
+                _t_turns = _thr.recent_turns(self, ctx.name, ctx.channel)
+                _t_res, _t_subj = _thr.resolve_reference(ctx.user_message, _t_turns)
+                self._thread_ctx = (ctx.user_message, _t_res, _t_subj)
                 if _t_subj:
                     print(f"[Chat] thread: odkaz rozřešen → {_t_subj}")
             except Exception as _te:
                 self._thread_ctx = None
                 print(f"[Chat] thread error: {_te}")
-            _cmd = parse_command(user_message)
+            _cmd = parse_command(ctx.user_message)
             # HANS_FILM_OPINION_ANAFORA_V1 (23. 9.) — anafora obliby po výpisu
             # filmů („a který se ti z nich líbil nejvíc?“) nenese slovo „film“;
             # o /film rozhodne předchozí replika ve vlákně.
             if not _cmd:
                 try:
                     from scripts.chat_commands import thread_film_opinion
-                    if thread_film_opinion(user_message, _t_turns):
-                        _cmd = ("film", user_message)
+                    if thread_film_opinion(ctx.user_message, _t_turns):
+                        _cmd = ("film", ctx.user_message)
                         logging.getLogger(__name__).info(
                             'HANS_FILM_OPINION_ANAFORA_V1: vlákno → /film')
                 except Exception as _fae:
@@ -4384,7 +4468,7 @@ class OpenWebUIDirectHandler:
             try:
                 _agc = self._agent_router()
                 _apc = getattr(_agc, "_pending", None) if _agc is not None else None
-                _ppc = _apc.get(name) if _apc else None
+                _ppc = _apc.get(ctx.name) if _apc else None
                 if _ppc is not None and (time.time() - _ppc.ts) <= 180:
                     _confirm_waits = True
             except Exception as _cpe2:
@@ -4392,7 +4476,7 @@ class OpenWebUIDirectHandler:
             if not _cmd and _confirm_waits:
                 logging.getLogger(__name__).info(
                     'HANS_CONFIRM_PRECEDENCE_V2: čeká potvrzení návrhu → '
-                    'LLM routing přeskočen: %.40s', user_message)
+                    'LLM routing přeskočen: %.40s', ctx.user_message)
             elif not _cmd:
                 # HANS_CMD_LLM_ROUTE_V1 (5.8.) — regexy minuly; zeptej se
                 # modelu, jestli věta nežádá o některý ČTECÍ výpis. Řeší
@@ -4403,10 +4487,10 @@ class OpenWebUIDirectHandler:
                     # HANS_THREAD_LLMROUTE_V1 — router posuzuje větu
                     # ROZŘEŠENOU (s předmětem z předchozí repliky), jinak
                     # navazující dotaz hodnotí izolovaně stejně jako regexy.
-                    _rt = user_message
+                    _rt = ctx.user_message
                     try:
                         _tc = getattr(self, '_thread_ctx', None)
-                        if _tc and _tc[0] == user_message and _tc[1]:
+                        if _tc and _tc[0] == ctx.user_message and _tc[1]:
                             _rt = _tc[1]
                     except Exception:
                         pass
@@ -4426,7 +4510,7 @@ class OpenWebUIDirectHandler:
             if _cmd and _cmd[0] == "studium":
                 try:
                     from scripts.hans_recall import is_knowledge_check_query
-                    if is_knowledge_check_query(user_message):
+                    if is_knowledge_check_query(ctx.user_message):
                         print("[Chat] studium+téma → recall "
                               "(HANS_STUDY_CONTENT_RECALL_V1)")
                         _cmd = None
@@ -4449,19 +4533,19 @@ class OpenWebUIDirectHandler:
             if _cmd and _cmd[0] in ("zdroje", "rozhovory", "cetl"):
                 try:
                     from scripts.claim_retract import _SOURCE_Q, find_claim
-                    if _SOURCE_Q.search(user_message or ""):
+                    if _SOURCE_Q.search(ctx.user_message or ""):
                         _hist_p = []
                         try:
-                            _hist_p = self.conv_store.get_history(name) or []
+                            _hist_p = self.conv_store.get_history(ctx.name) or []
                         except Exception:
                             pass
-                        if find_claim(user_message, _hist_p):
+                        if find_claim(ctx.user_message, _hist_p):
                             print("[Chat] provenience → běžná cesta "
                                   "(HANS_PROVENANCE_NOT_LIST_V1)")
                             logging.getLogger(__name__).info(
                                 'HANS_PROVENANCE_NOT_LIST_V1: /%s zrušen — '
                                 'věta konfrontuje čerstvé tvrzení: %.50s',
-                                _cmd[0], user_message)
+                                _cmd[0], ctx.user_message)
                             _cmd = None
                 except Exception as _pne:
                     logging.getLogger(__name__).debug(
@@ -4474,8 +4558,8 @@ class OpenWebUIDirectHandler:
                 # („namaluj kočku" 5× za sebou je legitimní záměr).
                 try:
                     from scripts import hans_thread as _thr
-                    if _thr.should_suppress(name, channel, _cmd[0],
-                                            user_message):
+                    if _thr.should_suppress(ctx.name, ctx.channel, _cmd[0],
+                                            ctx.user_message):
                         print(f"[Chat] thread: '{_cmd[0]}' potlačen "
                               f"(korekce) → odpoví model")
                         _cmd = None
@@ -4494,7 +4578,7 @@ class OpenWebUIDirectHandler:
                 try:
                     from scripts.claim_hold import disputed_last_seen
                     _hold_claim = disputed_last_seen(
-                        user_message, self.conv_store.get_history(name) or [])
+                        ctx.user_message, self.conv_store.get_history(ctx.name) or [])
                     if _hold_claim:
                         _cmd = ("videl", _hold_claim)   # jméno nese tvrzení
                         logging.getLogger(__name__).info(
@@ -4506,27 +4590,29 @@ class OpenWebUIDirectHandler:
             if _cmd:
                 # CHAT_COMMANDS_LOG_FIX
                 print(f"[Chat] command detected: {_cmd[0]}")
-                _reply = dispatch(_cmd, self, name=name)
+                _reply = dispatch(_cmd, self, name=ctx.name)
                 if _hold_claim:
                     from scripts.claim_hold import hold
                     # Bez uvození by odpověď vypadala jako přeslechnutá
                     # otázka — z deníku přijde slovo od slova táž věta.
-                    _reply = hold(_reply, user_message)
+                    _reply = hold(_reply, ctx.user_message)
                 try:
                     from scripts import hans_thread as _thr
-                    _thr.note_outcome(name, channel, _cmd[0], user_message)
+                    _thr.note_outcome(ctx.name, ctx.channel, _cmd[0], ctx.user_message)
                 except Exception:
                     pass
                 # Ulož do historie + diary jako normální exchange
                 try:
-                    self.conv_store.add_exchange(name, user_message, _reply, channel=channel)
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _reply, channel=ctx.channel)
                 except Exception:
                     pass
-                self._log_human_chat_to_diary(name, user_message, _reply)
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _reply)
                 return _reply
         except Exception as _ce:
             print(f"[Chat] command dispatch error: {_ce}")
+        return _POKRACUJ
 
+    def _sc_malovani_brana(self, ctx):
         # ── HANS_PAINT_GATE_AFTER_BYPASS_V1 (5.9.) — BRÁNA SE PŘESUNULA NÍŽ ──
         # Stála tady, hned za příkazy, s odůvodněním „příkazy jsou
         # deterministické, mozek nepotřebují". To odůvodnění platí — jenže
@@ -4549,61 +4635,67 @@ class OpenWebUIDirectHandler:
         # a PŘED modelem (jinak si datum rozepíše špatně a A1 pak abstinuje).
         try:
             from scripts.hans_recall import datetime_answer as _dta
-            _dtans = _dta(user_message)
+            _dtans = _dta(ctx.user_message)
             if _dtans:
                 print("[Chat] HANS_DATETIME_ANSWER_V1 → deterministická odpověď")
                 try:
-                    self.conv_store.add_exchange(name, user_message, _dtans,
-                                                 channel=channel)
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _dtans,
+                                                 channel=ctx.channel)
                 except Exception:
                     pass
-                self._log_human_chat_to_diary(name, user_message, _dtans,
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _dtans,
                                               bypass_kind="datetime")
                 return _dtans
         except Exception as _dte:
             print(f"[Chat] datetime answer error: {_dte}")
+        return _POKRACUJ
 
+    def _sc_stav_tazatele(self, ctx):
         # HANS_ASKER_STATE_V1 — „vidíte mě?" / „kdo jsem já?" ze živých dat.
         try:
             from scripts.hans_recall import asker_state_answer
             _hi_as = getattr(self, "_hans_idle", None)
             _as = asker_state_answer(
-                user_message, name,
+                ctx.user_message, ctx.name,
                 getattr(_hi_as, "_present_names", None) or [], self.config)
             if _as:
                 print("[Chat] HANS_ASKER_STATE_V1 → odpověď ze živého stavu")
                 try:
-                    self.conv_store.add_exchange(name, user_message, _as,
-                                                 channel=channel)
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _as,
+                                                 channel=ctx.channel)
                 except Exception:
                     pass
-                self._log_human_chat_to_diary(name, user_message, _as,
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _as,
                                               bypass_kind="asker_state")
                 return _as
         except Exception as _ase:
             print(f"[Chat] asker state error: {_ase}")
+        return _POKRACUJ
 
+    def _sc_kniha(self, ctx):
         # HANS_BOOK_RECOMMEND_V1 — doporučení z VLASTNÍ četby, ne z fantazie.
         try:
             from scripts.hans_recall import (asks_book_recommendation,
                                              book_recommendation)
-            if asks_book_recommendation(user_message):
+            if asks_book_recommendation(ctx.user_message):
                 _br = book_recommendation(
                     (self.config.get("diary_db")
                      or "data/hans_diary.db"), self.config)
                 if _br:
                     print("[Chat] HANS_BOOK_RECOMMEND_V1 → z dočtených knih")
                     try:
-                        self.conv_store.add_exchange(name, user_message, _br,
-                                                     channel=channel)
+                        self.conv_store.add_exchange(ctx.name, ctx.user_message, _br,
+                                                     channel=ctx.channel)
                     except Exception:
                         pass
-                    self._log_human_chat_to_diary(name, user_message, _br,
+                    self._log_human_chat_to_diary(ctx.name, ctx.user_message, _br,
                                                   bypass_kind="book_recommend")
                     return _br
         except Exception as _bre:
             print(f"[Chat] book recommend error: {_bre}")
+        return _POKRACUJ
 
+    def _sc_znalosti(self, ctx):
         try:
             from scripts.hans_recall import knowledge_check_bypass, person_card
             _dbp_kb = (self.config.get("diary_db")
@@ -4633,14 +4725,14 @@ class OpenWebUIDirectHandler:
                 # HANS_PERSON_ASK_PAT_V1 — sama `is_knowledge_check_query` je
                 # moc úzká: „na Janu jsi zapomněl, ne? co o ní víš" jí NEPROJDE
                 # (doloženo živě 18.8.) a LLM router to pak poslal na výpis zájmů.
-                if _ikc(user_message) or _aap(user_message, self.config):
+                if _ikc(ctx.user_message) or _aap(ctx.user_message, self.config):
                     # HANS_PERSON_CARD_VOICE_V1 — kartu vyslov, nevysypej
                     from scripts.hans_recall import person_card_voiced
-                    _pcard = person_card_voiced(_dbp_kb, user_message,
-                                                self.config, asker=name)
+                    _pcard = person_card_voiced(_dbp_kb, ctx.user_message,
+                                                self.config, asker=ctx.name)
             except Exception:
                 _pcard = ""
-            _kb = _pcard or knowledge_check_bypass(_dbp_kb, user_message, asker=name)
+            _kb = _pcard or knowledge_check_bypass(_dbp_kb, ctx.user_message, asker=ctx.name)
             if _kb:
                 # HANS_INSTANT_LOOKUP_V1 (4.8.) — „nemám záznam" už není konec:
                 # zkus téma DOHLEDAT HNED a odpovědět PROVIZORNĚ. Do paměti se
@@ -4654,7 +4746,7 @@ class OpenWebUIDirectHandler:
                         raise _SkipLookup()   # HANS_PERSON_CARD_BYPASS_V1
                     from scripts.hans_recall import _extract_knowledge_topic
                     from scripts.hans_findings import lookup_now
-                    _topic_kb = _extract_knowledge_topic(user_message)
+                    _topic_kb = _extract_knowledge_topic(ctx.user_message)
                     # HANS_PAINT_GATE_AFTER_BYPASS_V1 — dohledání je JEDINÁ věc
                     # nad přesunutou bránou, která potřebuje mozek (shrnuje
                     # článek LLM). Při běžícím renderu se přeskočí, ať nesebere
@@ -4673,7 +4765,7 @@ class OpenWebUIDirectHandler:
                             pass
                     if _topic_kb:
                         _prov = lookup_now(self.config, _dbp_kb, _topic_kb,
-                                           user_message, asker=name)
+                                           ctx.user_message, asker=ctx.name)
                         if _prov:
                             _kb = _prov
                             _bypass_kind = "instant_lookup"
@@ -4687,16 +4779,18 @@ class OpenWebUIDirectHandler:
                 if _bypass_kind == "knowledge_check":
                     print("[Chat] HANS_KNOWLEDGE_CHECK_V1 → deterministic bypass")
                 try:
-                    self.conv_store.add_exchange(name, user_message, _kb, channel=channel)
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _kb, channel=ctx.channel)
                 except Exception:
                     pass
                 # HANS_BYPASS_TRACE_V1 — označ deterministickou cestu
-                self._log_human_chat_to_diary(name, user_message, _kb,
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _kb,
                                               bypass_kind=_bypass_kind)
                 return _kb
         except Exception as _kce:
             print(f"[Chat] knowledge check bypass error: {_kce}")
+        return _POKRACUJ
 
+    def _sc_pamatujes(self, ctx):
         # HANS_REMEMBER_HONEST_V1 (5.9.) — NEROB NAROK NA PAMET, KTERY NEPLATI.
         # Doloheno: „pamatuj si ze me bavi priroda" -> „Ano, pamatuji si, ze
         # vas bavi priroda." Jenze v tu chvili ulozeno NENI nic; zajem doplni
@@ -4720,66 +4814,72 @@ class OpenWebUIDirectHandler:
         try:
             from scripts.hans_intent import (je_fakt_o_mluvcim,
                                              zada_o_zapamatovani)
-            if (zada_o_zapamatovani(user_message)
-                    and je_fakt_o_mluvcim(user_message)):
+            if (zada_o_zapamatovani(ctx.user_message)
+                    and je_fakt_o_mluvcim(ctx.user_message)):
                 from scripts.cz_names import address as _adr
-                _os = _adr(name, self.config) if name else "pane"
+                _os = _adr(ctx.name, self.config) if ctx.name else "pane"
                 _rh = ("Zapíšu si to k Vašim zájmům, %s. Ještě to v paměti "
                        "nemám — projdu si dnešní hovor večer a doplním to." % _os)
                 print("[Chat] HANS_REMEMBER_HONEST_V1 → deterministic bypass")
                 try:
-                    self.conv_store.add_exchange(name, user_message, _rh,
-                                                 channel=channel)
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _rh,
+                                                 channel=ctx.channel)
                 except Exception:
                     pass
-                self._log_human_chat_to_diary(name, user_message, _rh)
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _rh)
                 return _rh
         except Exception as _rhe:
             logging.getLogger(__name__).debug(
                 'HANS_REMEMBER_HONEST_V1 preskocen: %s', _rhe)
+        return _POKRACUJ
 
+    def _sc_zdroje(self, ctx):
         # HANS_SOURCE_QUERY_V1 — bypass LLM (17.7.). hans-czech persona
         # odmítá sdílet URL i s explicitním groundingem — persona finetune
         # silnější než system prompt. Vzor `commitments_answer` /
         # `film_knowledge_answer`: deterministická odpověď mimo LLM.
         try:
             from scripts.hans_recall import is_source_query, sources_answer
-            if is_source_query(user_message):
+            if is_source_query(ctx.user_message):
                 _dbp_sa = (self.config.get("diary_db")
                            or (self.config.get("hans_idle", {}) or {}).get("diary_db")
                            or "data/hans_diary.db")
-                _sa = sources_answer(_dbp_sa, user_message, asker=name)
+                _sa = sources_answer(_dbp_sa, ctx.user_message, asker=ctx.name)
                 if _sa:
                     print("[Chat] HANS_SOURCE_QUERY_V1 → deterministic bypass")
                     try:
-                        self.conv_store.add_exchange(name, user_message, _sa, channel=channel)
+                        self.conv_store.add_exchange(ctx.name, ctx.user_message, _sa, channel=ctx.channel)
                     except Exception:
                         pass
                     # HANS_BYPASS_TRACE_V1 (19.7.) — sdílený bypass_note přes
                     # _log_human_chat_to_diary(bypass_kind=…). Dřív inline
                     # (HANS_SOURCE_QUERY_BYPASS_NOTE_V1 18.7.), teď 1 cesta
                     # pro všechny bypass kinds.
-                    self._log_human_chat_to_diary(name, user_message, _sa,
+                    self._log_human_chat_to_diary(ctx.name, ctx.user_message, _sa,
                                                   bypass_kind="sources")
                     return _sa
         except Exception as _sae:
             print(f"[Chat] source query answer error: {_sae}")
+        return _POKRACUJ
 
+    def _sc_prohloubeni(self, ctx):
         # HANS_STUDY_DEEPEN_V2 — kritika/rozhodnutí ČISTÝM TEXTEM (ne jen
         # /prohloubit). Gated: jen když čeká návrh prohloubení. Klasifikuje
         # reakci uživatele a rovnou ji aplikuje.
         try:
-            _dr = self._maybe_deepen_response(name, user_message)
+            _dr = self._maybe_deepen_response(ctx.name, ctx.user_message)
             if _dr:
                 try:
-                    self.conv_store.add_exchange(name, user_message, _dr, channel=channel)
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _dr, channel=ctx.channel)
                 except Exception:
                     pass
-                self._log_human_chat_to_diary(name, user_message, _dr)
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _dr)
                 return _dr
         except Exception as _de:
             print(f"[Chat] deepen response error: {_de}")
+        return _POKRACUJ
 
+    def _sc_ceka_malba(self, ctx):
         # ── HANS_CHAT_WAIT_FOR_PAINT_V1 (5.8.) — maluju, ozvu se potom ──────
         # Chatová odpověď natáhne hans-czech (8 GB) do VRAM a tím podřízne
         # běžící render: FLUX se nevejde, spadne do lowvram a obraz trvá
@@ -4801,19 +4901,21 @@ class OpenWebUIDirectHandler:
                 from scripts.cz_names import address as _adr_paint
                 _reply = ("Zrovna maluji, %s — až obraz dokončím, budu se "
                           "Vám plně věnovat. Chvilku strpení."
-                          % (_adr_paint(name, self.config) if name else "pane"))
+                          % (_adr_paint(ctx.name, self.config) if ctx.name else "pane"))
                 try:
-                    self.conv_store.add_exchange(name, user_message, _reply,
-                                                 channel=channel)
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _reply,
+                                                 channel=ctx.channel)
                 except Exception:
                     pass
-                self._log_human_chat_to_diary(name, user_message, _reply,
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _reply,
                                               bypass_kind="paint_wait")
                 print("[Chat] odloženo — %s právě renderuje obraz" % _pn(self.config))
                 return _reply
         except Exception as _pe:
             print(f"[Chat] paint-wait gate error: {_pe}")
+        return _POKRACUJ
 
+    def _sc_agent(self, ctx):
         # ── HANS_AGENT_V1 — agentní vrstva (kontextové akce z konverzace) ──
         # PO parse_command (příkazy mají přednost), PŘED běžným chatem.
         # (1) čeká na osobu potvrzení návrhu? ano/ne → proveď/zruš.
@@ -4822,33 +4924,35 @@ class OpenWebUIDirectHandler:
         try:
             _agent = self._agent_router()
             if _agent is not None:
-                _conf = _agent.check_confirmation(self, name, user_message)
+                _conf = _agent.check_confirmation(self, ctx.name, ctx.user_message)
                 if _conf is not None:
-                    _conf = self._agent_oslov(_conf, name)   # HANS_AGENT_ADDRESSEE_V1
+                    _conf = self._agent_oslov(_conf, ctx.name)   # HANS_AGENT_ADDRESSEE_V1
                     try:
-                        self.conv_store.add_exchange(name, user_message, _conf, channel=channel)
+                        self.conv_store.add_exchange(ctx.name, ctx.user_message, _conf, channel=ctx.channel)
                     except Exception:
                         pass
-                    self._log_human_chat_to_diary(name, user_message, _conf)
+                    self._log_human_chat_to_diary(ctx.name, ctx.user_message, _conf)
                     return _conf
-                _prop = _agent.propose(self, name, user_message)
+                _prop = _agent.propose(self, ctx.name, ctx.user_message)
                 if _prop:
-                    _prop = self._agent_oslov(_prop, name)   # HANS_AGENT_ADDRESSEE_V1
+                    _prop = self._agent_oslov(_prop, ctx.name)   # HANS_AGENT_ADDRESSEE_V1
                     try:
-                        self.conv_store.add_exchange(name, user_message, _prop, channel=channel)
+                        self.conv_store.add_exchange(ctx.name, ctx.user_message, _prop, channel=ctx.channel)
                     except Exception:
                         pass
-                    if on_sentence:
+                    if ctx.on_sentence:
                         try:
-                            on_sentence(_prop)
+                            ctx.on_sentence(_prop)
                         except Exception:
                             pass
-                    self._log_human_chat_to_diary(name, user_message, _prop)
+                    self._log_human_chat_to_diary(ctx.name, ctx.user_message, _prop)
                     return _prop
         except Exception as _ae:
             print(f"[Chat] agent layer error: {_ae}")
+        return _POKRACUJ
 
-        system   = self._build_system(name, user_msg=user_message)
+    def _sc_podklad(self, ctx):
+        ctx.system   = self._build_system(ctx.name, user_msg=ctx.user_message)
         # Prefix user message jménem osoby pro lepší RAG retrieval.
         # "kdo jsem?" → "<jméno> se ptá: kdo jsem?" → embedding najde kartu osoby
         # místo kdo_je_hans.txt. Originál se ukládá do historie bez prefixu.
@@ -4863,20 +4967,20 @@ class OpenWebUIDirectHandler:
         # Prefix ale VZNIKL kvůli RAG retrievalu („kdo jsem?" → embedding najde
         # kartu osoby) a `HANS_QUERY_REWRITER_F1_V1` s ním počítá → nemazat,
         # jen ZÚŽIT: retrieval ho dostane, generace ne.
-        _raw_message = user_message
-        _q_for_retrieval = user_message
-        if name and name.lower() not in user_message.lower():
-            _q_for_retrieval = f"{name} se ptá: {user_message}"
+        ctx._raw_message = ctx.user_message
+        _q_for_retrieval = ctx.user_message
+        if ctx.name and ctx.name.lower() not in ctx.user_message.lower():
+            _q_for_retrieval = f"{ctx.name} se ptá: {ctx.user_message}"
         # ── HANS_SELFCONSISTENCY_A1_V1 ────────────────────────────────────
         # Předpočítej grounding JEDNOU (šetří RAG oproti výpočtu ve
         # _stream_message) a zjisti výsledek. Jen u 'factual_nofacts'
         # (faktický dotaz BEZ opory v RAG = rizikový volný výmysl) spusť A1
         # self-consistency: N× generuj, změř rozptyl → nestabilní → deter-
         # ministická abstinence (routing, ne prompt). Deferral-safe.
-        _grounding = _GROUNDING_UNSET
-        _a1_abstain = False
+        ctx._grounding = _GROUNDING_UNSET
+        ctx._a1_abstain = False
         try:
-            _grounding = self._build_grounding(_q_for_retrieval, name)
+            ctx._grounding = self._build_grounding(_q_for_retrieval, ctx.name)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
                 # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
                 # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale
@@ -4907,11 +5011,11 @@ class OpenWebUIDirectHandler:
                     # detektor dostal holou větu, zatímco kontext byl k mání.
                     # Změřeno: brzda se od 20.8. vypnula 6×, škodu udělal
                     # právě tenhle jeden dotaz → překlopí se jen on.
-                    _a1_text = getattr(self, '_f1_query', None) or _raw_message
-                    if _a1_text != _raw_message:
+                    _a1_text = getattr(self, '_f1_query', None) or ctx._raw_message
+                    if _a1_text != ctx._raw_message:
                         logging.getLogger(__name__).info(
                             'HANS_A1_THREAD_TEXT_V1: A1 se rozhoduje z %r '
-                            '(místo %r)', _a1_text[:60], _raw_message[:40])
+                            '(místo %r)', _a1_text[:60], ctx._raw_message[:40])
                     _st = self_topic(_a1_text, self.config)
                     # HANS_A1_PERSONA_NAME_IS_SELF_V1 (20. 9.) — JMÉNO PERSONY
                     # JE „ON SÁM“. Doloženo 19. 9. 17:02: F1 přepsal větu
@@ -4956,7 +5060,7 @@ class OpenWebUIDirectHandler:
                         logging.getLogger(__name__).info(
                             'HANS_A1_NOT_FOR_OWN_STATE_V1: A1 přeskočena — '
                             'dotaz je %r (opora je v promptu, ne v RAG): %.50s',
-                            _st, _raw_message)
+                            _st, ctx._raw_message)
                 except Exception as _ste:
                     logging.getLogger(__name__).debug('self_topic: %s', _ste)
                 # HANS_A1_ONLY_FOR_QUESTIONS_V1 (20. 9.) — ROZKAZ NENÍ DOTAZ.
@@ -4981,21 +5085,23 @@ class OpenWebUIDirectHandler:
                     try:
                         _ar = self._agent_router()
                         if _ar is not None and not _ar._looks_like_request(
-                                _raw_message):
+                                ctx._raw_message):
                             _skip_a1 = True
                             logging.getLogger(__name__).info(
                                 'HANS_A1_ONLY_FOR_QUESTIONS_V1: A1 přeskočena '
-                                '— věta se na nic neptá: %.50s', _raw_message)
+                                '— věta se na nic neptá: %.50s', ctx._raw_message)
                     except Exception as _lre:
                         logging.getLogger(__name__).debug(
                             'HANS_A1_ONLY_FOR_QUESTIONS_V1: %s', _lre)
                 if not _skip_a1:
                     from scripts.hans_selfconsistency import is_unstable
-                    if is_unstable(self.config, _raw_message) is True:
-                        _a1_abstain = True
+                    if is_unstable(self.config, ctx._raw_message) is True:
+                        ctx._a1_abstain = True
         except Exception as _a1e:
             logging.getLogger(__name__).warning('A1 gate failed: %s', _a1e)
-            _grounding = _GROUNDING_UNSET
+            ctx._grounding = _GROUNDING_UNSET
+
+    def _sc_nazor(self, ctx):
         # ── HANS_OPINION_GROUNDING_G1_V1 ─────────────────────────────────
         # Názorový/filosofický dotaz (imaginativní registr) → místo faktů
         # injektuj Hansovy VLASTNÍ postoje + odvahu zaujmout stanovisko
@@ -5007,21 +5113,23 @@ class OpenWebUIDirectHandler:
             # 'opinion' = routing v _build_grounding už rozhodl; 'skip' =
             # grounding neběžel (intent/knowledge nezapojeny) → rozhodni tady.
             if _oc == 'opinion' or (_oc == 'skip'
-                                    and is_opinion_query(_raw_message)):
+                                    and is_opinion_query(ctx._raw_message)):
                 _ob = opinion_block(self.config)
                 if _ob:
-                    system += _ob
+                    ctx.system += _ob
                     logging.getLogger(__name__).info(
                         'G1: názorový dotaz → blok vlastních postojů '
                         'injektován (%d zn)', len(_ob))
         except Exception as _oge:
             logging.getLogger(__name__).warning(
                 'G1 opinion grounding failed: %s', _oge)
-        _dohledano = False   # HANS_ANCHOR_LOOKUP_ON_ADMIT_V1 — ať se nehledá 2×
-        if _a1_abstain:
+
+    def _sc_a1(self, ctx):
+        ctx._dohledano = False   # HANS_ANCHOR_LOOKUP_ON_ADMIT_V1 — ať se nehledá 2×
+        if ctx._a1_abstain:
             # HANS_ANCHOR_LOOKUP_V1 — než odmítneš, zkus to dohledat.
-            response = self._dohledej_kotvu(_raw_message, name) or A1_ABSTAIN_TEXT
-            _dohledano = True
+            ctx.response = self._dohledej_kotvu(ctx._raw_message, ctx.name) or A1_ABSTAIN_TEXT
+            ctx._dohledano = True
             # CLAIM_RETRACT_V1 — brzda umí ODMÍTNOUT, ale neuměla se OPRAVIT.
             # Doloženo 6.8. 09:10→09:12: Hans tvrdil „hradby až 5 metrů",
             # o 80 s později přiznal „nemám spolehlivý záznam" — ale to číslo
@@ -5032,7 +5140,7 @@ class OpenWebUIDirectHandler:
                 from scripts.claim_retract import append_retraction
                 _hist = []
                 try:
-                    _hist = self.conv_store.get_history(name) or []
+                    _hist = self.conv_store.get_history(ctx.name) or []
                 except Exception:
                     pass
                 # CLAIM_RETRACT_GATE_V1 (13. 9.) — VYPINATELNE, default VYPNUTO.
@@ -5047,30 +5155,32 @@ class OpenWebUIDirectHandler:
                 # nic. Puvodni zamer (CLAIM_RETRACT_V1, 6. 8.) je spravny, jen
                 # predikat neumi odlisit tvrzeni od nabidky ani overit oporu.
                 # ⚠️ Kod se NEMAZE — az to predikat umi, staci prepnout klic.
-                _resp2 = (append_retraction(response, _raw_message, _hist)
+                _resp2 = (append_retraction(ctx.response, ctx._raw_message, _hist)
                           if ((self.config.get('chat', {}) or {})
                               .get('claim_retract_enabled', False))
-                          else response)
-                if _resp2 != response:
+                          else ctx.response)
+                if _resp2 != ctx.response:
                     logging.getLogger(__name__).info(
                         'CLAIM_RETRACT_V1: beru zpět dřívější tvrzení '
-                        '(abstinence u %r)', (_raw_message or '')[:60])
-                    response = _resp2
+                        '(abstinence u %r)', (ctx._raw_message or '')[:60])
+                    ctx.response = _resp2
             except Exception as _cre:
                 logging.getLogger(__name__).warning(
                     'CLAIM_RETRACT_V1 selhal (odpověď ponechána): %s', _cre)
-            if on_sentence:
+            if ctx.on_sentence:
                 try:
-                    on_sentence(response)   # ať to TTS vysloví
+                    ctx.on_sentence(ctx.response)   # ať to TTS vysloví
                 except Exception:
                     pass
         else:
-            response = self._stream_message(
-                (system, user_message), name=name,
-                on_sentence=on_sentence, grounding=_grounding)  # CHAT_ON_SENTENCE_V1
+            ctx.response = self._stream_message(
+                (ctx.system, ctx.user_message), name=ctx.name,
+                on_sentence=ctx.on_sentence, grounding=ctx._grounding)  # CHAT_ON_SENTENCE_V1
+
+    def _sc_pojistky(self, ctx):
         # G4D_DEDUP_ADDRESS_V1 — očisti opakované oslovení PŘED
         # rozdvojením do conv_store i diary→RAG (oba cíle čisté).
-        if response:
+        if ctx.response:
             # HANS_FILM_DIRECTOR_CHECK_V1 (21.8.) — přát si film, který doma
             # nemáme, je v pořádku (zvídavost), ale režiséra má mít správně.
             # Doloženo v simulovaném rozhovoru: „Sedmikrásky od Miloše Formana"
@@ -5079,9 +5189,9 @@ class OpenWebUIDirectHandler:
             try:
                 from scripts.film_director_check import zkontroluj_rezii
                 _kodi_r = getattr(getattr(self, "_hans_idle", None), "kodi", None)
-                _r2 = zkontroluj_rezii(response, kodi=_kodi_r, config=self.config)
-                if _r2 != response:
-                    response = _r2
+                _r2 = zkontroluj_rezii(ctx.response, kodi=_kodi_r, config=self.config)
+                if _r2 != ctx.response:
+                    ctx.response = _r2
             except Exception as _fdc:
                 logging.getLogger(__name__).debug(
                     'HANS_FILM_DIRECTOR_CHECK_V1 přeskočen: %s', _fdc)
@@ -5097,9 +5207,9 @@ class OpenWebUIDirectHandler:
             # nedostanou do paměti (týž důvod jako u oprav oslovení níž).
             try:
                 if (getattr(self, '_grounding_outcome', '') == 'grounded'
-                        and _grounding and _grounding is not _GROUNDING_UNSET):
+                        and ctx._grounding and ctx._grounding is not _GROUNDING_UNSET):
                     from scripts.grounding_guard import check as _gg_check
-                    _facts = _grounding.replace(ANTIKONFAB, ' ')
+                    _facts = ctx._grounding.replace(ANTIKONFAB, ' ')
                     _facts = _facts.replace(ANTIKONFAB_NOFACTS, ' ')
                     # ⚠️ REFERENCÍ MUSÍ BÝT VŠECHNO, CO MODEL DOSTAL, ne jen
                     # grounding. První živý test (13:49) zahodil VĚTU, KTERÁ
@@ -5107,7 +5217,7 @@ class OpenWebUIDirectHandler:
                     # grounding v tu chvíli nesl jiný zápisek. Bez historie
                     # guard trestá správné odpovědi.
                     try:
-                        for _h in (self.conv_store.get_history(name) or [])[-6:]:
+                        for _h in (self.conv_store.get_history(ctx.name) or [])[-6:]:
                             _facts += ' ' + str(
                                 _h.get('content', _h) if isinstance(_h, dict) else _h)
                     except Exception:
@@ -5130,8 +5240,8 @@ class OpenWebUIDirectHandler:
                     # Použije se varianta podle `use_evidence`. Druhý výpočet
                     # je jen množinová operace nad kmeny, řádově zdarma.
                     try:
-                        _d_bez = _gg_check(response, _facts)[1]
-                        _d_s = _gg_check(response, _facts + ' ' + _ev)[1] if _ev else _d_bez
+                        _d_bez = _gg_check(ctx.response, _facts)[1]
+                        _d_s = _gg_check(ctx.response, _facts + ' ' + _ev)[1] if _ev else _d_bez
                         logging.getLogger(__name__).info(
                             "HANS_EVIDENCE_AB_V1: bez evidence %d vět bez opory, "
                             "s evidencí %d (evidence %d zn, aktivní=%s)",
@@ -5154,7 +5264,7 @@ class OpenWebUIDirectHandler:
                         pass
                     if _use_ev and _ev:
                         _facts += ' ' + _ev
-                    _clean, _dropped = _gg_check(response, _facts)
+                    _clean, _dropped = _gg_check(ctx.response, _facts)
                     # GROUNDING_GUARD_ACTIVE_V2 (22.8.) — ÚZKÉ ZAPNUTÍ.
                     # Doloženo 22.8. na hradu Kost: podklad byl JEDNA věta ze
                     # studijní poznámky, odpověď osm vět (Bořkovští z Kostedna,
@@ -5225,8 +5335,8 @@ class OpenWebUIDirectHandler:
                         # `is_source_query` a agentní guard — třetí místo téže
                         # pravdy, schválně sdílené.
                         from scripts.hans_recall import is_memory_meta_query
-                        _uvaha = (is_reflective_ask(_raw_message)
-                                  or is_memory_meta_query(_raw_message))
+                        _uvaha = (is_reflective_ask(ctx._raw_message)
+                                  or is_memory_meta_query(ctx._raw_message))
                     except Exception:
                         pass
                     # HANS_GUARD_SELF_TOPIC_V1 (7.9.) — DOTAZ NA HANSE SAMÉHO
@@ -5262,7 +5372,7 @@ class OpenWebUIDirectHandler:
                     _o_sobe = False
                     try:
                         from scripts.hans_intent import self_topic as _self_topic
-                        _o_sobe = (_self_topic(_raw_message, self.config)
+                        _o_sobe = (_self_topic(ctx._raw_message, self.config)
                                    == 'asistent')
                     except Exception:
                         pass
@@ -5305,7 +5415,7 @@ class OpenWebUIDirectHandler:
                         # Citace je doslovná → nic se nedomýšlí; když žádná věta
                         # nepřekročí práh, platí dohledání jako dosud.
                         _cit = self._citace_ze_zapisku(
-                            _facts, getattr(self, '_f1_query', None) or _raw_message)
+                            _facts, getattr(self, '_f1_query', None) or ctx._raw_message)
                         if _cit:
                             logging.getLogger(__name__).info(
                                 'HANS_GUARD_QUOTE_NOTE_V1: odpovídám citací ze '
@@ -5314,10 +5424,10 @@ class OpenWebUIDirectHandler:
                                      "\u201e%s\u201c Víc podrobností tam nemám "
                                      "a nerad bych si domýšlel." % _cit)
                         else:
-                            _dohl = self._dohledej_kotvu(_raw_message, name,
+                            _dohl = self._dohledej_kotvu(ctx._raw_message, ctx.name,
                                                          mel_zapisky=True)
-                        _dohledano = True
-                        response = _dohl or _clean
+                        ctx._dohledano = True
+                        ctx.response = _dohl or _clean
                     elif _dropped:
                         # GROUNDING_GUARD_ACTIVE_V3 — do hlásícího logu i CESTA,
                         # ať se dá příště ladit z dat (dřív nešlo poznat, jestli
@@ -5358,18 +5468,18 @@ class OpenWebUIDirectHandler:
             # „oporu" z nesouvisejících chunků (0.651) a výsledek byl přesto
             # bez obsahu; a když je odpověď CELÁ jen přiznáním, není co ztratit.
             try:
-                if (not _dohledano
+                if (not ctx._dohledano
                         and getattr(self, '_grounding_outcome', '')
                         in ('factual_nofacts', 'grounded')):
                     from scripts.hans_thread import je_ciste_odrikani
-                    if je_ciste_odrikani(response):
-                        _dohl2 = self._dohledej_kotvu(_raw_message, name)
+                    if je_ciste_odrikani(ctx.response):
+                        _dohl2 = self._dohledej_kotvu(ctx._raw_message, ctx.name)
                         if _dohl2:
                             logging.getLogger(__name__).info(
                                 'HANS_ANCHOR_LOOKUP_ON_ADMIT_V1: přiznal '
                                 'neznalost sám → dohledáno (%.60s)',
-                                _raw_message or '')
-                            response = _dohl2
+                                ctx._raw_message or '')
+                            ctx.response = _dohl2
                         else:
                             logging.getLogger(__name__).info(
                                 'HANS_ANCHOR_LOOKUP_ON_ADMIT_V1: přiznání bez '
@@ -5379,7 +5489,7 @@ class OpenWebUIDirectHandler:
                     'HANS_ANCHOR_LOOKUP_ON_ADMIT_V1 selhalo: %s', _aloe)
             try:
                 from scripts.conversation_store import dedup_address_g4d
-                response = dedup_address_g4d(response, name, self.config)
+                ctx.response = dedup_address_g4d(ctx.response, ctx.name, self.config)
             except Exception:
                 pass
             # HANS_ADDRESSEE_V2 — deterministická oprava oslovení CIZÍ osoby.
@@ -5391,11 +5501,11 @@ class OpenWebUIDirectHandler:
             # všechny cíle (týž důvod jako u dedup_address_g4d výše).
             try:
                 from scripts.cz_names import fix_addressee
-                response, _nfix = fix_addressee(response, name, self.config)
+                ctx.response, _nfix = fix_addressee(ctx.response, ctx.name, self.config)
                 if _nfix:
                     logging.getLogger(__name__).info(
                         "HANS_ADDRESSEE_V2: opraveno %d cizích oslovení "
-                        "(partner=%s)", _nfix, name)
+                        "(partner=%s)", _nfix, ctx.name)
             except Exception:
                 pass
             # HANS_WEEKDAY_FIX_V1 (14. 9.) — den v tydnu vedle dneska opravi
@@ -5403,7 +5513,7 @@ class OpenWebUIDirectHandler:
             # zapisem do conv_store/deniku/RAG, stejne jako fix_addressee.
             try:
                 from scripts.cz_names import fix_weekday
-                response, _nden = fix_weekday(response)
+                ctx.response, _nden = fix_weekday(ctx.response)
                 if _nden:
                     logging.getLogger(__name__).info(
                         "HANS_WEEKDAY_FIX_V1: opraven den v tydnu (%d×)", _nden)
@@ -5421,40 +5531,67 @@ class OpenWebUIDirectHandler:
             try:
                 _gcfg = (self.config.get("openwebui_chat", {}) or {})
                 _mez = float(_gcfg.get("greeting_trim_gap_s", 21600))
-                _posl = self.conv_store.posledni_ts(name)
+                _posl = self.conv_store.posledni_ts(ctx.name)
                 # HANS_GREETING_OUTPUT_TRIM_V2 — kdyz clovek SAM pozdravil,
                 # je pozdrav v odpovedi legitimni (zmereno: 5 z 218
                 # neprvnich replik; uzivatel zdravi ve 12 ze 149 zprav).
                 _clovek_pozdravil = bool(
-                    _POZDRAV_UZIVATEL_RE.search((_raw_message or "").strip()))
+                    _POZDRAV_UZIVATEL_RE.search((ctx._raw_message or "").strip()))
                 if (_posl and (time.time() - _posl) < _mez
                         and not _clovek_pozdravil):
                     from scripts.conversation_store import ConversationStore as _CS
-                    _bez = _CS._POZDRAV_RE.sub("", response, count=1)
-                    if _bez.strip() and _bez != response:
+                    _bez = _CS._POZDRAV_RE.sub("", ctx.response, count=1)
+                    if _bez.strip() and _bez != ctx.response:
                         logging.getLogger(__name__).info(
                             "HANS_GREETING_OUTPUT_TRIM_V1: odriznut nadbytecny "
                             "pozdrav (rozhovor bezi %.0f min)",
                             (time.time() - _posl) / 60.0)
-                        response = _bez
+                        ctx.response = _bez
             except Exception as _gte:
                 logging.getLogger(__name__).debug(
                     "HANS_GREETING_OUTPUT_TRIM_V1: %s", _gte)
-        if response:
-            self.conv_store.add_exchange(name, _raw_message, response, channel=channel)
+
+    def _sc_overeni_tvrzeni(self, ctx):
+        # HANS_CLAIM_CHECK_V1 (28. 9.) — úvahová odpověď bez opory, která ale
+        # tvrdí něco o světě (jména, díla, letopočty) → slib nočního ověření
+        # + řádek do čekárny (zapíše se níž, až bude znát id záznamu v RAG).
+        ctx._claim_names = []
+        if (ctx.response and getattr(self, '_grounding_cesta', '') == 'uvahova_otazka'
+                and not self._skip_memory(ctx.name)
+                and (self.config.get("instant_lookup", {}) or {}).get(
+                    "claim_check", True)):
+            try:
+                from scripts.hans_findings import claim_names, CLAIM_NOTE
+                from scripts.cz_names import vocative as _voc, _known_person_forms
+                from scripts.hans_persona import persona_name as _pn
+                _vyn = {_pn(self.config), ctx.name, _voc(ctx.name)} | set(
+                    _known_person_forms(self.config))
+                ctx._claim_names = claim_names(ctx.response, _vyn)
+                if ctx._claim_names:
+                    ctx.response = ctx.response.rstrip() + "\n\n" + CLAIM_NOTE
+                    logging.getLogger(__name__).info(
+                        'HANS_CLAIM_CHECK_V1: úvaha s tvrzeními %s → v noci ověřím',
+                        ctx._claim_names[:6])
+            except Exception as _cce:
+                logging.getLogger(__name__).debug('HANS_CLAIM_CHECK_V1: %s', _cce)
+                ctx._claim_names = []
+
+    def _sc_ulozeni(self, ctx):
+        if ctx.response:
+            self.conv_store.add_exchange(ctx.name, ctx._raw_message, ctx.response, channel=ctx.channel)
             # # HUMAN_CHAT_VIA_LOG_ENTRY
             # Vztahové karty + paměť — zaloguj exchange do deníku jako
             # human_chat. Přes _log_entry → spustí synthesis_hooks
             # → vytvoří chat_reflection → upload do hans_identita RAG.
-            _note = f"{name}: {_raw_message}\nHans: {response}"
+            _note = f"{ctx.name}: {ctx._raw_message}\nHans: {ctx.response}"
             # HANS_TEST_PERSON_V1 — u testovací identity se přeskočí OBOJÍ:
             # deník i RAG. ⚠️ NESTAČÍ vynulovat `_hi_log` — tím by se naopak
             # spustila záložní SQL větev níž a řádek by se zapsal stejně.
-            _skip_mem = self._is_test_person(name)
+            _skip_mem = self._skip_memory(ctx.name)          # HANS_VOICE_NO_MEMORY_V1
             _hi_log = None if _skip_mem else getattr(self, "_hans_idle", None)
             if _hi_log and hasattr(_hi_log, "_log_entry"):
                 try:
-                    _hi_log._log_entry("human_chat", name, note=_note)
+                    _hi_log._log_entry("human_chat", ctx.name, note=_note)
                 except Exception as _e:
                     print(f"[Chat] human_chat log_entry failed: {_e}")
                     _hi_log = None
@@ -5468,7 +5605,7 @@ class OpenWebUIDirectHandler:
                         _db.execute(
                             "INSERT INTO diary (ts, event_type, title, note) "
                             "VALUES (?,?,?,?)",
-                            (_t.time(), "human_chat", name, _note)
+                            (_t.time(), "human_chat", ctx.name, _note)
                         )
                         _db.commit()
                 except Exception as _e:
@@ -5479,10 +5616,16 @@ class OpenWebUIDirectHandler:
             # (RAG = síťový hop), best-effort.
             try:
                 if not _skip_mem:
-                    self._upload_chat_memory(name, _raw_message, response)
+                    _chatlog = self._upload_chat_memory(ctx.name, ctx._raw_message, ctx.response)
+                    if ctx._claim_names:                    # HANS_CLAIM_CHECK_V1
+                        from scripts.hans_findings import add_claim_check
+                        add_claim_check(
+                            self.config.get("diary_db", "data/hans_diary.db"),
+                            asker=ctx.name, query=ctx._raw_message, answer=ctx.response,
+                            names=ctx._claim_names, chatlog_id=_chatlog or "")
             except Exception as _e:
                 print(f"[Chat] chat memory upload failed: {_e}")
-        return response
+
 
     def _upload_chat_memory(self, name: str, question: str, answer: str):
         """HANS_CHAT_RECALL_V1 — verbatim rozhovor do RAG (hans_pripady), aby byl
@@ -5492,6 +5635,8 @@ class OpenWebUIDirectHandler:
             return
         import threading as _th
         import time as _t
+        ts = _t.time()           # HANS_CLAIM_CHECK_V1 — id záznamu známé hned
+        doc_id = f"chatlog_{int(ts)}_{name}"
 
         def _work():
             try:
@@ -5499,7 +5644,6 @@ class OpenWebUIDirectHandler:
                 pname = persona_name(self.config)
             except Exception:
                 pname = "Hans"
-            ts = _t.time()
             import datetime as _dt
             when = _dt.datetime.fromtimestamp(ts).strftime("%A %-d.%-m.%Y %H:%M")
             # HANS_CHATLOG_NOT_FACT_V1 — původ přímo v textu, ať je i pro
@@ -5511,7 +5655,7 @@ class OpenWebUIDirectHandler:
             try:
                 _kn.upload(
                     collection_key="hans_pripady",
-                    doc_id=f"chatlog_{int(ts)}_{name}",
+                    doc_id=doc_id,
                     title=f"Rozhovor s {name}: {question.strip()[:60]}",
                     text=text,
                     metadata={"kdy": when, "osoba": name, "typ": "rozhovor",
@@ -5520,6 +5664,7 @@ class OpenWebUIDirectHandler:
             except Exception as _e:
                 print(f"[Chat] chat memory upload (worker): {_e}")
         _th.Thread(target=_work, daemon=True, name="ChatMemoryUpload").start()
+        return doc_id
 
     @staticmethod
     def _extract_read_topic(msg: str, url: str) -> str:

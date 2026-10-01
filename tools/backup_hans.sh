@@ -25,7 +25,13 @@ cd "$ROOT"
 KEEP="${KEEP:-14}"                 # kolik archivů nechat
 NAS_DEST="${NAS_DEST:-}"           # např. /mnt/nas/hans nebo user@nas:/path (rsync)
 RCLONE_REMOTE="${RCLONE_REMOTE:-}" # např. proton:Hans/backups
-GPG_PASSFILE="${GPG_PASSFILE:-}"   # soubor s heslem → šifrovat archiv (pro cloud)
+GPG_PASSFILE="${GPG_PASSFILE:-}"   # soubor s heslem → šifrovat archiv (JEN pro cloud)
+# HANS_BACKUP_PROTON_CLI_V1 (30. 9.) — Proton Drive přes OFICIÁLNÍ CLI (od 6/2026,
+# arm64), ne reverse-engineered rclone backend. Přihlášení jednou z prohlížeče
+# (i z jiného zařízení): `~/bin/proton-drive auth login`; relace leží v klíčence.
+PROTON_DRIVE_DEST="${PROTON_DRIVE_DEST:-}"   # např. /my-files/Hans_zalohy
+PROTON_DRIVE_BIN="${PROTON_DRIVE_BIN:-$HOME/bin/proton-drive}"
+PROTON_KEEP="${PROTON_KEEP:-30}"             # kolik archivů nechat na Protonu
 
 FULL=0
 [ "${1:-}" = "--full" ] && FULL=1
@@ -45,14 +51,30 @@ FULL_DBS=(kodi_monitor.db unknown_tracker.db)
 DBS=("${CORE_DBS[@]}")
 [ "$FULL" = 1 ] && DBS+=("${FULL_DBS[@]}")
 
+# HANS_BACKUP_DB_BUSY_V1 (30. 9.) — deník není ve WAL, takže `.backup` bez
+# čekání selže na „database is locked“, kdykoli Hans zrovna zapisuje.
+# Doloženo 30. 9. 14:58: ruční záloha odešla BEZ hans_diary.db a skript
+# přesto skončil „HOTOVO“. Proto čekání (.timeout) + pokusy, a chybějící
+# KLÍČOVÁ DB = selhání služby (stejná třída jako BACKUP_OFFSITE_LOUD_V1).
+DB_FAIL=0
 for db in "${DBS[@]}"; do
     src="data/$db"
     [ -f "$src" ] || { echo "  (přeskakuji chybějící $db)"; continue; }
-    if sqlite3 "$src" ".backup '$STAGE/data/$db'" 2>/dev/null; then
+    _ok=0
+    for _p in 1 2 3; do
+        if sqlite3 -cmd ".timeout 30000" "$src" ".backup '$STAGE/data/$db'" 2>/dev/null; then
+            _ok=1; break
+        fi
+        echo "  $db zamčená (pokus $_p/3) — zkusím znovu"
+        sleep 10
+    done
+    if [ "$_ok" = 1 ]; then
         ic=$(sqlite3 "$STAGE/data/$db" "PRAGMA integrity_check;" 2>/dev/null | head -1)
         echo "  DB $db: $ic ($(du -h "$STAGE/data/$db" | cut -f1))"
     else
-        echo "  !!! $db: .backup SELHAL — přeskakuji"
+        echo "  !!! $db: .backup SELHAL i po 3 pokusech"
+        rm -f "$STAGE/data/$db"
+        DB_FAIL=1
     fi
 done
 
@@ -207,8 +229,14 @@ print('  WOL na NAS: %s' % ('odeslano' if wake(mac='${NAS_WOL_MAC}') else 'SELHA
     NAS_WAIT="${NAS_WAIT:-20}"
     OFFSITE_FAIL=1
     for i in $(seq 1 "$NAS_TRIES"); do
-        if rsync -a --timeout=180 "$UPLOAD" "$NAS_DEST/" 2>&1; then
+        # HANS_BACKUP_PROTON_CLI_V1 — NAS v LAN dostává NEŠIFROVANÝ archiv
+        # (šifruje se jen pro cloud) a k němu heslo ke cloudovým kopiím: když
+        # Pi zemře, bez hesla by kopie na Protonu byly k ničemu. NAS už
+        # nešifrovaná data drží, takže heslo tam nic neodkrývá.
+        if rsync -a --timeout=180 "$ARCHIVE" "$NAS_DEST/" 2>&1; then
             echo "== NAS OK: $NAS_DEST (pokus $i/$NAS_TRIES) =="
+            [ -n "$GPG_PASSFILE" ] && [ -f "$GPG_PASSFILE" ] && \
+                rsync -a --timeout=60 "$GPG_PASSFILE" "$NAS_DEST/" 2>/dev/null || true
             OFFSITE_FAIL=0
             break
         fi
@@ -249,10 +277,53 @@ if [ -n "$RCLONE_REMOTE" ] && command -v rclone >/dev/null; then
     fi
 fi
 
+# --- 5b) Proton Drive (oficiální CLI) — HANS_BACKUP_PROTON_CLI_V1 ---
+# Selhání = OFFSITE_FAIL → služba `failed` → hlídač záloh hlásí (jako u NAS).
+if [ -n "$PROTON_DRIVE_DEST" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+    _pd="$PROTON_DRIVE_BIN"
+    if [ "$UPLOAD" = "$ARCHIVE" ]; then
+        # Do cloudu NIKDY nešifrovaně (config, jména domácnosti, deník).
+        echo "!!! Proton Drive: archiv NENÍ šifrovaný (chybí GPG_PASSFILE) — nenahrávám"
+        OFFSITE_FAIL=1
+    elif [ ! -x "$_pd" ]; then
+        echo "!!! Proton Drive: CLI chybí ($_pd)"
+        OFFSITE_FAIL=1
+    else
+        if ! timeout 120 "$_pd" filesystem info "$PROTON_DRIVE_DEST" >/dev/null 2>&1; then
+            timeout 120 "$_pd" filesystem create-folder "$(dirname "$PROTON_DRIVE_DEST")" \
+                "$(basename "$PROTON_DRIVE_DEST")" >/dev/null 2>&1 || true
+        fi
+        if timeout 1800 "$_pd" filesystem upload -c replace -t "$UPLOAD" "$PROTON_DRIVE_DEST" 2>&1; then
+            echo "== Proton Drive OK: $PROTON_DRIVE_DEST/$(basename "$UPLOAD") =="
+            # rotace na Protonu: jména nesou datum → řadit podle jména
+            _stare=$(timeout 120 "$_pd" filesystem list --json "$PROTON_DRIVE_DEST" 2>/dev/null \
+                | grep -oE "hans_backup_${KIND}_[0-9]{8}_[0-9]{6}\.tar\.gz\.gpg" \
+                | sort -u | head -n -"$PROTON_KEEP" || true)
+            for _s in $_stare; do
+                timeout 120 "$_pd" filesystem delete "$PROTON_DRIVE_DEST/$_s" >/dev/null 2>&1 \
+                    && echo "  Proton rotace: smazán $_s" \
+                    || echo "  (Proton rotace: $_s se nepodařilo smazat)"
+            done
+        else
+            echo "!!! Proton Drive push selhal — vypršelo přihlášení? → $_pd auth login"
+            OFFSITE_FAIL=1
+        fi
+    fi
+fi
+
+# šifrovaná kopie je jen pro cloud; lokálně by ji rotace (glob *.tar.gz*)
+# počítala do KEEP a na Pi by zůstala polovina dní
+[ "$UPLOAD" != "$ARCHIVE" ] && rm -f "$UPLOAD"
+
 # --- 6) Rotace (lokálně, per druh) ---
 ls -1t "$OUT_DIR"/hans_backup_${KIND}_*.tar.gz* 2>/dev/null | tail -n +$((KEEP+1)) | \
     while read -r old; do rm -f "$old" && echo "  rotace: smazán $(basename "$old")"; done
 
+if [ "${DB_FAIL:-0}" = 1 ]; then
+    echo "== ZÁLOHA NEÚPLNÁ: některá klíčová databáze chybí (viz !!! výše) =="
+    exit 3
+fi
 if [ "${OFFSITE_FAIL:-0}" = 1 ]; then
     # Lokalni archiv JE hotovy (rotace probehla vyse) — nenulovy konec hlasi
     # jen to, ze OFFSITE kopie chybi. `hans-backup.service` tim spadne do

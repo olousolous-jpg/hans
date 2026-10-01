@@ -1,0 +1,10 @@
+[Unit]
+Description=Hans — sběr titulků zpráv z více zdrojů (HANS_ZPRAVY_SBER_V1)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/face-recognition
+ExecStart=/usr/bin/python3 %h/Desktop/face-recognition/scripts/hans_zpravy.py sber
+TimeoutStartSec=300
+Nice=10

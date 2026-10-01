@@ -591,14 +591,24 @@ class EntityStore:
                 # Strange") — pri ponechani vsech by se ztratil. Zkratky
                 # (dr., sv.) se chovaji jinak nez kratka plnovyznamova
                 # slova (ves, raj, man, gun). Zmereno na druhe sade.
-                _vse = _tokens(k)
+                # HANS_ENTITY_COLLAPSED_KEY_V1 (30. 9.) — rozlišovací závorka
+                # („(film)“) není důkaz shody: klíč „dr. strange (film)“ se
+                # trefil na „film strážci galaxie“ (film přesně + strážci~strange
+                # prefixem). Změřeno na 898 větách: 5 změn, všechny falešné shody.
+                _vse = _tokens(re.sub(r"\s*\([^)]*\)", " ", k))
                 kt = [t for t in _vse if len(t) >= 4]
                 if len(_vse) >= 2 and len(kt) < 2:
                     kt = [t for t in _vse if len(t) >= 3]
                 if not kt:
                     continue  # jen krátké tokeny → moc nejednoznačné
+                # HANS_ENTITY_COLLAPSED_KEY_V1 — víceslovný klíč scvrklý na JEDNO
+                # slovo („dr. strange“ → strange) nemá oporu v dalším tokenu, takže
+                # volný prefix chytal „stránek/strana“. Slovo dotazu musí začínat
+                # CELÝM tokenem klíče (Strange, Strangeovi).
+                _scvrkly = len(_vse) >= 2 and len(kt) == 1
                 matched = [t for t in kt
-                           if any(_match_q(t, qt) for qt in q_tokens)]
+                           if any((qt.startswith(t) if _scvrkly
+                                   else _match_q(t, qt)) for qt in q_tokens)]
                 # plná shoda VŠECH tokenů, NEBO (u víceslovných jmen) shoda
                 # prvního I posledního tokenu — řeší prostřední jména
                 # („Erich Robert Sorge" ↔ dotaz „Erich Sorge").

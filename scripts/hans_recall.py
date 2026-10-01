@@ -3311,6 +3311,44 @@ def knowledge_check_bypass(db_path: str, user_text: str,
 
 
 # ── HANS_SELF_STATE_V1 (5.8.) — grounded blok „jak se mám a co jsem dnes dělal"
+def _popis_dila(data_json: str) -> str:
+    """HANS_SELF_STATE_WORKS_V1 (30. 9.) — co dílo JE, ne jen jeho téma.
+    Test 30. 9.: s řádkem „napsal jsem dílo: Dílo: <téma>“ Hans o webu se
+    6 stránkami a skladbou tvrdil „první fáze vývoje nástroje“, „interaktivní
+    vizualizace“, cizímu „esej“ a předstíral přehrání skladby."""
+    import json as _json
+    import os as _os
+    try:
+        d = _json.loads(data_json or "{}")
+    except Exception:
+        return ""
+    tema = str(d.get("topic") or "").strip()
+    cesta = str(d.get("path") or "")
+    if not tema:
+        return ""
+    if d.get("target") != "coder" or not cesta:
+        return "„%s“" % tema
+    adr = _os.path.dirname(cesta)
+    bits = []
+    try:
+        stranky = [f for f in _os.listdir(adr) if f.endswith(".html")]
+        if stranky:
+            bits.append("%d %s" % (len(stranky), "stránka" if len(stranky) == 1
+                                   else "stránky" if len(stranky) < 5 else "stránek"))
+        if _os.path.isdir(_os.path.join(adr, "images")) and _os.listdir(_os.path.join(adr, "images")):
+            bits.append("s obrázky")
+        _dj = _os.path.join(adr, "dilo.json")
+        if _os.path.exists(_dj):
+            _h = (_json.load(open(_dj, encoding="utf-8")) or {}).get("hudba")
+            if isinstance(_h, dict) and (_h.get("popis") or _h.get("styl")):
+                bits.append("se skladbou na úvodní stránce (%s)"
+                            % (_h.get("popis") or _h["styl"]))
+    except Exception:
+        pass
+    return "webové stránky na téma „%s“%s — hotové, uložené u mě" % (
+        tema, (" (" + ", ".join(bits) + ")") if bits else "")
+
+
 def self_state_facts(db_path: str, max_items: int = 6,
                      mood: str = "", mood_reason: str = "",
                      runtime: dict = None) -> str:
@@ -3330,7 +3368,8 @@ def self_state_facts(db_path: str, max_items: int = 6,
                                        microsecond=0).timestamp()
     # (label, event_type) — pořadí = důležitost pro vyprávění o dni
     cats = [("studoval jsem", "study_note"),
-            ("napsal jsem dílo", "work_artifact"),
+            ("vytvořil jsem dílo", "work_artifact"),   # HANS_SELF_STATE_WORKS_V1
+            ("napsal jsem esej", "work_created"),
             ("namaloval jsem", "artwork"),
             ("četl jsem", "web_read"),
             ("zapsal jsem si ke knize", "book_reflection"),
@@ -3351,10 +3390,12 @@ def self_state_facts(db_path: str, max_items: int = 6,
             det = []
             for r in rows:
                 t = (r["title"] or "").strip()
+                if etype == "work_artifact":
+                    t = _popis_dila(r["data"]) or t
                 if not t:
                     t = ((r["note"] or r["data"] or "").strip().split("\n")[0])[:60]
                 if t:
-                    det.append(t[:70])
+                    det.append(t[:200] if etype == "work_artifact" else t[:70])
             if det:
                 out.append("%s: %s" % (label, "; ".join(det)))
             if len(out) >= max_items:

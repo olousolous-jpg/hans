@@ -18,7 +18,6 @@ ExecStart=/usr/bin/ssh -NT \
   -o StrictHostKeyChecking=accept-new \
   -i %h/.ssh/hans_pc \
   -L 127.0.0.1:8765:127.0.0.1:8765 \
-  -L 127.0.0.1:8766:127.0.0.1:8766 \
   -L 127.0.0.1:8767:127.0.0.1:8767 \
   UZIVATEL@192.168.1.10   # <- doplnit vlastniho uzivatele a IP pocitace
 Restart=always

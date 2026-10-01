@@ -2248,6 +2248,21 @@ class AgentRouter:
             # HANS_STRANGER_NO_MUTATE_V1 (24. 9.) — cizí nesmí nic měnit:
             # projdou mu jen dotazy na stav (`report_*`). Odpověď místo ticha,
             # aby persona akci nepotvrdila (HANS_AGENT_SPEAK_REJECT_V1).
+            # HANS_STRANGER_HOUSEHOLD_V1 (30. 9.) — i dotaz na STAV domu je
+            # chod domácnosti: teploty po místnostech, co běží na TV, technika,
+            # složení domácnosti. Doloženo auditem 30. 9. (klima i TV cizímu).
+            # Počasí venku a Koláč zůstávají otevřené.
+            if aid in ("report_climate", "report_now_playing", "report_pc_health",
+                       "report_home_status", "report_household"):
+                try:
+                    from scripts.cz_names import is_known_person as _ikp_h
+                    _zn_h = bool(name) and _ikp_h(name)
+                except Exception:
+                    _zn_h = False
+                if not _zn_h:
+                    log.info("HANS_STRANGER_HOUSEHOLD_V1: agent %s od neznámého "
+                             "(%s) odmítnuto", aid, name)
+                    return "O tom mluvím jen se svou domácností."
             if not aid.startswith("report_"):
                 try:
                     from scripts.cz_names import is_known_person as _ikp

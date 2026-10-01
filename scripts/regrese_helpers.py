@@ -911,6 +911,12 @@ def lekce_citace(dotaz: str, tazatel: str) -> str:
     return "cituje" if any("kachn" in x.lower() for x in r) else "necituje"
 
 
+def qd_kontrola_ok(otazka: str, sql: str) -> bool:
+    """HANS_QUERY_DIARY_V1 — projde dotaz deterministickou kontrolou významu?"""
+    from scripts.hans_query_diary import kontrola
+    return kontrola(otazka, sql) == ""
+
+
 # ── HANS_PRAVA_V1 (27. 9.) — oprávnění známých osob ──────────────────────────
 def prava(cesta: str, tazatel: str) -> str:
     """Dostane známá osoba data JINÉ známé osoby? Vrátí 'smi' / 'odmita'.
@@ -1035,6 +1041,16 @@ def router_early_stop(kratke: str, plne: str) -> str:
     return "%d:%s" % (len(volani), (d or {}).get("action"))
 
 
+def ma_tvrzeni(text: str) -> bool:
+    """HANS_CLAIM_CHECK_V1 — obsahuje úvahová odpověď ověřitelné tvrzení?"""
+    from scripts.hans_findings import claim_names
+    from scripts.config_io import load
+    from scripts.cz_names import _known_person_forms
+    from scripts.hans_persona import persona_name
+    cfg = load()
+    return bool(claim_names(text, {persona_name(cfg)} | set(_known_person_forms(cfg))))
+
+
 def vzhled_predmet(text: str):
     """HANS_ENTITY_IMAGE_CHAT_V1 — co by most hledal jako entitu (jen vzor, bez DB)."""
     from scripts.bridge_commands import _VZHLED_RE
@@ -1042,7 +1058,49 @@ def vzhled_predmet(text: str):
     return (m.group("a") or m.group("b")).strip(" ?!.,") if m else None
 
 
-def qd_kontrola_ok(otazka: str, sql: str) -> bool:
-    """HANS_QUERY_DIARY_V1 — projde dotaz deterministickou kontrolou významu?"""
-    from scripts.hans_query_diary import kontrola
-    return kontrola(otazka, sql) == ""
+# ── HANS_STRANGER_HOUSEHOLD_V1 (30. 9.) ──────────────────────────────────────
+def chod_domacnosti(cmd: str, tazatel: str) -> str:
+    """Pustí čtecí příkaz o domě (/hraje, /seznam, /zdravi) k tazateli?"""
+    from scripts import chat_commands as cc
+    return "odmita" if cc._cizi_nesmi(cmd, "", _tazatel_jmeno(tazatel)) else "pusti"
+
+
+class _H:
+    def __init__(self):
+        self.config = _cfg()
+
+
+def film_vypis(tazatel: str) -> str:
+    """/film bez doplnku (vypis zhlednutych) — 'odmita' / 'vypise'."""
+    from scripts import chat_commands as cc
+    t = cc._cmd_film(_H(), _tazatel_jmeno(tazatel), "")
+    return "odmita" if "jen se svou domácností" in t else "vypise"
+
+
+def rezim_hlidani(tazatel: str) -> str:
+    """/rezim — rekne stav hlidani domu? 'rika' / 'mlci'."""
+    from scripts import chat_commands as cc
+    t = cc._cmd_rezim(_H(), _tazatel_jmeno(tazatel), "")
+    return "rika" if "Hlídací režim" in t else "mlci"
+
+
+def agent_stav_domu(aid: str, tazatel: str) -> str:
+    """Agentni report o dome k tazateli — 'odmita' / 'pusti' (bez LLM)."""
+    from scripts import hans_agent as ha
+    ag = ha.AgentRouter.__new__(ha.AgentRouter)
+    ag.config = _cfg()
+    ag.enabled = True
+    ag.threshold = 0.5
+    ag._actionable = lambda msg: True
+    ag._route = lambda h, n, m: {"action": aid, "confidence": 1.0, "args": {}}
+    ag._uplatni_pravidla = lambda aid_, *a, **k: aid_
+    t = ag.propose(_H(), _tazatel_jmeno(tazatel), "dotaz") or ""
+    return "odmita" if "jen se svou domácností" in t else "pusti"
+
+
+def entita_resolve(text: str) -> str:
+    """HANS_ENTITY_COLLAPSED_KEY_V1 — C1 `EntityStore.resolve` (cesta chatu).
+    Jméno entity, nebo '' když nic."""
+    from scripts.hans_entities import EntityStore
+    e = EntityStore(_cfg()).resolve(text)
+    return (e or {}).get("name") or ""

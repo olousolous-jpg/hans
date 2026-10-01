@@ -265,8 +265,29 @@ _CTENI_BEZ_ARG = {  # příkaz → argumenty, které jsou jen výpis
 _BEZ_SVOLENI = "K tomu ode mne nemáte svolení. Snad mi to prominete."  # HANS_PRAVA_V1
 
 
+# HANS_STRANGER_HOUSEHOLD_V1 (30. 9., pokyn uživatele: „cizí by z chodu
+# domácnosti neměl dostávat informace“) — čtecí příkazy o DOMĚ, ne o Hansovi.
+# Doloženo auditem 30. 9. (26 příkazů pod testovací personou): cizí dostal
+# nákupní seznam, co běží na TV (a nabídku pustit film) a stav techniky
+# v domě (PC, Kodi, restarty, čidla). Hansovo vlastní (četba, studium,
+# dílo, sny, obrazy, zájmy, nápady) zůstává otevřené — rozhodnutí uživatele.
+# Na rozdíl od `_JEN_ZNAMYM` se týká JEN cizího: známý bez práva „akce“
+# seznam dál přečte (mutace seznamu hlídá větev níž jako dosud).
+_CHOD_DOMACNOSTI = frozenset({"hraje", "seznam", "zdravi"})
+
+
 def _cizi_nesmi(cmd_id: str, args, name) -> str:
     """Vrátí odmítnutí pro cizího u mutujícího příkazu, jinak ''."""
+    if cmd_id in _CHOD_DOMACNOSTI:
+        try:
+            from scripts.cz_names import is_known_person as _ikp_d
+            _zn = bool(name) and _ikp_d(name)
+        except Exception:
+            _zn = False
+        if not _zn:
+            _log.info("HANS_STRANGER_HOUSEHOLD_V1: %s od neznámého (%s) odmítnuto",
+                      cmd_id, name)
+            return "O tom mluvím jen se svou domácností."
     if cmd_id in _JEN_ZNAMYM:
         pass
     elif cmd_id == "smer":
@@ -2756,12 +2777,28 @@ def _cmd_studium(handler, name, args) -> str:
     if not ap:
         progs = store.all_programs()
         if progs:
-            last = progs[0]
-            return ("Právě nestuduji, pane. Naposledy: „%s\" (%s, %d/%d). "
-                    "Další program si vyberu z trvalého koníčku. "
-                    "(/studium programy, /studium teď)" % (
-                        last["topic"], last["status"], last["current_index"],
-                        len(last["curriculum"])))
+            # HANS_STUDIUM_LAST_DONE_V1 (30. 9.) — „naposledy“ = naposledy
+            # DOKONČENÝ program, ne nejnovější řádek. Test 30. 9.: hudba
+            # dokončena 7/7 v 08:07, ale „co jsi teď dostudoval?“ dostalo
+            # „Naposledy: dynamické weby (pending, 0/0)“ — čekající na řadě.
+            hotove = [p for p in progs if p.get("status") == "completed"]
+            cekaji = [p for p in progs if p.get("status") == "pending"]
+            if hotove:
+                last = max(hotove, key=lambda p: (p.get("updated_ts") or 0, p["id"]))
+                veta = ("Právě nestuduji, pane. Naposledy jsem dokončil „%s\" "
+                        "(%d/%d)." % (last["topic"], len(last["curriculum"]),
+                                      len(last["curriculum"])))
+            else:
+                last = progs[0]
+                veta = ("Právě nestuduji, pane. Naposledy: „%s\" (%s, %d/%d)."
+                        % (last["topic"], last["status"], last["current_index"],
+                           len(last["curriculum"])))
+            if cekaji:
+                dalsi = min(cekaji, key=lambda p: p["id"])
+                veta += " Další na řadě: „%s\"." % dalsi["topic"]
+            else:
+                veta += " Další program si vyberu z trvalého koníčku."
+            return veta + " (/studium programy, /studium teď)"
         return ("Zatím jsem nezačal studijní program, pane — vyberu si trvalý "
                 "koníček a sestavím kurikulum. (/studium teď to spustí ručně)")
 
@@ -3030,10 +3067,34 @@ def _cmd_dilo(handler, name, args) -> str:
             except Exception:
                 _znamy = False      # fail-safe: radeji cestu neuvadet
             _kde = "Najdete ho v data/works/. " if _znamy else ""
-            return ("Právě nepíšu, pane. Naposledy: „%s\" (%s). %s"
+            # HANS_DILO_STUDY_WORK_V1 (30. 9.) — /dilo znal jen ESEJE
+            # (AuthorshipStore). Dilo ze studia (`work_artifact`: webove
+            # stranky, skladba) v nem chybelo, takze na „skladas hudbu k tomu
+            # projektu?" Hans hlasil jen posledni esej, zatimco ve volnem
+            # hovoru o webu vedel. Protahuje se hotovy popis
+            # `hans_recall._popis_dila` (HANS_SELF_STATE_WORKS_V1), bez cesty.
+            _studium = ""
+            try:
+                import sqlite3 as _sq
+                from scripts.hans_recall import _popis_dila, _cz_when
+                _c = _sq.connect("file:%s?mode=ro" % db, uri=True)
+                try:
+                    _r = _c.execute(
+                        "SELECT ts, data FROM diary WHERE event_type='work_artifact' "
+                        "ORDER BY ts DESC LIMIT 1").fetchone()
+                finally:
+                    _c.close()
+                if _r and _popis_dila(_r[1] or ""):
+                    _studium = ("Poslední dílo ze studia jsem dokončil %s: %s. "
+                                % (_cz_when(_r[0]), _popis_dila(_r[1] or "")))
+            except Exception as _e:
+                _log.debug("%s: %s", "HANS_DILO_STUDY_WORK_V1", _e)
+            _stav = {"completed": "dokončeno", "active": "rozepsáno",
+                     "abandoned": "odloženo"}.get(last["status"], last["status"])
+            return ("Právě nepíšu, pane. Poslední esej: „%s\" (%s). %s%s"
                     "Další dílo si vyberu z trvalého koníčku. "
                     "(/dilo vše, /dilo teď)"
-                    % (last["title"], last["status"], _kde))
+                    % (last["title"], _stav, _studium, _kde))
         return ("Zatím jsem nezačal psát, pane — vyberu si trvalý koníček a "
                 "navrhnu dílo. (/dilo teď to spustí ručně)")
 
@@ -4258,6 +4319,13 @@ def _cmd_rezim(handler, name, args) -> str:
         out.append("Ne, pane, nespím — jsem vzhůru a v běžném provozu."
                    if not _sleeping else
                    "Ano, pane, jsem v nočním režimu (spánek).")
+    # HANS_STRANGER_HOUSEHOLD_V1 — cizímu neříkat, zda je dům hlídaný.
+    try:
+        from scripts.cz_names import is_known_person as _ikp_r
+        if not (bool(name) and _ikp_r(name)):
+            _guard = None
+    except Exception:
+        _guard = None
     if _guard is not None:
         out.append("Hlídací režim mám %s." % ("zapnutý" if _guard else "vypnutý"))
     return " ".join(out)
@@ -4540,6 +4608,12 @@ def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
             _log.info("HANS_FILM_OPINION_ANSWER_V1: dotaz na oblibu \u2192 "
                       "odpovidam z vlastnich nazoru, ne vypisem")
             return _ob
+    # HANS_STRANGER_HOUSEHOLD_V1 — co se doma sledovalo (výpis i počet) je
+    # chod domácnosti. Názor na filmy a doporučení výš zůstávají otevřené.
+    if not _znamy:
+        _log.info("HANS_STRANGER_HOUSEHOLD_V1: výpis filmů od neznámého (%s) "
+                  "odmítnut", name)
+        return "O tom mluvím jen se svou domácností."
     # HANS_COUNT_FILMS_BOOKS_V1 — „kolik“ chce POCET, ne vypis.
     if _KOLIK_RE.search(str(args or "")):
         _p = _pocet_filmu(handler)

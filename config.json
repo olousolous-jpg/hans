@@ -505,9 +505,9 @@
         "_wake_note": "WAKE_WORD_OWW_V1: hands-free aktivace přes openWakeWord (lokálně). wake_model = název .onnx v openwakeword resources nebo cesta k vlastnímu modelu. HEJ_HANSI_V1 (28. 9.): vlastní české „hej Hansi“ (trénink na PC, HEJ_HANSI_27_09), hey_jarvis odstraněn na pokyn uživatele. Model je v data/models (gitignored, zdroj ~/hans_wake/training/output na PC). Práh 0,5: zásahy mají skóre 0,97–1,00, zbytek ~0,001 → práh skoro nerozhoduje. Trenér (syntetika): recall 0,82, 3,7 falešných/h. wake_words výše jsou OBSOLETNÍ. 28. 9. 20:40 → cs_hej_hansi_z (dotrénováno i na „hej Hanzi“ — v běžné řeči zní S jako Z; „Hanzi“ vyřazeno z negativ). Trenér: recall 0,77, 1,6 falešných/h (dřív 0,82 / 3,7 na snazší sadě). Nahrávky uživatele: 4 z 90s (dřív 3), 0 falešných na 60 s šumu + 31 nahrávkách.",
         "transcript_popup": true,
         "save_audio": {
-            "enabled": true,
+            "enabled": false,
             "dir": "data/mereni/hlas",
-            "_note": "HANS_VOICE_SAVE_V1 (27. 9., rozhodnutí uživatele): ukládá KAŽDOU výpověď po oslovení (wake word/gesto) jako WAV + zaznamy.jsonl (přepis, stt_s) kvůli měření přesnosti a rychlosti přepisu řeči. Jen to, co šlo do STT, nikdy zvuk místnosti. data/mereni záloha nebere. Po vyhodnocení SMAZAT a vypnout."
+            "_note": "HANS_VOICE_SAVE_V1 (27. 9.): ukládal výpovědi po oslovení kvůli měření přepisu. VYPNUTO 29. 9. po vyhodnocení (STT_TEST_29_09), nahrávky smazány na pokyn uživatele; s novým mikrofonem se bude sbírat znovu."
         },
         "remember": true,
         "_remember_note": "HANS_VOICE_NO_MEMORY_V1 (28. 9.) → 29. 9. ZAPNUTO po nasazení whisper.cpp turbo (HANS_STT_TURBO_V1, 11–12 % chyb). Výpověď přepsaná jen zálohou (base, herní mód/výpadek PC) do paměti nejde dál.",
@@ -1001,7 +1001,12 @@
         "reasoning_max_chars": 600,
         "voice_model": "hans-czech:latest",
         "voice_temperature": 0.7,
-        "voice_num_predict": 280
+        "voice_num_predict": 280,
+        "study_anchor_p": 0.5,
+        "seed_sim_min": 0.4,
+        "seed_sim_max": 0.7,
+        "seed_neighbor_pool": 8,
+        "_seed_band_note": "HANS_SYNTHESIS_SEED_BAND_V1 (28. 9.): kotva ze studia/knihy s pravděpodobností study_anchor_p, soused náhodně z seed_neighbor_pool nejbližších v pásmu podobnosti [seed_sim_min, seed_sim_max], páry nad stropem a blízké tituly (HANS_SYNTHESIS_SEED_TITLE_V1) vyřazeny. Strop 0,70: tentýž film česky × anglicky měl 0,707. Simulace 300 výběrů: duplikáty 3 % → 0, se studiem/knihou 8 % → 53 %. Backlog SYNTEZY_KVALITA_28_09."
     },
     "dashboard_proposal": {
         "_note": "HANS_DASHBOARD_PROPOSAL_V1 (Tier 1) — po dostudování Designu Hans JEDNORÁZOVĚ navrhne vlastní nástěnku: designová kritika+návrh (hans-czech, grounding = CSS fakta z index.html + jeho studijní poznámky) + SDXL mockup do galerie (source='dashboard'). Chat /dashboard [teď]. Tier 2 (reálný CSS diff se schválením + coder tier) = later.",
@@ -1695,6 +1700,10 @@
         },
         "_note": "HANS_HEAVY_QUEUE_V1 (28. 9.): fronta náročných úloh (úprava fotky, malba na požádání) — jedna naráz, spouští se jen při volném PC (ComfyUI, ne hra, ne ~/.hans_nevypinat, volná RAM min_free_gb podle druhu). Dlužné obrazy HANS_ART_RETRY_V1 sdílí zámek i kontrolu."
     },
+    "ollama_resident": {
+        "keep_alive_fix": true,
+        "_note": "HANS_OLLAMA_RESIDENT_CTX_V1 (29. 9.): num_ctx u rezidentniho modelu se sjednocuje vzdy; keep_alive=-1 s keep_alive_fix=true. ZAPNUTO 29. 9. ~16:30 po LLAMA_ARG_CACHE_RAM=2048 v override.conf Ollamy na PC (bez nej prompt cache 8 GB zasekavala Ollamu)."
+    },
     "zalohy_hlidac": {
         "enabled": true,
         "pi_nas_dir": "/mnt/nas-hans/Hans_backups",
@@ -1702,9 +1711,5 @@
         "pc_ok_file": "/mnt/nas-hans/hans_pc_restic/POSLEDNI_OK",
         "pc_max_dni": 10,
         "_note": "HANS_BACKUP_WATCH_V1: hlídač stáří záloh (hans_zalohy.py), hlásí na Matrix jednou denně po 22:30."
-    },
-    "ollama_resident": {
-        "keep_alive_fix": true,
-        "_note": "HANS_OLLAMA_RESIDENT_CTX_V1 (29. 9.): num_ctx u rezidentniho modelu se sjednocuje vzdy; keep_alive=-1 s keep_alive_fix=true. ZAPNUTO 29. 9. ~16:30 po LLAMA_ARG_CACHE_RAM=2048 v override.conf Ollamy na PC (bez nej prompt cache 8 GB zasekavala Ollamu)."
     }
 }

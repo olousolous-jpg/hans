@@ -134,6 +134,23 @@ def _embed_texts(config: dict, texts: List[str]) -> Optional[list]:
         return None
 
 
+def _title_tokens(s: str) -> set:
+    """Významná slova titulu bez závorek a prefixu „Studium: X —“."""
+    s = re.sub(r"\([^)]*\)", " ", s or "")
+    return {w for w in re.findall(r"\w+", s.lower()) if len(w) > 2}
+
+
+def _titles_close(a: str, b: str) -> bool:
+    """HANS_SYNTHESIS_SEED_TITLE_V1 (28. 9.) — tentýž titul jinak zapsaný
+    („X (film, 1977)“ × „X“, „Cognitive Psychology and A“ × „… and B“):
+    embedding je nerozliší, protože texty článků se liší. Shoda ≥ 50 %
+    slov kratšího titulu = blízké."""
+    ta, tb = _title_tokens(a), _title_tokens(b)
+    if not ta or not tb:
+        return False
+    return len(ta & tb) / min(len(ta), len(tb)) >= 0.5
+
+
 def _select_related(config: dict, cands: List[dict], n: int) -> Optional[List[dict]]:
     """Vyber n semínek, která spolu aspoň volně souvisí: náhodná kotva (pestrost
     napříč nocemi) + jejího n-1 nejpodobnějších sousedů (bge-m3 kosinus).
@@ -150,11 +167,47 @@ def _select_related(config: dict, cands: List[dict], n: int) -> Optional[List[di
         norms = np.linalg.norm(M, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         M = M / norms
-        anchor = random.randrange(len(cands))
+        # HANS_SYNTHESIS_SEED_BAND_V1 (28. 9.) — tři změny proti „kotva +
+        # NEJBLIŽŠÍ sousedé“. Ruční třídění 32 syntéz: hodnotu má 11, zásobník
+        # je z ~92 % četba (hlavně filmové články) a nejbližší soused bývá
+        # tentýž titul (film česky × anglicky, pořad × seznam jeho dílů).
+        # (1) kotva ze studia/knihy s pravděpodobností `study_anchor_p` —
+        #     simulace: trojic se studiem 8 % → 100 % při p=1, proto jen část nocí;
+        # (2) soused jen v pásmu [sim_min, sim_max] a každý pár ≤ sim_max
+        #     (duplikáty 3 % → 0 %);
+        # (3) soused NÁHODNĚ z `neighbor_pool` nejbližších v pásmu — jinak
+        #     tatáž kotva dá vždy tutéž trojici (studijních kotev je jen ~6).
+        # Nenajde-li se dost sousedů v pásmu → dosavadní nejbližší sousedé.
+        sim_min = float(c.get("seed_sim_min", 0.40))
+        sim_max = float(c.get("seed_sim_max", 0.70))
+        pool_n = max(1, int(c.get("seed_neighbor_pool", 8)))
+        p_study = float(c.get("study_anchor_p", 0.5))
+        study = [i for i, s in enumerate(cands)
+                 if s.get("et") and s.get("et") != "reading_takeaway"]
+        if study and random.random() < p_study:
+            anchor = random.choice(study)
+        else:
+            anchor = random.randrange(len(cands))
         sims = M @ M[anchor]                      # kosinus (znormováno)
         order = sorted((i for i in range(len(cands)) if i != anchor),
                        key=lambda i: -float(sims[i]))
-        idxs = [anchor] + order[:max(0, n - 1)]
+        idxs = [anchor]
+        pasmo = [i for i in order if sim_min <= float(sims[i]) <= sim_max]
+        while len(idxs) < n:
+            ok = [i for i in pasmo if i not in idxs
+                  and all(float(M[i] @ M[j]) <= sim_max for j in idxs)
+                  and not any(_titles_close(cands[i]["topic"], cands[j]["topic"])
+                              for j in idxs)][:pool_n]
+            if not ok:
+                break
+            idxs.append(random.choice(ok))
+        if len(idxs) < n:
+            _log.info("synthesis: pásmo podobnosti nestačilo (%d/%d) → nejbližší",
+                      len(idxs), n)
+            idxs = [anchor] + order[:max(0, n - 1)]
+        _log.info("synthesis: semínka %s (kotva %s)",
+                  " × ".join(cands[i]["topic"][:60] for i in idxs),
+                  cands[anchor].get("et") or "?")
         return [cands[i] for i in idxs]
     except Exception as e:
         _log.info("_select_related selhal (fallback na random): %s", e)
@@ -220,7 +273,8 @@ class IdeaStore:
                 _log.debug("_gather_seeds: přeskočeno zkomolené téma %r", topic_label)
                 continue
             by_topic[key] = {"topic": topic_label,
-                             "text": content[:max_seed_chars]}
+                             "text": content[:max_seed_chars],
+                             "et": etype}  # HANS_SYNTHESIS_SEED_BAND_V1
         cands = list(by_topic.values())
         if len(cands) < min_topics:
             return []
@@ -374,8 +428,9 @@ class IdeaStore:
                     title=f"Vlastní postřeh: {topics}", text=insight,
                     metadata={"kdy": time.strftime("%Y-%m-%d"),
                               "typ": "nápad"})
-            except Exception:
-                pass
+            except Exception as _tiche:
+                from scripts.logger import tichy_zapis as _tz  # HANS_SILENT_WRITE_LOG_V1
+                _tz('hans_ideas:generate_idea', _tiche)
         _log.info("synthesis: nový postřeh (%s): %s", topics, insight[:80])
         return {"result": "created", "topics": topics, "insight": insight}
 

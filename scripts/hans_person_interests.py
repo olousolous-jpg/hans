@@ -414,6 +414,60 @@ _EXTRACT_SYSTEM = (
 )
 
 
+# HANS_PERSON_INTEREST_OWN_WORDS_V1 (30. 9.) — zájem OSOBY jen z jejích vlastních
+# slov. Audit 30. 9.: z 226 dokladů u 24 aktivních zájmů bylo 88 Hansových vět
+# („V průběhu Vaší nepřítomnosti jsem studoval historii“, „V pátek jsem Vám
+# doporučil pečenou kachnu“) a zápor se počítal jako zájem („nejsem odborník
+# na design“ → design). Prompt „ignoruj Hanse“ nestačil — model viděl oba
+# hlasy. Teď dostane JEN řádky osoby a každý doklad se ověří kódem.
+_ZAPOR = re.compile(r"\b(nejsem|nevenuj\w*|nezajima\w*|nebavi\w*|nemam rad\w?|"
+                    r"nechci|nesleduj\w*|nectu)\b")
+
+
+def _fold(s: str) -> str:
+    import unicodedata as _ud
+    s = "".join(c for c in _ud.normalize("NFD", (s or "").lower())
+                if _ud.category(c) != "Mn")
+    return _WS.sub(" ", s).strip()
+
+
+def _jen_osoba(note: str, persona: str, person: str = "") -> list:
+    """Řádky OSOBY z přepisu human_chat („osoba: …“ / „Hans: …“); pokračovací
+    řádky patří k poslednímu mluvčímu. Mluvčí se pozná JEN podle jména osoby
+    nebo persony — Hansova odpověď sama obsahuje dvojtečky („Zítra (15.09.): …“)."""
+    pn = _fold(persona or "Hans")
+    po = _fold(person)
+    out, mluvi_osoba = [], False
+    for ln in str(note or "").splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        m = re.match(r"^([^:\n]{1,25}):\s*(.*)$", s)
+        kdo = _fold(m.group(1)) if m else ""
+        if m and kdo == pn:
+            mluvi_osoba = False
+        elif m and (kdo == po or (not po and kdo != pn)):
+            mluvi_osoba = True
+            if m.group(2).strip():
+                out.append(m.group(2).strip())
+        elif mluvi_osoba:
+            out.append(s)
+    return out
+
+
+def _doklad_od_osoby(example: str, radky_fold: list) -> bool:
+    k = _fold(example)
+    if len(k) < 3 or _ZAPOR.search(k):
+        return False
+    kt = set(w for w in re.findall(r"\w+", k) if len(w) > 2)
+    for l in radky_fold:
+        if k[:40] in l:
+            return True
+        if len(kt) >= 3 and len(kt & set(re.findall(r"\w+", l))) / len(kt) >= 0.7:
+            return True
+    return False
+
+
 def _parse_list(raw: str):
     s = re.sub(r"^```(?:json)?|```$", "", (raw or "").strip(), flags=re.MULTILINE).strip()
     i, j = s.find("["), s.rfind("]")
@@ -468,8 +522,20 @@ def extract_person_interests(config: dict, diary_db_path: str,
         if known:
             known_block = ("UŽ ZNÁMÉ ZÁJMY (při shodě použij přesný název):\n"
                            + "\n".join(f"- {k.interest}" for k in known) + "\n\n")
-        transcript = "\n---\n".join(notes[-20:])
-        prompt = f"{known_block}PŘEPIS ROZHOVORŮ:\n{transcript}"
+        # HANS_PERSON_INTEREST_OWN_WORDS_V1 — jen věty osoby
+        try:
+            from scripts.hans_persona import persona_name as _pn2
+            _persona = _pn2(config)
+        except Exception:
+            _persona = "Hans"
+        _bloky = ["\n".join(_jen_osoba(n, _persona, person)) for n in notes[-20:]]
+        _bloky = [b for b in _bloky if b.strip()]
+        if not _bloky:
+            continue
+        _radky_fold = [_fold(l) for b in _bloky for l in b.splitlines()]
+        transcript = "\n---\n".join(_bloky)
+        prompt = (f"{known_block}VĚTY OSOBY (jen to, co řekla ona; repliky "
+                  f"postavy jsou vynechané):\n{transcript}")
         try:
             # PERSON_INTERESTS_NUM_CTX_V1 (17. 9.) — bez num_ctx platilo
             # vychozich 2048 tokenu. `transcript` je join(notes[-20:]) BEZ
@@ -496,6 +562,14 @@ def extract_person_interests(config: dict, diary_db_path: str,
                 continue
             ex = it.get("examples")
             ex = ex if isinstance(ex, list) else ([ex] if ex else [])
+            # HANS_PERSON_INTEREST_OWN_WORDS_V1 — doklad musí být ve větách
+            # osoby a nesmí to být zápor; zájem bez dokladu se neukládá.
+            ex = [e for e in ex if isinstance(e, str)
+                  and _doklad_od_osoby(e, _radky_fold)]
+            if not ex:
+                _log.info("extract_person_interests: '%s' bez dokladu ve větách "
+                          "osoby → neukládám", interest)
+                continue
             if store.add_or_reinforce(person, interest, ex):
                 written += 1
     _log.info("extract_person_interests: zpracováno %d zájmů (osob: %d)",
