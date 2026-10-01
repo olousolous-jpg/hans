@@ -158,6 +158,7 @@ class ConversationStore:
         msgs = self._sbal_monolog(msgs)   # HANS_CONV_GREETING_ECHO_V1
         msgs = self._orez_pozdravy(msgs)  # HANS_CONV_GREETING_DIALOG_V1
         msgs = self._orez_pane(name, msgs)  # HANS_CONV_PANE_ECHO_V1
+        msgs = self._orez_odmitnuti(msgs)   # HANS_CONV_REFUSAL_ECHO_V1
         return [{"role": m["role"],
                  "content": (dedup_address_g4d(m["content"], name, self.config)
                              if m["role"] == "assistant" else m["content"])}
@@ -214,6 +215,36 @@ class ConversationStore:
         r"(?:(?<=^)|(?<=,))(\s*)pane\b"
         r"(?=\s*(?:[.,;:!?\u2026()\u201c\u00bb]|[\u2014\u2013-]|$))",
         _re_g4d.IGNORECASE | _re_g4d.MULTILINE)
+
+    # HANS_CONV_REFUSAL_ECHO_V1 (1. 10.) — kratke odmitnuti z historie ven.
+    _ODMITNUTI_RE = _re_g4d.compile(
+        r"(jen (se )?svou dom\u00e1cnost\u00ed|jen lidem, kter\u00e9 zn\u00e1m|"
+        r"jen s t\u011bmi, koho zn\u00e1m|nem\u00e1m spolehliv\u00fd z\u00e1znam|"
+        r"zeptejte u n\u00ed|pat\u0159\u00ed jin\u00e9 osob\u011b)", _re_g4d.I)
+
+    @classmethod
+    def _orez_odmitnuti(cls, msgs: list) -> list:
+        """HANS_CONV_REFUSAL_ECHO_V1 (1. 10.) — kratke Hansovo ODMITNUTI (soukromi
+        domacnosti, A1 „nemam spolehlivy zaznam“) i s otazkou pred nim vynech.
+
+        PROC: historie je few-shot (HANS_CONV_GREETING_ECHO_V1). Po opravnenem
+        odmitnuti model odmital i otazky NA SEBE („jak se citite?“, „vadi vam,
+        ze jste AI?“) opsanou formuli „odpovidam jen lidem, ktere znam“ — bez
+        jakehokoli guardu v logu. /tazatel 30. 9. 2×, 1. 10. 2×.
+        Zmereno 1. 10. na ulozenych konverzacich: domacnost 0 zasahu, cizi
+        a testovaci osoby 3–9 replik.
+        Posledni replika zustava (clovek muze reagovat „proc?“) — tyz kontrakt
+        jako `_orez_pozdravy`. ⚠️ Meni JEN pohled do promptu, v ulozisti vse."""
+        out = []
+        for i, m in enumerate(msgs or []):
+            if (m.get("role") == "assistant" and i < len(msgs) - 1
+                    and len(m.get("content") or "") <= 300
+                    and cls._ODMITNUTI_RE.search(m.get("content") or "")):
+                if out and out[-1].get("role") == "user":
+                    out.pop()
+                continue
+            out.append(m)
+        return out
 
     def _orez_pane(self, name, msgs):
         """HANS_CONV_PANE_ECHO_V1 (13. 9.) — u STARSICH Hansovych replik

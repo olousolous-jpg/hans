@@ -2650,6 +2650,15 @@ class OpenWebUIDirectHandler:
         # PERSONA_REFACTOR_1_4 — jednotný zdroj identity
         from scripts.hans_persona import persona_core
         ctx.system_base = persona_core(self.config)
+        # HANS_PERSONA_NATURE_V1 (1. 10., pokyn uživatele) — na „co jste?“ ať
+        # řekne, že je umělá inteligence, a popíše se Severčiným jádrem. Bez
+        # téhle věty si model doplňoval generické „jako AI nemám smysly“ —
+        # nepravda (kamera, mikrofon). JEN chat: persona_core čte 30 míst
+        # (reflexe, Koláč), vývoj osobnosti se tím měnit nemá.
+        _nat = ((self.config.get("persona", {}) or {}).get("nature_chat") or "").strip()
+        if _nat:
+            from scripts.hans_persona import apply_name as _an
+            ctx.system_base += " " + _an(_nat, self.config)
         # Known persons
         ctx.known = self.config.get("known_persons", {})
         # HANS_PROMPT_HOUSEHOLD_PRIVACY_V1 (8. 9.) — CIZI tazatel nedostane
@@ -2935,6 +2944,15 @@ class OpenWebUIDirectHandler:
                 if _sc:
                     ctx.study_ctx = ("\n\nMé soukromé studium (zmiň jen když to "
                                  "přirozeně zapadne, nevnucuj): " + _sc)
+                # HANS_SELF_STATE_LASTING_V1 (1. 10.) — stav děl a fronta studia
+                # i mimo blok self_state: „kdy bys chtěl mít stránku hotovou?“
+                # šlo volným hovorem a model slíbil „do 31. října“ hotové dílo.
+                from scripts.hans_recall import lasting_facts
+                _tr = lasting_facts(_dbp2)
+                if _tr:
+                    ctx.study_ctx += ("\n\nCo jsem vytvořil a co studuji (o stavu "
+                                      "svých děl a studia mluv JEN podle tohohle): "
+                                      + "; ".join(_tr) + ".")
             except Exception:
                 ctx.study_ctx = ""
 

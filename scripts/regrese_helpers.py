@@ -1104,3 +1104,11 @@ def entita_resolve(text: str) -> str:
     from scripts.hans_entities import EntityStore
     e = EntityStore(_cfg()).resolve(text)
     return (e or {}).get("name") or ""
+
+
+def odmitnuti_v_historii(repliky: list) -> int:
+    """HANS_CONV_REFUSAL_ECHO_V1 — kolik zprav zbyde po vyrazeni odmitnuti.
+    `repliky` = [[role, text], ...]."""
+    from scripts.conversation_store import ConversationStore
+    return len(ConversationStore._orez_odmitnuti(
+        [{"role": r, "content": c} for r, c in repliky]))

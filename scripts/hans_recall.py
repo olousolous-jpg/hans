@@ -3349,6 +3349,80 @@ def _popis_dila(data_json: str) -> str:
         tema, (" (" + ", ".join(bits) + ")") if bits else "")
 
 
+def _prvni_veta(text: str, max_chars: int = 110) -> str:
+    s = re.sub(r"\s+", " ", text or "").strip()
+    m = re.match(r"(.+?[.!?])(\s|$)", s)
+    s = m.group(1) if m else s
+    return s if len(s) <= max_chars else s[:max_chars].rsplit(" ", 1)[0] + "…"
+
+
+def _self_state_trvale(conn) -> list:
+    """HANS_SELF_STATE_LASTING_V1 (1. 10.) — co Hans VYTVOŘIL a co STUDUJE,
+    bez ohledu na dnešek. Blok self_state nesl jen dnešní záznamy, takže web
+    hotový 29. 9. v něm o den později chyběl a model na „je ta stránka
+    hotová?“ odpověděl v jednom rozhovoru „v rané fázi“, „hotová“
+    i „rozpracovaná“ a cizímu „teprve ji chystám“; další studium si vymýšlel
+    („Jára Cimrman“), ačkoli fronta programů je v DB (/tazatel 1. 10., 9×)."""
+    out = []
+    try:
+        r = conn.execute("SELECT ts, data FROM diary WHERE event_type='work_artifact' "
+                         "ORDER BY ts DESC LIMIT 1").fetchone()
+        if r and _popis_dila(r["data"] or ""):
+            import datetime as _dtm
+            _d = _dtm.datetime.fromtimestamp(r["ts"])
+            out.append("moje poslední dílo ze studia: %s (dokončil jsem ho %d. %d.)"
+                       % (_popis_dila(r["data"] or ""), _d.day, _d.month))
+    except Exception as e:
+        _log.debug("self_state trvale (dilo): %s", e)
+    try:
+        import json as _json
+        rows = conn.execute("SELECT title, kind, status, current_index, outline "
+                            "FROM writing_project ORDER BY id DESC").fetchall()
+        akt = [x for x in rows if x["status"] == "active"]
+        hot = [x for x in rows if x["status"] == "completed"]
+        if akt:
+            n = len(_json.loads(akt[0]["outline"] or "[]"))
+            out.append("rozepsané dílo: %s „%s“ (píšu sekci %d z %d)"
+                       % (akt[0]["kind"] or "esej", akt[0]["title"],
+                          min((akt[0]["current_index"] or 0) + 1, n or 1), n))
+        if hot:
+            out.append("dokončená psaná díla: %d, poslední %s „%s“"
+                       % (len(hot), hot[0]["kind"] or "esej", hot[0]["title"]))
+    except Exception as e:
+        _log.debug("self_state trvale (psani): %s", e)
+    try:
+        import json as _json
+        akt = conn.execute("SELECT topic, current_index, curriculum FROM study_program "
+                           "WHERE status='active' ORDER BY id ASC").fetchall()
+        cek = conn.execute("SELECT topic FROM study_program WHERE status='pending' "
+                           "ORDER BY id ASC").fetchall()
+        if akt:
+            n = len(_json.loads(akt[0]["curriculum"] or "[]"))
+            out.append("teď studuji: „%s“ (podtéma %d z %d)"
+                       % (akt[0]["topic"], min((akt[0]["current_index"] or 0) + 1, n or 1), n))
+        dalsi = [x["topic"] for x in list(akt[1:]) + list(cek)]
+        if dalsi:
+            out.append("další studium v pořadí: " + ", ".join("„%s“" % d for d in dalsi[:3]))
+    except Exception as e:
+        _log.debug("self_state trvale (studium): %s", e)
+    return out
+
+
+def lasting_facts(db_path: str) -> list:
+    """HANS_SELF_STATE_LASTING_V1 — trvalé řádky pro chatový prompt (díla, studium)."""
+    conn = None
+    try:
+        conn = _ro(db_path)
+        conn.row_factory = sqlite3.Row
+        return _self_state_trvale(conn)
+    except Exception as e:
+        _log.debug("lasting_facts: %s", e)
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def self_state_facts(db_path: str, max_items: int = 6,
                      mood: str = "", mood_reason: str = "",
                      runtime: dict = None) -> str:
@@ -3392,14 +3466,26 @@ def self_state_facts(db_path: str, max_items: int = 6,
                 t = (r["title"] or "").strip()
                 if etype == "work_artifact":
                     t = _popis_dila(r["data"]) or t
+                # HANS_SELF_STATE_IDEA_TEXT_V1 (1. 10.) — titulek nápadu jsou
+                # semínka „A × B × C“; z „Hrabě Monte Christo (film) × …“ model
+                # cizímu řekl „momentálně přehrávám Hraběte Monte Christo“.
+                # Titulek sebekritiky je jen jméno persony („uvědomil jsem si
+                # o sobě: Hans“). Obojí → první věta obsahu.
+                elif etype == "synthesis_idea" and (r["data"] or "").strip():
+                    t = "„%s“" % _prvni_veta(r["data"])
+                elif etype == "self_critique" and (r["note"] or "").strip():
+                    t = _prvni_veta(r["note"])
                 if not t:
                     t = ((r["note"] or r["data"] or "").strip().split("\n")[0])[:60]
                 if t:
-                    det.append(t[:200] if etype == "work_artifact" else t[:70])
+                    det.append(t[:200] if etype == "work_artifact" else
+                               t[:120] if etype in ("synthesis_idea", "self_critique")
+                               else t[:70])
             if det:
                 out.append("%s: %s" % (label, "; ".join(det)))
             if len(out) >= max_items:
                 break
+        trvale = _self_state_trvale(conn)            # HANS_SELF_STATE_LASTING_V1
     except Exception as e:
         _log.debug("self_state_facts: %s", e)
         return ""
@@ -3453,7 +3539,7 @@ def self_state_facts(db_path: str, max_items: int = 6,
     if mood:
         head.append("nálada: %s%s" % (
             mood, (" (důvod: %s)" % mood_reason) if mood_reason else ""))
-    if not out and not head:
+    if not out and not head and not trvale:
         return ""
     # Instrukce s TVAREM odpovědi: samotná fakta nestačila — persona je jen
     # olízla a vrátila vatu („Službu plním, a to je pro mne dostatečné").
@@ -3461,6 +3547,9 @@ def self_state_facts(db_path: str, max_items: int = 6,
     return ("FAKTA O MĚ A O MÉM DNEŠKU — čerpej z NICH, nic si nepřidávej "
             "(co tu není, dnes nebylo):\n"
             + ("- " + "\n- ".join(head + out) if (head or out) else "")
+            + (("\nCO JSEM VYTVOŘIL A CO STUDUJI (platí trvale, ne jen dnes — o stavu "
+                "svých děl a studia mluv JEN podle tohohle):\n- " + "\n- ".join(trvale))
+               if trvale else "")
             + "\n\nKdyž se ptá, jak se mám nebo co jsem dělal: odpověz 2–4 větami, "
               "řekni jak se cítím a PROČ, a jmenuj DVĚ KONKRÉTNÍ věci z dneška "
               "(téma studia, název díla, co jsem četl). Žádné obecné fráze "

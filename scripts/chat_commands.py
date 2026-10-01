@@ -3106,6 +3106,24 @@ def _cmd_dilo(handler, name, args) -> str:
     for i, s in enumerate(ap["outline"]):
         mark = "✓" if i < cur else ("→" if i == cur else " ")
         out.append("   %s %s" % (mark, s))
+    # HANS_DILO_STUDY_WORK_V2 (1. 10.) — dílo ze studia i při rozepsané eseji.
+    # V1 ho ukazovala jen ve větvi „právě nepíšu“; od noci 30. 9. se píše esej,
+    # takže /dilo o hotovém webu mlčelo a Hans tvrdil, že je „v rané fázi“.
+    try:
+        import sqlite3 as _sq
+        from scripts.hans_recall import _popis_dila, _cz_when
+        _c = _sq.connect("file:%s?mode=ro" % db, uri=True)
+        try:
+            _r = _c.execute("SELECT ts, data FROM diary WHERE event_type='work_artifact' "
+                            "ORDER BY ts DESC LIMIT 1").fetchone()
+        finally:
+            _c.close()
+        if _r and _popis_dila(_r[1] or ""):
+            out.append("")
+            out.append("Poslední dílo ze studia jsem dokončil %s: %s."
+                       % (_cz_when(_r[0]), _popis_dila(_r[1] or "")))
+    except Exception as _e:
+        _log.debug("%s: %s", "HANS_DILO_STUDY_WORK_V2", _e)
     out.append("")
     out.append("Sessions: %d  |  ručně: /dilo teď" % ap["sessions_done"])
     return NL_RUNTIME.join(out)

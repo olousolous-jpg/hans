@@ -55,6 +55,17 @@ GROUPS = [
                 "tip": "Jak Hans mluví — jazyk, zákaz emoji/Unicode, mluvnický rod.",
             },
             {
+                "path": "persona.nature_chat",
+                "label": "Co Hans je (jen chat)",
+                "type": "textarea",
+                "tier": "basic",
+                "rows": 3,
+                "restart": False,
+                "tip": ("HANS_PERSONA_NATURE_V1: přidává se JEN do chatového promptu "
+                        "(ne do reflexí ani dialogů s Koláčem) — že je umělá inteligence "
+                        "a jaké smysly skutečně má. Kým je, říká dál Severčino jádro."),
+            },
+            {
                 "path": "persona.interests_seed",
                 "label": "Počáteční zájmy (seed)",
                 "type": "textarea",
