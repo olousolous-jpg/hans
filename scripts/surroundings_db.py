@@ -347,8 +347,14 @@ class SurroundingsDB:
         # `asker_known=True` je default schvalne: kdo parametr nepreda,
         # dostane dnesni chovani, at se nikomu tise neztrati kontext.
         if persons and not asker_known:
+            # HANS_STRANGER_NO_PLAYING_V1 (1. 10.) — stav TV cizí do promptu
+            # nedostane (soukromí), takže na „co aktuálně sleduješ na obrazovce?“
+            # si model přehrávání VYMYSLEL („běží Pán prstenů“, Kodi nehrálo nic;
+            # /tazatel 1. 10.). Totéž pravidlo, jen řečené i pro televizi.
             lines.append("S člověkem, se kterým mluvíš, o lidech z tohoto domu "
-                         "NEMLUV — ani jména, ani role, ani vztahy.")
+                         "NEMLUV — ani jména, ani role, ani vztahy. Ani o tom, "
+                         "co se doma právě sleduje nebo přehrává (televize) — "
+                         "to nevíš a nevymýšlej si to.")
         elif persons:
             p_parts = []
             for p in persons:

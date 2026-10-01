@@ -3500,7 +3500,11 @@ def self_state_facts(db_path: str, max_items: int = 6,
             ("vytvořil jsem dílo", "work_artifact"),   # HANS_SELF_STATE_WORKS_V1
             ("napsal jsem esej", "work_created"),
             ("namaloval jsem", "artwork"),
-            ("četl jsem", "web_read"),
+            # HANS_SELF_STATE_ARTICLE_LABEL_V1 (1. 10.) — web_read jsou ČLÁNKY
+            # (Wikipedie); z „četl jsem: Falešná kočička (film, 1926)“ model 3×
+            # udělal přečtenou KNIHU („dočetl jsem Falešnou kočičku“). Knihy
+            # mají vlastní řádek „zapsal jsem si ke knize“.
+            ("četl jsem článek o", "web_read"),
             ("zapsal jsem si ke knize", "book_reflection"),
             ("napadlo mě", "synthesis_idea"),
             ("uvědomil jsem si o sobě", "self_critique"),

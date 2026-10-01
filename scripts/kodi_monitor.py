@@ -7,6 +7,7 @@ Tabulky:
   kodi_sessions  — každé přehrávání (film/seriál/hudba)
   person_events  — příchody a odchody osob
 """
+import re
 import sqlite3
 import threading
 import time
@@ -72,6 +73,33 @@ def videno_text(konec: float, now: float) -> str:
     kdy = "%s %d. %d." % (_dny[d0.weekday()], d0.day, d0.month)
     return "Tenhle film jsme viděli %s (před %d dny)." % (kdy, dni)
 
+
+
+# HANS_KODI_CHANNEL_FILM_V1 (1. 10.) — film z TV kanálu (IPTV): Kodi nedá rok
+# a typ je „channel“, takže zvědavost hledala OBECNĚ podle názvu „X (ST)“ a čtení
+# FILMOVÉ cesty (HANS_FILM_ARTICLE_V1 s kontrolou roku) se míjelo. Rok a „film“
+# přitom stojí v popisu pořadu („Český film (1937)“). Změřeno 1. 10. na 1 574
+# záznamech z kanálů: 5 filmů s „film (rok)“ v popisu, správně přečteno 0
+# (Naomie Harrisová, „Spící panna (román)“, „Falešná kočička (film, 1926)“),
+# s filmovou cestou a rokem 3 správně, 2 nic.
+_KANAL_FILM_RE = re.compile(r"\bfilm\w*\b[^()]{0,40}\((1[89]\d\d|20\d\d)\)", re.IGNORECASE)
+_KANAL_PRIPONA_RE = re.compile(r"\s*(?:\((?:ST|HD|SD|TV|AD|3D)\)|,\s*Kino\s+Art)\s*$",
+                               re.IGNORECASE)
+
+
+def _film_z_kanalu(item: dict):
+    """(název, typ, rok) pro zvědavost. U kanálu s filmem v popisu → movie + rok."""
+    titul = item.get("title") or ""
+    typ = item.get("type", "movie")
+    rok = item.get("year") or None
+    if typ == "channel":
+        popis = (item.get("plot") or item.get("plotoutline") or "")
+        m = _KANAL_FILM_RE.search(popis)
+        if m:
+            typ = "movie"
+            rok = rok or int(m.group(1))
+            titul = _KANAL_PRIPONA_RE.sub("", titul).strip() or titul
+    return titul, typ, rok
 
 class KodiMonitor:
     # T3_ENCOUNTER_TRACKER_V1 — optional callbacks pro EncounterTracker.
@@ -246,10 +274,11 @@ class KodiMonitor:
                 _uid = item.get("uniqueid")
                 _uid = _uid if isinstance(_uid, dict) else {}
                 if _should_fire and item.get("title") and hasattr(self, '_curiosity'):
+                    _ktit, _ktyp, _krok = _film_z_kanalu(item)   # HANS_KODI_CHANNEL_FILM_V1
                     self._curiosity.trigger_kodi(
-                        title      = item["title"],
-                        media_type = item.get("type", "movie"),
-                        year       = item.get("year") or None,   # HANS_FILM_ARTICLE_V1
+                        title      = _ktit,
+                        media_type = _ktyp,
+                        year       = _krok,   # HANS_FILM_ARTICLE_V1
                         imdb       = _uid.get("imdb", ""),     # HANS_FILM_IMDB_V1
                         qid        = _uid.get("wikidata", ""),
                     )

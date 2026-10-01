@@ -744,6 +744,14 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
             kmen = v[:-1] if v[-1:] in "aeiouy" else v
             if len(kmen) >= 3 and f.startswith(kmen) and len(f) - len(kmen) <= 3:
                 return True
+            # HANS_VYNECH_PRIVLASTEK_V1 (1. 10.) — PŘIVLASTŇOVACÍ TVAR
+            # („Hansův“, „Hansových“): za kmenem je víc než 3 znaky, takže
+            # propadl a F1 přepis „počet vašich projektů“ → „Hansových
+            # projektů“ dal kotvu „Hansový projektů“ → Wikipedie „Hans Bethe“
+            # (/tazatel 1. 10.).
+            if (len(kmen) >= 3 and f.startswith(kmen)
+                    and re.fullmatch(r"(?:uv|ov[aeiouy][a-z]{0,3})", f[len(kmen):])):
+                return True
             # HANS_VYNECH_PALATALIZACE_V1 (20. 9.) — ČEŠTINA MĚKČÍ KONCOVKU
             # KMENE. Doloženo z deníku: na „a co vis o Hence?" se jméno
             # z domácnosti NEVYLOUČILO (kmen „henk" × tvar „henc") a Hans
