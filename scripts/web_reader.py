@@ -317,6 +317,10 @@ class WebReader:
             if r.status_code != 200:
                 return None
             data    = r.json()
+            if data.get("type") == "disambiguation":    # HANS_WIKI_NO_DISAMBIG_V1
+                _log.info("HANS_WIKI_NO_DISAMBIG_V1: %s:%r je rozcestník — "
+                          "nepoužiji", lang, title)
+                return None
             extract = data.get("extract", "")
             page_url = data.get("content_urls", {}).get("desktop", {}).get("page", "")
             if not extract or len(extract) < 100:
@@ -634,8 +638,13 @@ class WebReader:
             if lang == "cs":
                 return self.wikipedia_article(query, lang="en", max_chars=max_chars)
             return None
+        self._posledni_rozcestnik = False
         extract = self._wiki_extract(title, lang, intro_only=False)
         if not extract or len(extract) < 120:
+            # HANS_WIKI_NO_DISAMBIG_V1 — český rozcestník = pojem je víceznačný;
+            # en záloha by vybrala náhodný význam („Merkur“ → německý časopis).
+            if getattr(self, "_posledni_rozcestnik", False):
+                return None
             if lang == "cs":
                 return self.wikipedia_article(query, lang="en", max_chars=max_chars)
             return None
@@ -726,8 +735,15 @@ class WebReader:
                       intro_only: bool = False) -> str:
         """prop=extracts plaintext daného názvu. intro_only → jen lead."""
         api = f"https://{lang}.wikipedia.org/w/api.php"
+        # HANS_WIKI_NO_DISAMBIG_V1 (1. 10.) — rozcestník není článek. Doloženo
+        # /tazatel 1. 10.: kotva „Bacha“ (2. pád) → cs článek o J. S. Bachovi
+        # správně zamítnut gatem, en záloha vzala přesný titul „Bacha“ =
+        # rozcestník a cizí tazatel dostal „vietnamskou zeleninu…“. pageprops
+        # jedou v TÉMŽE dotazu (žádný request navíc); rozcestník → "" a volající
+        # se chová jako u nenalezeného článku (cs→en záloha / nic).
         params = {
-            "action": "query", "prop": "extracts", "explaintext": 1,
+            "action": "query", "prop": "extracts|pageprops",
+            "ppprop": "disambiguation", "explaintext": 1,
             "redirects": 1, "titles": page_title, "format": "json",
             "formatversion": 2,
         }
@@ -737,6 +753,11 @@ class WebReader:
             r = self._get(api, params=params, timeout=self._timeout)
             pages = r.json().get("query", {}).get("pages", [])
             if pages and isinstance(pages, list):
+                if "disambiguation" in (pages[0].get("pageprops") or {}):
+                    self._posledni_rozcestnik = True
+                    _log.info("HANS_WIKI_NO_DISAMBIG_V1: %s:%r je rozcestník — "
+                              "nepoužiji", lang, page_title)
+                    return ""
                 return (pages[0].get("extract") or "").strip()
         except Exception as e:
             _log.debug("_wiki_extract error (%s): %s", page_title, e)
