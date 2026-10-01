@@ -3092,6 +3092,13 @@ def _extract_knowledge_topic(text: str) -> Optional[str]:
             or re.fullmatch(r"(?:seri[áa]l\w*|film\w*|kn[ií]\w+|posta?v\w*"
                             r"|typ\w*)", x, flags=re.I)):
         return None
+    # HANS_KNOWLEDGE_TOPIC_LEN_V1 (1. 10.) — téma delší než 6 slov není téma,
+    # ale kus souvětí („třeba jiné díla s obdobnou atmosférou jako ta Falešná
+    # kočička“) → bypass „nemám záznamy o ‚…‘“, ačkoli film Hans ten den četl
+    # (/tazatel 1. 10.). Změřeno na 1 700 větách: skutečná témata 1–4 slova,
+    # 9 a 10 slov jen 2× a obě nesmysl.
+    if x and len(x.split()) > 6:
+        return None
     return x or None
 
 

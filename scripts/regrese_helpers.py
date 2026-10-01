@@ -1112,3 +1112,17 @@ def odmitnuti_v_historii(repliky: list) -> int:
     from scripts.conversation_store import ConversationStore
     return len(ConversationStore._orez_odmitnuti(
         [{"role": r, "content": c} for r, c in repliky]))
+
+
+def stitek_po_strazi(stitek: str, veta: str) -> str:
+    """HANS_ZAJMY_VERB_2ND_V1 — co zbyde ze štítku LLM routeru po _thread_guard."""
+    from scripts import chat_commands as cc
+    from scripts.config_io import load
+    return cc._thread_guard(stitek, veta, load()) or ""
+
+
+def prikaz_z_vety(veta: str) -> str:
+    """HANS_STUDY_ORIGIN_SCOPE_V1 — id příkazu z regexové vrstvy ('' = žádný)."""
+    from scripts.chat_commands import parse_command
+    r = parse_command(veta)
+    return r[0] if r else ""

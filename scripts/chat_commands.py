@@ -2275,6 +2275,18 @@ _DRUHA_OSOBA = re.compile(
     r"\b(?:t[\u011be]|tob[\u011be]|ti|tv[\u016fu]j|tvoje|tvoji|tv[\u00e1a]|tv[\u00e9e]|"
     r"v[\u00e1a]s|v[\u00e1a]m|va[\u0161s]e|va[\u0161s]i|va[\u0161s]eho|v[\u00e1a][\u0161s])\b",
     re.IGNORECASE)
+# HANS_ZAJMY_VERB_2ND_V1 (1. 10.) — 2. osoba bývá jen ve SLOVESE („mas rad
+# klasicke skladatele?“, „mel jsi rad nejakou knihu?“, „zajimas se…?“,
+# „Čtete rád…?“) → _DRUHA_OSOBA (zájmena) ji míjela, router dal /zajmy
+# a Hans odmítl „to patří jiné osobě“ (/tazatel 1. 10. 3×, 30. 9. 1×).
+# Změřeno na 15 skutečných volbách /zajmy z logu (~50 dní): vypadne 7 otázek
+# na Hanse; „co myslis ze ME zajima?“ drží výjimka 1. osoby.
+_DRUHA_OSOBA_SLOVESO = re.compile(
+    r"\b(?:jsi|jste|m[\u00e1a][\u0161s]|m[\u00e1a]te|"
+    r"\w{2,}(?:[\u00e1a][\u0161s]|[\u00edi][\u0161s]|e[\u0161s]|[\u00e1a\u00edie]te))\b",
+    re.IGNORECASE)
+_PRVNI_OSOBA_OBJEKT = re.compile(r"\b(?:m[\u011be]|mne|mi|m[\u016fu]j|moje|moji)\b",
+                                 re.IGNORECASE)
 # HANS_KALENDAR_NOT_ELLIPSIS_V1 (15. 9.) — kratka elipsa po predpovedi pocasi.
 _ELIPSA_KRATKA = re.compile(r"^\s*a\s+(?:\S+\s*){1,3}\??\s*$", re.IGNORECASE)
 _KALENDAR_SLOVO = re.compile(
@@ -2558,8 +2570,13 @@ def _studium_puvod(store, db: str, args: str) -> str:
         if hledane:
             for r in radky:            # shoda na jádrových slovech, ne přesná
                 t = _norm_veta(r["topic"])
-                if hledane in t or t in hledane or any(
-                        w in t for w in hledane.split() if len(w) > 3):
+                # HANS_STUDY_ORIGIN_SCOPE_V1 — po celých slovech (kmen 5 zn.):
+                # podřetězec dával „proc“ ⊂ „proces“ → Norimberský proces.
+                _tt = t.split()
+                if hledane == t or any(
+                        w == x or (len(w) >= 5 and len(x) >= 5 and w[:5] == x[:5])
+                        for w in hledane.split() if len(w) > 3
+                        and w not in _STUDY_ORIGIN for x in _tt):
                     prog = r
                     break
         if prog is None:
@@ -2881,7 +2898,14 @@ register(
         # ⚠️ JEDEN ZDROJ PRAVDY: tentýž vzor, jakým se rozhoduje uvnitř příkazu.
         # Dvě kopie se hned rozešly — psal jsem je zvlášť a slovosled „to SIS
         # VYBRAL" byl opravený jen v jedné, takže dotaz k příkazu vůbec nedošel.
-        _ORIGIN_PAT.pattern,
+        # HANS_STUDY_ORIGIN_SCOPE_V1 (1. 10.) — jen když ZA slovesem výběru
+        # (= v pozici předmětu; lookahead se vyhodnocuje od místa shody) stojí
+        # studium/téma/program nebo „to/tohle/sám“. Na 1 711 větách (korpus, konverzace,
+        # přepisy) sedl holý vzor 2× a OBA mimo studium („proc sis vybral
+        # pravy bacha?“, „…tu konkretni knihu na cteni?“) → Hans odpověděl
+        # o „Norimberském procesu“. Případ z 26. 8. („vybral sis to sám?“) drží „to/sám“.
+        r"(?=.*(?:studi|t[eé]m|program|nau[cč]|\bto\b|tohle|toto|\bs[aá]m\b))(?:"
+        + _ORIGIN_PAT.pattern + r")",
     ],
     handler=_cmd_studium,
     help_text="Studijní program: /studium [programy|teď|přeskoč]",
@@ -6215,7 +6239,9 @@ def _thread_guard(cid: str, msg: str, config: dict, turns=None) -> str:
             _log.info("HANS_ZAJMY_ASKER_ONLY_V1: '%.40s' → /zajmy ZAMÍTNUTO "
                       "(v dotazu nezaznělo nic o zájmech)", msg)
             return ""
-        if (_DRUHA_OSOBA.search(msg or "")
+        if ((_DRUHA_OSOBA.search(msg or "")
+             or (_DRUHA_OSOBA_SLOVESO.search(msg or "")          # HANS_ZAJMY_VERB_2ND_V1
+                 and not _PRVNI_OSOBA_OBJEKT.search(msg or "")))
                 and not _ZAJMY_NA_HANSE.search(msg or "")):
             _log.info("HANS_ZAJMY_ASKER_ONLY_V1: '%.40s' → /zajmy ZAMÍTNUTO "
                       "(ptá se na Hanse, ne na zájmy osoby)", msg)
