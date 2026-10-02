@@ -32,6 +32,7 @@ a vpravo dole setrvačnost při posunu okna.
 ```
 
 Skript udělá tohle:
+0. **Zazálohuje současný vzhled** do `~/liquid-glass-zalohy/` (viz níže).
 1. Doinstaluje balíčky: `base-devel cmake extra-cmake-modules kwin qt6-base kconfig kvantum …`.
 2. Přeloží efekt a nainstaluje ho do `/usr/lib/qt6/plugins/kwin/effects/plugins/`.
 3. Vypne vestavěný efekt *Rozostření* a zapne *Tekuté sklo*.
@@ -44,6 +45,26 @@ Původní hodnoty si uloží do `~/.local/share/liquid-glass/state.env` a
 
 Části jdou spustit i zvlášť: `./install.sh --only effect`, `--only kvantum`,
 `--only panel`.
+
+### Záloha a obnova vzhledu
+
+Před každou instalací se uloží záloha
+`~/liquid-glass-zalohy/zaloha-DATUM-pred-instalaci.tar.gz`. Obsahuje nastavení
+vzhledu: `kwinrc`, `kdeglobals`, `plasmarc`, `plasmashellrc`, rozložení plochy
+a panelů, Kvantum, dekorace Breeze/Klassy, profily Konsole, nastavení GTK a
+uživatelské motivy, barvy a ikony v `~/.local/share`. V souboru
+`LIQUID-GLASS-ZALOHA.txt` uvnitř je zapsáno, jaký motiv byl nastavený.
+
+```bash
+./install.sh --backup                 # zálohovat kdykoli ručně
+./install.sh --list-backups           # vypsat zálohy
+./install.sh --restore                # obnovit z poslední zálohy
+./install.sh --restore ~/liquid-glass-zalohy/zaloha-….tar.gz
+```
+
+Obnova před přepsáním zazálohuje i současný stav (`…-pred-obnovou`), takže se
+dá vrátit. Obnovují se jen soubory ze seznamu vzhledu, nic jiného. Po obnově se
+odhlas a přihlas.
 
 ### Po aktualizaci KWinu
 

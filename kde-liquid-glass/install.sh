@@ -10,6 +10,9 @@
 #   ./install.sh --only effect   jen balíčky + efekt (bez Kvantum a panelu)
 #   ./install.sh --rebuild       po aktualizaci KWinu: znovu přeložit efekt
 #   ./install.sh --uninstall     vrátit vše zpět
+#   ./install.sh --backup        jen zálohovat současný vzhled
+#   ./install.sh --restore [SOUBOR]  obnovit vzhled ze zálohy (bez SOUBORU poslední)
+#   ./install.sh --list-backups  vypsat zálohy
 #   ./install.sh --dark          tmavé sklo a tmavý motiv aplikací
 #   ./install.sh --yes           bez dotazů
 #
@@ -24,6 +27,19 @@ BUILD_DIR="${LG_BUILD_DIR:-$HOME/.cache/liquid-glass-build}"
 BIN_DIR="$HOME/.local/bin"
 KVANTUM_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/Kvantum"
 THEME=LiquidGlass
+BACKUP_DIR="${LG_BACKUP_DIR:-$HOME/liquid-glass-zalohy}"
+RESTORE_FILE=""
+
+# Co patří ke vzhledu plochy (cesty relativně k $HOME). Zálohují se jen ty, které existují.
+BACKUP_PATHS=(
+    .config/kwinrc .config/kdeglobals .config/plasmarc .config/plasmashellrc
+    .config/plasma-org.kde.plasma.desktop-appletsrc .config/kdedefaults
+    .config/breezerc .config/klassyrc .config/ksplashrc .config/kscreenlockerrc
+    .config/kcminputrc .config/Trolltech.conf .config/Kvantum
+    .config/gtk-3.0/settings.ini .config/gtk-4.0/settings.ini .config/xsettingsd
+    .config/konsolerc .local/share/konsole
+    .local/share/plasma .local/share/color-schemes .local/share/aurorae .local/share/icons
+)
 
 DRY=0; YES=0; DARK=0; MODE=install; ONLY=""
 
@@ -54,7 +70,7 @@ ask() {  # ask "Otázka?" -> 0 = ano
     [[ -z "$a" || "$a" =~ ^[aAyY] ]]
 }
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
 while (( $# )); do
     case "$1" in
@@ -63,6 +79,11 @@ while (( $# )); do
         --dark) DARK=1 ;;
         --uninstall) MODE=uninstall ;;
         --rebuild) MODE=rebuild ;;
+        --backup) MODE=backup ;;
+        --list-backups) MODE=list ;;
+        --restore)
+            MODE=restore
+            if [[ -n "${2:-}" && "${2:-}" != --* ]]; then RESTORE_FILE="$2"; shift; fi ;;
         --only) ONLY="${2:-}"; shift ;;
         -h|--help) usage ;;
         *) die "Neznámý přepínač: $1 (viz --help)" ;;
@@ -229,6 +250,96 @@ step_panel() {
     ok "panely: plovoucí, průhledné"
 }
 
+# ── záloha vzhledu ──────────────────────────────────────────────────────────
+step_backup() {  # step_backup [popis]
+    local label="${1:-pred-instalaci}"
+    head_ "Záloha současného vzhledu"
+    local items=() p
+    for p in "${BACKUP_PATHS[@]}"; do
+        [[ -e "$HOME/$p" ]] && items+=("$p")
+    done
+    if (( ${#items[@]} == 0 )); then warn "Není co zálohovat."; return; fi
+    local file
+    file="$BACKUP_DIR/zaloha-$(date +%Y%m%d-%H%M%S)-$label.tar.gz"
+    if (( DRY )); then
+        say "  ${c_dim}[dry-run]${c_0} zálohoval bych do $file:"
+        printf '      %s\n' "${items[@]}"
+        return
+    fi
+    mkdir -p "$BACKUP_DIR"
+    # popis zálohy: co bylo nastavené (pro člověka, při obnově se nepoužívá)
+    local info; info="$(mktemp -d)"
+    {
+        echo "Záloha vzhledu KDE: $(date '+%d. %m. %Y %H:%M')"
+        echo "KWin: $(kwin_wayland --version 2>/dev/null || echo '?')"
+        echo "Globální motiv: $(kread --file kdeglobals --group KDE --key LookAndFeelPackage)"
+        echo "Barvy: $(kread --file kdeglobals --group General --key ColorScheme)"
+        echo "Styl aplikací: $(kread --file kdeglobals --group KDE --key widgetStyle)"
+        echo "Ikony: $(kread --file kdeglobals --group Icons --key Theme)"
+        echo "Motiv Plasmy: $(kread --file plasmarc --group Theme --key name)"
+        echo "Dekorace oken: $(kread --file kwinrc --group org.kde.kdecoration2 --key theme)"
+        echo "Kvantum: $(kread --file "$KVANTUM_DIR/kvantum.kvconfig" --group General --key theme)"
+        echo
+        echo "Obnova: ./install.sh --restore \"$file\""
+    } > "$info/LIQUID-GLASS-ZALOHA.txt"
+    tar -czf "$file" -C "$HOME" "${items[@]}" -C "$info" LIQUID-GLASS-ZALOHA.txt 2>/dev/null \
+        || tar -czf "$file" -C "$HOME" "${items[@]}" -C "$info" LIQUID-GLASS-ZALOHA.txt
+    rm -rf "$info"
+    ok "uloženo: $file ($(du -h "$file" | cut -f1))"
+    say "  ${c_dim}obnova: ./install.sh --restore${c_0}"
+}
+
+list_backups() {
+    head_ "Zálohy v $BACKUP_DIR"
+    local f found=0
+    for f in "$BACKUP_DIR"/zaloha-*.tar.gz; do
+        [[ -e "$f" ]] || continue
+        found=1
+        printf '  %s  (%s)\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+    done
+    (( found )) || say "  žádné"
+}
+
+restore_backup() {
+    local file="$RESTORE_FILE"
+    if [[ -z "$file" ]]; then
+        file="$(ls -1t "$BACKUP_DIR"/zaloha-*.tar.gz 2>/dev/null | grep -v -- '-pred-obnovou' | head -n1 || true)"
+    fi
+    [[ -n "$file" && -f "$file" ]] || die "Záloha nenalezena (viz ./install.sh --list-backups)."
+    head_ "Obnova vzhledu ze zálohy"
+    tar -xzf "$file" -O LIQUID-GLASS-ZALOHA.txt 2>/dev/null | sed -n '1,9p' | sed 's/^/  /' || true
+    ask "Obnovit vzhled z $(basename "$file")? Současné nastavení se předtím taky zazálohuje." \
+        || { warn "zrušeno"; return; }
+    step_backup pred-obnovou
+    # z obnovované zálohy vzít jen cesty ze seznamu (nic mimo vzhled)
+    local members=() m p
+    while IFS= read -r m; do
+        m="${m#./}"; m="${m%/}"
+        for p in "${BACKUP_PATHS[@]}"; do
+            if [[ "$m" == "$p" ]]; then members+=("$m"); break; fi
+        done
+    done < <(tar -tzf "$file")
+    (( ${#members[@]} )) || die "V záloze nejsou žádné soubory vzhledu."
+    # adresáře nahradit celé, aby v nich nezůstalo nic z novějšího vzhledu
+    for m in "${members[@]}"; do
+        [[ -d "$HOME/$m" ]] && run rm -rf "$HOME/${m:?}"
+    done
+    run tar -xzf "$file" -C "$HOME" "${members[@]}"
+    ok "obnoveno: ${#members[@]} položek"
+    if (( ! DRY )); then
+        kwin_dbus /KWin reconfigure >/dev/null
+        if [[ "$(kread --file kwinrc --group Plugins --key liquidglassEnabled)" != "true" ]]; then
+            kwin_dbus /Effects org.kde.kwin.Effects.unloadEffect liquidglass >/dev/null
+            [[ "$(kread --file kwinrc --group Plugins --key blurEnabled)" != "false" ]] \
+                && kwin_dbus /Effects org.kde.kwin.Effects.loadEffect blur >/dev/null
+        fi
+        pgrep -x plasmashell >/dev/null && run systemctl --user restart plasma-plasmashell.service
+    fi
+    say "  Pro úplné projevení (styl aplikací, dekorace oken) se odhlas a přihlas."
+    [[ -f "$MANIFEST" ]] && say "  ${c_dim}Efekt zůstal nainstalovaný, jen je vypnutý; úplně odstranit: ./install.sh --uninstall${c_0}"
+    return 0
+}
+
 # ── odinstalace ─────────────────────────────────────────────────────────────
 restore() {  # restore KEY file group... key
     local key="$1"; shift
@@ -278,9 +389,13 @@ uninstall() {
 (( DRY )) && say "${c_warn}Režim dry-run: nic se neinstaluje ani nemění.${c_0}"
 case "$MODE" in
     uninstall) uninstall ;;
+    backup)    step_backup rucni ;;
+    list)      list_backups ;;
+    restore)   restore_backup ;;
     rebuild)   preflight; step_packages; step_effect ;;
     install)
         preflight
+        step_backup pred-instalaci
         want effect && step_packages
         want effect && step_effect
         want kvantum && step_kvantum
