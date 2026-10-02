@@ -5231,7 +5231,12 @@ class OpenWebUIDirectHandler:
             try:
                 from scripts.film_director_check import zkontroluj_rezii
                 _kodi_r = getattr(getattr(self, "_hans_idle", None), "kodi", None)
-                _r2 = zkontroluj_rezii(ctx.response, kodi=_kodi_r, config=self.config)
+                # HANS_DIRECTOR_SAME_FILM_V1 — podklad a prompt nesou rok verze filmu
+                _kx = "\n".join(str(x) for x in (
+                    getattr(ctx, "_grounding", "") if isinstance(getattr(ctx, "_grounding", ""), str) else "",
+                    getattr(ctx, "system", "") if isinstance(getattr(ctx, "system", ""), str) else ""))
+                _r2 = zkontroluj_rezii(ctx.response, kodi=_kodi_r, config=self.config,
+                                       kontext=_kx)
                 if _r2 != ctx.response:
                     ctx.response = _r2
             except Exception as _fdc:

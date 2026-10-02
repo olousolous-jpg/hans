@@ -2166,8 +2166,11 @@ def artwork_answer(db_path: str, question: str = "", limit: int = 5) -> str:
                 if len(_temata) >= 3:
                     break
             if _temata:
+                # HANS_DILO_TENSE_V1 (2. 10.) — dřív „webovou stránku, kterou
+                # SESTAVÍM, když téma dostuduji“ i o HOTOVÉM díle → tazatel
+                # (B21) to právem četl jako slib a Hans se zamotal.
                 _out = ("Naposledy jsem vytvo\u0159il d\u00edlo k t\u00e9matu \u201e%s\u201c (%s) \u2014 "
-                        "webovou str\u00e1nku, kterou sestav\u00edm, kdy\u017e t\u00e9ma dostuduji."
+                        "webovou str\u00e1nku; takovou stavím v\u017edy, kdy\u017e t\u00e9ma dostuduji."
                         % (_temata[0][1], _cz_when(_temata[0][0])))
                 if len(_temata) > 1:
                     _out += " P\u0159edt\u00edm k t\u00e9mat\u016fm: %s." % ", ".join(
@@ -3405,13 +3408,50 @@ def _self_state_trvale(conn) -> list:
                            "ORDER BY id ASC").fetchall()
         if akt:
             n = len(_json.loads(akt[0]["curriculum"] or "[]"))
-            out.append("teď studuji: „%s“ (podtéma %d z %d)"
-                       % (akt[0]["topic"], min((akt[0]["current_index"] or 0) + 1, n or 1), n))
+            # HANS_SELF_STATE_MORE_V1 — i KDY studium začalo (/tazatel 2. 10.: „od 21. srpna“, správně 17. 9.)
+            _zac = ""
+            try:
+                _st = conn.execute("SELECT started_ts FROM study_program WHERE status='active' "
+                                   "ORDER BY id ASC LIMIT 1").fetchone()
+                if _st and _st[0]:
+                    import datetime as _dtz
+                    _z = _dtz.datetime.fromtimestamp(_st[0])
+                    _zac = ", začal jsem %d. %d." % (_z.day, _z.month)
+            except Exception:
+                pass
+            out.append("teď studuji: „%s“ (podtéma %d z %d%s)"
+                       % (akt[0]["topic"], min((akt[0]["current_index"] or 0) + 1, n or 1), n, _zac))
         dalsi = [x["topic"] for x in list(akt[1:]) + list(cek)]
         if dalsi:
             out.append("další studium v pořadí: " + ", ".join("„%s“" % d for d in dalsi[:3]))
     except Exception as e:
         _log.debug("self_state trvale (studium): %s", e)
+    # HANS_SELF_STATE_MORE_V1 (2. 10.) — poslední obraz a poslední dočtená kniha.
+    # /tazatel 2. 10.: o obraze „Sen“ (1. 10. 23:24, muž na stezce do lesa)
+    # tvrdil „14 h 27 min od pátku“ a popsal zříceninu s notami; jako poslední
+    # dočtenou knihu jmenoval rozečtený dokument místo dočtené knihy.
+    try:
+        import datetime as _dto
+        r = conn.execute("SELECT ts, title, note FROM diary WHERE event_type='artwork' "
+                         "ORDER BY ts DESC LIMIT 1").fetchone()
+        if r and r["title"]:
+            _d = _dto.datetime.fromtimestamp(r["ts"])
+            _co = re.split(r"(?<=[.!?])\s", (r["note"] or "").strip(), 1)[0][:140]
+            out.append("můj poslední obraz: „%s“ (namaloval jsem ho %d. %d. v %s)%s"
+                       % (r["title"], _d.day, _d.month, _d.strftime("%H:%M"),
+                          (" — " + _co) if _co else ""))
+    except Exception as e:
+        _log.debug("self_state trvale (obraz): %s", e)
+    try:
+        import datetime as _dtk
+        r = conn.execute("SELECT ts, title FROM diary WHERE event_type='book_finished' "
+                         "ORDER BY ts DESC LIMIT 1").fetchone()
+        if r and r["title"]:
+            _d = _dtk.datetime.fromtimestamp(r["ts"])
+            out.append("poslední dočtená kniha: %s (dočetl jsem ji %d. %d.)"
+                       % (re.sub(r"^Do[čc]etl:\s*", "", r["title"]), _d.day, _d.month))
+    except Exception as e:
+        _log.debug("self_state trvale (kniha): %s", e)
     return out
 
 
@@ -3434,7 +3474,8 @@ _VLASTNI_STOP = {"proc", "jsi", "jste", "sis", "vybral", "zvolil", "zaujalo",
 
 # obecná slova nic neukotví („obraz“ ~ „s obrázky“ v přehledu → falešná shoda)
 _VLASTNI_OBECNE = ("obraz", "podtem", "tvor", "stud", "tema", "dil", "prac",
-                   "esej", "knih", "clan", "sekc", "hotov")
+                   "esej", "knih", "clan", "sekc", "hotov",
+                   "kter")   # HANS_SELF_STATE_MORE_V1: „která“ v popisu obrazu ≠ předmět
 
 
 def predmet_vlastniho_dila(text: str, db_path: str) -> str:

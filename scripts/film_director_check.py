@@ -80,14 +80,40 @@ def _sedi(a: str, b: str) -> bool:
         return a[:5] == b[:5]
 
 
-def _z_kodi(kodi, titul: str):
-    """Režie z knihovny (první pád) nebo None. Nikdy nevyhodí výjimku."""
+def _roky_u_titulu(titul: str, text: str) -> set:
+    """HANS_DIRECTOR_SAME_FILM_V1 — roky uvedené hned za titulem
+    („Hrabě Monte Christo (film, 2024)“, „… z roku 1975“)."""
+    if not titul or not text:
+        return set()
+    return {int(y) for y in re.findall(
+        re.escape(titul) + r"[^\n.]{0,25}?\b((?:19|20)\d\d)\b", text, re.IGNORECASE)}
+
+
+def _z_kodi(kodi, titul: str, kontext: str = ""):
+    """Režie z knihovny (první pád) nebo None. Nikdy nevyhodí výjimku.
+
+    HANS_DIRECTOR_SAME_FILM_V1 (2. 10.) — jen když je to TENTÝŽ film: titul
+    z knihovny se musí shodovat celý (find_movie je fuzzy: „Křižovatka“ →
+    „Křižovatka smrti 2“) a rok, pokud ho odpověď nebo podklad u titulu uvádí,
+    musí sedět (knihovna má „Hrabě Monte Christo“ 1975, Hans mluvil o filmu
+    z roku 2024). Všechny 3 ostré zásahy do 2. 10. dosadily režiséra JINÉHO
+    filmu téhož jména."""
     if not kodi or not titul:
         return None
     try:
         m = kodi.find_movie(titul)
         if m and hasattr(kodi, "movie_details"):
             d = kodi.movie_details(m.get("movieid")) or {}
+            _lib = str(d.get("title") or m.get("title") or m.get("label") or "")
+            if _fold(_lib) != _fold(titul):
+                _log.info("HANS_DIRECTOR_SAME_FILM_V1: %r v knihovně je %r — jiný film",
+                          titul, _lib)
+                return None
+            _roky = _roky_u_titulu(titul, kontext)
+            if _roky and d.get("year") and int(d.get("year")) not in _roky:
+                _log.info("HANS_DIRECTOR_SAME_FILM_V1: %r — knihovna má rok %s, "
+                          "v textu %s → jiná verze", titul, d.get("year"), sorted(_roky))
+                return None
             rez = d.get("director") or []
             if rez:
                 return [str(x) for x in rez]
@@ -126,8 +152,9 @@ def _osirela_spojka(text: str, od: int) -> str:
                               text[od:], count=1, flags=re.IGNORECASE)
 
 
-def zkontroluj_rezii(odpoved: str, kodi=None, config=None) -> str:
-    """Vrátí odpověď s ověřenou atribucí (nebo beze změny)."""
+def zkontroluj_rezii(odpoved: str, kodi=None, config=None, kontext: str = "") -> str:
+    """Vrátí odpověď s ověřenou atribucí (nebo beze změny).
+    `kontext` = co dostal model (podklad, prompt) — nese rok verze filmu."""
     if not odpoved:
         return odpoved
     m = _ATRIBUCE.search(odpoved)
@@ -155,10 +182,19 @@ def zkontroluj_rezii(odpoved: str, kodi=None, config=None) -> str:
         return odpoved
     prij = _prijmeni(tvrzeny)
 
-    rezie = _z_kodi(kodi, titul)
+    rezie = _z_kodi(kodi, titul, odpoved + "\n" + (kontext or ""))
     if rezie:
         if any(_sedi(prij, _prijmeni(r)) for r in rezie):
             return odpoved
+        # HANS_DIRECTOR_SAME_FILM_V1 — bez roku nevíme, o kterou verzi jde
+        # („Duna“ 1984 Lynch × 2021 Villeneuve): potvrdí-li tvrzené jméno
+        # Wikipedie, nech ho být.
+        if not _roky_u_titulu(titul, odpoved + "\n" + (kontext or "")):
+            _cl = _z_wikipedie(config, titul)
+            if prij and _cl and any(_sedi(prij, w) for w in re.findall(r"[\wá-ž]+", _fold(_cl))):
+                _log.info("HANS_DIRECTOR_SAME_FILM_V1: %r u %r potvrzuje Wikipedie "
+                          "(jiná verze než v knihovně) → ponechávám", tvrzeny, titul)
+                return odpoved
         spravne = rezie[0]
         _log.info("HANS_FILM_DIRECTOR_CHECK_V1: %r není režisér %r → %r "
                   "(z knihovny)", tvrzeny, titul, spravne)
