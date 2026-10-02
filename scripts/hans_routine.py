@@ -102,6 +102,48 @@ _DREAM_SEEDS = [
 ]
 
 
+def _g5d_neoveritelne(entity: str, config: dict) -> bool:
+    """HANS_G5D_SKIP_UNVERIFIABLE_V1 (30. 9.) — entita, kterou Wikipedie ověřit
+    NEMŮŽE: sám Hans, Koláč, člen domácnosti, datum/čas, nebo překlep modelu
+    v „PRÁZDNÉ“. Dřív šla do porovnání: „Hans namaloval…“ proti článku HANS
+    (ochrana krku závodníků) → ROZPOR → falešná „oprava faktu“ do deníku a do
+    večerní reflexe. Změřeno 30. 9.: 11 ze 40 zapsaných oprav bylo tohoto druhu
+    (7× Hans/Koláč, 4× datum), žádná skutečná oprava by se tím neztratila."""
+    import re as _re
+    e = (entity or "").strip().strip("\"'„“”").strip()
+    if not e:
+        return True
+    el = e.lower()
+    if el.startswith("prázdn") or el.startswith("prázn"):
+        return True
+    jmena = set()
+    try:
+        from scripts.hans_persona import persona_name
+        jmena.add(persona_name(config).lower())
+    except Exception:
+        jmena.add("hans")
+    try:
+        from scripts.hans_kolac import kolac_name
+        jmena.add(kolac_name(config).lower())
+    except Exception:
+        pass
+    for k, kp in ((config.get("known_persons") or {}).items()):
+        jmena.add(str(k).lower())
+        if isinstance(kp, dict):
+            for x in ("nom", "full"):
+                if kp.get(x):
+                    jmena.add(str(kp[x]).lower())
+    if el in jmena:
+        return True
+    if _re.fullmatch(r"[\d\s.:/-]+", el):
+        return True
+    if _re.search(r"\b\d{1,2}\.\s*[^\W\d_]+\s+\d{4}\b", el):
+        return True
+    if el in ("čas", "datum", "dnes", "dnešek", "den"):
+        return True
+    return False
+
+
 class _StudyBusy(Exception):
     """HANS_STUDY_SINGLE_FLIGHT_V1 — studium právě běží z druhé cesty;
     tenhle tick tiše přeskoč (NENÍ to chyba, guard se nesmí nastavit)."""
@@ -432,6 +474,9 @@ class HansRoutine:
                 entity = line.split("|", 1)[0].strip() if "|" in line else line
                 claim = line.split("|", 1)[1].strip() if "|" in line else line
                 if not entity:
+                    continue
+                if _g5d_neoveritelne(entity, self.config):  # HANS_G5D_SKIP_UNVERIFIABLE_V1
+                    _log.info("G5D: [%s] přeskakuji (sám o sobě / osoba z domácnosti / datum — Wikipedie to neověří)", entity)
                     continue
                 # G5F_VERIFY_FULLTEXT_V1 — najdi správný článek dle PŘEDMĚTU,
                 # stáhni PLNÝ text (ne REST summary). Fallback na summary.
@@ -1847,6 +1892,22 @@ class HansRoutine:
                     # doopravdy, ohlasi se, jakmile je mozek zpatky. Tim se
                     # poplach jen ODKLADA, nezahazuje.
                     _brain_down = oll in (hans_health.DOWN, hans_health.WEDGED)
+                    # HANS_SCHEDULE_NOTIFY_GRACE_V1 (30. 9.) — po návratu mozku
+                    # dát rutinám čas doběhnout. Doloženo 30. 9.: PC v noci
+                    # vypnuté → study_tick „zaostává“, hlášení čekalo na mozek
+                    # a odešlo v 03:01:03, HNED po WOL; studium proběhlo úspěšně
+                    # v 03:03 a ráno přišel poplach na nic. Hrana se ani tady
+                    # nekonzumuje — co visí i po lhůtě, ohlásí se.
+                    _ted = time.time()
+                    if _brain_down:
+                        self._health_brain_down_seen = True
+                    elif getattr(self, '_health_brain_down_seen', False):
+                        self._health_brain_down_seen = False
+                        self._health_brain_up_ts = _ted
+                    _lhuta = float((self.config.get('hans_schedule', {}) or {})
+                                   .get('notify_grace_after_brain_s', 1800))
+                    if _ted - getattr(self, '_health_brain_up_ts', 0.0) < _lhuta:
+                        _brain_down = True       # → větev „čeká“, hrana zůstane
                     _sched = (health.get('schedule') or {}).get('stale') or []
                     _sched_key = tuple(sorted(s['name'] for s in _sched))
                     _sched_prev = getattr(self, '_health_last_sched', ())
