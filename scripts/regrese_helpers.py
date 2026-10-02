@@ -1144,3 +1144,11 @@ def termin_pripominky(veta: str, text: str) -> str:
     _ok, args, _m = a._ground_note(h, {"text": text})
     r = a.AgentRouter.__new__(a.AgentRouter)
     return r._default_text(a.ACTIONS["add_note"], args)
+
+
+def druh_nabidky(odpoved: str) -> str:
+    """HANS_OFFER_TO_PENDING_V1 — jaký slib akce v Hansově odpovědi poznat
+    (bez DB: jen rozpoznání, předmět se tu nehledá)."""
+    from scripts import hans_offer as o
+    nal = o._najdi(odpoved, "", {}, "")
+    return nal[0] if nal else ""

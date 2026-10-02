@@ -130,6 +130,7 @@ def drain(handler, send, config: dict | None = None,
             log.info("odložená zpráva vypršela (%.1f h): %.60s",
                      age / 3600.0, text)
             continue
+        _t0_nab = time.time()   # HANS_OFFER_TO_PENDING_V1
         try:
             reply = handler.send_chat_message(person, text,
                                               channel=r.get("channel") or None)
@@ -147,6 +148,11 @@ def drain(handler, send, config: dict | None = None,
         if not reply:
             keep.append(r)      # mozek zase nedostupný → zkusí se příště
             continue
+        try:   # HANS_OFFER_TO_PENDING_V1 — nabídka akce → čekající návrh
+            from scripts.hans_offer import zpracuj as _nab
+            reply, _ = _nab(handler, person, text, reply, _t0_nab)
+        except Exception:
+            pass
         try:
             send("K vaší zprávě z %s se vracím, pane:\n\n%s" % (when, reply))
             done += 1

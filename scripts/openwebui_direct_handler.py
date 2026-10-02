@@ -343,6 +343,7 @@ class OpenWebUIDirectHandler:
 
         # Web chat: vezmi CELOU odpověď (bez stream-TTS), vyčisti opakované
         # pozdravy, AŽ POTOM vyslov — opraví zobrazené i mluvené najednou.
+        _t0_nab = time.time()   # HANS_OFFER_TO_PENDING_V1
         try:
             # HANS_CHAT_CHANNEL_AWARE_V1 — tag zprávy channelem 'web'
             # HANS_STOPA_V1 — stopa dotazu pro vizualizaci (web admin /mysleni);
@@ -356,6 +357,12 @@ class OpenWebUIDirectHandler:
                 resp = self.send_chat_message(person, message, channel="web")
         except Exception as e:
             resp = f"(chyba: {e})"
+        # HANS_OFFER_TO_PENDING_V1 — nabídka akce → čekající návrh (ano = splní)
+        try:
+            from scripts.hans_offer import zpracuj as _nab
+            resp, _ = _nab(self, person, message, resp or "", _t0_nab)
+        except Exception:
+            pass
         resp = self._collapse_repeated_greetings(resp or "")
 
         tts = self.tts_speaker

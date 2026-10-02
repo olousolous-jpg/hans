@@ -643,13 +643,22 @@ class MatrixBridge:
                                                      "send_chat_message"):
                 # HANS_STOPA_ZIVE_V1 (27. 9.) — stopa i pro Matrix (živý strom
                 # v adminu /mysleni); chyba stopy = dotaz proběhne jako bez ní
+                _t0_nab = time.time()   # HANS_OFFER_TO_PENDING_V1
                 if (self.config.get("stopa", {}) or {}).get("enabled", True):
                     from scripts import hans_stopa as _hs
-                    return _hs.spust(self._handler.send_chat_message, person,
+                    _odp = _hs.spust(self._handler.send_chat_message, person,
                                      text, channel="matrix", kanal="matrix",
                                      osoba=person, zprava=text)
-                return self._handler.send_chat_message(person, text,
-                                                       channel="matrix")
+                else:
+                    _odp = self._handler.send_chat_message(person, text,
+                                                           channel="matrix")
+                # HANS_OFFER_TO_PENDING_V1 — nabídka akce → čekající návrh
+                try:
+                    from scripts.hans_offer import zpracuj as _nab
+                    _odp, _ = _nab(self._handler, person, text, _odp or "", _t0_nab)
+                except Exception:
+                    pass
+                return _odp
         except Exception as e:
             _log.warning("matrix → chat selhal: %s", e)
         return None
