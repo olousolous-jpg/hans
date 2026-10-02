@@ -29,8 +29,11 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QScrollArea>
+#include <QTabWidget>
+#include <QWheelEvent>
 #include <QSlider>
 #include <QStandardPaths>
+#include <QApplication>
 #include <QVBoxLayout>
 
 K_PLUGIN_CLASS(KWin::LiquidGlassEffectConfig)
@@ -40,6 +43,24 @@ namespace KWin
 
 namespace
 {
+
+// Kolečko myši nad posuvníkem bez fokusu nemá měnit hodnotu, ale posouvat
+// stránku. Hodnota se kolečkem mění až po kliknutí na posuvník.
+class WheelGuard : public QObject
+{
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Wheel) {
+            if (auto *w = qobject_cast<QWidget *>(watched); w && !w->hasFocus()) {
+                event->ignore(); // propaguje se rodiči (posuvná oblast)
+                return true;
+            }
+        }
+        return false;
+    }
+};
 
 QWidget *slider(const QString &key, int min, int max, const QString &suffix, QSlider **out = nullptr)
 {
@@ -52,6 +73,9 @@ QWidget *slider(const QString &key, int min, int max, const QString &suffix, QSl
     }
     s->setRange(min, max);
     s->setPageStep(std::max(1, (max - min) / 10));
+    s->setFocusPolicy(Qt::StrongFocus);
+    static WheelGuard *guard = new WheelGuard(qApp);
+    s->installEventFilter(guard);
     auto *value = new QLabel;
     value->setMinimumWidth(value->fontMetrics().horizontalAdvance(QStringLiteral("100 px")));
     value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -171,24 +195,36 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
 {
     LiquidGlassConfig::instance(QStringLiteral("kwinrc"));
 
-    // obsah je delší, proto v posuvné oblasti
+    // nahoře předvolba, pod ní záložky; každá záložka se vejde bez posouvání
     auto *outer = new QVBoxLayout(widget());
     outer->setContentsMargins(0, 0, 0, 0);
-    auto *scroll = new QScrollArea;
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    auto *page = new QWidget;
-    auto *col = new QVBoxLayout(page);
-    scroll->setWidget(page);
-    outer->addWidget(scroll);
-    widget()->setMinimumSize(560, 720);
+    auto *top = new QWidget;
+    auto *topLayout = new QVBoxLayout(top);
+    topLayout->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(top);
+    auto *tabs = new QTabWidget;
+    outer->addWidget(tabs, 1);
+    widget()->setMinimumWidth(520);
 
-    const auto group = [col](const QString &title) {
+    QVBoxLayout *col = topLayout;
+    const auto newTab = [tabs, &col](const QString &title) {
+        auto *scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        auto *page = new QWidget;
+        col = new QVBoxLayout(page);
+        scroll->setWidget(page);
+        tabs->addTab(scroll, title);
+    };
+    const auto group = [&col](const QString &title) {
         auto *g = new QGroupBox(title);
         auto *form = new QFormLayout(g);
         form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
         col->addWidget(g);
         return form;
+    };
+    const auto finishTab = [&col]() {
+        col->addStretch(1);
     };
     const QString px = QStringLiteral(" px");
     const QString pct = QStringLiteral(" %");
@@ -208,6 +244,7 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
     }
 
     // ── sklo
+    newTab(QStringLiteral("Sklo"));
     {
         auto *form = group(QStringLiteral("Sklo"));
         form->addRow(QStringLiteral("Rozmazání:"), slider(QStringLiteral("BlurStrength"), 1, 15, QString()));
@@ -222,7 +259,10 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
         form->addRow(QStringLiteral("Zaoblení (výchozí):"), slider(QStringLiteral("CornerRadius"), 0, 40, px));
     }
 
+    finishTab();
+
     // ── rámeček kolem oken
+    newTab(QStringLiteral("Rámeček"));
     {
         auto *form = group(QStringLiteral("Skleněný rámeček kolem oken"));
         form->addRow(QStringLiteral("Šířka:"), slider(QStringLiteral("RingWidth"), 0, 40, px));
@@ -231,7 +271,10 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
         form->addRow(QStringLiteral("Bez rámečku:"), line(QStringLiteral("RingExcludeClasses"), QStringLiteral("např. steam, firefox")));
     }
 
+    finishTab();
+
     // ── animace
+    newTab(QStringLiteral("Animace"));
     {
         auto *form = group(QStringLiteral("Animace"));
         form->addRow(QString(), check(QStringLiteral("MouseLight"), QStringLiteral("Lesk na hraně sleduje kurzor")));
@@ -241,7 +284,10 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
         form->addRow(QString(), check(QStringLiteral("IdleShimmer"), QStringLiteral("Světlo pomalu „dýchá“ (stále překresluje)")));
     }
 
+    finishTab();
+
     // ── ostatní
+    newTab(QStringLiteral("Aplikace"));
     {
         auto *form = group(QStringLiteral("Aplikace"));
         form->addRow(QStringLiteral("Sklo přes celé okno:"), line(QStringLiteral("ForceGlassClasses"), QStringLiteral("třídy oken oddělené čárkou")));
@@ -266,9 +312,9 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
         }
     }
 
-    col->addStretch(1);
+    finishTab();
 
-    addConfig(LiquidGlassConfig::self(), page);
+    addConfig(LiquidGlassConfig::self(), widget());
 }
 
 QString LiquidGlassEffectConfig::kvantumThemeFile() const
