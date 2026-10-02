@@ -1126,3 +1126,21 @@ def prikaz_z_vety(veta: str) -> str:
     from scripts.chat_commands import parse_command
     r = parse_command(veta)
     return r[0] if r else ""
+
+
+def termin_pripominky(veta: str, text: str) -> str:
+    """HANS_REMINDER_RAW_DUE_V1 — znění návrhu add_note, když router vrátil
+    `text` a uživatel řekl `veta` (grounding + skladba návrhu jako v produkci)."""
+    from scripts import hans_agent as a
+
+    class _AR:
+        pass
+
+    class _H:
+        pass
+    h, ar = _H(), _AR()
+    ar._raw_message = veta
+    h._agent_inst = ar
+    _ok, args, _m = a._ground_note(h, {"text": text})
+    r = a.AgentRouter.__new__(a.AgentRouter)
+    return r._default_text(a.ACTIONS["add_note"], args)

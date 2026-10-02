@@ -1201,10 +1201,13 @@ def _run_add_note(handler, args) -> str:
     # skončilo jako odpověď o prázdném kalendáři a NIC se neuložilo.
     try:
         from scripts.hans_commitments import _parse_due, add_reminder
-        if _parse_due(text) > 0:
+        # HANS_REMINDER_RAW_DUE_V1 — termín z původní věty, když ho router
+        # z textu vypustil (uloženo při návrhu v `_ground_note`)
+        _kdy = (args.get("_kdy") or "").strip()
+        if _parse_due(text) > 0 or (_kdy and _parse_due(_kdy) > 0):
             ok, say = add_reminder(_diary_path(handler),
                                    getattr(handler, "_last_person", "") or "",
-                                   text, when_phrase=text)
+                                   text, when_phrase=text if _parse_due(text) > 0 else _kdy)
             if ok:
                 return say
     except Exception as _re:
@@ -1226,9 +1229,41 @@ def _run_add_note(handler, args) -> str:
         return "Poznámku se nepodařilo uložit, pane."
 
 
+_PRIPOMEN_PAT = re.compile(r"p[řr]ipom|nezapom|upozorn", re.I)
+
+
 def _ground_note(handler, args):
     t = (args.get("text") or "").strip()
+    # HANS_REMINDER_RAW_DUE_V1 (2. 10.) — router z „připomeň mi dnes v 18:00,
+    # že mám X“ vrátil text jen „X“ → vznikla poznámka bez termínu a Hans
+    # pak tvrdil, že připomínka přijde v 18:00. Termín se proto hledá i
+    # v PŮVODNÍ větě — teď, při návrhu: po „ano“ je surová věta už „ano“.
+    # Jen když věta o připomenutí žádá („zapiš si, že jsem dnes v 8 vstal“
+    # připomínkou není).
+    if len(t) >= 2:
+        try:
+            from scripts.hans_commitments import _parse_due
+            _ar = (getattr(handler, "_agent_inst", None)
+                   or getattr(handler, "_agent", None))
+            veta = str(getattr(_ar, "_raw_message", "") or "")
+            if (_parse_due(t) <= 0 and _PRIPOMEN_PAT.search(veta)
+                    and _parse_due(veta) > 0):
+                args = dict(args, _kdy=veta[:200])
+        except Exception as _e:
+            log.debug("ground_note termín: %s", _e)
     return (len(t) >= 2, args, "" if len(t) >= 2 else "prázdná poznámka")
+
+
+def _kdy_text(due: float) -> str:
+    """HANS_REMINDER_RAW_DUE_V1 — termín pro znění návrhu („dnes v 18:00“)."""
+    import datetime as _d
+    kdy = _d.datetime.fromtimestamp(due)
+    dnes = _d.datetime.now().date()
+    if kdy.date() == dnes:
+        return kdy.strftime("dnes v %H:%M")
+    if (kdy.date() - dnes).days == 1:
+        return kdy.strftime("zítra v %H:%M")
+    return "%d. %d. v %s" % (kdy.day, kdy.month, kdy.strftime("%H:%M"))
 
 
 # HANS_UNIFY_ACTIONS_V1 — /vypnipc a /hlidej žily jen jako regexy v
@@ -2482,6 +2517,16 @@ class AgentRouter:
         if action.id == "add_study_topic":
             return f"Mám si „{args.get('tema')}“ zařadit ke studiu?"
         if action.id == "add_note":
+            # HANS_REMINDER_RAW_DUE_V1 — s termínem se ptej na PŘIPOMÍNKU,
+            # ať je před „ano“ vidět, co se založí
+            try:
+                from scripts.hans_commitments import _parse_due
+                _due = (_parse_due(args.get("text") or "")
+                        or _parse_due(args.get("_kdy") or ""))
+            except Exception:
+                _due = 0
+            if _due > 0:
+                return f"Mám vám {_kdy_text(_due)} připomenout „{args.get('text')}“?"
             return f"Mám si poznamenat „{args.get('text')}“?"
         if action.id == "pc_shutdown":
             return "Mám vypnout počítač?"
