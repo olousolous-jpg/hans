@@ -3,7 +3,7 @@
 #
 #   liquid-glass show                 aktuální nastavení
 #   liquid-glass set KLÍČ HODNOTA      změnit jednu hodnotu (projeví se hned)
-#   liquid-glass preset NÁZEV          jemne | vychozi | silne | bez-ramecku | tmave | svetle
+#   liquid-glass preset NÁZEV          iphone | jemne | vychozi | silne | bez-ramecku | tmave | svetle
 #   liquid-glass on | off              zapnout / vrátit vestavěné rozostření
 #   liquid-glass status                běží efekt?
 #
@@ -11,22 +11,23 @@
 #   EdgeWidth (px), Refraction (px), ChromaticAberration (0–100),
 #   Specular (0–100), TintStrength (0–100), DarkTint (true/false),
 #   CornerRadius (px), RingWidth (px, 0 = bez rámečku kolem oken),
+#   RingClarity (0–100, čirost rámečku), WaveStrength (0–100, vlnění při posunu),
 #   RingExcludeClasses, ForceGlassClasses (třídy oken oddělené čárkou),
 #   MouseLight, LiquidMotion, IdleShimmer (true/false), MotionStrength (0–100)
 set -euo pipefail
 
 GROUP=Effect-liquidglass
 KEYS=(BlurStrength NoiseStrength Saturation EdgeWidth Refraction ChromaticAberration
-      Specular TintStrength DarkTint CornerRadius RingWidth RingExcludeClasses
+      Specular TintStrength DarkTint CornerRadius RingWidth RingClarity WaveStrength RingExcludeClasses
       ForceGlassClasses MouseLight LiquidMotion MotionStrength IdleShimmer)
 declare -A DEFAULTS=(
     [BlurStrength]=10 [NoiseStrength]=3 [Saturation]=160 [EdgeWidth]=26 [Refraction]=20
     [ChromaticAberration]=35 [Specular]=55 [TintStrength]=8 [DarkTint]=false
-    [CornerRadius]=10 [RingWidth]=6 [RingExcludeClasses]="" [ForceGlassClasses]=""
+    [CornerRadius]=10 [RingWidth]=6 [RingClarity]=70 [WaveStrength]=60 [RingExcludeClasses]="" [ForceGlassClasses]=""
     [MouseLight]=true [LiquidMotion]=true [MotionStrength]=50 [IdleShimmer]=false
 )
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 reload() {
     qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.reconfigureEffect liquidglass >/dev/null 2>&1 || true
@@ -41,6 +42,9 @@ set_key() {
 
 preset() {
     case "$1" in
+        iphone)      set_key BlurStrength 4; set_key RingWidth 10; set_key RingClarity 90
+                     set_key Refraction 28; set_key EdgeWidth 30; set_key ChromaticAberration 25
+                     set_key Specular 80; set_key TintStrength 4; set_key WaveStrength 60 ;;
         jemne)       set_key Refraction 10; set_key EdgeWidth 18; set_key ChromaticAberration 15
                      set_key Specular 35; set_key MotionStrength 30 ;;
         vychozi)     for k in "${KEYS[@]}"; do kwriteconfig6 --file kwinrc --group "$GROUP" --key "$k" --delete; done ;;

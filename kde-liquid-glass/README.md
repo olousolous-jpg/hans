@@ -81,7 +81,7 @@ Pak se odhlas a přihlas.
 
 ```bash
 liquid-glass show                  # aktuální hodnoty
-liquid-glass preset silne          # jemne | vychozi | silne | bez-ramecku | tmave | svetle
+liquid-glass preset iphone         # iphone | jemne | vychozi | silne | bez-ramecku | tmave | svetle
 liquid-glass set Refraction 28     # jedna hodnota, projeví se hned
 liquid-glass off / on              # vrátit vestavěné rozostření / zapnout sklo
 ```
@@ -97,6 +97,8 @@ liquid-glass off / on              # vrátit vestavěné rozostření / zapnout 
 | `Specular` | 55 | síla lesku (0–100) |
 | `TintStrength` / `DarkTint` | 8 / false | mléčný (světlý) nebo kouřový (tmavý) tón |
 | `RingWidth` | 6 | skleněný rámeček kolem běžných oken (px, 0 = vypnuto) |
+| `RingClarity` | 70 | jak čiré je sklo rámečku (0 = mléčné, 100 = skoro ostré pozadí) |
+| `WaveStrength` | 60 | vlnění pozadí pod sklem při přesouvání okna (0 = vypnuto) |
 | `RingExcludeClasses` | – | okna bez rámečku, např. `steam,firefox` |
 | `ForceGlassClasses` | – | sklo přes celé okno pro dané aplikace (smysl má jen u průhledných) |
 | `CornerRadius` | 10 | zaoblení, když ho okno samo neudává |

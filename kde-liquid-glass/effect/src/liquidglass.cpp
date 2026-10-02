@@ -120,6 +120,14 @@ LiquidGlassEffect::LiquidGlassEffect()
         m_glassPass.lightOnLocation = shader->uniformLocation("lightOn");
         m_glassPass.motionLocation = shader->uniformLocation("motion");
         m_glassPass.lightAngleLocation = shader->uniformLocation("lightAngle");
+        m_glassPass.sharpTexLocation = shader->uniformLocation("sharpTex");
+        m_glassPass.frameBoxLocation = shader->uniformLocation("frameBox");
+        m_glassPass.frameRadiusLocation = shader->uniformLocation("frameRadius");
+        m_glassPass.hasRingLocation = shader->uniformLocation("hasRing");
+        m_glassPass.ringClarityLocation = shader->uniformLocation("ringClarity");
+        m_glassPass.timeLocation = shader->uniformLocation("time");
+        m_glassPass.waveAmpLocation = shader->uniformLocation("waveAmp");
+        m_glassPass.waveDirLocation = shader->uniformLocation("waveDir");
     }
 
     m_downsamplePass.shader = ShaderManager::instance()->generateShaderFromFile(ShaderTrait::MapTexture,
@@ -302,6 +310,8 @@ void LiquidGlassEffect::reconfigure(ReconfigureFlags flags)
     m_liquidMotion = LiquidGlassConfig::liquidMotion();
     m_motionStrength = LiquidGlassConfig::motionStrength() / 100.0f;
     m_idleShimmer = LiquidGlassConfig::idleShimmer();
+    m_ringClarity = LiquidGlassConfig::ringClarity() / 100.0f;
+    m_waveStrength = LiquidGlassConfig::waveStrength() / 100.0f;
     if (m_idleShimmer && m_valid) {
         m_shimmerTimer.start();
     } else {
@@ -669,8 +679,20 @@ void LiquidGlassEffect::slotFrameGeometryChanged(EffectWindow *w, const RectF &o
         it->second.blurItem->setEffectBoundingRect(blurRegion(w).boundingRect());
         updateItemGeometry(w);
     }
+    const QPointF delta = now.topLeft() - oldGeometry.topLeft();
+    if (m_waveStrength > 0 && !delta.isNull() && now.size() == oldGeometry.size()) {
+        // vlnění: každý posun přidá energii, směr se plynule natáčí za pohybem
+        const qreal len = std::hypot(delta.x(), delta.y());
+        GlassWindowData &glass = it->second;
+        glass.wave = std::min<qreal>(1.0, glass.wave + len * 0.04);
+        const QPointF dir = glass.waveDir * 0.7 + (delta / len) * 0.3;
+        const qreal dl = std::hypot(dir.x(), dir.y());
+        if (dl > 1e-3) {
+            glass.waveDir = dir / dl;
+        }
+        repaintGlass(w);
+    }
     if (m_liquidMotion && m_motionStrength > 0) {
-        const QPointF delta = now.topLeft() - oldGeometry.topLeft();
         if (!delta.isNull() && now.size() == oldGeometry.size()) {
             QPointF m = it->second.motion * 0.6 + delta * (0.9 * m_motionStrength);
             const qreal limit = 24.0 * m_motionStrength;
@@ -720,13 +742,18 @@ void LiquidGlassEffect::prePaintScreen(ScreenPrePaintData &data)
     m_lastFrameMs = now;
     if (dt > 0) {
         const qreal decay = std::exp(-dt / 90.0);
+        const qreal waveDecay = std::exp(-dt / 450.0);
         for (auto &[window, glass] : m_windows) {
-            if (glass.motion.isNull()) {
+            if (glass.motion.isNull() && glass.wave <= 0) {
                 continue;
             }
             glass.motion *= decay;
             if (std::hypot(glass.motion.x(), glass.motion.y()) < 0.15) {
                 glass.motion = QPointF();
+            }
+            glass.wave *= waveDecay;
+            if (glass.wave < 0.01) {
+                glass.wave = 0;
             }
             repaintGlass(window);
         }
@@ -1106,6 +1133,23 @@ void LiquidGlassEffect::blur(const RenderTarget &renderTarget, const RenderViewp
         shader->setUniform(m_glassPass.motionLocation, QVector2D(motion));
         shader->setUniform(m_glassPass.lightAngleLocation, lightAngle);
 
+        // rámeček: tvar okna (díra v rámečku) a ostré pozadí pro čiré sklo
+        const RectF frameBox = w->frameGeometry()
+                                   .scaled(scale)
+                                   .rounded()
+                                   .translated(-scaledBackgroundRect.topLeft());
+        shader->setUniform(m_glassPass.frameBoxLocation, QVector4D(frameBox.horizontalCenter(), frameBox.verticalCenter(), frameBox.width() * 0.5, frameBox.height() * 0.5));
+        shader->setUniform(m_glassPass.frameRadiusLocation, shapeRadius(w, false).scaled(scale).rounded().toVector());
+        shader->setUniform(m_glassPass.hasRingLocation, ring ? 1.0f : 0.0f);
+        shader->setUniform(m_glassPass.ringClarityLocation, m_ringClarity);
+        shader->setUniform(m_glassPass.timeLocation, float(m_clock.elapsed() / 1000.0));
+        shader->setUniform(m_glassPass.waveAmpLocation, float(m_waveStrength * 9.0 * blurInfo.wave * scale));
+        shader->setUniform(m_glassPass.waveDirLocation, QVector2D(blurInfo.waveDir));
+        shader->setUniform(m_glassPass.sharpTexLocation, 1);
+
+        glActiveTexture(GL_TEXTURE1);
+        renderInfo.textures[0]->bind();
+        glActiveTexture(GL_TEXTURE0);
         read->colorAttachment()->bind();
 
         glEnable(GL_BLEND);
@@ -1114,6 +1158,10 @@ void LiquidGlassEffect::blur(const RenderTarget &renderTarget, const RenderViewp
         vbo->draw(GL_TRIANGLES, 6, vertexCount);
 
         glDisable(GL_BLEND);
+
+        glActiveTexture(GL_TEXTURE1);
+        renderInfo.textures[0]->unbind();
+        glActiveTexture(GL_TEXTURE0);
 
         ShaderManager::instance()->popShader();
     }

@@ -51,6 +51,12 @@
         <entry name="RingWidth" type="Int">
             <default>6</default>
         </entry>
+        <!-- jak čiré je sklo rámečku: 0 = mléčné jako uvnitř, 100 = čiré -->
+        <entry name="RingClarity" type="Int">
+            <default>70</default>
+            <min>0</min>
+            <max>100</max>
+        </entry>
         <entry name="RingExcludeClasses" type="String">
             <default></default>
         </entry>
@@ -67,6 +73,12 @@
         </entry>
         <entry name="MotionStrength" type="Int">
             <default>50</default>
+            <min>0</min>
+            <max>100</max>
+        </entry>
+        <!-- vlnění pozadí pod sklem při přesouvání okna (0 = vypnuto) -->
+        <entry name="WaveStrength" type="Int">
+            <default>60</default>
             <min>0</min>
             <max>100</max>
         </entry>

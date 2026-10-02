@@ -49,6 +49,10 @@ struct GlassWindowData
     /// Liquid motion: lagging offset in logical px, decays over time
     QPointF motion;
 
+    /// Vlnění pod sklem při posunu okna: síla 0..1 (pomalu odeznívá) a směr
+    qreal wave = 0;
+    QPointF waveDir = QPointF(1, 0);
+
     std::unordered_map<RenderView *, GlassRenderData> render;
 
     std::unique_ptr<BackgroundEffectItem> blurItem;
@@ -133,6 +137,14 @@ private:
         int lightOnLocation;
         int motionLocation;
         int lightAngleLocation;
+        int sharpTexLocation;
+        int frameBoxLocation;
+        int frameRadiusLocation;
+        int hasRingLocation;
+        int ringClarityLocation;
+        int timeLocation;
+        int waveAmpLocation;
+        int waveDirLocation;
     } m_glassPass;
 
     struct
@@ -189,6 +201,8 @@ private:
     bool m_liquidMotion = true;
     float m_motionStrength = 0.5f;
     bool m_idleShimmer = false;
+    float m_ringClarity = 0.7f;
+    float m_waveStrength = 0.6f;
 
     QElapsedTimer m_clock;
     qint64 m_lastFrameMs = 0;

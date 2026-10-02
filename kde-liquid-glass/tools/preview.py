@@ -103,11 +103,14 @@ def render(args, scene: str, out: Path):
     tex = ctx.texture((W, H), 3, blurred.transpose(Image.FLIP_TOP_BOTTOM).tobytes())
     tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
     tex.repeat_x = tex.repeat_y = False
+    sharp_tex = ctx.texture((W, H), 3, sharp.transpose(Image.FLIP_TOP_BOTTOM).tobytes())
+    sharp_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+    sharp_tex.repeat_x = sharp_tex.repeat_y = False
 
     # okno uprostřed
     win = (360, 220, 360 + 560, 220 + 360)
     radius = 12
-    if scene == "ring":
+    if scene in ("ring", "wave"):
         g = args.ring
         shape = (win[0] - g, win[1] - g, win[2] + g, win[3] + g)
         shape_radius = radius + g
@@ -150,11 +153,20 @@ def render(args, scene: str, out: Path):
     setu("lightOn", 1.0 if scene == "light" else 0.0)
     setu("motion", (18.0, 0.0) if scene == "motion" else (0.0, 0.0))
     setu("lightAngle", math.pi * 1.25)
+    setu("sharpTex", 1)
+    setu("frameBox", ((win[0] + win[2]) / 2, (win[1] + win[3]) / 2, (win[2] - win[0]) / 2, (win[3] - win[1]) / 2))
+    setu("frameRadius", (radius,) * 4)
+    setu("hasRing", 1.0 if scene in ("ring", "wave") else 0.0)
+    setu("ringClarity", float(args.clarity))
+    setu("time", 1.3)
+    setu("waveAmp", 9.0 * float(args.wave) if scene == "wave" else 0.0)
+    setu("waveDir", (1.0, 0.0))
 
     fbo = ctx.simple_framebuffer((W, H), components=4)
     fbo.use()
     fbo.clear(0, 0, 0, 0)
     tex.use(0)
+    sharp_tex.use(1)
     vao.render()
     raw = np.frombuffer(fbo.read(components=4), np.uint8).reshape(H, W, 4)[::-1]
 
@@ -166,7 +178,7 @@ def render(args, scene: str, out: Path):
     img = Image.fromarray((np.clip(comp, 0, 1) * 255).astype(np.uint8))
 
     d = ImageDraw.Draw(img, "RGBA")
-    if scene == "ring":
+    if scene in ("ring", "wave"):
         # neprůhledné okno přes střed rámečku
         m = rounded_mask((W, H), win, radius)
         img.paste(Image.new("RGB", (W, H), (236, 236, 238)), (0, 0), m)
@@ -185,7 +197,7 @@ def render(args, scene: str, out: Path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--scene", choices=["glass", "ring", "light", "motion", "all"], default="all")
+    ap.add_argument("--scene", choices=["glass", "ring", "light", "motion", "wave", "all"], default="all")
     ap.add_argument("--out", default="preview")
     ap.add_argument("--blur", type=float, default=10)
     ap.add_argument("--saturation", type=float, default=1.6)
@@ -195,9 +207,11 @@ def main():
     ap.add_argument("--specular", type=float, default=0.55)
     ap.add_argument("--tint", type=float, default=0.08)
     ap.add_argument("--ring", type=float, default=6)
+    ap.add_argument("--clarity", type=float, default=0.7, help="čirost rámečku 0..1")
+    ap.add_argument("--wave", type=float, default=0.6, help="síla vlnění 0..1")
     ap.add_argument("--egl", action="store_true", help="EGL bez displeje (Mesa llvmpipe)")
     args = ap.parse_args()
-    scenes = ["glass", "ring", "light", "motion"] if args.scene == "all" else [args.scene]
+    scenes = ["glass", "ring", "light", "motion", "wave"] if args.scene == "all" else [args.scene]
     for s in scenes:
         render(args, s, Path(args.out) / ("%s.png" % s))
 

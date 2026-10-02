@@ -29,6 +29,15 @@ uniform float lightOn;      // 1 = lesk sleduje kurzor
 uniform vec2 motion;        // setrvačnost při posunu okna (px)
 uniform float lightAngle;   // směr pevného světla (rad), animuje se
 
+uniform sampler2D sharpTex; // ostré (nerozmazané) pozadí
+uniform vec4 frameBox;      // rám okna (díra v rámečku): střed.xy, poloviční rozměr.zw
+uniform vec4 frameRadius;
+uniform float hasRing;      // 1 = sklo tvoří i rámeček kolem okna
+uniform float ringClarity;  // 0 = rámeček mléčný, 1 = čirý
+uniform float time;         // s
+uniform float waveAmp;      // amplituda vlnění (px), odeznívá po posunu okna
+uniform vec2 waveDir;       // směr posledního pohybu okna
+
 in vec2 uv;
 in vec2 vertex;
 
@@ -78,20 +87,39 @@ void main(void)
     // setrvačnost: obsah se při pohybu okna „opozdí“, nejvíc u hran
     dispPx -= motion * (0.3 + 0.7 * lens);
 
+    // vlnění: dvě postupující vlny podél a napříč směru pohybu okna
+    if (waveAmp > 0.01) {
+        vec2 perp = vec2(-waveDir.y, waveDir.x);
+        float along = dot(vertex, waveDir);
+        float across = dot(vertex, perp);
+        float w1 = sin(along * 0.045 - time * 9.0 + sin(across * 0.02) * 1.5);
+        float w2 = sin(across * 0.06 + time * 6.5);
+        dispPx += waveDir * w1 * waveAmp + perp * w2 * waveAmp * 0.45;
+    }
+
+    // rámeček kolem okna je čirý (ostré pozadí), uvnitř okna mléčné sklo
+    float ring = 0.0;
+    if (hasRing > 0.5) {
+        ring = smoothstep(-1.0, 1.0, sdfRoundedBox(vertex, frameBox.xy, frameBox.zw, frameRadius));
+    }
+    float clear = ring * ringClarity;
+
     vec2 base = uv + pxToUv(dispPx);
 
     vec4 c;
     if (chroma > 0.0 && lens > 0.002) {
         vec2 ca = pxToUv(n * refraction * lens * chroma * 0.6);
-        vec4 mid = blurAt(base);
-        c = vec4(blurAt(base + ca).r, mid.g, blurAt(base - ca).b, mid.a);
+        vec4 mid = mix(blurAt(base), texture(sharpTex, base), clear);
+        float r = mix(blurAt(base + ca).r, texture(sharpTex, base + ca).r, clear);
+        float b = mix(blurAt(base - ca).b, texture(sharpTex, base - ca).b, clear);
+        c = vec4(r, mid.g, b, mid.a);
     } else {
-        c = blurAt(base);
+        c = mix(blurAt(base), texture(sharpTex, base), clear);
     }
     c = c * colorMatrix;
 
-    // tón skla (světlé „mléčné“ nebo tmavé)
-    c.rgb = mix(c.rgb, tint.rgb, tint.a);
+    // tón skla (světlé „mléčné“ nebo tmavé); čirý rámeček skoro bez tónu
+    c.rgb = mix(c.rgb, tint.rgb, tint.a * (1.0 - 0.8 * clear));
 
     // lesk: tenká linka na hraně + měkký odlesk v pásu čočky
     float rim = 1.0 - smoothstep(0.0, 2.5, inside);
