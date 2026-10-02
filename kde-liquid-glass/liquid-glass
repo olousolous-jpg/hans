@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# liquid-glass – nastavení efektu Liquid Glass (KWin) z příkazové řádky.
+#
+#   liquid-glass show                 aktuální nastavení
+#   liquid-glass set KLÍČ HODNOTA      změnit jednu hodnotu (projeví se hned)
+#   liquid-glass preset NÁZEV          jemne | vychozi | silne | bez-ramecku | tmave | svetle
+#   liquid-glass on | off              zapnout / vrátit vestavěné rozostření
+#   liquid-glass status                běží efekt?
+#
+# Klíče: BlurStrength (1–15), NoiseStrength (0–14), Saturation (%),
+#   EdgeWidth (px), Refraction (px), ChromaticAberration (0–100),
+#   Specular (0–100), TintStrength (0–100), DarkTint (true/false),
+#   CornerRadius (px), RingWidth (px, 0 = bez rámečku kolem oken),
+#   RingExcludeClasses, ForceGlassClasses (třídy oken oddělené čárkou),
+#   MouseLight, LiquidMotion, IdleShimmer (true/false), MotionStrength (0–100)
+set -euo pipefail
+
+GROUP=Effect-liquidglass
+KEYS=(BlurStrength NoiseStrength Saturation EdgeWidth Refraction ChromaticAberration
+      Specular TintStrength DarkTint CornerRadius RingWidth RingExcludeClasses
+      ForceGlassClasses MouseLight LiquidMotion MotionStrength IdleShimmer)
+declare -A DEFAULTS=(
+    [BlurStrength]=10 [NoiseStrength]=3 [Saturation]=160 [EdgeWidth]=26 [Refraction]=20
+    [ChromaticAberration]=35 [Specular]=55 [TintStrength]=8 [DarkTint]=false
+    [CornerRadius]=10 [RingWidth]=6 [RingExcludeClasses]="" [ForceGlassClasses]=""
+    [MouseLight]=true [LiquidMotion]=true [MotionStrength]=50 [IdleShimmer]=false
+)
+
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+reload() {
+    qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.reconfigureEffect liquidglass >/dev/null 2>&1 || true
+}
+
+set_key() {
+    local key="$1" value="$2" k found=0
+    for k in "${KEYS[@]}"; do [[ "$k" == "$key" ]] && found=1; done
+    (( found )) || { echo "Neznámý klíč: $key" >&2; usage 1; }
+    kwriteconfig6 --file kwinrc --group "$GROUP" --key "$key" "$value"
+}
+
+preset() {
+    case "$1" in
+        jemne)       set_key Refraction 10; set_key EdgeWidth 18; set_key ChromaticAberration 15
+                     set_key Specular 35; set_key MotionStrength 30 ;;
+        vychozi)     for k in "${KEYS[@]}"; do kwriteconfig6 --file kwinrc --group "$GROUP" --key "$k" --delete; done ;;
+        silne)       set_key Refraction 32; set_key EdgeWidth 36; set_key ChromaticAberration 60
+                     set_key Specular 75; set_key MotionStrength 80; set_key RingWidth 8 ;;
+        bez-ramecku) set_key RingWidth 0 ;;
+        tmave)       set_key DarkTint true; set_key TintStrength 22 ;;
+        svetle)      set_key DarkTint false; set_key TintStrength 8 ;;
+        *) echo "Neznámá předvolba: $1" >&2; usage 1 ;;
+    esac
+}
+
+case "${1:-}" in
+    show)
+        for k in "${KEYS[@]}"; do
+            v="$(kreadconfig6 --file kwinrc --group "$GROUP" --key "$k" 2>/dev/null || true)"
+            printf '  %-20s %s\n' "$k" "${v:-${DEFAULTS[$k]} (výchozí)}"
+        done ;;
+    set)    [[ $# -eq 3 ]] || usage 1; set_key "$2" "$3"; reload ;;
+    preset) [[ $# -eq 2 ]] || usage 1; preset "$2"; reload ;;
+    on)
+        kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled false
+        kwriteconfig6 --file kwinrc --group Plugins --key liquidglassEnabled true
+        qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect blur >/dev/null 2>&1 || true
+        qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect liquidglass >/dev/null 2>&1 || true ;;
+    off)
+        kwriteconfig6 --file kwinrc --group Plugins --key liquidglassEnabled false
+        kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled true
+        qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect liquidglass >/dev/null 2>&1 || true
+        qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect blur >/dev/null 2>&1 || true ;;
+    status)
+        if [[ "$(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded liquidglass 2>/dev/null)" == "true" ]]; then
+            echo "Liquid Glass běží."
+        else
+            echo "Liquid Glass neběží. Zkus: liquid-glass on (nebo po aktualizaci KWinu: install.sh --rebuild)."
+        fi ;;
+    -h|--help|"") usage ;;
+    *) usage 1 ;;
+esac

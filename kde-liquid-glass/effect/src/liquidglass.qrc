@@ -1,0 +1,10 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/effects/liquidglass/">
+  <file>shaders/downsample.frag</file>
+  <file>shaders/noise.frag</file>
+  <file>shaders/glass.frag</file>
+  <file>shaders/glass.vert</file>
+  <file>shaders/upsample.frag</file>
+  <file>shaders/vertex.vert</file>
+</qresource>
+</RCC>

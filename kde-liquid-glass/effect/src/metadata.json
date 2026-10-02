@@ -1,0 +1,14 @@
+{
+    "KPlugin": {
+        "Category": "Appearance",
+        "Description": "Liquid glass: blur with refraction, specular rim and motion behind translucent windows and around windows",
+        "Description[cs]": "Tekuté sklo: rozostření s lomem světla, leskem na hraně a animací za průhlednými okny a kolem oken",
+        "EnabledByDefault": false,
+        "License": "GPL",
+        "Name": "Liquid Glass",
+        "Name[cs]": "Tekuté sklo"
+    },
+    "org.kde.kwin.effect": {
+        "enabledByDefaultMethod": true
+    }
+}
