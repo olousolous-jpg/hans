@@ -84,15 +84,16 @@ def load_config_default():
 def toaster_mode(action: str):
     """Zapne/vypne Švitorka mód. action = 'on' nebo 'off'."""
     try:
-        import importlib, json
-        cfg = json.loads(Path("config.json").read_text(encoding="utf-8"))
-        # Najdi HansDialog instanci — importujeme přes hans_idle
-        # V reálu to musí být propojené přes globální referenci
-        # Prozatím: uložíme flag do config.json a hans_dialog si ho přečte
+        # CONFIG_ATOMIC_SAVE_V1 (2. 10.) — přes config_io (atomický zápis,
+        # dělicí čára veřejné/privátní), ne přímým přepisem config.json
+        from scripts import config_io as _cio
+        cfg = _cio.load()
+        if not cfg:
+            return {"ok": False, "error": "config nejde načíst"}
         cfg.setdefault("hans_dialog", {})
         cfg["hans_dialog"]["toaster_mode"] = (action == "on")
-        Path("config.json").write_text(
-            json.dumps(cfg, indent=4, ensure_ascii=False), encoding="utf-8")
+        if not _cio.save(cfg):
+            return {"ok": False, "error": "config nejde uložit"}
         return {"ok": True, "toaster": action == "on"}
     except Exception as e:
         return {"ok": False, "error": str(e)}

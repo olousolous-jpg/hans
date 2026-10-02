@@ -240,6 +240,20 @@ def rozdel(cfg: dict) -> tuple[dict, dict]:
     return ver, priv
 
 
+def _zapis_atomicky(cesta: Path, text: str) -> None:
+    """CONFIG_ATOMIC_SAVE_V1 (2. 10.) — dočasný soubor vedle + os.replace.
+    Přímý zápis mohl hlídač configu (display_controller) přečíst rozepsaný →
+    load() vrátil {} a nastavení se vrátila na výchozí. Práva se zachovají."""
+    import os
+    tmp = cesta.with_name(cesta.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        os.chmod(tmp, cesta.stat().st_mode & 0o777)
+    except OSError:
+        pass
+    os.replace(tmp, cesta)
+
+
 def load(root: Optional[Path] = None, hlasit: bool = True) -> dict:
     """Načti sloučený config. Privátní část přebíjí veřejnou."""
     r = root or koren()
@@ -298,11 +312,9 @@ def save(cfg: dict, root: Optional[Path] = None) -> bool:
                    "NEUKLÁDÁM: %s", len(spatne), "; ".join(spatne[:5]))
         return False
     try:
-        (r / VEREJNY).write_text(
-            json.dumps(ver, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
+        _zapis_atomicky(r / VEREJNY, json.dumps(ver, indent=4, ensure_ascii=False) + "\n")
         if priv:
-            (r / PRIVATNI).write_text(
-                json.dumps(priv, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
+            _zapis_atomicky(r / PRIVATNI, json.dumps(priv, indent=4, ensure_ascii=False) + "\n")
         return True
     except Exception as e:
         _log.error("config: zápis selhal: %s", e)

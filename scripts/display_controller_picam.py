@@ -515,7 +515,6 @@ class PicamDisplayController:
                 try:
                     _new_mtime = _config_path.stat().st_mtime
                     if _new_mtime != _config_mtime:
-                        _config_mtime = _new_mtime
                         # HANS_CONFIG_WATCH_MERGED_V1 (11. 9.) — NACITAT PRES
                         # config_io, ne cist config.json naprimo. Od rozdeleni
                         # configu (8. 9.) je ve verejnem souboru jen pulka;
@@ -528,6 +527,12 @@ class PicamDisplayController:
                         # prilepi sam.
                         from scripts.config_io import load as _cio_load
                         _new_cfg = _cio_load()
+                        # CONFIG_ATOMIC_SAVE_V1 — prázdný výsledek (soubor
+                        # nejde přečíst) nepoužívat a čas změny si nepamatovat
+                        # → zkusí se znovu při další kontrole
+                        if not _new_cfg:
+                            raise RuntimeError("config prázdný, zkusím znovu")
+                        _config_mtime = _new_mtime
                         self.config.update(_new_cfg)
                         self._on_settings_save(_new_cfg)  # ON_SETTINGS_SAVE_METHOD_V1
                         _syslog.info('Config reloaded from web admin')

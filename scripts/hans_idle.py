@@ -7,6 +7,8 @@ Když nikdo není doma, Hans má vlastní program dne.
 
 Spouští se automaticky z display_controller_picam.py.
 """
+import os   # HANS_IDLE_IMPORTS_V1 (2. 10.) — `_climate_now` (os) a stopy případů (re)
+import re   # padaly na NameError do tichého except: klima náladu nikdy neovlivnilo, shrnutí případu od 2. 9. chybělo
 import sqlite3
 import threading
 import time
@@ -399,6 +401,9 @@ class HansIdle:
             )""")
         self._db.execute(
             "CREATE INDEX IF NOT EXISTS idx_diary_ts ON diary(ts)")
+        # HANS_DIARY_TYPE_INDEX_V1 (2. 10.) — ~160 dotazů filtruje event_type
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_diary_type_ts ON diary(event_type, ts)")
         self._db.commit()
 
     def _capability_check(self):
@@ -2804,10 +2809,13 @@ class HansIdle:
     def get_diary_context(self, max_age_h: int = 24) -> str:
         """Vrať shrnutí deníku pro LLM kontext."""
         cutoff = time.time() - max_age_h * 3600
-        rows = self._db.execute("""
-            SELECT ts, event_type, title, note FROM diary
-            WHERE ts >= ? ORDER BY ts DESC LIMIT 20
-        """, (cutoff,)).fetchall()
+        # HANS_DIARY_CTX_LOCK_V1 (2. 10.) — volá to chat z jiného vlákna nad
+        # sdíleným připojením; ostatní místa ho drží pod self._lock
+        with self._lock:
+            rows = self._db.execute("""
+                SELECT ts, event_type, title, note FROM diary
+                WHERE ts >= ? ORDER BY ts DESC LIMIT 20
+            """, (cutoff,)).fetchall()
 
         if not rows:
             return ""
@@ -2862,11 +2870,12 @@ class HansIdle:
 
     def get_movie_recommendation(self) -> dict | None:
         """Vrať film který Hans dnes 'viděl' — pro konverzaci."""
-        row = self._db.execute("""
-            SELECT title, data, note FROM diary
-            WHERE event_type='movie_browsed'
-            ORDER BY ts DESC LIMIT 1
-        """).fetchone()
+        with self._lock:   # HANS_DIARY_CTX_LOCK_V1
+            row = self._db.execute("""
+                SELECT title, data, note FROM diary
+                WHERE event_type='movie_browsed'
+                ORDER BY ts DESC LIMIT 1
+            """).fetchone()
         if not row:
             return None
         return {"title": row[0], "data": row[1], "plot": row[2]}
