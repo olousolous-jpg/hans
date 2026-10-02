@@ -46,7 +46,7 @@ DRY=0; YES=0; DARK=0; MODE=install; ONLY=""
 PACKAGES=(
     base-devel cmake extra-cmake-modules git python
     kwin qt6-base qt6-declarative qt6-tools
-    kconfig kcoreaddons kwindowsystem kdecoration
+    kconfig kcoreaddons kwindowsystem kdecoration kcmutils
     libepoxy libdrm wayland libxcb vulkan-headers vulkan-icd-loader mesa
     kvantum
 )

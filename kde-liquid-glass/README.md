@@ -79,6 +79,13 @@ Pak se odhlas a přihlas.
 
 ## Nastavení
 
+**V grafickém rozhraní:** *Nastavení systému → Správa oken → Efekty plochy → Tekuté
+sklo → ikona ozubeného kola.* Najdeš tam všechny hodnoty níže, výběr předvolby
+(iPhone, jemné, silné…) a průhlednost oken a nabídek z motivu Kvantum.
+Uloží se tlačítkem *Použít* a hned se projeví.
+
+**Z příkazové řádky:**
+
 ```bash
 liquid-glass show                  # aktuální hodnoty
 liquid-glass preset iphone         # iphone | jemne | vychozi | silne | bez-ramecku | tmave | svetle

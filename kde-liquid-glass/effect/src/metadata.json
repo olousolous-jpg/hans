@@ -8,6 +8,7 @@
         "Name": "Liquid Glass",
         "Name[cs]": "Tekuté sklo"
     },
+    "X-KDE-ConfigModule": "kwin_liquidglass_config",
     "org.kde.kwin.effect": {
         "enabledByDefaultMethod": true
     }

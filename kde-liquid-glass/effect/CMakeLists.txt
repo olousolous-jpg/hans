@@ -12,7 +12,7 @@ include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Quick DBus)
-find_package(KF6 6.0 REQUIRED COMPONENTS Config CoreAddons)
+find_package(KF6 6.0 REQUIRED COMPONENTS Config CoreAddons KCMUtils)
 find_package(KWin 6.7 REQUIRED)
 find_package(KDecoration3 REQUIRED)
 # kód pro X11 okna (Xwayland) volá xcb přímo
@@ -44,3 +44,19 @@ target_link_libraries(liquidglass PRIVATE
 if(TARGET XCB::XCB)
     target_link_libraries(liquidglass PRIVATE XCB::XCB)
 endif()
+
+# ── nastavení v Nastavení systému → Efekty plochy → Tekuté sklo (ozubené kolo)
+set(liquidglass_config_SOURCES src/config/liquidglass_config.cpp)
+kconfig_add_kcfg_files(liquidglass_config_SOURCES src/liquidglassconfig.kcfgc)
+kcoreaddons_add_plugin(kwin_liquidglass_config
+    SOURCES ${liquidglass_config_SOURCES}
+    INSTALL_NAMESPACE "kwin/effects/configs"
+)
+target_include_directories(kwin_liquidglass_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(kwin_liquidglass_config PRIVATE
+    Qt::Widgets
+    Qt::DBus
+    KF6::ConfigGui
+    KF6::CoreAddons
+    KF6::KCMUtils
+)
