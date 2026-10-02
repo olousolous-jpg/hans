@@ -167,6 +167,7 @@ step_effect() {
 
     run install -Dm755 "$HERE/liquid-glass" "$BIN_DIR/liquid-glass"
     ok "nástroj pro nastavení: $BIN_DIR/liquid-glass"
+    ensure_path
 
     install_pacman_hook
 
@@ -180,6 +181,27 @@ step_effect() {
             warn "Efekt se zatím nenačetl. Odhlas se a přihlas; pokud ani pak, viz README (Řešení potíží)."
         fi
     fi
+}
+
+ensure_path() {
+    # Arch nemá ~/.local/bin v PATH; doplnit do ~/.bashrc (a fish/zsh, pokud jsou)
+    [[ ":$PATH:" == *":$BIN_DIR:"* ]] && return 0
+    local line='export PATH="$HOME/.local/bin:$PATH"'
+    local rc
+    for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        [[ -f "$rc" || "$rc" == "$HOME/.bashrc" ]] || continue
+        if ! grep -qs '\.local/bin' "$rc"; then
+            if (( DRY )); then
+                say "  ${c_dim}[dry-run]${c_0} přidal bych do $rc: $line"
+            else
+                printf '\n# liquid-glass a další uživatelské příkazy\n%s\n' "$line" >> "$rc"
+            fi
+        fi
+    done
+    if command -v fish >/dev/null && [[ -d "$HOME/.config/fish" ]]; then
+        run fish -c "fish_add_path -U $BIN_DIR"
+    fi
+    warn "$BIN_DIR nebyl v PATH; doplněno pro nové terminály. V tomhle terminálu: source ~/.bashrc"
 }
 
 install_pacman_hook() {
