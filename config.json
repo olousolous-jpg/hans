@@ -815,7 +815,7 @@
         "enabled": true,
         "chunk_size": 3000,
         "custom_books": [],
-        "embed_model": "bge-m3:latest",
+        "embed_model": "bge-m3-cpu:latest",
         "user_book_weight": 0.7,
         "_semantic_note": "HANS_LIBRARY_SEMANTIC_V1: vyber knihy = bge-m3 kosinova podobnost (titul+tagy) vs Hansovy zajmy (fallback doslovny preryv tagu). user_book_weight = dampener nahranych knih (0.7 = nizsi priorita nez katalog). Nahrane ebooky auto-tagovany qwenem pri importu (EBOOK_AUTOTAG_V1).",
         "wishlist_weight": 0.7
@@ -825,7 +825,7 @@
         "relax_semantic": {
             "enabled": true,
             "threshold": 0.48,
-            "model": "bge-m3:latest",
+            "model": "bge-m3-cpu:latest",
             "keep_alive": "10m",
             "timeout_s": 6,
             "_note": "HANS_RELAX_SEMANTIC_V1 (27. 9.): relaxovaný nález fulltextu zápisků musí k otázce patřit významem (bge-m3 kosinus ≥ práh), jinak se zahodí → poctivé „nemám zapsáno“. Ručně 160 dvojic: práh 0,48 = šum 4 %, souvisejících zůstane 72 %. Backlog SLABE_PODKLADY_27_09."
@@ -985,7 +985,7 @@
         "max_seed_chars": 600,
         "_seed_select_note": "related_seeds=true → místo náhodných semínek vyber přes bge-m3 podobnost ta, co spolu aspoň volně souvisí (náhodná kotva + nejpodobnější sousedé) → míň prázdných univerzálií. false = random.",
         "related_seeds": true,
-        "embed_model": "bge-m3:latest",
+        "embed_model": "bge-m3-cpu:latest",
         "embed_max_chars": 400,
         "temperature": 0.85,
         "num_ctx": 8192,
@@ -1007,7 +1007,8 @@
         "seed_sim_min": 0.4,
         "seed_sim_max": 0.7,
         "seed_neighbor_pool": 8,
-        "_seed_band_note": "HANS_SYNTHESIS_SEED_BAND_V1 (28. 9.): kotva ze studia/knihy s pravděpodobností study_anchor_p, soused náhodně z seed_neighbor_pool nejbližších v pásmu podobnosti [seed_sim_min, seed_sim_max], páry nad stropem a blízké tituly (HANS_SYNTHESIS_SEED_TITLE_V1) vyřazeny. Strop 0,70: tentýž film česky × anglicky měl 0,707. Simulace 300 výběrů: duplikáty 3 % → 0, se studiem/knihou 8 % → 53 %. Backlog SYNTEZY_KVALITA_28_09."
+        "_seed_band_note": "HANS_SYNTHESIS_SEED_BAND_V1 (28. 9.): kotva ze studia/knihy s pravděpodobností study_anchor_p, soused náhodně z seed_neighbor_pool nejbližších v pásmu podobnosti [seed_sim_min, seed_sim_max], páry nad stropem a blízké tituly (HANS_SYNTHESIS_SEED_TITLE_V1) vyřazeny. Strop 0,70: tentýž film česky × anglicky měl 0,707. Simulace 300 výběrů: duplikáty 3 % → 0, se studiem/knihou 8 % → 53 %. Backlog SYNTEZY_KVALITA_28_09.",
+        "_embed_cpu_note": "HANS_EMBED_CPU_V1 (30. 9.): bge-m3 na GPU vedle rezidentniho hans-czech zasekaval inferenci az 10 min (OLLAMA_ZASEK_30_09) -> varianta bge-m3-cpu (Modelfile na PC: FROM bge-m3 + num_gpu 0). CPU 0,28 s/veta, 1,5 s/8x500 zn."
     },
     "dashboard_proposal": {
         "_note": "HANS_DASHBOARD_PROPOSAL_V1 (Tier 1) — po dostudování Designu Hans JEDNORÁZOVĚ navrhne vlastní nástěnku: designová kritika+návrh (hans-czech, grounding = CSS fakta z index.html + jeho studijní poznámky) + SDXL mockup do galerie (source='dashboard'). Chat /dashboard [teď]. Tier 2 (reálný CSS diff se schválením + coder tier) = later.",
