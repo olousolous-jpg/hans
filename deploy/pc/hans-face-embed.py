@@ -50,6 +50,12 @@ THREADS = int(os.environ.get("FACE_THREADS", "8"))
 PROVIDER = os.environ.get("ORT_PROVIDER", "CPU")
 SIZE = 112
 DIM = 512
+# ADAFACE_SHADOW_V1 (27. 9.) — DRUHÝ model jen pro stínové srovnání (rozhoduje
+# dál MODEL). AdaFace IR101 WebFace12M z CVLFace chce BGR, ačkoli jeho config
+# tvrdí RGB: změřeno na označeném sběru, prohozené kanály +3–4 b. (r50 je na
+# pořadí kanálů necitlivý). Endpoint /embed2; když soubor chybí, /embed2 = 404.
+MODEL2 = os.environ.get("FACE_MODEL2", os.path.expanduser("~/hans/adaface_ir101_wf12m.onnx"))
+MODEL2_BGR = os.environ.get("FACE_MODEL2_BGR", "1") == "1"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("face-embed")
@@ -57,37 +63,43 @@ log = logging.getLogger("face-embed")
 _stats = {"embedu": 0, "ms_celkem": 0.0}
 
 
-def _make_session():
+def _make_session(path=None):
+    path = path or MODEL
     import onnxruntime as ort
     so = ort.SessionOptions()
     so.intra_op_num_threads = THREADS
     so.log_severity_level = 3
     prov = (["ROCMExecutionProvider", "CPUExecutionProvider"]
             if PROVIDER.upper() == "ROCM" else ["CPUExecutionProvider"])
-    s = ort.InferenceSession(MODEL, so, providers=prov)
-    log.info("model %s | provider %s | vláken %d", MODEL, s.get_providers()[0], THREADS)
+    s = ort.InferenceSession(path, so, providers=prov)
+    log.info("model %s | provider %s | vláken %d", path, s.get_providers()[0], THREADS)
     return s
 
 
 SESS = None
 INPUT = None
+SESS2 = None
+INPUT2 = None
 
 
-def embed(buf: bytes) -> bytes:
+def embed(buf: bytes, druhy: bool = False) -> bytes:
     n = len(buf) // (SIZE * SIZE * 3)
     if n == 0 or len(buf) % (SIZE * SIZE * 3):
         raise ValueError(f"špatná délka těla: {len(buf)} B")
     imgs = np.frombuffer(buf, np.uint8).reshape(n, SIZE, SIZE, 3).astype(np.float32)
+    if druhy and MODEL2_BGR:
+        imgs = imgs[..., ::-1]     # ADAFACE_SHADOW_V1: RGB → BGR
     # stejná normalizace jako insightface: (x-127.5)/127.5, pořadí NCHW
     x = ((imgs - 127.5) / 127.5).transpose(0, 3, 1, 2)
     t0 = time.perf_counter()
-    out = SESS.run(None, {INPUT: np.ascontiguousarray(x)})[0]
+    _s, _i = (SESS2, INPUT2) if druhy else (SESS, INPUT)
+    out = _s.run(None, {_i: np.ascontiguousarray(x)})[0]
     dt = (time.perf_counter() - t0) * 1000.0
     _stats["embedu"] += n
     _stats["ms_celkem"] += dt
     out = np.asarray(out, np.float32)
     out /= (np.linalg.norm(out, axis=1, keepdims=True) + 1e-9)
-    log.info("embed n=%d za %.0f ms (%.1f ms/kus)", n, dt, dt / n)
+    log.info("embed%s n=%d za %.0f ms (%.1f ms/kus)", "2" if druhy else "", n, dt, dt / n)
     return out.astype(np.float32).tobytes()
 
 
@@ -108,6 +120,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/health"):
             n = _stats["embedu"]
             b = json.dumps({"ok": True, "model": os.path.basename(MODEL),
+                            "model2": os.path.basename(MODEL2) if SESS2 else None,
                             "provider": SESS.get_providers()[0] if SESS else None,
                             "vlaken": THREADS, "embedu": n,
                             "ms_prumer": round(_stats["ms_celkem"] / n, 1) if n else None},
@@ -117,7 +130,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found")
 
     def do_POST(self):
-        if not self.path.startswith("/embed"):
+        druhy = self.path.startswith("/embed2")      # ADAFACE_SHADOW_V1
+        if not self.path.startswith("/embed") or (druhy and SESS2 is None):
             self._send(404, b"not found"); return
         try:
             ln = int(self.headers.get("Content-Length", 0))
@@ -127,7 +141,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not c:
                     break
                 buf += c
-            self._send(200, embed(buf))
+            self._send(200, embed(buf, druhy))
         except Exception as e:
             log.error("embed selhal: %s", e)
             self._send(400, str(e).encode(), "text/plain; charset=utf-8")
@@ -138,6 +152,9 @@ if __name__ == "__main__":
         log.error("model nenalezen: %s", MODEL); sys.exit(1)
     SESS = _make_session()
     INPUT = SESS.get_inputs()[0].name
+    if os.path.exists(MODEL2):                     # ADAFACE_SHADOW_V1
+        SESS2 = _make_session(MODEL2)
+        INPUT2 = SESS2.get_inputs()[0].name
     # rozehřát — první běh je vždy pomalý a zkreslil by měření
     embed(np.zeros((SIZE, SIZE, 3), np.uint8).tobytes())
     _stats["embedu"] = 0; _stats["ms_celkem"] = 0.0

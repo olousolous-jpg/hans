@@ -44,6 +44,30 @@ def lm_of(result):
         return None
 
 
+def natoceni(lm, box=None):
+    """FACE_POSE_LOG_V1 (2. 10.) — hrubé natočení hlavy z 5 SCRFD bodů.
+    yaw = posun nosu od středu očí / vzdálenost očí (0 = zpříma, ±0,5 a víc
+    = profil); ed = vzdálenost očí / šířka boxu (malé = profil nebo zátylek).
+    Vrací (yaw, ed) nebo None."""
+    try:
+        p = np.asarray(lm, dtype=np.float32).reshape(5, 2)
+        if not np.all(np.isfinite(p)) or not np.any(p):
+            return None
+        oci = p[1] - p[0]
+        d = float(np.hypot(oci[0], oci[1]))
+        if d < 1e-4:
+            return None
+        stred = (p[0] + p[1]) / 2.0
+        yaw = float((p[2][0] - stred[0]) / d)
+        ed = None
+        if box is not None:
+            bw = float(box[2] - box[0])
+            ed = d / bw if bw > 1e-4 else None
+        return round(yaw, 2), (round(ed, 2) if ed is not None else None)
+    except Exception:
+        return None
+
+
 def aligned_crop_lm(frame, lm, size=None):
     """Zarovnání na ArcFace referenci ze SKUTEČNÝCH SCRFD landmarků.
 
@@ -221,6 +245,12 @@ class AsyncRecognizer:
         self.used_pc = False
         self._pc_min_area = float(
             (self.config.get('pc_embed', {}) or {}).get('min_face_area', 0.0015))
+        # FACE_DARK_GATE_V1 / FACE_POSE_LOG_V1 (2. 10.)
+        _rt_g = (self.config.get('recognition_tuning', {}) or {})
+        self._pc_min_jas = float(_rt_g.get('pc_min_jas', 15))
+        self._pose_log_den = int(_rt_g.get('pose_log_den', 40))
+        self._pose_log_every_s = float(_rt_g.get('pose_log_every_s', 30))
+        self._pose_log_dir = str(_rt_g.get('pose_log_dir', 'data/mereni/natoceni'))
         try:
             from scripts.pc_embed import PCEmbedder
             self._pc = PCEmbedder(self.config)
@@ -228,6 +258,14 @@ class AsyncRecognizer:
                 print('[AsyncRecognizer] PC embedding zapnut')
         except Exception as _e:
             print(f'[AsyncRecognizer] PC embedding nedostupný: {_e}')
+        # ADAFACE_SHADOW_V1 — druhý model jen ve stínu (loguje, nerozhoduje)
+        self._shadow = None
+        try:
+            from scripts.face_shadow import FaceShadow
+            _sh = FaceShadow(self.config)
+            self._shadow = _sh if _sh.enabled else None
+        except Exception as _e:
+            print(f'[AsyncRecognizer] stín AdaFace nedostupný: {_e}')
 
         self._face_prep = _FacePreprocessor(self.config)
         # Filtr mikro-detekcí — boxy menší než min_face_area se neposílají
@@ -407,6 +445,7 @@ class AsyncRecognizer:
                 # Crop je levný (jedna warpAffine), takže ho spočítáme pro VŠECHNY
                 # obličeje; drahý byl jen Hailo embedding, a ten zůstává přeskočený.
                 pc_embs = {}
+                pc_crops, _shadow_r50 = {}, {}   # ADAFACE_SHADOW_V1
                 if self._pc is not None and self._pc.available and main_frame is not None:
                     _idx, _cr = [], []
                     # ⚠️ NE `face_indices` — ten filtruje na min_face_area 0.005,
@@ -432,6 +471,7 @@ class AsyncRecognizer:
                         _out = self._pc.embed(_cr)
                         if _out is not None:
                             pc_embs = {i: e for i, e in zip(_idx, _out)}
+                            pc_crops = dict(zip(_idx, _cr))   # ADAFACE_SHADOW_V1
                 self.used_pc = bool(pc_embs)   # VOTE_PC_SCALE_V1
 
                 # PC_VOTE_TELEMETRY_V1: jednou za minutu shrnout, kdo rozhodoval
@@ -478,6 +518,15 @@ class AsyncRecognizer:
                         if _pe is not None:
                             raw_name, raw_conf = self.face_db.identify_pc(_pe)
                             self._pc_stat["pc"] += 1          # PC_VOTE_TELEMETRY_V1
+                            _shadow_r50[det_idx] = raw_name   # ADAFACE_SHADOW_V1
+                            # FACE_DARK_GATE_V1 (2. 10.) — černý výřez jméno nedostane.
+                            # Ručně označené rozpory 29.–30. 9.: ne-tváře jas od 3,9,
+                            # skutečné tváře od 19 → práh 15 bez ztráty tváře.
+                            _cr_pc = pc_crops.get(det_idx)
+                            if (raw_name != "Unknown" and _cr_pc is not None
+                                    and float(np.mean(_cr_pc)) < self._pc_min_jas):
+                                raw_name, raw_conf = "Unknown", 0.0
+                            self._uloz_natoceni(det_idx, hailo_results, _cr_pc, raw_name)
                         else:
                             raw_name, raw_conf = self.face_db.identify(use_emb)
                             self._pc_stat["hailo"] += 1
@@ -604,6 +653,12 @@ class AsyncRecognizer:
                                 except Exception:
                                     pass
 
+                # ADAFACE_SHADOW_V1 — tytéž výřezy druhému modelu (jen log)
+                if self._shadow is not None and _shadow_r50:
+                    _si = [i for i in _shadow_r50 if i in pc_crops]
+                    self._shadow.submit([pc_crops[i] for i in _si],
+                                        [_shadow_r50[i] for i in _si])
+
             except Exception:
                 print("[AsyncRecognizer] exception:")
                 traceback.print_exc()
@@ -687,6 +742,37 @@ class AsyncRecognizer:
             if self._diag_logger:
                 self._diag_logger.warning(
                     "person_seen failed for %s: %s", name, _e)
+
+    def _uloz_natoceni(self, det_idx, hailo_results, crop, name):
+        """FACE_POSE_LOG_V1 (2. 10.) — vzorek výřezů s natočením hlavy pro
+        ruční označení (tvář × odvrácená hlava), ze kterého se teprve změří
+        práh. Nejvýš 1 za `pose_log_every_s` a `pose_log_den` denně."""
+        try:
+            if not self._pose_log_den or crop is None:
+                return
+            now = time.time()
+            if now - getattr(self, "_pose_log_t", 0.0) < self._pose_log_every_s:
+                return
+            den = time.strftime("%Y%m%d")
+            if getattr(self, "_pose_log_d", None) != den:
+                self._pose_log_d, self._pose_log_n = den, 0
+            if self._pose_log_n >= self._pose_log_den:
+                return
+            r = hailo_results[det_idx]
+            nt = natoceni(lm_of(r), r[0])
+            if nt is None:
+                return
+            import os as _os
+            _os.makedirs(self._pose_log_dir, exist_ok=True)
+            fn = "%s_%s_yaw%+.2f_ed%.2f_jas%d.png" % (
+                time.strftime("%Y%m%d_%H%M%S"), name or "Unknown", nt[0],
+                nt[1] if nt[1] is not None else -1, int(np.mean(crop)))
+            cv2.imwrite(_os.path.join(self._pose_log_dir, fn),
+                        cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
+            self._pose_log_t = now
+            self._pose_log_n += 1
+        except Exception:
+            pass
 
     def _aligned_crop(self, frame: np.ndarray, box: list):
         """Similarity-transform crop aligned to ArcFace canonical landmarks."""

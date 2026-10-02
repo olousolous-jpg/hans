@@ -1379,7 +1379,21 @@
         "cooldown_s": 60.0,
         "_cooldown_note": "Po 3 chybách se 60 s nezkouší — v noci by se jinak log i main loop zbytečně zatěžovaly opakovanými pokusy.",
         "min_face_area": 0.0015,
-        "_area_note": "NE min_face_area z async_recognizer (0.005) — reálné tváře mají 0.0028–0.0045, takže by do PC větve nespadlo skoro nic. 0.0015 je změřená hranice, pod kterou rostou záměny."
+        "_area_note": "NE min_face_area z async_recognizer (0.005) — reálné tváře mají 0.0028–0.0045, takže by do PC větve nespadlo skoro nic. 0.0015 je změřená hranice, pod kterou rostou záměny.",
+        "shadow": {
+            "enabled": false,
+            "gallery": "data/known_faces_pc_ada.pkl",
+            "margin": 0.06,
+            "top_k": 3,
+            "queue": 4,
+            "timeout_s": 3.0,
+            "_note": "ADAFACE_SHADOW_V1 (27. 9.): AdaFace IR101 (WebFace12M, BGR) na PC /embed2 jen LOGUJE, rozhoduje dál r50. Offline při náskoku 0,06: správně 71,2 × 66,7 %, záměny 2,6 × 4,2 %. Souhrn: system.log 'stín AdaFace za minutu', rozpory: recognition.log 'SHADOW'. Galerie tools/build_pc_gallery.py --url …/embed2 --out data/known_faces_pc_ada.pkl. Backlog ADAFACE_27_09.",
+            "save_rozpory": false,
+            "save_dir": "data/mereni/adaface/rozpory",
+            "save_jednostranne_den": 20,
+            "_save_note": "ADAFACE_SHADOW_SAVE_V1 (29. 9., souhlas uživatele): výřezy rozporů (jiné jméno vždy, jen ada / jen r50 vzorek 1/min, 20/den) k ručnímu roztřídění. Po vyhodnocení SMAZAT složku a vypnout.",
+            "_off_note": "2. 10.: VYPNUTO — r50 vyhrál (ada míň Unknown 27,1 × 31,8 %, ale víc omylů; rozpory r50 15 : ada 2). Označených 154 výřezů v save_dir zůstává jako testovací sada galerie (stitky.json). Backlog TVARE_ZLEPSENI_02_10."
+        }
     },
     "body_harvest": {
         "enabled": false,
