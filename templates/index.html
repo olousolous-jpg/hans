@@ -169,6 +169,7 @@ button.btn:hover { opacity: 0.85; }
       <button data-tab="conversations" onclick="showTab('conversations')">💬 Konverzace</button>
       <button data-tab="works" onclick="showTab('works')">🛠️ Hansova práce</button>
       <button data-tab="zpravy" onclick="showTab('zpravy')">📰 Zprávy</button>
+      <button data-tab="politici" onclick="showTab('politici')">🏛️ Politici</button>
       <button data-tab="questions" onclick="showTab('questions')">❓ Otázky<span id="q-nav-badge" style="background:var(--yellow);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:0.7em;margin-left:auto;display:none">0</span></button>
       <button data-tab="mysleni" onclick="showTab('mysleni')">🧠 Myšlení</button>
       <button data-tab="users" onclick="showTab('users')">🔐 Uživatelé</button>
@@ -351,6 +352,23 @@ button.btn:hover { opacity: 0.85; }
 
 <!-- ── HANSOVA PRÁCE (HANS_MAKER_V1 — vygenerované stránky po verzích) -->
 <!-- HANS_ZPRAVY_SBER_V1 (30. 9.) — sebrané titulky zpráv z více zdrojů -->
+<!-- HANS_DEMAGOG_V1 — ověřené výroky politiků z Demagog.cz -->
+<div id="tab-politici" class="tab-content">
+  <div class="filter-bar" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input id="dm-hledej" type="search" placeholder="politik, strana nebo téma…" oninput="kresliPolitiky()" onkeydown="if(event.key==='Enter')dmHledejTema()" style="flex:1;min-width:180px;padding:6px 10px;border-radius:6px;border:1px solid var(--bg3);background:var(--bg2);color:var(--fg)">
+    <button class="btn btn-neutral" onclick="dmHledejTema()">Hledat v textu výroků</button>
+    <label style="font-size:0.85rem;color:var(--fg2)">verdikt
+      <select id="dm-verdikt" onchange="dmPrekresli()"><option value="">vše</option><option value="pravda">pravda</option><option value="nepravda">nepravda</option><option value="zavádějící">zavádějící</option><option value="neověřitelné">neověřitelné</option></select></label>
+    <span id="dm-info" style="color:var(--fg2);font-size:0.85rem"></span>
+  </div>
+  <div style="color:var(--fg2);font-size:0.8rem;margin:-6px 0 12px">Výroky a verdikty ověřil <a href="https://demagog.cz" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">Demagog.cz</a>; Hans je jen sbírá (každou hodinu) a předává. Jen Česko, od ledna 2025.</div>
+  <div style="display:grid;grid-template-columns:minmax(220px,320px) 1fr;gap:14px" id="dm-mrizka">
+    <div class="card" style="margin:0;max-height:75vh;overflow:auto"><div style="font-weight:600;margin-bottom:8px">Politici</div><div id="dm-politici"></div></div>
+    <div class="card" style="margin:0"><div id="dm-nadpis" style="font-weight:600;margin-bottom:8px">Vyberte politika vlevo, nebo hledejte téma.</div><div id="dm-vyroky"></div></div>
+  </div>
+</div>
+<style>@media (max-width:700px){#dm-mrizka{grid-template-columns:1fr!important}}</style>
+
 <div id="tab-zpravy" class="tab-content">
   <div class="filter-bar" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <button class="btn btn-neutral" onclick="loadZpravy()">↺ Obnovit</button>
@@ -363,6 +381,11 @@ button.btn:hover { opacity: 0.85; }
   <div class="card">
     <div style="font-weight:600;margin-bottom:8px">Zdroje</div>
     <div id="zp-zdroje" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px"></div>
+  </div>
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:4px">🔢 Čísla se liší napříč médii</div>
+    <div style="color:var(--fg2);font-size:0.8rem;margin-bottom:10px">Počty (mrtví, zranění, zatčení, pohřešovaní, školy…) z titulků a perexů téže události, seřazené podle času. Většinou jde o vývoj v čase nebo o jiný rozsah (regionální tisk píše o svém městě), ne o rozpor. Stejné číslo od více médií po sobě je sloučené (+N).</div>
+    <div id="zp-cisla"></div>
   </div>
   <div class="card">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
@@ -596,6 +619,7 @@ const PAGE_TITLES = {
   conversations: 'Konverzace', works: 'Hansova práce', questions: 'Otázky',
   'cfg-identity': 'Nastavení', log: 'Log', users: 'Uživatelé', mysleni: 'Jak Hans přemýšlí',
   zpravy: 'Zprávy — sběr z více zdrojů',
+  politici: 'Politici — ověřené výroky (Demagog.cz)',
 };
 function showTab(name) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -610,7 +634,7 @@ function showTab(name) {
   const loaders = {
     'diary': loadDiaryCards, 'faces': loadFaces, 'objects': loadObjects,
     'conversations': loadConversations, 'log': loadLog, 'questions': loadQuestions,
-    'works': loadWorks, 'zpravy': loadZpravy, 'users': loadPristup, 'mysleni': () => window.msOtevri && window.msOtevri(),
+    'works': loadWorks, 'zpravy': loadZpravy, 'politici': loadPolitici, 'users': loadPristup, 'mysleni': () => window.msOtevri && window.msOtevri(),
   };
   if (loaders[name]) loaders[name]();
 }
@@ -1628,6 +1652,57 @@ async function loadTrends() {
 }
 
 // HANS_MAKER_V1 — karta „Hansova práce" (vygenerované stránky po verzích)
+// HANS_DEMAGOG_V1 — záložka Politici (ověřené výroky z Demagog.cz)
+let _dm = null, _dmVyroky = [], _dmNadpis = '', _dmPs = [];
+const dmFold = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const dmBarva = v => ({'pravda': 'var(--green)', 'nepravda': 'var(--red)', 'zavádějící': 'var(--orange)'})[v] || 'var(--fg2)';
+async function loadPolitici() {
+  try {
+    _dm = await (await fetch('/api/demagog')).json();
+    kresliPolitiky();
+  } catch (e) { document.getElementById('dm-info').textContent = 'Nepodařilo se načíst.'; }
+}
+function kresliPolitiky() {
+  if (!_dm) return;
+  const f = dmFold(document.getElementById('dm-hledej').value);
+  const ps = _dmPs = (_dm.politici || []).filter(p => !f || dmFold(p.mluvci + ' ' + (p.strana || '')).includes(f));
+  const celkem = (_dm.politici || []).reduce((a, p) => a + p.pocet, 0);
+  document.getElementById('dm-info').textContent = `${(_dm.politici || []).length} politiků · ${celkem} výroků`;
+  document.getElementById('dm-politici').innerHTML = ps.length ? ps.map((p, i) => {
+    const dily = [['pravda', p.pravda], ['nepravda', p.nepravda], ['zavádějící', p.zavadejici], ['neověřitelné', p.neoveritelne]]
+      .filter(x => x[1]).map(x => `<span title="${x[0]}: ${x[1]}" style="display:inline-block;height:6px;width:${100 * x[1] / p.pocet}%;background:${dmBarva(x[0])}"></span>`).join('');
+    return `<div onclick="dmUkaz(_dmPs[${i}].mluvci)" style="cursor:pointer;padding:6px 4px;border-bottom:1px solid var(--bg3)">`
+      + `<div style="display:flex;justify-content:space-between;gap:6px"><span>${esc(p.mluvci)} <span style="color:var(--fg2);font-size:0.78rem">${esc(p.strana || '')}</span></span><span style="color:var(--fg2);font-size:0.8rem">${p.pocet}</span></div>`
+      + `<div style="display:flex;border-radius:3px;overflow:hidden;margin-top:3px;background:var(--bg3)">${dily}</div></div>`;
+  }).join('') : '<div style="color:var(--fg2)">Nikdo takový — zkuste „Hledat v textu výroků“.</div>';
+}
+async function dmUkaz(m) {
+  const d = await (await fetch('/api/demagog?mluvci=' + encodeURIComponent(m))).json();
+  const p = (_dm.politici || []).find(x => x.mluvci === m) || {};
+  _dmNadpis = `${esc(m)} <span style="color:var(--fg2);font-weight:400;font-size:0.85rem">${esc(p.strana || '')} · ${p.pocet || 0} výroků: <span style="color:var(--green)">${p.pravda || 0} pravda</span>, <span style="color:var(--red)">${p.nepravda || 0} nepravda</span>, <span style="color:var(--orange)">${p.zavadejici || 0} zavádějící</span>, ${p.neoveritelne || 0} neověřitelné</span>`;
+  _dmVyroky = d.vyroky || []; dmPrekresli(false);
+}
+async function dmHledejTema() {
+  const q = document.getElementById('dm-hledej').value.trim();
+  if (!q) return;
+  const d = await (await fetch('/api/demagog?q=' + encodeURIComponent(q))).json();
+  _dmNadpis = d.mluvci ? esc(d.mluvci) : `Téma „${esc(q)}“ <span style="color:var(--fg2);font-weight:400;font-size:0.85rem">· ${(d.vyroky || []).length} výroků</span>`;
+  _dmVyroky = d.vyroky || []; dmPrekresli(true);
+}
+function dmPrekresli(sJmenem) {
+  const vf = document.getElementById('dm-verdikt').value;
+  const vy = _dmVyroky.filter(v => !vf || v.verdikt === vf);
+  document.getElementById('dm-nadpis').innerHTML = _dmNadpis || 'Vyberte politika vlevo, nebo hledejte téma.';
+  const jm = sJmenem === undefined ? _dmNadpis.startsWith('Téma') : sJmenem;
+  document.getElementById('dm-vyroky').innerHTML = vy.length ? vy.map(v => {
+    const u = /^https:\/\/demagog\.cz\//.test(v.url) ? v.url : '#';
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--bg3)">`
+      + `<div style="font-size:0.78rem;color:var(--fg2)">${esc(String(v.datum || '').replace(/^(\d{4})-(\d{2})-(\d{2}).*/, (_, r, m, d) => `${+d}. ${+m}. ${r}`))}${v.porad ? ' · ' + esc(v.porad) : ''}${jm ? ' · <b style="color:var(--fg)">' + esc(v.mluvci) + '</b> ' + esc(v.strana || '') : ''}</div>`
+      + `<div style="margin:3px 0">„${esc(v.vyrok)}“ <span style="font-weight:600;color:${dmBarva(v.verdikt)};white-space:nowrap">${esc(v.verdikt).toUpperCase()}</span></div>`
+      + `<div style="font-size:0.85rem;color:var(--fg2)">${esc(v.kratce || '')} <a href="${u}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">celé zdůvodnění ↗</a></div></div>`;
+  }).join('') : (_dmNadpis ? '<div style="color:var(--fg2)">Nic takového.</div>' : '');
+}
+
 // HANS_ZPRAVY_SBER_V1 — záložka Zprávy
 let _zp = null;
 function zpCas(ts) {
@@ -1636,10 +1711,17 @@ function zpCas(ts) {
   const hm = d.toLocaleTimeString('cs-CZ', {hour: '2-digit', minute: '2-digit'});
   return d.toDateString() === n.toDateString() ? hm : d.toLocaleDateString('cs-CZ', {day: 'numeric', month: 'numeric'}) + ' ' + hm;
 }
+// HANS_ZPRAVY_PREKLAD_V1 — český překlad JEN pro čtení; originál po najetí myší
+function zpTit(r) {
+  if (!r.titulek_cs) return esc(r.titulek);
+  const orig = esc(r.titulek).replace(/"/g, '&quot;');
+  const jaz = String(r.jazyk || '').toUpperCase() || 'PŘEKL.';
+  return `<span title="Originál: ${orig}">${esc(r.titulek_cs)}</span> <span title="Originál: ${orig}" style="font-size:0.68rem;color:var(--fg2);border:1px solid var(--bg3);border-radius:3px;padding:0 3px;cursor:help">${esc(jaz)}</span>`;
+}
 function zpOdkaz(r) {
   const u = String(r.url || '');
   const bezp = /^https?:\/\//.test(u) ? u.replace(/"/g, '%22') : '#';
-  return `<a href="${bezp}" target="_blank" rel="noopener noreferrer" style="color:var(--fg);text-decoration:none">${esc(r.titulek)}</a>`;
+  return `<a href="${bezp}" target="_blank" rel="noopener noreferrer" style="color:var(--fg);text-decoration:none">${zpTit(r)}</a>`;
 }
 async function loadZpravy() {
   try {
@@ -1667,6 +1749,20 @@ function kresliZpravy() {
       + `</div>`;
   }).join('');
   document.getElementById('zp-n2').textContent = d.spicka_n || 5;
+  // HANS_ZPRAVY_CISLA_V1 — čísla téže události napříč médii
+  const zpRada = r => {
+    const sk = [];
+    for (const x of r) {
+      const l = sk[sk.length - 1];
+      if (l && l.h === x.hodnota) l.n++; else sk.push({h: x.hodnota, z: x.zdroj, c: x.cas, n: 0});
+    }
+    return sk.map(s => `<span style="white-space:nowrap">${Number(s.h).toLocaleString('cs-CZ')} <span style="color:var(--accent2)">${esc(s.z)}${s.n ? ' +' + s.n : ''}</span> <span style="color:var(--fg2)">${zpCas(s.c)}</span></span>`).join(' → ');
+  };
+  const cs = d.cisla || [];
+  document.getElementById('zp-cisla').innerHTML = cs.length ? cs.map(u =>
+    `<div style="padding:6px 0;border-bottom:1px solid var(--bg3)"><div>${zpTit(u)} <span style="color:var(--fg2);font-size:0.78rem">· ${u.pocet_zdroju} médií · událost ${u.id}</span></div>`
+    + u.veliciny.map(v => `<div style="font-size:0.82rem;margin:2px 0 0 12px"><b>${esc(v.popis)}:</b> ${zpRada(v.rada)}</div>`).join('')
+    + `</div>`).join('') : '<div style="color:var(--fg2)">V tomhle okně se žádný počet mezi médii neliší.</div>';
 
   const vyd = document.getElementById('zp-vydani').value;
   const hl = (d.hlavni || []).filter(r => filtr(r) && (!vyd || r.vydani === vyd));
@@ -1674,8 +1770,8 @@ function kresliZpravy() {
     const cl = (r.clenove || []).map(c => `<div style="font-size:0.8rem;color:var(--fg2)">• ${esc(c[0])} <span style="color:var(--accent2)">${esc(c[1])}</span></div>`).join('');
     return `<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--bg3)">`
       + `<div style="min-width:44px;text-align:right;font-weight:600;color:var(--accent)">${r.na_spici}×</div>`
-      + `<div style="flex:1;min-width:0"><div>${esc(r.titulek)}</div>`
-      + `<div style="color:var(--fg2);font-size:0.78rem">${r.kategorie && r.kategorie !== 'zprava' ? `<span style="color:var(--orange)">${r.kategorie === 'bulvar' ? 'bulvár' : 'sport'}</span> · ` : ''}${esc(r.vydani_nazev)} · ${r.pocet_zdroju} médií · nejvýš ${r.nejlepsi_pozice}. · na špici ${zpCas(r.prvni_na_spici_ts)} – ${zpCas(r.posledni_na_spici_ts)}`
+      + `<div style="flex:1;min-width:0"><div>${zpTit(r)}</div>`
+      + `<div style="color:var(--fg2);font-size:0.78rem">${r.kategorie && r.kategorie !== 'zprava' ? `<span style="color:var(--orange)">${r.kategorie === 'bulvar' ? 'bulvár' : 'sport'}</span> · ` : ''}${esc(r.vydani_nazev)} · ${r.pocet_zdroju === 1 ? '<span style="color:var(--orange)">jen 1 médium</span>' : r.pocet_zdroju + ' médií'} · nejvýš ${r.nejlepsi_pozice}. · na špici ${zpCas(r.prvni_na_spici_ts)} – ${zpCas(r.posledni_na_spici_ts)}`
       + ` · <a href="#" onclick="const e=document.getElementById('zp-cl-${i}');e.style.display=e.style.display?'':'none';return false" style="color:var(--accent)">média</a></div>`
       + `<div id="zp-cl-${i}" style="display:none;margin-top:4px">${cl}</div></div></div>`;
   }).join('') : '<div style="color:var(--fg2)">Zatím nic.</div>';
@@ -2273,6 +2369,7 @@ async function savePristup() {
   };
   if (location.hash === "#mysleni") setTimeout(() => showTab("mysleni"), 0);
   if (location.hash === "#zpravy") setTimeout(() => showTab("zpravy"), 0);   // HANS_ZPRAVY_SBER_V1
+  if (location.hash === "#politici") setTimeout(() => showTab("politici"), 0);   // HANS_DEMAGOG_V1
   if (location.hash === "#nastaveni") setTimeout(() => showTab("cfg-identity"), 0);   // WEB_SETTINGS_ESSENTIAL_V1
 })();
 </script>

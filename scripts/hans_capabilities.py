@@ -30,6 +30,16 @@ _CAPABILITIES = [
     ("paint", "Umím MALOVAT obrazy (výtvarná pipeline SDXL) — své sny, dojmy ze "
      "dne, svůj domov, obrazy ke knihám, i na libovolné téma či dojem z rozhovoru",
      "namaluj <téma> / nakresli <téma>; /art <kniha>; galerie „Co Hans namaloval\""),
+    ("zpravy", "Sleduji ZPRÁVY — každou hodinu sbírám titulky z českých i zahraničních médií "
+     "(ČT24, iROZHLAS, Seznam Zprávy, Novinky, BBC, Guardian, DW, Le Monde…) a umím říct, co se "
+     "děje, nebo najít zprávy k tématu za poslední tři dny. Neopakuji celé články; titulky cizích "
+     "médií uvádím v českém překladu, pokud už je přeložený; hledání podle smyslu potřebuje zapnutý počítač",
+     "/zpravy [téma]; „co píšou o …“, „co je ve zprávách“"),
+    ("demagog", "Umím vyhledat OVĚŘENÉ VÝROKY českých politiků z Demagog.cz — výrok, "
+     "jejich verdikt (pravda / nepravda / zavádějící / neověřitelné), krátké zdůvodnění "
+     "a odkaz. Verdikt je jejich, sám politiky nehodnotím; mám jen to, co ověřili oni "
+     "(od ledna 2025), a jen Českou republiku",
+     "/demagog <jméno nebo téma>; „co ověřil Demagog o …“"),
     ("study", "Umím STUDOVAT téma do hloubky přes týdny (Wikipedie, akademický "
      "výzkum, primární texty, knihy) a psát si poznámky", "/studium"),
     ("authorship", "Píšu VLASTNÍ dílo na pokračování (esej/povídku)", "/dilo"),

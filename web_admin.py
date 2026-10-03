@@ -1337,6 +1337,23 @@ async def get_zpravy(hodin: float = 48.0, vse: int = 0):
         return {"zdroje": [], "spicka": [], "nove": [], "sberu": 0, "chyba": str(e)}
 
 
+@app.get("/api/demagog")
+async def get_demagog(mluvci: str = "", q: str = ""):
+    """HANS_DEMAGOG_V1 (3. 10.) — ověřené výroky politiků z Demagog.cz
+    (tabulka `demagog` v `hans_zpravy.db`). Bez parametrů jen seznam politiků."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent))
+        from scripts.hans_zpravy import demagog_mluvci, demagog_vyroky
+        out = {"politici": demagog_mluvci()}
+        if mluvci or q:
+            out.update(demagog_vyroky(mluvci=mluvci[:120], dotaz=q[:200], limit=100))
+        return out
+    except Exception as e:
+        print(f"[web_admin] get_demagog error: {e}")
+        return {"politici": [], "vyroky": [], "chyba": str(e)}
+
+
 @app.get("/api/musings")
 async def get_musings(limit: int = 6):
     """Co Hans napsal sám pro sebe (diary event 'musing')."""

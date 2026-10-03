@@ -4475,6 +4475,18 @@ class OpenWebUIDirectHandler:
                             'HANS_FILM_OPINION_ANAFORA_V1: vlákno → /film')
                 except Exception as _fae:
                     logging.getLogger(__name__).debug('anafora film: %s', _fae)
+            # HANS_DEMAGOG_FOLLOWUP_V1 (3. 10.) — pokračování po výpisu z Demagogu
+            # („a co ostatní výroky?“) nenese slovo Demagog; rozhodne vlákno.
+            if not _cmd:
+                try:
+                    from scripts.chat_commands import thread_demagog
+                    _dma = thread_demagog(ctx.user_message, _t_turns)
+                    if _dma:
+                        _cmd = ("demagog", _dma)
+                        logging.getLogger(__name__).info(
+                            'HANS_DEMAGOG_FOLLOWUP_V1: vlákno → /demagog (%.60s)', _dma)
+                except Exception as _dme:
+                    logging.getLogger(__name__).debug('demagog vlákno: %s', _dme)
             # HANS_CONFIRM_PRECEDENCE_V2 (20.8.) — ČEKÁ-LI AGENT NA POTVRZENÍ,
             # LLM ROUTER SE NEPTÁ. Princip už platí od 7.8. pro větev
             # prohloubení (`HANS_CONFIRM_PRECEDENCE_V1`), jen se nikdy
@@ -5006,6 +5018,22 @@ class OpenWebUIDirectHandler:
         ctx._a1_abstain = False
         try:
             ctx._grounding = self._build_grounding(_q_for_retrieval, ctx.name)
+            # HANS_ZPRAVY_PODKLAD_V1 (3. 10.) — otázka na DĚNÍ ve světě dostane
+            # sebrané zprávy (Matrix 3. 10.: Francie vymyšlená a připsaná Demagogu).
+            # Ne u otázek na Hanse samotného a u názorů (tam zprávy nepatří).
+            if getattr(self, '_grounding_outcome', '') not in ('self_state', 'opinion'):
+                try:
+                    from scripts.hans_zpravy import zpravy_podklad
+                    _zpb = zpravy_podklad(ctx.user_message, self.config)
+                    if _zpb:
+                        _stary = (ctx._grounding if isinstance(ctx._grounding, str)
+                                  and ctx._grounding is not _GROUNDING_UNSET else "")
+                        _stary = _stary.replace(ANTIKONFAB, "").strip()
+                        ctx._grounding = ANTIKONFAB + "\n\n" + _zpb + (
+                            ("\n\n" + _stary) if _stary else "")
+                        self._vysledek_groundingu('grounded', 'zpravy')
+                except Exception as _zpe:
+                    logging.getLogger(__name__).debug('zprávy podklad: %s', _zpe)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
                 # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
                 # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale
@@ -5230,6 +5258,38 @@ class OpenWebUIDirectHandler:
         # G4D_DEDUP_ADDRESS_V1 — očisti opakované oslovení PŘED
         # rozdvojením do conv_store i diary→RAG (oba cíle čisté).
         if ctx.response:
+            # HANS_DEMAGOG_GUARD_V1 (3. 10.) — model si vymyslel „ověřené výroky“
+            # (tvar zkopírovaný z historie, 3× v /tazatel) → nahradit skutečným
+            # výpisem z Demagogu. Výstup příkazu sem nedojde (vrací se dřív).
+            # ⚠️ Hlas mluví po větách, takže řečené už nevrátí; opraví se zápis.
+            try:
+                from scripts.hans_zpravy import demagog_vymysleno
+                if demagog_vymysleno(ctx.response):
+                    from scripts.chat_commands import _cmd_demagog, thread_demagog, parse_command
+                    from scripts import hans_thread as _thr_dm
+                    _arg = thread_demagog(ctx.user_message, _thr_dm.recent_turns(
+                        self, ctx.name, ctx.channel))
+                    _pc = parse_command(ctx.user_message)
+                    if _arg or (_pc and _pc[0] == "demagog"):
+                        # otázka MÍŘÍ na ověřené výroky → skutečný výpis
+                        ctx.response = ("Ověřené výroky beru jen přímo z Demagog.cz, nic si "
+                                        "k nim nedomýšlím:\n" + _cmd_demagog(
+                                            self, ctx.name, _arg or ctx.user_message))
+                    else:
+                        # HANS_DEMAGOG_GUARD_V2 — jiná otázka (Francie 3. 10.):
+                        # vyhodit věty s vymyšleným Demagogem, zbytek nechat
+                        # celá odpověď je nespolehlivá (obsah i zdroj vymyšlené) →
+                        # sebrané zprávy, když k tématu něco mají, jinak poctivě
+                        from scripts.chat_commands import _cmd_zpravy
+                        _zp = _cmd_zpravy(self, ctx.name, ctx.user_message)
+                        ctx.response = (_zp if _zp.startswith("Ve zprávách k tomu mám")
+                                        else "K tomu nemám spolehlivý podklad a nerad bych "
+                                             "si něco domýšlel.")
+                    logging.getLogger(__name__).warning(
+                        'HANS_DEMAGOG_GUARD_V1: vymyšlený Demagog v odpovědi opraven (%.60s)',
+                        ctx.user_message)
+            except Exception as _dge:
+                logging.getLogger(__name__).debug('demagog pojistka: %s', _dge)
             # HANS_FILM_DIRECTOR_CHECK_V1 (21.8.) — přát si film, který doma
             # nemáme, je v pořádku (zvídavost), ale režiséra má mít správně.
             # Doloženo v simulovaném rozhovoru: „Sedmikrásky od Miloše Formana"

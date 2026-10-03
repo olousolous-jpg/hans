@@ -3979,6 +3979,213 @@ def _cmd_zdroje(handler, name, args) -> str:
     return "\n".join(out)
 
 
+def _cmd_zpravy(handler, name, args) -> str:
+    """HANS_ZPRAVY_CHAT_V1 (3. 10.) — co je ve zprávách (sběr hans_zpravy).
+
+    Hledá podle VÝZNAMU (bge-m3 na PC, napříč jazyky), při spícím PC podle
+    slov v českých titulcích. Titulky cizích médií se nepřekládají (rozhodnutí
+    uživatele). Bez tématu = největší události dne. Veřejné → smí i cizí.
+    Dřív Hans ke zprávám přístup neměl a přehled si vymýšlel (/tazatel 3. 10.)."""
+    from datetime import datetime as _dt
+    from scripts.hans_zpravy import zpravy_hledej
+    try:
+        cfg = getattr(handler, "config", None)
+        if cfg is None:
+            from scripts.config_io import load as _cl
+            cfg = _cl()
+        r = zpravy_hledej(args or "", cfg)
+    except Exception:
+        return "Do sebraných zpráv se mi teď nepodařilo nahlédnout."
+
+    def _c(ts):
+        try:
+            d = _dt.fromtimestamp(ts)
+            return ("dnes %s" % d.strftime("%H:%M") if d.date() == _dt.now().date()
+                    else "%d. %d. %s" % (d.day, d.month, d.strftime("%H:%M")))
+        except Exception:
+            return "?"
+    if not r["udalosti"]:
+        if not r["tema"]:
+            return "Za poslední den jsem ve zprávách nic nesebral."
+        pozn = (" (počítač s jazykovým modelem teď neběží, hledal jsem jen v českých titulcích)"
+                if r.get("hledano") == "slova" else "")
+        return "O tom jsem ve zprávách za poslední tři dny nic nenašel%s." % pozn
+    # HANS_ZPRAVY_PREKLAD_V1 — cizí titulky česky (překlad jen pro čtení)
+    try:
+        import sqlite3 as _sq
+        from scripts.hans_zpravy import DB as _ZDB, preklad_mapa
+        _pc = _sq.connect("file:%s?mode=ro" % _ZDB, uri=True, timeout=5)
+        _pm = preklad_mapa(_pc, [u["titulek"] for u in r["udalosti"]] +
+                           [u["trefa"]["titulek"] for u in r["udalosti"] if u.get("trefa")])
+        _pc.close()
+        for u in r["udalosti"]:
+            u["titulek"] = _pm.get(u["titulek"], u["titulek"])
+            if u.get("trefa"):
+                u["trefa"]["titulek"] = _pm.get(u["trefa"]["titulek"], u["trefa"]["titulek"])
+    except Exception:
+        pass
+    out = ["Největší zprávy posledních 24 hodin:" if not r["tema"]
+           else "Ve zprávách k tomu mám:"]
+    for u in r["udalosti"]:
+        kolik = (" — píše o tom %d médií" % u["medii"]) if u["medii"] >= 5 else (
+            " — píše o tom %d média" % u["medii"] if u["medii"] >= 2 else "")
+        out.append("• %s, %s: %s%s" % (_c(u["cas"]), u["zdroj"], u["titulek"], kolik))
+        if u.get("trefa"):
+            out.append("   také %s, %s: %s" % (_c(u["trefa"]["cas"]), u["trefa"]["zdroj"],
+                                            u["trefa"]["titulek"]))
+    if r["rezim"] == "slova":
+        out.append("(Počítač s jazykovým modelem teď neběží, hledal jsem jen v českých titulcích.)")
+    out.append("Sbírám je každou hodinu z českých i zahraničních médií; podrobnosti jsou "
+               "v záložce Zprávy.")
+    return "\n".join(out)
+
+
+register(
+    "zpravy",
+    slash_aliases=["zpravy", "zprávy", "novinky"],
+    # HANS_ZPRAVY_CHAT_V1 — ZÁMĚRNĚ úzké: holé „co je nového?“ je pozdrav
+    # Hansovi, ne dotaz na zprávy. Musí zaznít zprávy/noviny/svět/píšou.
+    nl_patterns=[
+        r"\b(?:ve|v) zpr[áa]v[áa]ch\b",
+        r"\b(?:ve|v) novin[áa]ch\b",
+        r"\bco (?:se )?p[íi][šs]ou\b",
+        r"\bp[íi][šs]ou\s+(?:o|v|ve|na)\b",
+        r"\b(?:co|jak[ée]) (?:je |jsou )?(?:nov[ée]ho|novinky)\s+(?:ve|ze|v)\s+sv[ěe]t",
+        r"\b(?:nejnov[ěe]j[šs][íi]|aktu[áa]ln[íi]|dne[šs]n[íi]|hlavn[íi]) zpr[áa]v",
+        r"\b(?:n[ěe]jak[ée]|jak[ée]) zpr[áa]vy\b",
+        r"\bzpr[áa]vy (?:o|ohledn[ěe]|ze sv[ěe]ta)\b",   # ne „zprávy z Matrixu“
+    ],
+    handler=_cmd_zpravy,
+    help_text="Co je ve zprávách — /zpravy [téma]",
+)
+
+
+_DEMAGOG_STRANKA: dict = {}   # (osoba, mluvčí/dotaz) → (posun, čas) — HANS_DEMAGOG_V1
+
+# HANS_DEMAGOG_FOLLOWUP_V1 (3. 10.) — navazující otázka po výpisu z Demagogu.
+# /tazatel 3. 10.: „a co ostatní výroky?“, „výroky pana Fialy o migraci?“,
+# „jaké další politiky ověřovali?“ nenesly slovo „Demagog“ → příkaz nesepnul
+# a model ZKOPÍROVAL TVAR výpisu z historie se smyšlenými verdikty (3×).
+# Vzor HANS_FILM_OPINION_ANAFORA_V1: rozhoduje POSLEDNÍ Hansova replika.
+_DM_POKRACOVANI = re.compile(
+    r"\b(dal[šs]\w*|je[šs]t[ěe]|ostatn\w*|v[íi]c|jin[éeýa]\w*|v[ýy]rok\w*|"
+    r"ov[ěe][řr]\w*|politi\w*|t[ée]ma\w*|pokra[čc]\w*)\b", re.I)
+
+
+def posledni_vypis_demagog(turns):
+    """Mluvčí z POSLEDNÍ Hansovy repliky, je-li výpisem z Demagogu:
+    "" = výpis bez mluvčího (téma), None = poslední replika výpis není."""
+    for role, text in reversed(list(turns or [])):
+        if role != "assistant":
+            continue
+        text = str(text or "")
+        if "demagog.cz/vyrok/" not in text and "Demagog.cz" not in text:
+            return None
+        m = re.match(r"\s*([^\n—:]{3,60}?) — (?:Demagog\.cz od|k tomuhle tématu má Demagog)", text)
+        return m.group(1).strip() if m else ""
+    return None
+
+
+def thread_demagog(message: str, turns):
+    """Argument pro /demagog, když věta navazuje na výpis z Demagogu; jinak None."""
+    msg = (message or "").strip()
+    if not msg or len(msg) > 400 or not _DM_POKRACOVANI.search(msg):
+        return None
+    mluvci = posledni_vypis_demagog(turns)
+    if mluvci is None:
+        return None
+    return ("%s %s" % (mluvci, msg)).strip() if mluvci else msg
+
+
+def _cmd_demagog(handler, name, args) -> str:
+    """HANS_DEMAGOG_V1 (3. 10.) — ověřené výroky politiků z Demagog.cz.
+
+    Hans jen PŘEDÁVÁ jejich verdikt s datem a odkazem, sám nic nehodnotí
+    (pilot 3. 10.: vlastní ověření zvládne ~15 % toho, co ověřuje Demagog).
+    Hledá se mluvčí (i skloňovaný: „o Babišovi“), jinak slova výroku.
+    Veřejná data → smí i cizí."""
+    from scripts.hans_zpravy import demagog_hledej
+    import time as _t
+    try:
+        r = demagog_hledej(args or "", limit=4)
+        # 3. 10. uživatel: „vypisuje stále stejné čtyři výroky“ → týž dotaz
+        # téže osoby do 10 min ukáže DALŠÍ várku (na konci zase od začátku)
+        klic = (name or "", r.get("klic") or (args or "").strip().lower())   # mluvčí + kmeny tématu
+        pred = _DEMAGOG_STRANKA.get(klic)
+        if pred and _t.time() - pred[1] < 600 and r.get("celkem", 0) > 4:
+            posun = pred[0] + 4 if pred[0] + 4 < r["celkem"] else 0
+            if posun:
+                r = demagog_hledej(args or "", limit=4, posun=posun)
+        _DEMAGOG_STRANKA[klic] = (r.get("posun", 0), _t.time())
+    except Exception:
+        return "Do záznamů z Demagogu se mi teď nepodařilo nahlédnout."
+    od = r.get("od")
+    if not od:
+        return "Ověřené výroky z Demagogu zatím nemám stažené."
+    def _d(s):
+        try:
+            y, m, d = (s or "")[:10].split("-")
+            return "%d. %d. %s" % (int(d), int(m), y)
+        except Exception:
+            return s or "?"
+    if not r["vyroky"]:
+        if r.get("mluvci"):
+            return ("U %s k tomuhle mezi ověřenými výroky z Demagog.cz nic nemám "
+                    "(mám je od %s, a jen to, co ověřili oni)." % (r["mluvci"], _d(od)))
+        return ("K tomu jsem mezi ověřenými výroky z Demagog.cz nic nenašel "
+                "(mám je od %s, a jen to, co ověřili oni)." % _d(od))
+    out = []
+    sh = r.get("souhrn") or {}
+    cel = r.get("celkem", 0)
+    poradi = ("pravda", "nepravda", "zavádějící", "neověřitelné")
+    sh_txt = ", ".join("%d %s" % (sh[k], k) for k in poradi if sh.get(k))
+    if r.get("mluvci") and r.get("tema"):
+        out.append("%s — k tomuhle tématu má Demagog.cz %d %s (%s):" % (
+            r["mluvci"], cel, "výrok" if cel == 1 else ("výroky" if cel < 5 else "výroků"), sh_txt))
+    elif r.get("mluvci"):
+        out.append("%s — Demagog.cz od %s ověřil %d %s (%s):" % (
+            r["mluvci"], _d(od), cel, "výrok" if cel == 1 else ("výroky" if cel < 5 else "výroků"),
+            sh_txt) if cel else "Ověřené výroky — %s, podle Demagog.cz:" % r["mluvci"])
+    elif cel:
+        out.append("K tomu má Demagog.cz %d ověřených výroků (%s):" % (cel, sh_txt))
+    else:
+        out.append("Nejnovější ověřené výroky podle Demagog.cz:")
+    for v in r["vyroky"]:
+        kdo = "" if r.get("mluvci") else "%s%s: " % (
+            v["mluvci"], " (%s)" % v["strana"] if v.get("strana") else "")
+        vyr = v["vyrok"] if len(v["vyrok"]) <= 220 else v["vyrok"][:217] + "…"
+        kr = v.get("kratce") or ""
+        kr = kr if len(kr) <= 240 else kr[:237] + "…"
+        out.append("• %s%s — %s„%s“ — %s. %s %s" % (
+            _d(v["datum"]), (", " + v["porad"]) if v.get("porad") else "",
+            kdo, vyr, v["verdikt"].upper(), kr, v["url"]))
+    zbyva = cel - (r.get("posun", 0) + len(r["vyroky"]))
+    if zbyva > 0:
+        out.append("Verdikt je jejich, já ho jen předávám. Zeptáte-li se znovu, ukážu "
+                   "dalších %d." % min(4, zbyva))
+    else:
+        out.append("Verdikt je jejich, já ho jen předávám.")
+    return "\n".join(out)
+
+
+register(
+    "demagog",
+    slash_aliases=["demagog", "overeno", "overene"],
+    # HANS_DEMAGOG_V1 — ZÁMĚRNĚ úzké: slovo „demagog“, nebo dotaz na OVĚŘENÍ
+    # výroku/politika. Obecné „je pravda, co řekl X?“ ne (X bývá člen
+    # domácnosti). Tykání i vykání: ověřil/ověřoval/ověřujete…
+    nl_patterns=[
+        r"\bdemagog",
+        r"\bov[eě][řr](il[ia]?|ovali?|uje|ujete|ujete|ili)\b.{0,40}\b(v[ýy]rok\w*|politik\w*)",
+        # HANS_DEMAGOG_FOLLOWUP_V1 — „ověřené výroky“ (tazatel 3. 10., B8)
+        r"\bov[eě][řr]en[éeý]\w*\s+v[ýy]rok",
+        r"\bfact[- ]?check\w*",
+    ],
+    handler=_cmd_demagog,
+    help_text="Ověřené výroky politiků z Demagog.cz — /demagog <jméno nebo téma>",
+)
+
+
 register(
     "zdroje",
     slash_aliases=["zdroje", "odkazy", "literatura", "zdroj", "odkaz"],

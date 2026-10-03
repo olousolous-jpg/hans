@@ -676,6 +676,778 @@ def casova_osa(udalost_id: int, path: str = DB) -> list:
     return out
 
 
+# ── HANS_ZPRAVY_CISLA_V1 (3. 10.) — čísla téže události napříč médii ────────
+# Krok 3 plánu ověřování, BEZ LLM. Změřeno 3. 10. nad 72 h:
+#   • plné texty: 1 397 dvojic, skoro vše šum (cena × zdražení, celkem × podíl)
+#     → ⛔ jen TITULKY a PEREXY (nesou hlavní fakt);
+#   • titulky s obecným slovem: 267 dvojic, ~40 % skutečných;
+#   • jen POČTY níže: 82 dvojic / 9 událostí, většinou skutečné (mrtví 23 × 40).
+# Většina rozdílů je VÝVOJ V ČASE, ne rozpor → výstup je ŘADA hodnot s médiem
+# a časem; „proč se liší“ (vývoj / jiný rozsah / chyba) je až krok 4.
+# ⚠️ Regionální tisk píše o svém městě (3 zatčení × 1 747 celostátně).
+# ⚠️ Obecné „lidé“ ZÁMĚRNĚ chybí — míchalo demonstranty, demonstrace i dav.
+_CISLO_RE = re.compile(
+    r"(?<![\w.,])(\d{1,3}(?:[  .,]\d{3})+|\d+(?:[.,]\d+)?)\s*"
+    r"(tis\.|tisíc\w*|thousand|milion\w*|million\w*|Millionen|miliard\w*|billion\w*|Milliarden)?"
+    r"\s+([^\W\d_]{3,})", re.U)
+VELICINY = [   # (klíč, popis, vzor na slovo ZA číslem bez diakritiky, malými)
+    ("mrtvi", "mrtví", r"^(dead|death|kill|mrtv|obet|zemrel|umrel|tote|todes|opfer|morts?$|tue(e|s|es)?$|victim|deces)"),
+    ("zraneni", "zranění", r"^(injur|wound|zranen|verletz|bless)"),
+    ("zatceni", "zatčení", r"^(arrest|detain|zatcen|zadrzen|festnahm|festgenom|interpell)"),
+    ("pohresovani", "pohřešovaní", r"^(missing|pohres|vermisst|disparu)"),
+    ("evakuovani", "evakuovaní", r"^(evacu|evaku)"),
+    ("cestujici", "cestující", r"^(passeng|cestuj|passagi)"),
+    ("policiste", "policisté", r"^(police|polici|polizist)"),
+    ("skoly", "školy", r"^(school|skol|schul|ecole|lycee|colleg)"),
+    ("domy", "domy", r"^(homes|houses|domu|domy|hauser|maisons|logements)$"),
+]
+_VEL_RE = [(k, p, re.compile(v)) for k, p, v in VELICINY]
+CISLA_ROZDIL = 0.15          # hodnoty se liší, když (max − min) / max > 15 %
+
+
+def _bez_diakritiky(s: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFD", (s or "").lower())
+                   if unicodedata.category(ch) != "Mn")
+
+
+def _cislo_hodnota(n: str, nasobek: str) -> float:
+    s = n.replace(" ", " ")
+    if re.fullmatch(r"\d{1,3}(?:[ .,]\d{3})+", s):
+        v = float(re.sub(r"[ .,]", "", s))
+    else:
+        v = float(s.replace(",", "."))
+    m = _bez_diakritiky(nasobek or "")
+    if m.startswith(("miliard", "billion", "milliard")):
+        v *= 1e9
+    elif m.startswith("mil"):
+        v *= 1e6
+    elif m.startswith(("tis", "thous")):
+        v *= 1e3
+    return v
+
+
+def vytahni_pocty(text: str) -> list:
+    """[(klíč veličiny, hodnota, úryvek)] z titulku/perexu."""
+    out = []
+    for m in _CISLO_RE.finditer(text or ""):
+        n, nas, slovo = m.groups()
+        try:
+            v = _cislo_hodnota(n, nas)
+        except ValueError:
+            continue
+        if not nas and 1900 <= v <= 2100:
+            continue                       # letopočet
+        sl = _bez_diakritiky(slovo)
+        for k, _p, rx in _VEL_RE:
+            if rx.search(sl):
+                out.append((k, v, m.group(0)))
+                break
+    return out
+
+
+def _medium(zdroj: str) -> str:
+    """Jedno jméno média pro RSS id i název z Google News („guardian“ = „The Guardian“)."""
+    nazvy = {z[0]: z[1] for z in ZDROJE}
+    s = _bez_diakritiky(nazvy.get(zdroj, zdroj or ""))
+    s = re.sub(r"^the\s+|\s+(news|zpravy)$|\.(com|cz|de|fr|co\.uk|org)$", "", s.strip())
+    return re.sub(r"[^a-z0-9]+", "", s)
+
+
+def cisla_udalosti(udalost_id: int, path: str = DB) -> dict:
+    """{veličina: [{hodnota, zdroj, cas, odhad, text}]} — jen veličiny, které
+    uvádějí aspoň 2 média a hodnoty se liší o víc než CISLA_ROZDIL."""
+    pod = {}
+    nazvy = {z[0]: z[1] for z in ZDROJE}        # RSS id → název média
+    for z in casova_osa(udalost_id, path):
+        for k, v, ury in vytahni_pocty("%s. %s" % (z["titulek"] or "", z["perex"] or "")):
+            pod.setdefault(k, []).append({"hodnota": v, "zdroj": nazvy.get(z["zdroj"], z["zdroj"] or "?"),
+                                          "cas": z["cas"],
+                                          "odhad": z["odhad"], "text": ury})
+    out = {}
+    for k, rada in pod.items():
+        rada.sort(key=lambda r: r["cas"] or 0)
+        videno, cista = set(), []
+        for r in rada:                      # totéž číslo téhož média jednou (nejdřívější)
+            klic = (_medium(r["zdroj"]), r["hodnota"])
+            if klic not in videno:
+                videno.add(klic)
+                cista.append(r)
+        if len({_medium(r["zdroj"]) for r in cista}) < 2:
+            continue
+        hi = max(r["hodnota"] for r in cista)
+        lo = min(r["hodnota"] for r in cista)
+        if hi > 0 and (hi - lo) / hi > CISLA_ROZDIL:
+            out[k] = cista
+    return out
+
+
+def _db_cisla(c) -> None:
+    c.execute("""CREATE TABLE IF NOT EXISTS udalost_cisla (
+        udalost_id INTEGER PRIMARY KEY, data TEXT, spocteno REAL)""")
+
+
+def prepocti_cisla(c, ted: float, hodin: float = 72.0) -> dict:
+    """Po sběru: čísla událostí s ≥ 2 médii za posledních `hodin`."""
+    import json as _json
+    _db_cisla(c)
+    ids = [r[0] for r in c.execute(
+        "SELECT id FROM udalosti WHERE posledni_ts >= ? AND pocet_zdroju >= 2",
+        (ted - hodin * 3600,))]
+    n = 0
+    for uid in ids:
+        d = cisla_udalosti(uid)
+        if d:
+            c.execute("INSERT OR REPLACE INTO udalost_cisla VALUES (?,?,?)",
+                      (uid, _json.dumps(d, ensure_ascii=False), ted))
+            n += 1
+        else:
+            c.execute("DELETE FROM udalost_cisla WHERE udalost_id=?", (uid,))
+    c.commit()
+    return {"udalosti": len(ids), "s_rozdilem": n}
+
+
+def rozdily_cisel(path: str = DB, hodin: float = 48.0) -> list:
+    """Pro dashboard (jen čtení): události, u nichž se čísla mezi médii liší."""
+    import json as _json
+    if not os.path.exists(path):
+        return []
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        rows = c.execute(
+            """SELECT u.id, u.titulek, u.pocet_zdroju, u.posledni_ts, x.data
+               FROM udalost_cisla x JOIN udalosti u ON u.id = x.udalost_id
+               WHERE u.posledni_ts >= ? ORDER BY u.pocet_zdroju DESC""",
+            (time.time() - hodin * 3600,)).fetchall()
+        pm = preklad_mapa(c, [r[1] for r in rows])      # HANS_ZPRAVY_PREKLAD_V1
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        c.close()
+    popisy = {k: p for k, p, _ in VELICINY}
+    return [{"id": uid, "titulek": tit, "titulek_cs": pm.get(tit), "pocet_zdroju": n, "posledni_ts": ts,
+             "veliciny": [{"klic": k, "popis": popisy.get(k, k), "rada": r}
+                          for k, r in _json.loads(d).items()]}
+            for uid, tit, n, ts, d in rows]
+
+
+# ── HANS_DEMAGOG_V1 (3. 10.) — ověřené výroky politiků z Demagog.cz ─────────
+# Pilot 3. 10. (NAPADY 🏛️): ve zprávách tvrdých ověřitelných výroků skoro není
+# a vlastní ověření z dat Sněmovny zvládne ~15 % toho, co ověřuje Demagog →
+# varianta A: Demagog jako ZDROJ. Hans jen předává jejich verdikt s odkazem,
+# sám nic nehodnotí. Veřejné GraphQL bez klíče; jen ČR.
+DEMAGOG_API = "https://demagog.cz/graphql"
+DEMAGOG_MAX_NOVYCH = 120      # na jeden běh (≈ 0,5 s/výrok)
+VERDIKTY = {"VERACITY_TRUE": "pravda", "VERACITY_UNTRUE": "nepravda",
+            "VERACITY_MISLEADING": "zavádějící", "VERACITY_UNVERIFIABLE": "neověřitelné"}
+
+
+def _db_demagog(c) -> None:
+    c.execute("""CREATE TABLE IF NOT EXISTS demagog (
+        id INTEGER PRIMARY KEY, vyrok TEXT, verdikt TEXT, mluvci TEXT, mluvci_f TEXT,
+        strana TEXT, funkce TEXT, porad TEXT, medium TEXT, datum TEXT,
+        kratce TEXT, stazeno REAL)""")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_dm_datum ON demagog(datum)")
+
+
+def _demagog_q(dotaz: str, timeout: float = 60) -> dict:
+    import json as _json
+    import urllib.request as _ur
+    r = _ur.Request(DEMAGOG_API, data=_json.dumps({"query": dotaz}).encode(),
+                    headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (X11; Linux aarch64) HansZpravy/1.0"})
+    with _ur.urlopen(r, timeout=timeout) as f:
+        d = _json.load(f)
+    if d.get("errors"):
+        raise RuntimeError(str(d["errors"])[:200])
+    return d["data"]
+
+
+def _bez_html(s: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
+
+
+def sber_demagog(c, ted: float, max_novych: int = DEMAGOG_MAX_NOVYCH, roky: list = None) -> dict:
+    """Stáhne výroky, které ještě nemáme (letošní, v lednu i loňské)."""
+    _db_demagog(c)
+    if not roky:                           # běžně letošní; ruční doplnění starších roků
+        roky = [time.localtime(ted).tm_year]
+        if time.localtime(ted).tm_mon == 1:
+            roky.append(roky[0] - 1)
+    ids = set()
+    for r in roky:
+        ids |= {int(x["id"]) for x in _demagog_q(
+            "{ sitemapStatementsByYear(year:%d) { id } }" % r)["sitemapStatementsByYear"]}
+    mame = {r[0] for r in c.execute("SELECT id FROM demagog")}
+    nove = sorted(ids - mame, reverse=True)[:max_novych]     # nejnovější napřed
+    ulozeno = chyb = 0
+    for i in nove:
+        try:
+            s = _demagog_q(
+                "{ statementV2(id:%d) { id content veracity { key } "
+                "sourceSpeaker { fullName role body { shortName } } "
+                "source { name releasedAt medium { name } } "
+                "assessment { shortExplanation } } }" % i)["statementV2"]
+        except Exception:
+            chyb += 1
+            continue
+        if not s or not s.get("veracity"):
+            continue                       # ještě neověřeno / nezveřejněno
+        sp = s.get("sourceSpeaker") or {}
+        src = s.get("source") or {}
+        jm = re.sub(r"\s+", " ", sp.get("fullName") or "").strip()   # Demagog má i „Vít  Rakušan“
+        c.execute("INSERT OR REPLACE INTO demagog VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
+            int(s["id"]), _bez_html(s.get("content")),
+            VERDIKTY.get(s["veracity"]["key"], s["veracity"]["key"]),
+            jm, _bez_diakritiky(jm), (sp.get("body") or {}).get("shortName") or "",
+            sp.get("role") or "", src.get("name") or "",
+            (src.get("medium") or {}).get("name") or "", src.get("releasedAt") or "",
+            _bez_html((s.get("assessment") or {}).get("shortExplanation")), ted))
+        ulozeno += 1
+        time.sleep(0.2)
+    c.commit()
+    return {"novych": ulozeno, "chyb": chyb, "celkem": len(mame) + ulozeno}
+
+
+_DM_NETEMA = ("demagog", "overil", "overov", "overuj", "overen", "vyrok", "vyroc", "nekdo",
+              "pravd", "tvrdil", "tvrdi", "rikal", "rekl", "prohla", "fakt", "check",
+              "politi", "muzes", "muzete", "podivej", "podivat", "najdi", "najdete",
+              "posledn", "nejak", "nejnov", "zjist", "jestli", "zdali",
+              # HANS_DEMAGOG_FOLLOWUP_V1 — slova navazujících otázek
+              "dalsi", "dalsich", "dals", "ostatn", "jeste", "jine", "jiny", "jinych",
+              "tema", "temat", "ciste", "ukazat", "ukaz", "prosim", "tykaj", "ohled",
+              "souvis", "postoj", "historii", "nejake", "nejaky", "takove",
+              "recil", "reci", "rika", "rekl", "rekla", "zakla")
+
+
+def demagog_hledej(dotaz: str, limit: int = 4, path: str = DB, posun: int = 0) -> dict:
+    """Výroky podle MLUVČÍHO (příjmení i skloňované: „Babišovi“) nebo podle slov
+    výroku. Vrací {mluvci, vyroky:[...], od} — `od` = nejstarší uložený výrok,
+    ať odpověď poctivě řekne, kam až záznamy sahají."""
+    if not os.path.exists(path):
+        return {"mluvci": None, "vyroky": [], "od": None}
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        try:
+            od = c.execute("SELECT min(datum) FROM demagog").fetchone()[0]
+        except sqlite3.OperationalError:
+            return {"mluvci": None, "vyroky": [], "od": None}
+        slova = [w for w in re.findall(r"[a-z0-9]+", _bez_diakritiky(dotaz)) if len(w) >= 3]
+        mluvci = None
+        _jm_kmeny = set()
+        for (jm, jmf) in c.execute("SELECT DISTINCT mluvci, mluvci_f FROM demagog"):
+            prijm = (jmf or "").split()[-1] if jmf else ""
+            if len(prijm) < 4:
+                continue
+            # HANS_DEMAGOG_FOLLOWUP_V1 — kmen podle SKLOŇOVÁNÍ, ne useknutím:
+            # 3. 10. „jak“ z Jakoba sedlo na „jaké“. Fiala → fial(y/ovi),
+            # Pavel → pavl(a), Babiš/Jakob celé (Babišovi, Jakobovi).
+            kmeny_jm = {prijm[:-1] if prijm[-1] in "aeiouy" else prijm}
+            if len(prijm) >= 5 and prijm[-2] == "e" and prijm[-1] not in "aeiouy":
+                kmeny_jm.add(prijm[:-2] + prijm[-1])
+            kmeny_jm = {k for k in kmeny_jm if len(k) >= 4}
+            if any(w.startswith(k) for w in slova for k in kmeny_jm):
+                _jm_kmeny_kand = kmeny_jm
+                # přesnější shoda (i křestní jméno) má přednost
+                if mluvci is None or any(w.startswith(jmf.split()[0][:4]) for w in slova):
+                    mluvci = jm
+                    _jm_kmeny = _jm_kmeny_kand
+        sl = "id, vyrok, verdikt, mluvci, strana, funkce, porad, medium, datum, kratce"
+        souhrn = {}
+        # HANS_DEMAGOG_FOLLOWUP_V1 — téma i u mluvčího („výroky Fialy o migraci“);
+        # jména mluvčího a slova žádosti se do tématu nepočítají
+        _jm_slova = set(_bez_diakritiky(mluvci or "").split())
+        def _je_jmeno(w):
+            return any(w.startswith(j[:4]) for j in _jm_slova if len(j) >= 4) or \
+                any(w.startswith(k) for k in _jm_kmeny)
+        # téma stojí v češtině za PŘEDLOŽKOU („výroky o migraci“, „k poplatkům“);
+        # 3. 10. bez toho vyhrála konverzační slova dlouhého souvětí („byste“)
+        fq = " ".join(re.findall(r"[a-z0-9]+", _bez_diakritiky(dotaz)))   # i krátké předložky
+        za_predl = []
+        for m in re.finditer(r"\b(?:o|ohledne|k|ke|tykajici se|na tema|kolem)\s+([a-z]{4,})(?:\s+([a-z]{4,}))?", fq):
+            za_predl += [w for w in m.groups() if w]
+        kand = [w[:5] for w in (za_predl or slova) if len(w) >= 5
+                and not w.startswith(_DM_NETEMA) and not _je_jmeno(w)]
+        # téma = jen kmeny, které se ve výrocích VYSKYTUJÍ a nejsou běžné
+        # („velmi“, „užitečné“ z dlouhého souvětí jinak shodily hledání na nulu)
+        texty = [_bez_diakritiky(r[0]) for r in c.execute("SELECT vyrok FROM demagog")]
+        n_t = max(1, len(texty))
+        kmeny = []
+        for k in dict.fromkeys(kand):
+            df = sum(1 for x in texty if k in x)
+            if 0 < df <= max(3, 0.03 * n_t):
+                kmeny.append(k)
+        kmeny = kmeny[:3]
+        if mluvci and kmeny:
+            # stačí JEDEN kmen tématu; víc shod = výš (dotaz mívá dvě témata)
+            vse = [r for _, r in sorted(
+                ((sum(k in _bez_diakritiky(r[1]) for k in kmeny), r) for r in c.execute(
+                    "SELECT %s FROM demagog WHERE mluvci=? ORDER BY datum DESC, id DESC" % sl, (mluvci,))),
+                key=lambda x: -x[0]) if _ > 0]
+            for r in vse:
+                souhrn[r[2]] = souhrn.get(r[2], 0) + 1
+            rows = vse[posun:posun + limit]
+        elif mluvci:
+            # souhrn verdiktů + stránkování (opakovaný dotaz → další várka)
+            souhrn = dict(c.execute("SELECT verdikt, count(*) FROM demagog WHERE mluvci=? "
+                                    "GROUP BY verdikt", (mluvci,)).fetchall())
+            rows = c.execute("SELECT %s FROM demagog WHERE mluvci=? ORDER BY datum DESC, id DESC "
+                             "LIMIT ? OFFSET ?" % sl, (mluvci, limit, posun)).fetchall()
+        else:
+            # téma: slova dotazu BEZ slov, která nesou jen žádost („ověřil někdo
+            # výrok…“) — 3. 10. jinak „demagog“ sedlo na „pozn. Demagog.cz“
+            # (kmeny = informativní kmeny tématu, spočtené výš)
+            tema = kmeny or None
+            if not kmeny and kand:         # téma zadané, ale ve výrocích není → nic
+                rows = []
+            elif not kmeny:                # holý dotaz → nejnovější ověřené
+                rows = c.execute("SELECT %s FROM demagog ORDER BY datum DESC, id DESC LIMIT ?"
+                                 % sl, (limit,)).fetchall()
+            if tema:
+              # ⚠️ SQLite lower()/LIKE diakritiku neskládá („ducho“ × „důchod“)
+              # → hledá se v Pythonu nad textem bez diakritiky (výroků jsou stovky)
+              vse = [r for _, r in sorted(
+                  ((sum(k in _bez_diakritiky(r[1]) for k in kmeny), r) for r in c.execute(
+                      "SELECT %s FROM demagog ORDER BY datum DESC, id DESC" % sl)),
+                  key=lambda x: -x[0]) if _ > 0][:200]
+              for r in vse:
+                  souhrn[r[2]] = souhrn.get(r[2], 0) + 1
+              rows = vse[posun:posun + limit]
+    finally:
+        c.close()
+    klice = ["id", "vyrok", "verdikt", "mluvci", "strana", "funkce", "porad", "medium",
+             "datum", "kratce"]
+    vy = [dict(zip(klice, r)) for r in rows]
+    for v in vy:
+        v["url"] = "https://demagog.cz/vyrok/%d" % v["id"]
+    return {"mluvci": mluvci, "vyroky": vy, "od": od, "souhrn": souhrn,
+            "celkem": sum(souhrn.values()), "posun": posun,
+            "tema": kmeny, "klic": "%s|%s" % (mluvci or "", ",".join(kmeny))}
+
+
+_DM_PRIPSANI = re.compile(
+    r"podle\s+(?:serveru\s+|webu\s+|projektu\s+)?demagog|"
+    r"demagog(?:\.cz)?\s+(?:uvad|overil|zjistil|pise|tvrdi|hodnot|oznacil|doloz)|"
+    r"na\s+strank(?:ach|y)\s+demagog|demagog(?:\.cz)?\s*\(\s*\d")
+
+
+def demagog_vety_pryc(text: str) -> str:
+    """Vyhodí věty, které vymyšleně připisují něco Demagogu (zbytek nechá)."""
+    vety = re.split(r"(?<=[.!?])\s+", text or "")
+    zbyle = [v for v in vety if not (_DM_PRIPSANI.search(_bez_diakritiky(v))
+                                     or "demagog" in _bez_diakritiky(v))]
+    return " ".join(zbyle).strip()
+
+
+def demagog_vymysleno(text: str, path: str = DB) -> bool:
+    """HANS_DEMAGOG_GUARD_V1 (3. 10.) — cituje odpověď MODELU Demagog bez opory?
+    /tazatel 3. 10.: 3× model zkopíroval tvar výpisu z historie a vyplnil ho
+    smyšlenými výroky skutečných politiků s verdikty a odkazy (0/12 id v DB).
+    True = odkaz na výrok, který nemáme, odkaz na skutečný výrok s jiným textem,
+    nebo verdikt v uvozovkách bez odkazu. Prostá zmínka „Demagog“ projde."""
+    f = _bez_diakritiky(text or "")
+    if "demagog" not in f:
+        return False
+    ids = [int(x) for x in re.findall(r"demagog\.cz/vyrok/(\d+)", text or "")]
+    verdikt = re.search(r"\b(PRAVDA|NEPRAVDA|ZAVÁDĚJÍCÍ|NEOVĚŘITELNÉ)\b", text or "")
+    if not ids:
+        # HANS_DEMAGOG_GUARD_V2 — i PŘIPSÁNÍ zdroje bez odkazu: 3. 10. Matrix
+        # „Podle Demagog.cz (4. září 2026) studenti ve Francii protestují…“
+        return bool((verdikt and re.search(r"[„\"“].{8,}[“\"”]", text or ""))
+                    or _DM_PRIPSANI.search(f))
+    if not os.path.exists(path):
+        return True
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        for i in ids:
+            r = c.execute("SELECT vyrok FROM demagog WHERE id=?", (i,)).fetchone()
+            if not r:
+                return True
+            if _bez_diakritiky(r[0])[:40] not in f:
+                return True
+    except sqlite3.OperationalError:
+        return True
+    finally:
+        c.close()
+    return False
+
+
+def demagog_mluvci(path: str = DB) -> list:
+    """Pro dashboard: politici s počty ověřených výroků podle verdiktu."""
+    if not os.path.exists(path):
+        return []
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        rows = c.execute(
+            """SELECT mluvci, max(strana), count(*), max(datum),
+                      sum(verdikt='pravda'), sum(verdikt='nepravda'),
+                      sum(verdikt='zavádějící'), sum(verdikt='neověřitelné')
+               FROM demagog GROUP BY mluvci ORDER BY count(*) DESC""").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        c.close()
+    return [{"mluvci": m, "strana": s, "pocet": n, "posledni": d, "pravda": a,
+             "nepravda": b, "zavadejici": z, "neoveritelne": x} for m, s, n, d, a, b, z, x in rows]
+
+
+def demagog_vyroky(mluvci: str = "", dotaz: str = "", limit: int = 100, path: str = DB) -> dict:
+    """Pro dashboard: výroky vybraného politika (přesné jméno) nebo hledání."""
+    if mluvci:
+        if not os.path.exists(path):
+            return {"vyroky": []}
+        c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+        try:
+            rows = c.execute("SELECT id, vyrok, verdikt, mluvci, strana, funkce, porad, medium, "
+                             "datum, kratce FROM demagog WHERE mluvci=? ORDER BY datum DESC, id DESC "
+                             "LIMIT ?", (mluvci, limit)).fetchall()
+        finally:
+            c.close()
+        k = ["id", "vyrok", "verdikt", "mluvci", "strana", "funkce", "porad", "medium", "datum", "kratce"]
+        vy = [dict(zip(k, r)) for r in rows]
+        for v in vy:
+            v["url"] = "https://demagog.cz/vyrok/%d" % v["id"]
+        return {"mluvci": mluvci, "vyroky": vy}
+    return demagog_hledej(dotaz, limit=limit, path=path)
+
+
+# ── HANS_ZPRAVY_CHAT_V1 (3. 10.) — zprávy pro Hanse (chat /zpravy) ─────────
+# Test 3. 10. (10 otázek): podle VÝZNAMU (bge-m3, napříč jazyky) 8/10 trefa,
+# klíčová slova jen čeština. Potřeba: práh (Brno 0,56 → francouzské zprávy),
+# NEJNOVĚJŠÍ titulek události („jak dopadlo“), sloučit shluky téže události
+# (letadlo 139/21/5 médií), český titulek když je, jinak originál (překlad
+# zamítnut uživatelem). Spící PC → klíčová slova nad českými titulky.
+ZPRAVY_PRAH = 0.62            # podobnost dotazu a titulku (bge-m3, kosinus) — stačí sama
+ZPRAVY_PRAH_SLOVA = 0.55      # nižší podobnost projde, jen když v titulcích události
+                              # jsou VŠECHNY kmeny tématu (jména: Babiš 0,59, Pikeová 0,59;
+                              # falešné: Brno 0,56, Trump+cla 0,60 — samotný práh nedělí)
+ZPRAVY_SLOUCIT = 0.80         # dvě události podobnější než tohle = jedna
+_ZP_NETEMA = ("noveho", "nove", "zprav", "novin", "pisou", "pise", "stalo", "deje",
+              "dopad", "nejak", "jsou", "svete", "svet", "dnes", "vcera", "zajima",
+              "zajim", "slysel", "cetl", "muzes", "muzete", "mohl", "prosim", "rekni",
+              "reknete", "vlastne", "porad", "jeste", "nejnov", "aktual", "posledn")
+
+
+def _zp_udalost_popis(uid: int, path: str, kmeny: list = None) -> dict:
+    if uid < 0:                               # samostatný RSS titulek (−id)
+        c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+        try:
+            r = c.execute("SELECT titulek, zdroj, COALESCE(publikovano, prvni_ts) FROM titulky "
+                          "WHERE id=?", (-uid,)).fetchone()
+        finally:
+            c.close()
+        if not r:
+            return {}
+        nazvy = {z[0]: z[1] for z in ZDROJE}
+        return {"titulek": r[0], "zdroj": nazvy.get(r[1], r[1]), "cas": r[2], "prvni": r[2],
+                "medii": 1, "cesky": True, "trefa": None}
+    # bulvár (Google News ho nese i ve shlucích seriózních zpráv) se neukazuje
+    osa = [z for z in casova_osa(uid, path) if _f(z.get("zdroj") or "") not in BULVAR]
+    if not osa:
+        return {}
+    cz = [z for z in osa if z.get("jazyk") == "cs" and z.get("titulek")]
+    posl = (cz or osa)[-1]                    # NEJNOVĚJŠÍ (vývoj, „jak dopadlo“)
+    # + titulek, který k dotazu sedí nejlíp (nejnovější výsledek neřekne vždy)
+    trefa = None
+    if kmeny:
+        sk = [(sum(k in _bez_diakritiky(z["titulek"] or "") for k in kmeny), z["cas"] or 0, z)
+              for z in (cz or osa)]
+        sk = [x for x in sk if x[0] > 0 and x[2] is not posl]
+        if sk:
+            trefa = max(sk, key=lambda x: (x[0], x[1]))[2]
+    nazvy = {z[0]: z[1] for z in ZDROJE}
+    medii = {_medium(z.get("zdroj") or "") for z in osa if z.get("zdroj")}
+    return {"titulek": posl["titulek"], "zdroj": nazvy.get(posl["zdroj"], posl["zdroj"]),
+            "cas": posl["cas"], "prvni": osa[0]["cas"], "medii": len(medii),
+            "cesky": bool(cz),
+            "trefa": ({"titulek": trefa["titulek"], "zdroj": nazvy.get(trefa["zdroj"], trefa["zdroj"]),
+                       "cas": trefa["cas"]} if trefa else None)}
+
+
+def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: int = 4,
+                  path: str = DB) -> dict:
+    """{rezim: 'prehled'|'vyznam'|'slova'|'nic', udalosti: [...], tema: bool}."""
+    import numpy as np
+    if not os.path.exists(path):
+        return {"rezim": "nic", "udalosti": [], "tema": False}
+    od = time.time() - hodin * 3600
+    slova = [w for w in re.findall(r"[a-z0-9]+", _bez_diakritiky(dotaz)) if len(w) >= 4]
+    tema = [w for w in slova if not w.startswith(_ZP_NETEMA)]
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        info = {r[0]: r[1] for r in c.execute(
+            "SELECT id, pocet_zdroju FROM udalosti WHERE posledni_ts >= ?", (od,))}
+        if not tema:                          # holý dotaz → největší události dne
+            ids = [r[0] for r in c.execute(
+                "SELECT id FROM udalosti WHERE posledni_ts >= ? ORDER BY pocet_zdroju DESC "
+                "LIMIT ?", (time.time() - 24 * 3600, limit * 3))]
+            rezim, skore = "prehled", {}
+        else:
+            e = _embed([dotaz], config or {}) if config is not None else None
+            if e:
+                rows = c.execute(
+                    """SELECT uc.udalost_id, v.vec FROM vektory v JOIN pribehy p ON p.id=v.pribeh_id
+                       JOIN udalost_clen uc ON uc.pribeh_id=p.id WHERE p.posledni_ts>=?
+                       UNION ALL
+                       SELECT COALESCE(tu.udalost_id, -t.id), v.vec FROM vektory_tit v
+                       JOIN titulky t ON t.id=v.titulek_id
+                       LEFT JOIN titulek_udalost tu ON tu.titulek_id=t.id WHERE t.posledni_ts>=?""",
+                    (od, od)).fetchall()
+                # RSS titulek BEZ události (přiřazení má práh 0,70) = samostatná zpráva:
+                # 3. 10. „vláda ustála hlasování o nedůvěře“ (iROZHLAS, Seznam) v žádné nebyl
+                for uid, _ in rows:
+                    if uid < 0:
+                        info.setdefault(uid, 1)
+                q = np.array(e[0], dtype=np.float32); q /= (np.linalg.norm(q) or 1)
+                nej, vek = {}, {}
+                for uid, vb in rows:
+                    if uid not in info:
+                        continue
+                    v = np.frombuffer(vb, dtype=np.float32)
+                    v = v / (np.linalg.norm(v) or 1)
+                    s = float(v @ q)
+                    if s > nej.get(uid, -1):
+                        nej[uid], vek[uid] = s, v
+                kmeny = [w[:5] for w in tema][:4]
+
+                def _slova_sedi(u):
+                    if u < 0:
+                        f = _bez_diakritiky(_zp_udalost_popis(u, path).get("titulek") or "")
+                        return bool(kmeny) and all(k in f for k in kmeny)
+                    f = _bez_diakritiky(" ".join("%s %s" % (z.get("titulek") or "", z.get("perex") or "")
+                                                 for z in casova_osa(u, path)))
+                    return bool(kmeny) and all(k in f for k in kmeny)
+                kand = sorted((u for u in nej if nej[u] >= ZPRAVY_PRAH or
+                               (nej[u] >= ZPRAVY_PRAH_SLOVA and _slova_sedi(u))),
+                              key=lambda u: -nej[u])
+                if kand:                          # o víc než 0,12 slabší než nejlepší = šum
+                    kand = [u for u in kand if nej[u] >= nej[kand[0]] - 0.15]
+                ids, vybrane = [], []
+                for u in kand:                    # sloučit shluky téže události
+                    if any(float(vek[u] @ vek[w]) >= ZPRAVY_SLOUCIT for w in vybrane):
+                        continue
+                    vybrane.append(u); ids.append(u)
+                rezim, skore = "vyznam", nej
+            else:                                 # PC spí → klíčová slova (jen čeština)
+                kmeny = [w[:5] for w in tema][:4]
+                sc = {}
+                for uid, tit, per in c.execute(
+                        """SELECT tu.udalost_id, t.titulek, t.perex FROM titulky t
+                           JOIN titulek_udalost tu ON tu.titulek_id=t.id
+                           WHERE t.posledni_ts>=? AND t.jazyk='cs'""", (od,)):
+                    f = _bez_diakritiky("%s %s" % (tit, per or ""))
+                    h = sum(k in f for k in kmeny)
+                    if h and uid in info:
+                        sc[uid] = max(sc.get(uid, 0), h + 0.001 * (info[uid] or 0))
+                ids = sorted(sc, key=lambda u: -sc[u])
+                rezim, skore = "slova", sc
+    finally:
+        c.close()
+    out = []
+    for uid in ids:
+        d = _zp_udalost_popis(uid, path, [w[:5] for w in tema][:4])
+        if not d or any(_norm_tit(d["titulek"]) == _norm_tit(x["titulek"]) for x in out):
+            continue
+        d["id"] = uid
+        d["skore"] = round(float(skore.get(uid, 0)), 2)
+        out.append(d)
+        if len(out) >= limit:
+            break
+    return {"rezim": rezim if out else "nic", "hledano": rezim, "udalosti": out, "tema": bool(tema)}
+
+
+# ── HANS_ZPRAVY_PREKLAD_V1 (3. 10.) — české titulky JEN PRO ČTENÍ na webu ─────
+# Překlad PŘED zpracováním uživatel 1. 10. zamítl (vnáší falešné rozpory) a to
+# platí dál: shlukování, čísla i hledání jedou nad ORIGINÁLY. Tady se jen
+# pro zobrazení přidá česká verze. Test 3. 10. na 12 titulcích: translategemma
+# přesnější („Fast 2000“ = „téměř 2000“; hans-czech „více než“ = opak,
+# „mineur“ → „horník“), 28 s / 12 titulků. ~660 cizích titulků denně.
+PREKLAD_MODEL = "translategemma:12b"
+PREKLAD_DAVKA = 15
+PREKLAD_MAX = 90              # na jeden hodinový běh
+
+
+def _db_preklady(c) -> None:
+    c.execute("""CREATE TABLE IF NOT EXISTS preklady (
+        otisk TEXT PRIMARY KEY, puvodni TEXT, cesky TEXT, model TEXT, ts REAL)""")
+
+
+def _otisk_textu(s: str) -> str:
+    import hashlib
+    return hashlib.sha1(re.sub(r"\s+", " ", (s or "").strip()).encode("utf-8")).hexdigest()
+
+
+def _ollama_volna() -> bool:
+    """Překládat jen když GPU nepotřebuje hra, překlad dokumentů ani render."""
+    try:
+        from scripts.ollama_client import game_mode_on, translate_pause_on
+        if game_mode_on() or translate_pause_on():
+            return False
+    except Exception:
+        return False
+    try:
+        d = sqlite3.connect("file:%s?mode=ro" % os.path.join(ROOT, "data", "hans_diary.db"),
+                            uri=True, timeout=3)
+        bezi = d.execute("SELECT count(*) FROM heavy_jobs WHERE status='running'").fetchone()[0]
+        d.close()
+        return not bezi
+    except Exception:
+        return True
+
+
+def _preloz_davku(texty: list, config: dict):
+    import json as _json
+    import requests
+    from scripts.ollama_client import _resolve_url
+    prompt = ("Přelož tyto novinové titulky do přirozené češtiny. Zachovej jména, čísla a "
+              "význam (např. „fast“ = „téměř“). Vrať JSON pole řetězců ve stejném pořadí, "
+              "nic jiného.\n" + _json.dumps(texty, ensure_ascii=False))
+    r = requests.post(_resolve_url(None, config) + "/api/generate", json={
+        "model": PREKLAD_MODEL, "prompt": prompt, "stream": False, "keep_alive": "30s",
+        "options": {"temperature": 0.1, "num_ctx": 4096}}, timeout=(5, 300))
+    r.raise_for_status()
+    o = r.json().get("response", "")
+    o = re.sub(r"^\s*```(?:json)?|```\s*$", "", o.strip())
+    m = re.search(r"\[.*\]", o, re.S)
+    a = _json.loads(m.group(0)) if m else None
+    if not isinstance(a, list) or len(a) != len(texty):
+        return None                       # nesedí počet → radši nic než posunuté
+    return [str(x).strip() for x in a]
+
+
+def _cizi_titulky(c, od: float) -> list:
+    out = []
+    for (t,) in c.execute("SELECT titulek FROM pribehy WHERE posledni_ts>=? AND jazyk!='cs' "
+                          "ORDER BY na_spici DESC, videno DESC", (od,)):
+        out.append(t)
+    for (t,) in c.execute("SELECT titulek FROM titulky WHERE posledni_ts>=? AND jazyk!='cs' "
+                          "ORDER BY na_spici DESC, prvni_ts DESC", (od,)):
+        out.append(t)
+    for (t, j) in c.execute("SELECT titulek, jazyky FROM udalosti WHERE posledni_ts>=?", (od,)):
+        if t and _je_cizi_titulek(c, t):
+            out.append(t)
+    return [t for t in dict.fromkeys(out) if t]
+
+
+def _je_cizi_titulek(c, t: str) -> bool:
+    r = (c.execute("SELECT jazyk FROM pribehy WHERE titulek=? LIMIT 1", (t,)).fetchone()
+         or c.execute("SELECT jazyk FROM titulky WHERE titulek=? LIMIT 1", (t,)).fetchone())
+    return bool(r) and r[0] != "cs"
+
+
+def prelozit_titulky(c, config: dict, ted: float, max_n: int = PREKLAD_MAX) -> dict:
+    _db_preklady(c)
+    if not _ollama_volna():
+        return {"prelozeno": 0, "odlozeno": "GPU obsazená"}
+    mame = {r[0] for r in c.execute("SELECT otisk FROM preklady")}
+    chybi = [t for t in _cizi_titulky(c, ted - 48 * 3600) if _otisk_textu(t) not in mame][:max_n]
+    n = chyb = 0
+    for i in range(0, len(chybi), PREKLAD_DAVKA):
+        davka = chybi[i:i + PREKLAD_DAVKA]
+        if i and not _ollama_volna():          # mezitím hra / render → přestat
+            break
+        pr = None
+        for pokus in (1, 2):                   # 3. 10.: jedna chyba ukončila celé doplnění
+            try:
+                pr = _preloz_davku(davka, config)
+                break
+            except Exception as e:
+                _log.info("překlad titulků: %s (pokus %d)", str(e)[:100], pokus)
+                time.sleep(10)
+        else:
+            break
+        if not pr:
+            chyb += 1
+            continue
+        for a, b in zip(davka, pr):
+            c.execute("INSERT OR REPLACE INTO preklady VALUES (?,?,?,?,?)",
+                      (_otisk_textu(a), a, b, PREKLAD_MODEL, ted))
+            n += 1
+        c.commit()
+    return {"prelozeno": n, "chybnych_davek": chyb, "zbyva": max(0, len(chybi) - n)}
+
+
+def preklad_mapa(c, texty) -> dict:
+    """{původní: český} pro zobrazení; co přeložené není, chybí."""
+    try:
+        ot = {_otisk_textu(t): t for t in texty if t}
+        if not ot:
+            return {}
+        out = {}
+        klice = list(ot)
+        for i in range(0, len(klice), 500):
+            q = klice[i:i + 500]
+            for k, cz in c.execute("SELECT otisk, cesky FROM preklady WHERE otisk IN (%s)"
+                                   % ",".join("?" * len(q)), q):
+                out[ot[k]] = cz
+        return out
+    except sqlite3.OperationalError:
+        return {}
+
+
+# ── HANS_ZPRAVY_PODKLAD_V1 (3. 10.) — zprávy jako PODKLAD pro otázky na dění ──
+# Matrix 3. 10.: „proč studenti ve Francii protestují?“ nešlo do /zpravy (bez
+# slova zprávy) → model si vymyslel vysoké školy a připsal to Demagogu.
+# Práh změřen nad 1 284 běžnými větami z deníku × 10 otázkami na dění:
+# 0,65 → 8/10 dění, 9 běžných nad prahem (počasí × francouzské „Météo“, film,
+# TV — ty skoro vždy obslouží jiná cesta dřív). Navíc: pod 0,72 musí aspoň
+# jeden kmen tématu stát v titulcích události (vyřadí počasí i „kafe“).
+PODKLAD_PRAH = 0.65
+PODKLAD_JISTE = 0.72
+
+
+def zpravy_podklad(dotaz: str, config: dict, path: str = DB):
+    """Text podkladu ze zpráv (nebo None) — titulky + perexy nejbližší události
+    a začátek plného českého článku, s médiem a časem."""
+    from datetime import datetime as _dt
+    r = zpravy_hledej(dotaz, config, limit=2, path=path)
+    if r.get("rezim") != "vyznam" or not r["udalosti"]:
+        return None
+    top = r["udalosti"][0]
+    if top["skore"] < PODKLAD_PRAH:
+        return None
+    uid = top["id"]
+    osa = casova_osa(uid, path) if uid > 0 else []
+    kmeny = [w[:5] for w in re.findall(r"[a-z]+", _bez_diakritiky(dotaz))
+             if len(w) >= 4 and not w.startswith(_ZP_NETEMA)]
+    if top["skore"] < PODKLAD_JISTE:
+        f = _bez_diakritiky(" ".join("%s %s" % (z.get("titulek") or "", z.get("perex") or "")
+                                     for z in osa) or top["titulek"])
+        if not any(k in f for k in kmeny):
+            return None
+    nazvy = {z[0]: z[1] for z in ZDROJE}
+    radky = []
+    osa = [z for z in osa if _f(z.get("zdroj") or "") not in BULVAR]   # bez bulváru
+    vyber = [z for z in osa if z.get("jazyk") == "cs"][-5:] or osa[-5:]
+    for z in vyber:
+        cas = _dt.fromtimestamp(z["cas"] or 0).strftime("%d. %m. %H:%M")
+        radky.append("- %s, %s: %s%s" % (cas, nazvy.get(z["zdroj"], z["zdroj"]), z["titulek"],
+                                         (" — " + z["perex"][:240]) if z.get("perex") else ""))
+    if not radky:
+        radky.append("- %s: %s" % (top["zdroj"], top["titulek"]))
+    clanek = ""
+    if uid > 0:
+        c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+        try:
+            tids = [x[0] for x in c.execute(
+                """SELECT t.id FROM titulek_udalost tu JOIN titulky t ON t.id=tu.titulek_id
+                   JOIN clanky k ON k.titulek_id=t.id WHERE tu.udalost_id=? AND t.jazyk='cs'
+                   AND k.sum=0 ORDER BY t.prvni_ts DESC LIMIT 1""", (uid,))]
+            zdroj_cl = c.execute("SELECT zdroj FROM titulky WHERE id=?", (tids[0],)).fetchone()[0] \
+                if tids else None
+        except sqlite3.OperationalError:
+            tids, zdroj_cl = [], None
+        finally:
+            c.close()
+        if tids:
+            tx = clanek_text(tids[0], path=path)
+            if isinstance(tx, (list, tuple)):
+                tx = tx[0] if tx else ""
+            if tx:
+                clanek = "\nZačátek článku (%s):\n%s" % (nazvy.get(zdroj_cl, zdroj_cl),
+                                                         re.sub(r"\s+", " ", tx)[:900])
+    return ("ZE SEBRANÝCH ZPRÁV (Hans je sbírá každou hodinu; uváděj médium, nic nedomýšlej, "
+            "co tu není, nevíš; zdroj NENÍ Demagog):\n" + "\n".join(radky) + clanek)
+
+
 def udalosti(path: str = DB, config: dict = None) -> dict:
     """Krok po sběru: dopočítat vektory a přeshlukovat okno."""
     if ROOT not in sys.path:
@@ -970,11 +1742,22 @@ def prehled(path: str = DB, hodin: float = 48.0, limit: int = 40,
     except sqlite3.OperationalError:
         skryto = {}
     sberu = c.execute("SELECT count(DISTINCT ts) FROM sbery").fetchone()[0]
+    try:                                   # HANS_ZPRAVY_PREKLAD_V1 — jen zobrazení
+        _pm = preklad_mapa(c, [r["titulek"] for r in spicka + nove + hlavni])
+        for r in spicka + nove + hlavni:
+            if r.get("titulek") in _pm:
+                r["titulek_cs"] = _pm[r["titulek"]]
+    except Exception:
+        pass
     c.close()
     for r in spicka + nove:
         r["zdroj_nazev"] = nazvy.get(r["zdroj"], (r["zdroj"],))[0]
+    try:                                   # HANS_ZPRAVY_CISLA_V1
+        cisla = rozdily_cisel(path, hodin)
+    except Exception:
+        cisla = []
     return {"zdroje": zdroje, "spicka": spicka, "nove": nove, "sberu": sberu, "hlavni": hlavni,
-            "skryto": skryto,
+            "skryto": skryto, "cisla": cisla,
             "spicka_n": SPICKA, "hodin": hodin}
 
 
@@ -1022,6 +1805,46 @@ if __name__ == "__main__":
             _c.close()
         except Exception as e:
             _log.warning("snímky článků selhaly: %s", e)
+        try:                                   # HANS_ZPRAVY_CISLA_V1
+            _c = _db()
+            print("čísla:", prepocti_cisla(_c, time.time()))
+            _c.close()
+        except Exception as e:
+            _log.warning("čísla událostí selhala: %s", e)
+        try:                                   # HANS_DEMAGOG_V1
+            _c = _db()
+            print("demagog:", sber_demagog(_c, time.time()))
+            _c.close()
+        except Exception as e:
+            _log.warning("demagog selhal: %s", e)
+        try:                                   # HANS_ZPRAVY_PREKLAD_V1 — jen pro čtení na webu
+            from scripts.config_io import load as _cl
+            _c = _db()
+            print("překlad titulků:", prelozit_titulky(_c, _cl(), time.time()))
+            _c.close()
+        except Exception as e:
+            _log.warning("překlad titulků selhal: %s", e)
+    elif cmd == "demagog":                             # HANS_DEMAGOG_V1
+        if len(sys.argv) > 2 and sys.argv[2] == "sber":   # demagog sber [rok …]
+            _c = _db()
+            print(sber_demagog(_c, time.time(), max_novych=5000,
+                               roky=[int(x) for x in sys.argv[3:]] or None))
+            _c.close()
+        else:
+            for v in demagog_hledej(" ".join(sys.argv[2:]), limit=8)["vyroky"]:
+                print(v["datum"], v["verdikt"], v["mluvci"], "|", v["vyrok"][:100], v["url"])
+    elif cmd == "cisla":                               # HANS_ZPRAVY_CISLA_V1
+        from datetime import datetime as _dt
+        if len(sys.argv) > 2 and sys.argv[2] == "prepocti":
+            _c = _db(); print(prepocti_cisla(_c, time.time())); _c.close()
+        for u in rozdily_cisel(hodin=float(sys.argv[2]) if len(sys.argv) > 2
+                               and sys.argv[2] != "prepocti" else 48.0):
+            print("%4d  %3d médií  %s" % (u["id"], u["pocet_zdroju"], (u["titulek"] or "")[:90]))
+            for v in u["veliciny"]:
+                print("        %-12s %s" % (v["popis"] + ":", "  →  ".join(
+                    "%s %s (%s%s)" % (("%g" % r["hodnota"]), r["zdroj"],
+                                      _dt.fromtimestamp(r["cas"] or 0).strftime("%d.%m. %H:%M"),
+                                      "~" if r["odhad"] else "") for r in v["rada"])))
     elif cmd == "snimky":
         _c = _db()
         print(snimky(_c, time.time(), float(sys.argv[2]) if len(sys.argv) > 2 else SNIMKY_ROZPOCET_S))
@@ -1040,6 +1863,17 @@ if __name__ == "__main__":
         print((clanek_text(int(sys.argv[2])) or "")[:1500])
     elif cmd == "osa":                                 # HANS_ZPRAVY_OSA_V1
         from datetime import datetime as _dt
+        _c = _db()                                     # HANS_ZPRAVY_CISLA_V1 — hlavička
+        _u = _c.execute("SELECT titulek, pocet_zdroju FROM udalosti WHERE id=?",
+                        (int(sys.argv[2]),)).fetchone()
+        _c.close()
+        if _u:
+            print("%s\nmédií: %d%s" % (_u[0], _u[1] or 0,
+                                     "  ⚠️ píše o tom jen jedno médium" if (_u[1] or 0) == 1 else ""))
+        for _k, _r in cisla_udalosti(int(sys.argv[2])).items():
+            print("čísla %-10s %s" % (_k + ":", "  →  ".join(
+                "%g %s (%s)" % (r["hodnota"], r["zdroj"],
+                                _dt.fromtimestamp(r["cas"] or 0).strftime("%d.%m. %H:%M")) for r in _r)))
         for z in casova_osa(int(sys.argv[2])):
             print("%s%s %-10s %-22s %s" % (
                 _dt.fromtimestamp(z["cas"] or 0).strftime("%d.%m. %H:%M"),
