@@ -173,6 +173,26 @@ _RECALL_PAT = re.compile(
     r"zn[áa][šs]\b|pamatuje[šs]", re.IGNORECASE)
 
 
+# ── HANS_AGENT_TV_CUE_V1 (3. 10.) — „co hraje na TV“ jen s ZMÍNKOU o TV ─────
+# Doloženo 3. 10.: „co se stalo s tím letadlem z Dubaje?“ → router zvolil
+# `report_now_playing` (cizímu odmítnuto, domácímu by odpověděl stavem TV).
+# 📏 Retro korpus 758 vět: router zvolil now_playing u 24; bez zmínky o TV /
+# přehrávání jen 3 a všechny špatně („čemu se teď věnuješ?“, „funguje ti
+# všechno?“, „proč zrovna rok 2021“); všech 21 skutečných dotazů ji má
+# (i navazující „kdo tam hraje?“). Po zamítnutí jde věta běžnou cestou.
+_TV_PODNET = re.compile(
+    r"\b(tv|televiz\w*|telk\w*|hraj\w*|hrani|bezi\w*|davaj\w*|vysil\w*|"
+    r"prehrav\w*|kodi|film\w*|porad\w*|serial\w*|program\w*|kanal\w*|stanic\w*|"
+    r"sleduj\w*|kouk\w*|diva\w*|dokument\w*|zapnut\w*|pust\w*)\b")
+
+
+def _ma_tv_podnet(msg: str) -> bool:
+    import unicodedata as _ud
+    f = "".join(c for c in _ud.normalize("NFD", (msg or "").lower())
+                if _ud.category(c) != "Mn")
+    return bool(_TV_PODNET.search(f))
+
+
 # ── HANS_STUDY_QUESTION_GUARD_V1 (30.8.) — OTÁZKA NENÍ POKYN KE STUDIU ──────
 # Doloženo dlouhým ověřovacím rozhovorem 30.8.:
 #   „jaké hrady jsou v Českém ráji?"  → „Mám si »hrady v Českém ráji« zařadit
@@ -2161,6 +2181,10 @@ class AgentRouter:
              akce=("kodi_play_film",),
              podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_pokyn(msg),
              verdikt=None, duvod="věta se ptá na film, nežádá přehrání"),
+        # HANS_AGENT_TV_CUE_V1 (3. 10.) — viz komentář u `_ma_tv_podnet`.
+        dict(marker="HANS_AGENT_TV_CUE_V1", akce=("report_now_playing",),
+             podminka=lambda s, aid, msg, dec, h: not _ma_tv_podnet(msg),
+             verdikt=None, duvod="věta nemluví o TV ani přehrávání"),
     )
 
     def _zapis_zajem_mluvciho(self, decision: dict, handler, message: str):
