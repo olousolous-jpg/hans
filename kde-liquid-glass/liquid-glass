@@ -12,22 +12,23 @@
 #   Specular (0–100), TintStrength (0–100), DarkTint (true/false),
 #   CornerRadius (px), RingWidth (px, 0 = bez rámečku kolem oken),
 #   RingClarity (0–100, čirost rámečku), WaveStrength (0–100, vlnění při posunu),
+#   BorderMoves (true/false, tažení za okraj okna = přesun),
 #   RingExcludeClasses, ForceGlassClasses (třídy oken oddělené čárkou),
 #   MouseLight, LiquidMotion, IdleShimmer (true/false), MotionStrength (0–100)
 set -euo pipefail
 
 GROUP=Effect-liquidglass
 KEYS=(BlurStrength NoiseStrength Saturation EdgeWidth Refraction ChromaticAberration
-      Specular TintStrength DarkTint CornerRadius RingWidth RingClarity WaveStrength RingExcludeClasses
+      Specular TintStrength DarkTint CornerRadius RingWidth RingClarity WaveStrength BorderMoves RingExcludeClasses
       ForceGlassClasses MouseLight LiquidMotion MotionStrength IdleShimmer)
 declare -A DEFAULTS=(
     [BlurStrength]=10 [NoiseStrength]=3 [Saturation]=160 [EdgeWidth]=26 [Refraction]=20
     [ChromaticAberration]=35 [Specular]=55 [TintStrength]=8 [DarkTint]=false
-    [CornerRadius]=10 [RingWidth]=6 [RingClarity]=70 [WaveStrength]=60 [RingExcludeClasses]="" [ForceGlassClasses]=""
+    [CornerRadius]=10 [RingWidth]=6 [RingClarity]=70 [WaveStrength]=60 [BorderMoves]=true [RingExcludeClasses]="" [ForceGlassClasses]=""
     [MouseLight]=true [LiquidMotion]=true [MotionStrength]=50 [IdleShimmer]=false
 )
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 reload() {
     qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.reconfigureEffect liquidglass >/dev/null 2>&1 || true

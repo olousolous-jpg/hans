@@ -268,6 +268,7 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
         form->addRow(QStringLiteral("Šířka:"), slider(QStringLiteral("RingWidth"), 0, 40, px));
         form->addRow(hint(QStringLiteral("0 = bez rámečku. Rámeček je i kolem neprůhledných aplikací (Firefox, GTK).")));
         form->addRow(QStringLiteral("Čirost:"), slider(QStringLiteral("RingClarity"), 0, 100, pct));
+        form->addRow(QString(), check(QStringLiteral("BorderMoves"), QStringLiteral("Tažení za okraj okna okno přesouvá (rohy dál mění velikost)")));
         form->addRow(QStringLiteral("Bez rámečku:"), line(QStringLiteral("RingExcludeClasses"), QStringLiteral("např. steam, firefox")));
     }
 

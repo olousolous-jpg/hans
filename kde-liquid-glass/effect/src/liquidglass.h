@@ -26,6 +26,7 @@ namespace KWin
 {
 
 class BackgroundEffectItem;
+class BorderMoveFilter;
 
 struct GlassRenderData
 {
@@ -203,6 +204,18 @@ private:
     bool m_idleShimmer = false;
     float m_ringClarity = 0.7f;
     float m_waveStrength = 0.6f;
+
+    // tažení za okraj okna (ne roh) okno přesouvá místo roztahování
+    bool m_borderMoves = true;
+    std::unique_ptr<BorderMoveFilter> m_borderFilter;
+
+public:
+    bool borderMoves() const
+    {
+        return m_borderMoves;
+    }
+
+private:
 
     QElapsedTimer m_clock;
     qint64 m_lastFrameMs = 0;

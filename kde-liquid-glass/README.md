@@ -106,6 +106,7 @@ liquid-glass off / on              # vrátit vestavěné rozostření / zapnout 
 | `RingWidth` | 6 | skleněný rámeček kolem běžných oken (px, 0 = vypnuto) |
 | `RingClarity` | 70 | jak čiré je sklo rámečku (0 = mléčné, 100 = skoro ostré pozadí) |
 | `WaveStrength` | 60 | vlnění pozadí pod sklem při přesouvání okna (0 = vypnuto) |
+| `BorderMoves` | true | tažení za okraj okna (ne roh) okno **přesouvá** místo roztahování; rohy dál mění velikost |
 | `RingExcludeClasses` | – | okna bez rámečku, např. `steam,firefox` |
 | `ForceGlassClasses` | – | sklo přes celé okno pro dané aplikace (smysl má jen u průhledných) |
 | `CornerRadius` | 10 | zaoblení, když ho okno samo neudává |

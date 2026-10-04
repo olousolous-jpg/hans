@@ -57,6 +57,10 @@
             <min>0</min>
             <max>100</max>
         </entry>
+        <!-- tažení za okraj okna okno přesouvá (rohy dál mění velikost) -->
+        <entry name="BorderMoves" type="Bool">
+            <default>true</default>
+        </entry>
         <entry name="RingExcludeClasses" type="String">
             <default></default>
         </entry>

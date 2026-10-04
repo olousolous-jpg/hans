@@ -15,6 +15,10 @@
 #include "liquidglassconfig.h"
 
 #include "core/rendertarget.h"
+#include "input.h"
+#include "input_event.h"
+#include "options.h"
+#include "pointer_input.h"
 #include "core/renderviewport.h"
 #include "effect/effecthandler.h"
 #include "opengl/glplatform.h"
@@ -88,6 +92,52 @@ static QMatrix4x4 colorTransformMatrix(qreal saturation, qreal contrast)
 
     return contrastMatrix * saturationMatrix;
 }
+
+/**
+ * Stisk levého tlačítka na okraji dekorace (levý, pravý, horní, dolní okraj,
+ * ne roh) spustí přesun okna jako při tažení za titulek. Filtr stojí těsně
+ * před filtrem dekorací KWinu, takže dekorace stisk vůbec nedostane a
+ * nezačne roztahovat. Rohy, modifikátory (Meta+tažení) a ostatní tlačítka
+ * zůstávají beze změny.
+ */
+class BorderMoveFilter : public InputEventFilter
+{
+public:
+    explicit BorderMoveFilter(LiquidGlassEffect *effect)
+        : InputEventFilter(InputFilterOrder::Decoration)
+        , m_effect(effect)
+    {
+    }
+
+    bool pointerButton(PointerButtonEvent *event) override
+    {
+        if (!m_effect->borderMoves() || event->button != Qt::LeftButton
+            || event->state != PointerButtonState::Pressed
+            || event->modifiersRelevantForShortcuts != Qt::NoModifier) {
+            return false;
+        }
+        // okno pod kurzorem; kurzor musí být na jeho dekoraci, ne v obsahu
+        Window *window = input()->pointer()->hover();
+        if (!window || !window->decoration() || !window->isMovable()
+            || window->clientGeometry().contains(event->position)) {
+            return false;
+        }
+        switch (window->decoration()->sectionUnderMouse()) {
+        case Qt::LeftSection:
+        case Qt::RightSection:
+        case Qt::TopSection:
+        case Qt::BottomSection:
+            break;
+        default:
+            return false; // titulek, tlačítka a rohy řeší dekorace jako obvykle
+        }
+        window->performMousePressCommand(Options::MouseActivateRaiseAndMove, event->position);
+        return true;
+    }
+
+private:
+    LiquidGlassEffect *const m_effect;
+};
 
 LiquidGlassEffect::LiquidGlassEffect()
 {
@@ -186,6 +236,12 @@ LiquidGlassEffect::LiquidGlassEffect()
     });
 #endif
 
+    // přesun okna tažením za okraj (jen Wayland, na X11 input() chybí)
+    if (input()) {
+        m_borderFilter = std::make_unique<BorderMoveFilter>(this);
+        input()->installInputEventFilter(m_borderFilter.get());
+    }
+
     // Liquid Glass: lesk sleduje kurzor, pomalé „dýchání“ světla
     connect(effects, &EffectsHandler::mouseChanged, this,
             [this](const QPointF &pos, const QPointF &oldpos, Qt::MouseButtons, Qt::MouseButtons, Qt::KeyboardModifiers, Qt::KeyboardModifiers) {
@@ -213,8 +269,12 @@ LiquidGlassEffect::LiquidGlassEffect()
 
 LiquidGlassEffect::~LiquidGlassEffect()
 {
+    if (m_borderFilter && input()) {
+        input()->uninstallInputEventFilter(m_borderFilter.get());
+    }
     waylandServer()->backgroundEffectManager()->removeBlurCapability();
 }
+
 
 void LiquidGlassEffect::initBlurStrengthValues()
 {
@@ -312,6 +372,7 @@ void LiquidGlassEffect::reconfigure(ReconfigureFlags flags)
     m_idleShimmer = LiquidGlassConfig::idleShimmer();
     m_ringClarity = LiquidGlassConfig::ringClarity() / 100.0f;
     m_waveStrength = LiquidGlassConfig::waveStrength() / 100.0f;
+    m_borderMoves = LiquidGlassConfig::borderMoves();
     if (m_idleShimmer && m_valid) {
         m_shimmerTimer.start();
     } else {
