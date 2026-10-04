@@ -1050,7 +1050,7 @@ register(
         r"\bpřiprav.{0,20}den[íi]k",
         r"\bzapis.{0,20}dnes",
         r"\bshrnut[íi].{0,20}dne",
-        r"\bzapis.{0,20}den[íi]k",
+        r"\bzapis(?!ky\s+z\s+den)(?!k[uy]\s+z\s+den).{0,20}den[íi]k",   # HANS_DENIK_NOT_BOOK_V1: ne kniha „Zápisky z deníku …“
         r"\bden[íi]k.{0,20}dnes",
     ],
     handler=_cmd_denik,
@@ -5158,7 +5158,7 @@ register(
         r"(p[řr]ipome[ňnt]\w*|vzpome[ňn]\w*|zopakuj)\s+.{0,25}"
         r"(rozhovor|konverzac|bavil|mluvil|pov[íi]dal)",
         r"(rozhovor|konverzac\w*)\s+o\s+\w{3,}",
-        r"(bavil|mluvil|pov[íi]dal)[iy]\s+jsme\s+(se\s+)?o\s+\w{3,}",
+        r"(bavil|mluvil|pov[íi]dal)[iy]\s+jsme\s+(se\s+)?o\s+\w{3,}(?![^.?!]*\s[-–]\s)",  # HANS_ROZHOVORY_NOT_PREAMBLE_V1: „Mluvili jsme o X – <jiná otázka>“ je úvod, ne dotaz
         # „pošli detail o rychlém obědě…", „ukaž ten recept", „vypiš záznam o…"
         # Bez tohohle Hans odpověď VYGENERUJE ZNOVU (doložený případ 13.7. —
         # do receptu si přidal koriandr, který v původním zápisu nebyl).
@@ -6121,6 +6121,10 @@ _ROUTE_CUE = {
     "rozvrh": re.compile(r"rozvrh|rutin", re.I),
     "rozhovory": re.compile(r"mluv|bavil|bavi[lt]|povid|rozhovor|rikal|rekl|slibil|"
                             r"psal|chat|debat|konverz", re.I),
+    # /tazatel 4. 10.: „co máš v plánu na zítřek?“ (Hansův plán) → kalendář
+    # domácnosti; za ~50 dní jediná LLM volba /kalendar a chybná
+    "kalendar": re.compile(r"kalend|udalost|schuz|termin|narozen|svat[ek]|akce|akci|"
+                           r"navstev|\bmam\b|\bmame\b|\bmi\b|\bnas\b|\bnam\b|\bmuj\b", re.I),
 }
 
 

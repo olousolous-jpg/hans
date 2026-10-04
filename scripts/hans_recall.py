@@ -3442,6 +3442,18 @@ def _self_state_trvale(conn) -> list:
                           (" — " + _co) if _co else ""))
     except Exception as e:
         _log.debug("self_state trvale (obraz): %s", e)
+    # HANS_SELF_STATE_READING_V1 (4. 10.) — rozečtená kniha: /tazatel B1 Hans
+    # tvrdil „čtu Zápisky z deníku Anny Frankové“ (nikdy nečetl), skutečná
+    # četba byla jiná a v přehledu chyběla.
+    try:
+        r = conn.execute("SELECT ts, title FROM diary WHERE event_type='book_read' "
+                         "AND ts > ? ORDER BY ts DESC LIMIT 1",
+                         (time.time() - 3 * 86400,)).fetchone()
+        if r and r["title"]:
+            out.append("teď čtu: %s" % re.sub(r"\s+—\s+kap\.\s*(\d+)$", r" (kapitola \1)",
+                                              r["title"].strip()))
+    except Exception as e:
+        _log.debug("self_state trvale (cteni): %s", e)
     try:
         import datetime as _dtk
         r = conn.execute("SELECT ts, title FROM diary WHERE event_type='book_finished' "

@@ -792,7 +792,12 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
             k = j
             while k < len(words) and _fold(words[k]) in _ANG_SPOJKA:
                 k += 1
-            if k > j and k < len(words) and k in idx:
+            # HANS_ANCHOR_JOIN_COMMA_V1 (4. 10.) — i před spojkou rozhoduje, co
+            # stojí mezi slovy: „Foucault, Bach, da Vinci“ se slepilo na „Bach
+            # da Vinci“ → Wikipedie „Pablo Bach“ (/tazatel B24)
+            if k > j and k < len(words) and k in idx \
+                    and not re.search(re.escape(words[j - 1]) + r"\s*[,;:–-]\s*"
+                                      + re.escape(words[j]) + r"\b", veta or ""):
                 jmeno.extend(words[j:k])     # „of the"
                 jmeno.append(words[k])       # „Seas"
                 j = k + 1
