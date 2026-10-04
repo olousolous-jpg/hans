@@ -95,6 +95,10 @@ _ACTION_VERBS = {
     # ZAPIŠ, že sis vymyslel to divadlo" agent neviděl a odpověď obstaral
     # volný hovor — Hans prohlásil, že si zápis udělal, a nezapsalo se nic.
     "zapis", "zapiš", "zaznamenej", "poznac", "poznač",
+    # HANS_ACTION_VERBS_PLAY_V1 (4. 10.) — „Přehrej Hvězdné války 3.“ (hlas
+    # 3. 10.) agent neviděl (bez „film“, bez otazníku) → volný hovor řekl
+    # „Přehrávám“ a nespustilo se nic. Hlasový přepis dává i „přehrej“.
+    "prehraj", "přehraj", "prehrej", "přehrej", "zahraj",
 }
 
 _LATER_PAT = re.compile(
@@ -638,6 +642,26 @@ def _ground_kodi_play(handler, args):
     kodi = getattr(getattr(handler, "_hans_idle", None), "kodi", None)
     if not kodi:
         return False, args, "kodi nedostupné"
+    # HANS_KODI_RANDOM_FILM_V1 (4. 10.) — „pusť náhodný / nějaký film“ (hlas
+    # 3. 10.) hledalo film NÁZVEM „náhodný film“ → „v knihovně nemám“. Výběr
+    # už Kodi klient umí (nevídaný z nových podle oblíbených žánrů, jinak
+    # oblíbený vídaný); akce má potvrzení, takže Hans napřed řekne, co vybral.
+    import unicodedata as _ud
+    _tf = "".join(ch for ch in _ud.normalize("NFD", title.lower())
+                  if _ud.category(ch) != "Mn")
+    if re.fullmatch(r"(?:nejak\w*|nahodn\w*|libovoln\w*|cokoli\w*|neco|nejaky?\s+dobr\w*)"
+                    r"(?:\s+(?:film\w*|neco))?", _tf.strip()):
+        try:
+            m = kodi.pick_suggestion() or kodi.pick_rewatch()
+        except Exception as _re_:
+            log.debug("náhodný film: %s", _re_)
+            m = None
+        if not m:
+            return False, args, "film není v knihovně"
+        log.info("HANS_KODI_RANDOM_FILM_V1: %r → náhodně %r", title, m.get("title"))
+        args["_movie"] = m
+        args["titul"] = m.get("title", title)
+        return True, args, ""
     m = kodi.find_movie(title)
     if not m:
         # HANS_KODI_ALT_TITLE_V1 — zkus originální/anglický název („Kruh"→„Ring")
@@ -2319,6 +2343,18 @@ class AgentRouter:
                 except Exception:
                     _zn_h = False
                 if not _zn_h:
+                    # HANS_STRANGER_CLIMATE_CUE_V1 (4. 10.) — /tazatel 3. 10.: cizí
+                    # „jak vám toto počasí vyhovuje ke studiu?“ (po tahu, kde mu
+                    # Hans počasí venku řekl) router vzal jako report_climate
+                    # a dostal „O tom mluvím jen se svou domácností“. Bez zmínky
+                    # o místnosti/teplotě to není dotaz na čidla → běžný hovor.
+                    if aid == "report_climate" and not re.search(
+                            r"m[íi]stnost|pokoj|uvnit[řr]|doma\b|tady|\btu\b|teplot|"
+                            r"vlhk|stup[ňn]|zima|horko|dusno|chladn|teplo\b",
+                            message or "", re.IGNORECASE):
+                        log.info("HANS_STRANGER_CLIMATE_CUE_V1: report_climate bez "
+                                 "zmínky o místnosti od neznámého → běžný hovor")
+                        return None
                     log.info("HANS_STRANGER_HOUSEHOLD_V1: agent %s od neznámého "
                              "(%s) odmítnuto", aid, name)
                     return "O tom mluvím jen se svou domácností."

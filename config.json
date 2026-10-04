@@ -634,7 +634,12 @@
         "_note_line_max_chars": "HANS_KOLAC_LINE_SEAM_V1: strop délky jedné repliky. Přes něj se řez položí na KONEC VĚTY, ne doprostřed slova. Dřív natvrdo 300 a 159 ze 180 useknutých replik mělo přesně 300 znaků.",
         "_note_line_num_predict": "HANS_TEXT_LIMITS_V1 (25. 9.): 120 tokenů utínalo ~2,6 % replik kolem 350–400 zn (pod znakovým stropem, takže šev nezabral). Sonda bez limitu: 40/40 replik dokončeno, medián 180, p90 240, max 404 zn → 250 tokenů / 800 zn s rezervou; šev zůstává jen pojistka.",
         "cti_nahlas": false,
-        "_note_cti_nahlas": "HANS_DIALOG_SILENT_V1 (29. 9.): rozhovory s Koláčem a komentáře k jeho odchodu/návratu se nečtou nahlas. Předčítání drželo TTS ve stavu „mluví“ a probouzecí slovo bylo po tu dobu hluché. Deník i Myšlení beze změny."
+        "_note_cti_nahlas": "HANS_DIALOG_SILENT_V1 (29. 9.): rozhovory s Koláčem a komentáře k jeho odchodu/návratu se nečtou nahlas. Předčítání drželo TTS ve stavu „mluví“ a probouzecí slovo bylo po tu dobu hluché. Deník i Myšlení beze změny.",
+        "stance_judge_nightly": true,
+        "stance_judge_model": "qwen2.5:14b",
+        "stance_defend_factor": 0.5,
+        "stance_judge_max_age_days": 14,
+        "_stance_judge_note": "KOLAC_DEBATE_NIGHT_JUDGE_V1 (4. 10.): debata se zpochybněným postojem se uloží (stance_debates) a v noci ji za stance krokem večerní reflexe posoudí stance_judge_model třemi třídami — ustoupil → oslabit (−15 %), obhájil → posílit krokem reinforce_alpha × stance_defend_factor, mimo téma → nic (bod challenge_held). Změřeno na 37 debatách: hans-czech a qwen2.5:7b přikyvují (ANO 35/37, 27/37), 14b rozlišuje. false = starý okamžitý soud hans-czech (jen oslabuje)."
     },
     "room_observer": {
         "enabled": true,

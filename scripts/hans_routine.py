@@ -1812,6 +1812,28 @@ class HansRoutine:
                     _zh(self.config, self._notifier)
             except Exception as _ze:
                 _log.warning("hlídač záloh: %s", _ze)
+            # BODY_TRACK_ROZPOR_HLIDAC_V1 (4. 10.) — snímky rozporů stopy postavy
+            # a tváře (BODY_TRACK_ROZPOR_SNIMEK_V1): až jich je dost a aspoň ze
+            # dvou dní, JEDNOU dát vědět na Matrix, že je čas je označit.
+            try:
+                _bc = (self.config.get("body_track", {}) or {})
+                _bn = int(_bc.get("rozpor_snapshot_notify", 0) or 0)
+                _bd = os.path.join(_bc.get("log_dir", "data/mereni/postava_stin"), "snimky")
+                _bf = os.path.join(_bd, ".nahlaseno")
+                if _bn and os.path.isdir(_bd) and not os.path.exists(_bf):
+                    _bs = [f for f in os.listdir(_bd) if f.endswith(".jpg")]
+                    _bdny = {f[:8] for f in _bs}
+                    if len(_bs) >= _bn and len(_bdny) >= 2:
+                        if self._notifier and self._notifier.send_proactive(
+                                "Snímků s rozporem postavy a tváře je %d (z %d dní) — dost "
+                                "na rozhodnutí. Leží v %s; u každého stačí říct, jestli má "
+                                "pravdu zelený rámeček (postava), nebo červený (tvář)."
+                                % (len(_bs), len(_bdny), _bd)):
+                            open(_bf, "w").write(time.strftime("%Y-%m-%d %H:%M"))
+                            _log.info("BODY_TRACK_ROZPOR_HLIDAC_V1: nahlášeno (%d snímků)",
+                                      len(_bs))
+            except Exception as _be:
+                _log.warning("hlídač snímků postavy: %s", _be)
             try:
                 from scripts import hans_health
                 health = hans_health.probe_all(self.config)
@@ -2279,6 +2301,7 @@ class HansRoutine:
             ('dream', self._nt_dream),
             ('relationship_reflection', self._nt_relationship_reflection),
             ('evening_reflection', self._nt_evening_reflection),
+            ('stance_debates', self._nt_stance_debates),   # KOLAC_DEBATE_NIGHT_JUDGE_V1
             ('place', self._nt_place),
             ('art', self._nt_art),
             ('severka', self._nt_severka),
@@ -2299,6 +2322,32 @@ class HansRoutine:
             ('entity_images', self._nt_entity_images),   # HANS_ENTITY_IMAGE_V1
             ('creation_reflection', self._nt_creation_reflection),
         )
+
+    def _nt_stance_debates(self, ctx):
+        # KOLAC_DEBATE_NIGHT_JUDGE_V1 (4. 10.) — Koláčovy debaty o postojích
+        # soudí v noční frontě silnější model (hans_stance_debate). Nezávisí
+        # na tom, jestli se povedla reflexe: čekající debata zůstává ve frontě
+        # (pending), dokud ji soud nezpracuje — nic se nepřeskočí, jen odloží.
+        # Nejvýš 1× za hodinu, ať se 14b nenahrává ke každé noční debatě zvlášť.
+        if time.time() - getattr(self, "_debaty_ts", 0.0) < 3600:
+            return
+        try:
+            import sqlite3 as _sq
+            _c = _sq.connect(self._diary_path, timeout=5)
+            try:
+                _n = _c.execute("SELECT count(*) FROM stance_debates "
+                                "WHERE status='pending'").fetchone()[0]
+            except _sq.OperationalError:
+                _n = 0                      # tabulka ještě nevznikla
+            finally:
+                _c.close()
+            if not _n or not self._brain_up():
+                return
+            self._debaty_ts = time.time()
+            from scripts.hans_stance_debate import posud
+            posud(self.config, self._diary_path)
+        except Exception as _de:
+            _log.warning("soud Koláčových debat: %s", _de)
 
     def _nt_slot_free(self, ctx, important: bool = False) -> bool:
         if ctx.brain_down:

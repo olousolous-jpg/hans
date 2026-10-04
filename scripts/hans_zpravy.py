@@ -1123,7 +1123,10 @@ ZPRAVY_SLOUCIT = 0.80         # dvě události podobnější než tohle = jedna
 _ZP_NETEMA = ("noveho", "nove", "zprav", "novin", "pisou", "pise", "stalo", "deje",
               "dopad", "nejak", "jsou", "svete", "svet", "dnes", "vcera", "zajima",
               "zajim", "slysel", "cetl", "muzes", "muzete", "mohl", "prosim", "rekni",
-              "reknete", "vlastne", "porad", "jeste", "nejnov", "aktual", "posledn")
+              "reknete", "vlastne", "porad", "jeste", "nejnov", "aktual", "posledn",
+              # HANS_ZPRAVY_HOLY_DOTAZ_V1 (4. 10., hlas 3. 10.): „Jaké jsou dnešní
+              # zprávy?“ bralo „jaké“ jako téma → „o tom nic nenašel“
+              "jak", "dulez", "nejdulez", "hlavni", "udal", "dnesk", "sobot")
 
 
 def _zp_udalost_popis(uid: int, path: str, kmeny: list = None) -> dict:
@@ -1160,6 +1163,82 @@ def _zp_udalost_popis(uid: int, path: str, kmeny: list = None) -> dict:
             "cesky": bool(cz),
             "trefa": ({"titulek": trefa["titulek"], "zdroj": nazvy.get(trefa["zdroj"], trefa["zdroj"]),
                        "cas": trefa["cas"]} if trefa else None)}
+
+
+def zpravy_odkazy(uid: int, path: str = DB, medium: str = None, limit: int = 1) -> list:
+    """HANS_ZPRAVY_ODKAZY_V1 (4. 10.) — odkazy na články k události.
+
+    Odkaz mají jen titulky z RSS kanálů médií (`titulky.url`); Google News dává
+    zašifrovaná přesměrování, ta se neukazují. Česky přednost, pak nejnovější,
+    bez bulváru. `medium` = jen ten (porovnání přes `_medium`).
+    → [{"zdroj": název, "titulek": …, "url": …}]"""
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        if uid < 0:
+            rows = c.execute("SELECT zdroj, titulek, url, jazyk, COALESCE(publikovano, prvni_ts) "
+                             "FROM titulky WHERE id=?", (-uid,)).fetchall()
+        else:
+            rows = c.execute(
+                """SELECT t.zdroj, t.titulek, t.url, t.jazyk, COALESCE(t.publikovano, t.prvni_ts)
+                   FROM titulek_udalost x JOIN titulky t ON t.id = x.titulek_id
+                   WHERE x.udalost_id = ?""", (uid,)).fetchall()
+    finally:
+        c.close()
+    nazvy = {z[0]: z[1] for z in ZDROJE}
+    chci = _medium(medium) if medium else None
+    rows = [r for r in rows if r[2] and r[2].startswith("http")
+            and _f(nazvy.get(r[0], r[0]) or "") not in BULVAR
+            and (chci is None or _medium(r[0]) == chci)]
+    rows.sort(key=lambda r: (r[3] != "cs", -(r[4] or 0)))
+    out, videno = [], set()
+    for zdr, tit, url, _j, _t in rows:
+        if url in videno:
+            continue
+        videno.add(url)
+        # sledovací přívěsky (utm_…) do odkazu pro člověka nepatří
+        url = re.sub(r"#utm_.*$", "", url)
+        url = re.sub(r"[?&]utm_[^#]*$", "", url)
+        out.append({"zdroj": nazvy.get(zdr, zdr), "titulek": tit, "url": url})
+        if len(out) >= limit:
+            break
+    return out
+
+
+_MEDIUM_ALIAS = ((r"\bct\s*24\b|\bct\b|ceske? televiz", "ct24"), (r"rozhlas", "irozhlas"),
+                 (r"\bseznam", "seznam"), (r"novink", "novinky"), (r"idnes", "idnes"),
+                 (r"\bbbc\b", "bbc"), (r"guardian", "guardian"), (r"\bnpr\b", "npr"),
+                 (r"al\s*d?zh?a?zeer|al\s*jazeer", "aljazeera"), (r"\bdw\b|deutsche welle", "dw"),
+                 (r"tagesschau", "tagesschau"), (r"\brfi\b", "rfi"))
+
+
+def medium_ze_zpravy(zprava: str):
+    """HANS_ZPRAVY_ODKAZY_V1 — RSS id média jmenovaného ve větě („na Novinky“,
+    „z ČT“), jinak None."""
+    f = _bez_diakritiky(zprava or "")
+    for vzor, rid in _MEDIUM_ALIAS:
+        if re.search(vzor, f):
+            return rid
+    return None
+
+
+def udalosti_podle_url(urls: list, path: str = DB) -> list:
+    """HANS_ZPRAVY_ODKAZY_V1 — id událostí (−id u samostatného titulku) k odkazům
+    z předchozího výpisu /zpravy; pořadí jako v `urls`."""
+    out = []
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        for u in urls:
+            r = c.execute("""SELECT t.id, x.udalost_id FROM titulky t
+                             LEFT JOIN titulek_udalost x ON x.titulek_id = t.id
+                             WHERE t.url = ? OR t.url LIKE ? OR t.url LIKE ?
+                             LIMIT 1""", (u, u + "#%", u + "?%")).fetchone()   # výpis utm ořezal
+            if r:
+                uid = r[1] if r[1] is not None else -r[0]
+                if uid not in out:
+                    out.append(uid)
+    finally:
+        c.close()
+    return out
 
 
 def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: int = 4,

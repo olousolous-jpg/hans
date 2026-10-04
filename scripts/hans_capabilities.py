@@ -33,8 +33,10 @@ _CAPABILITIES = [
     ("zpravy", "Sleduji ZPRÁVY — každou hodinu sbírám titulky z českých i zahraničních médií "
      "(ČT24, iROZHLAS, Seznam Zprávy, Novinky, BBC, Guardian, DW, Le Monde…) a umím říct, co se "
      "děje, nebo najít zprávy k tématu za poslední tři dny. Neopakuji celé články; titulky cizích "
-     "médií uvádím v českém překladu, pokud už je přeložený; hledání podle smyslu potřebuje zapnutý počítač",
-     "/zpravy [téma]; „co píšou o …“, „co je ve zprávách“"),
+     "médií uvádím v českém překladu, pokud už je přeložený; hledání podle smyslu potřebuje zapnutý počítač. "
+     "U zpráv posílám ODKAZ na článek (jen u médií, jejichž kanály sbírám — u souhrnů z Google News odkaz nemám) "
+     "a na požádání i odkazy od konkrétního média",
+     "/zpravy [téma]; „co píšou o …“, „co je ve zprávách“; po výpisu „pošli odkaz (na Novinky)“"),
     ("demagog", "Umím vyhledat OVĚŘENÉ VÝROKY českých politiků z Demagog.cz — výrok, "
      "jejich verdikt (pravda / nepravda / zavádějící / neověřitelné), krátké zdůvodnění "
      "a odkaz. Verdikt je jejich, sám politiky nehodnotím; mám jen to, co ověřili oni "
@@ -114,6 +116,17 @@ _CAPABILITIES = [
      "si ukládám i jejich obrázek (portrét, fotku, plakát). Na Matrixu ho na požádání "
      "ukážu i s krátkým popisem — jen u věcí, které znám, a jen když článek obrázek má",
      "„jak vypadá <jméno>?“ nebo „ukaž mi fotku <jméno>“ v Matrixu"),
+    # HANS_CAP_IMAGES_V1 (4. 10.) — /tazatel 3. 10.: na „umíš dělat fotky?“ Hans
+    # vymyslel povel „vyfoť“ (takový NENÍ) a na „můžeš mi ji poslat?“ tvrdil
+    # „nemohu posílat obrázky, komunikuji textem“ (přes Matrix posílá).
+    ("send_images", "Přes MATRIX umím POSLAT obrázky: své namalované obrazy (poslední "
+     "nebo náhodný), upravené fotky a obrázky osob a míst z Wikipedie. V chatu na "
+     "webu obrázky neposílám — tam je ukáže galerie",
+     "/obraz (nebo /foto) v Matrixu — poslední obraz; /obraz náhodný"),
+    ("no_camera_photo", "Z kamery na povel NEFOTÍM a snímky z ní neposílám — žádný "
+     "příkaz „vyfoť“ nemám. Snímek a video z kamery pošlu jen při HLÍDÁNÍ, když "
+     "je dům prázdný a něco se pohne",
+     "hlídej dům; /hlidej"),
     ("translate_doc", "Umím k cizojazyčnému dokumentu, který běží v Kodi, "
      "PŘIPRAVIT ČESKOU ZVUKOVOU STOPU (namluvenou) a uložit ho jako nový soubor. "
      "Trvá to minuty a ozvu se, až bude hotovo",

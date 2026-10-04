@@ -1085,7 +1085,7 @@ register(
     "info",
     slash_aliases=["info", "stav"],
     nl_patterns=[
-        r"\bjak[ýé].{0,10}stav",
+        r"\bjak[ýé].{0,10}\bstav",   # HANS_INFO_STAV_WORD_V1 (4. 10.): ne „jaké POSTAVy“
         r"\bco.{0,5}ví[šs].{0,10}o\s*sob",
     ],
     handler=_cmd_info,
@@ -1953,7 +1953,10 @@ register(
         r"\b" + _ART_MINULE + r"\s+(jsi|jste)\b",
         _ART_MINULE_STAZENE,                     # HANS_ART_CONTRACTED_PAST_V1
         r"\b(co|jak[ée]|kolik)\b.*\b(jsi|jste)\b.*\b" + _ART_MINULE,
-        r"(posledn[íi]|nov[ýy])\s+obraz\b",
+        # HANS_OBRAZY_NOT_TECHNIQUE_V1 (4. 10.) — otázka na techniku/rozměr
+        # obrazu není žádost o výpis (/tazatel: „olejomalba 60×80“) → chat
+        # s HANS_OWN_WORK_DETAIL_V1
+        r"(?!.*(?:olejomal|pl[áa]tn|rozm[ěe]r|jak\s+velk|technik|[čc][íi]m\s+(?:jsi|jste)\s+maloval))(posledn[íi]|nov[ýy])\s+obraz\b",
         # HANS_COUNT_ANSWER_V1 (13. 9.) — „kolik obrazu mas?“ nema sloveso
         # v minulem case, takze na vzor s `(jsi|jste)` + minuly tvar nesedlo
         # a propadlo do volneho hovoru → falesna abstinence (12. 9.).
@@ -1970,7 +1973,7 @@ register(
         # obrazy posilat neumi. Doplnena slovesa posli/poslat/videt.
         # Zmereno: cil 10/10, 0 vet ukradenych na 758 realnych,
         # 9 hranicnich pripadu nekrade `/namaluj`.
-        r"(uka[žz]\w*|po[šs]l\w*|poslat|vid[ěe]t|uvid[ěe]t)"
+        r"(?!.*(?:olejomal|pl[áa]tn|rozm[ěe]r|jak\s+velk|technik|[čc][íi]m\s+(?:jsi|jste)\s+maloval))(uka[žz]\w*|po[šs]l\w*|poslat|vid[ěe]t|uvid[ěe]t)"
         r"(\s+\w+){0,3}\s+(obraz|obr[áa]z|galeri)",
         r"m[ůu][žz]u\s+(to\s+)?vid[ěe]t\s+(ten\s+)?obraz",
         # HANS_ARTWORK_UNPREFIXED_V1 (16. 9.) — NEPREDPONOVE tvary.
@@ -4033,6 +4036,17 @@ def _cmd_zpravy(handler, name, args) -> str:
         if u.get("trefa"):
             out.append("   také %s, %s: %s" % (_c(u["trefa"]["cas"]), u["trefa"]["zdroj"],
                                             u["trefa"]["titulek"]))
+        # HANS_ZPRAVY_ODKAZY_V1 (4. 10.) — odkaz na článek (jen RSS média; hlas
+        # URL vynechá). Dřív Hans na „pošli odkaz“ tvrdil, že URL nemá.
+        try:
+            from scripts.hans_zpravy import zpravy_odkazy
+            # článek téhož média jako řádek, když ho máme; jinak jiný (s názvem)
+            for _o in (zpravy_odkazy(u["id"], medium=u["zdroj"]) or zpravy_odkazy(u["id"])):
+                # holá adresa: médium je vidět v doméně a hlas (tts_speaker
+                # maže http…) z řádku nic nepřečte
+                out.append("   %s" % _o["url"])
+        except Exception:
+            pass
     if r["rezim"] == "slova":
         out.append("(Počítač s jazykovým modelem teď neběží, hledal jsem jen v českých titulcích.)")
     out.append("Sbírám je každou hodinu z českých i zahraničních médií; podrobnosti jsou "
@@ -4054,9 +4068,78 @@ register(
         r"\b(?:nejnov[ěe]j[šs][íi]|aktu[áa]ln[íi]|dne[šs]n[íi]|hlavn[íi]) zpr[áa]v",
         r"\b(?:n[ěe]jak[ée]|jak[ée]) zpr[áa]vy\b",
         r"\bzpr[áa]vy (?:o|ohledn[ěe]|ze sv[ěe]ta)\b",   # ne „zprávy z Matrixu“
+        # HANS_ZPRAVY_SVET_NE_DENIK_V1 — „co se dneska událo ve světě“
+        r"\bco\s+se\s+(?:\w+\s+){0,2}(?:stalo|d[ěe]je|d[ěe]lo|ud[áa]lo)\w*\s+(?:\w+\s+){0,2}ve?\s+sv[ěe]t",
     ],
     handler=_cmd_zpravy,
     help_text="Co je ve zprávách — /zpravy [téma]",
+)
+
+
+# HANS_ZPRAVY_ODKAZY_V1 (4. 10.) — „pošli mi odkaz na Novinky, kde se o tom
+# píše“ po výpisu /zpravy. 3. 10. (Matrix) taková věta nikam nevedla a model
+# tvrdil, že „nemá přístup k internetu pro získání URL“ — odkazy přitom má.
+# Vzor HANS_DEMAGOG_FOLLOWUP_V1: rozhoduje POSLEDNÍ Hansova replika.
+_ZP_PATICKA = "Sbírám je každou hodinu z českých i zahraničních médií"
+_ZP_ODKAZ_PAT = re.compile(
+    r"\b(odkaz\w*|link\w*|url|adres\w*|zdroj\w*|[čc]l[áa]n(?:ek|ku|ky|k\w*)|"
+    r"p[íi][šs]e\s+(?:se\s+)?o\s+tom|kde\s+(?:se\s+)?(?:to|o\s+tom)\s+p[íi][šs]\w*|"
+    r"cel[ýy]\s+text|p[řr]e[čc][íi]st)\b", re.I)
+
+
+def thread_zpravy(message: str, turns):
+    """Argument pro /odkazy_zprav, když věta žádá odkaz po výpisu zpráv; jinak None."""
+    msg = (message or "").strip()
+    if not msg or len(msg) > 300 or not _ZP_ODKAZ_PAT.search(msg):
+        return None
+    for role, text in reversed(list(turns or [])):
+        if role != "assistant":
+            continue
+        text = str(text or "")
+        if _ZP_PATICKA not in text:
+            return None
+        urls = re.findall(r"https?://\S+", text)
+        return "%s\x1f%s" % (" ".join(urls), msg)
+    return None
+
+
+def _cmd_odkazy_zprav(handler, name, args) -> str:
+    """HANS_ZPRAVY_ODKAZY_V1 — odkazy na články ke zprávám z posledního výpisu."""
+    from scripts.hans_zpravy import (zpravy_odkazy, udalosti_podle_url,
+                                     medium_ze_zpravy, ZDROJE)
+    urls, _, msg = (args or "").partition("\x1f")
+    try:
+        ids = udalosti_podle_url(urls.split())
+    except Exception:
+        return "Do sebraných zpráv se mi teď nepodařilo nahlédnout."
+    if not ids:
+        return ("Odkaz mám jen u článků z kanálů médií (ČT24, iROZHLAS, Seznam Zprávy, "
+                "Novinky, iDNES a zahraniční); u těchhle zpráv žádný nemám.")
+    med = medium_ze_zpravy(msg)
+    nazev = {z[0]: z[1] for z in ZDROJE}.get(med, med)
+    out, chybi = [], 0
+    for uid in ids:
+        o = zpravy_odkazy(uid, medium=med, limit=2) if med else zpravy_odkazy(uid, limit=2)
+        if not o:
+            chybi += 1
+            continue
+        for x in o:
+            out.append("• %s — %s\n   %s" % (x["zdroj"], x["titulek"], x["url"]))
+    if not out:
+        return ("Od %s k těm zprávám článek nemám. Bez omezení na médium ti pošlu jiné — "
+                "stačí říct „pošli odkazy“." % nazev)
+    hlava = ("Články od %s k těm zprávám:" % nazev) if med else "Odkazy na články k těm zprávám:"
+    if med and chybi:
+        out.append("(K %d dalším zprávám od %s nic nemám.)" % (chybi, nazev))
+    return "\n".join([hlava] + out)
+
+
+register(
+    "odkazy_zprav",
+    slash_aliases=["odkazy_zprav"],
+    nl_patterns=[],            # jen z vlákna (thread_zpravy), samo nesepne
+    handler=_cmd_odkazy_zprav,
+    help_text="Odkazy na články k poslednímu výpisu zpráv",
 )
 
 
@@ -4521,8 +4604,10 @@ register(
     "dnes",
     slash_aliases=["dnes", "dnesek", "den"],
     nl_patterns=[
-        r"co\s+se\s+(dnes|dneska|d[ňn]es)\w*\s+(d[ěe]lo|stalo|ud[áa]lo)",
-        r"co\s+se\s+(d[ěe]lo|stalo|ud[áa]lo)\s+(dnes|dneska)",
+        # HANS_ZPRAVY_SVET_NE_DENIK_V1 (4. 10.) — „co se dneska událo ve světě“
+        # (hlas 3. 10.) je dotaz na zprávy, ne na deník domu
+        r"co\s+se\s+(dnes|dneska|d[ňn]es)\w*\s+(d[ěe]lo|stalo|ud[áa]lo)(?!.*\b(?:ve?\s+sv[ěe]t|v\s+[čc]esk|ve?\s+zpr[áa]v|v\s+republi))",
+        r"co\s+se\s+(d[ěe]lo|stalo|ud[áa]lo)\s+(dnes|dneska)(?!.*\b(?:ve?\s+sv[ěe]t|v\s+[čc]esk|ve?\s+zpr[áa]v|v\s+republi))",
         r"co\s+(bylo|se\s+d[ěe]lo)\s+(dnes\s+)?(doma|v\s+dom[ěe])",
         r"jak[ýy]\s+byl\s+(dnes(n[íi])?)?\s*den",
         r"shr[nň]\s+(mi\s+)?(dnes(ek|n[íi]\s+den)?)",
@@ -6024,6 +6109,14 @@ _LLM_ROUTE_SYSTEM = (
 
 _llm_route_cache: dict = {}
 
+# HANS_CMD_LLM_ROUTE_CUE_V1 — co musí věta (bez diakritiky) nést, aby model
+# smel zvolit tenhle výpis
+_ROUTE_CUE = {
+    "rozvrh": re.compile(r"rozvrh|rutin", re.I),
+    "rozhovory": re.compile(r"mluv|bavil|bavi[lt]|povid|rozhovor|rikal|rekl|slibil|"
+                            r"psal|chat|debat|konverz", re.I),
+}
+
 
 def _route_cache_key(msg: str, turns=None) -> str:
     """HANS_CMD_LLM_ROUTE_CACHE_V1 — klíč cache = věta + PŘEDMĚT z vlákna.
@@ -6697,6 +6790,17 @@ def resolve_command_llm(message: str, config: dict, turns=None):
             and not _asks_own_records(msg, config)):
         _log.info("HANS_CMD_LLM_ROUTE_V3: '%.40s' → /%s ZAMÍTNUTO "
                   "(ptá se na svět, ne na Hansovy záznamy)", msg, cid)
+        _llm_route_cache[_ckey] = ""
+        return None
+    # HANS_CMD_LLM_ROUTE_CUE_V1 (4. 10.) — pevná pojistka ZA modelem (změna
+    # popisu v promptu přehodila 9 ze 117 jiných voleb → zamítnuto měřením).
+    # Z logu ~50 dní: /rozvrh 4× a všechny chybně („co chceš dělat zítra“,
+    # „snídani sis vzal?“, „odpočíváš?“), /rozhovory u „co jsi dělal ráno?“,
+    # „zapamatuješ si mě?“. Výpis jen když věta nese jeho téma.
+    _cue = _ROUTE_CUE.get(cid) if cid else None
+    if _cue is not None and not _cue.search(_fold_diacritics(msg)):
+        _log.info("HANS_CMD_LLM_ROUTE_CUE_V1: '%.40s' → /%s ZAMÍTNUTO "
+                  "(věta nenese téma výpisu)", msg, cid)
         _llm_route_cache[_ckey] = ""
         return None
     if cid:

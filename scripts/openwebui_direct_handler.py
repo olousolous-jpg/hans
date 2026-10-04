@@ -1038,6 +1038,61 @@ class OpenWebUIDirectHandler:
                 "tu neni, si NEVYMYSLEJ."
                 % (_tema, _puvod, ("\n- " + _stav) if _stav else ""))
 
+    def _kodi_film_fact(self, raw: str, turns) -> str:
+        """HANS_KODI_FILM_FACT_V1 (4. 10.) — film Z KNIHOVNY, o kterém je řeč:
+        rok, žánr, režie, děj a herci s rolemi z Kodi. /tazatel 3. 10.: Hans
+        doporučil „Road to Perdition“, na „je to tak dobrý?“ vymyslel role
+        (Hanks „jako John Logan“, syn „Tyler James Williams“) i kameramana —
+        `factual_nofacts`, protože HANS_KODI_CAST_FACT chytá jen otázku NA
+        herce. Titul musí PŘESNĚ sedět s knihovnou (žádný fuzzy únos) a být
+        ve zprávě, nebo v Hansově poslední replice při navazující otázce."""
+        kodi = getattr(getattr(self, "_hans_idle", None), "kodi", None)
+        if not kodi or not raw:
+            return ''
+        norm = getattr(kodi, "_norm_title", None) or (lambda s: (s or "").lower())
+        posl = ""
+        for role, txt in reversed(list(turns or [])):
+            if role == "assistant":
+                posl = str(txt or "")
+                break
+        _q = re.compile(r"[„\"*]([^„\"“*\n]{2,70})[\"“*]")
+        nr = " %s " % norm(raw)
+        kand = []
+        for x in _q.findall(raw) + _q.findall(posl):
+            if x.strip() and x.strip() not in kand:
+                kand.append(x.strip())
+        navaz = bool(re.search(r"\b(?:to|ten|ho|n[ěe]m|n[ěe]j|film\w*|tom)\b", raw, re.I)) \
+            and len(raw.split()) <= 25
+        for k in kand:
+            nk = norm(k)
+            if len(nk) < 3:
+                continue
+            ve_zprave = (" %s " % nk) in nr
+            if not (ve_zprave or (navaz and k in posl)):
+                continue
+            mv = kodi.find_movie(k)
+            if not mv or nk not in (norm(mv.get("title")), norm(mv.get("originaltitle"))):
+                continue
+            d = kodi.movie_details(mv.get("movieid")) or {}
+            radky = ["FILM Z MÉ KNIHOVNY — „%s“ (%s%s):" % (
+                d.get("title") or mv.get("title"), d.get("year") or mv.get("year") or "?",
+                (", " + ", ".join((d.get("genre") or [])[:3])) if d.get("genre") else "")]
+            if d.get("director"):
+                radky.append("Režie: %s" % ", ".join(d["director"][:3]))
+            if d.get("plot"):
+                radky.append("Děj: %s" % re.sub(r"\s+", " ", d["plot"])[:500])
+            herci = ["%s%s" % (c.get("name"), (" jako %s" % c["role"]) if c.get("role") else "")
+                     for c in (d.get("cast") or [])[:8] if c.get("name")]
+            if herci:
+                radky.append("Hrají: %s" % "; ".join(herci))
+            radky.append("O ději, hercích, rolích a režii mluv JEN podle tohohle. Kameru, "
+                         "ocenění, hudbu ani další údaje, které tu nejsou, si NEDOMÝŠLEJ; "
+                         "vlastní dojem či doporučení smíš.")
+            logging.getLogger(__name__).info(
+                'HANS_KODI_FILM_FACT_V1: film z knihovny %r (%d herců)', k[:40], len(herci))
+            return '\n\n' + "\n".join(radky)
+        return ''
+
     def _kodi_cast_fact(self, text: str) -> str:
         """Obsazení (a režie) toho, o čem je řeč — deterministicky z Kodi.
 
@@ -1632,6 +1687,23 @@ class OpenWebUIDirectHandler:
                 log_once(  # HANS_NO_SILENT_CTX_V1
                     logging.getLogger(__name__), "_build_grounding(obsazeni)",
                     "_build_grounding: blok obsazení selhal: %s", _tiche)
+
+            # HANS_KODI_FILM_FACT_V1 (4. 10.) — film z knihovny, o kterém je řeč
+            try:
+                from scripts import hans_thread as _thr_ff
+                try:
+                    _ch_ff = get_current_channel()
+                except Exception:
+                    _ch_ff = None
+                _ff = self._kodi_film_fact(
+                    str(ctx._text), _thr_ff.recent_turns(self, ctx.name, _ch_ff))
+                if _ff:
+                    self._vysledek_groundingu('grounded', 'film_kodi')
+                    return _ff
+            except Exception as _tiche:
+                log_once(
+                    logging.getLogger(__name__), "_build_grounding(film_kodi)",
+                    "_build_grounding: blok filmu z knihovny selhal: %s", _tiche)
 
             # C1: entity store — deterministické resolvování ZNÁMÉ entity
             # (z Hansova čtení) PŘED RAG. Autoritativní fakt (definiční věta
@@ -2956,6 +3028,13 @@ class OpenWebUIDirectHandler:
                 # šlo volným hovorem a model slíbil „do 31. října“ hotové dílo.
                 from scripts.hans_recall import lasting_facts
                 _tr = lasting_facts(_dbp2)
+                # HANS_OWN_WORK_DETAIL_V1 — osnova eseje / popis a technika obrazu
+                try:
+                    from scripts.hans_recall import detail_vlastniho_dila
+                    _tr = list(_tr or []) + detail_vlastniho_dila(
+                        str(getattr(ctx, "user_msg", "") or ""), _dbp2)
+                except Exception:
+                    pass
                 if _tr:
                     ctx.study_ctx += ("\n\nCo jsem vytvořil a co studuji (o stavu "
                                       "svých děl a studia mluv JEN podle tohohle): "
@@ -4487,6 +4566,18 @@ class OpenWebUIDirectHandler:
                             'HANS_DEMAGOG_FOLLOWUP_V1: vlákno → /demagog (%.60s)', _dma)
                 except Exception as _dme:
                     logging.getLogger(__name__).debug('demagog vlákno: %s', _dme)
+            # HANS_ZPRAVY_ODKAZY_V1 (4. 10.) — „pošli odkaz…“ po výpisu zpráv;
+            # předbíhá i /zdroje (ten by vypsal zdroje Hansovy četby, ne zpráv)
+            if not _cmd or _cmd[0] == "zdroje":
+                try:
+                    from scripts.chat_commands import thread_zpravy
+                    _zpo = thread_zpravy(ctx.user_message, _t_turns)
+                    if _zpo:
+                        _cmd = ("odkazy_zprav", _zpo)
+                        logging.getLogger(__name__).info(
+                            'HANS_ZPRAVY_ODKAZY_V1: vlákno → /odkazy_zprav')
+                except Exception as _zpe:
+                    logging.getLogger(__name__).debug('zpravy vlákno: %s', _zpe)
             # HANS_CONFIRM_PRECEDENCE_V2 (20.8.) — ČEKÁ-LI AGENT NA POTVRZENÍ,
             # LLM ROUTER SE NEPTÁ. Princip už platí od 7.8. pro větev
             # prohloubení (`HANS_CONFIRM_PRECEDENCE_V1`), jen se nikdy

@@ -106,9 +106,14 @@ def main() -> int:
                 print(f"         původ: {p['puvod']}")
     hotovo = len(pripady) - len(padlo) - len(preskoceno)
     radek = f"\n{hotovo}/{len(pripady) - len(preskoceno)} prošlo"
-    if preskoceno:
-        radek += (f"  ·  {len(preskoceno)} přeskočeno (model nedostupný: "
-                  + ", ".join(sorted({p["funkce"].split(".")[-1] for p in preskoceno})) + ")")
+    # REGRESE_SKIP_LABEL_V1 (4. 10.) — záměrně vypnuté ≠ model neodpověděl;
+    # souhrn dřív obojí hlásil jako „model nedostupný“ (a svedl k „PC spí“)
+    zamerne = [p for p in preskoceno if p.get("preskocit")]
+    model = [p for p in preskoceno if not p.get("preskocit")]
+    for _sk, _popis in ((model, "model neodpověděl"), (zamerne, "záměrně vypnuto")):
+        if _sk:
+            radek += (f"  ·  {len(_sk)} přeskočeno ({_popis}: "
+                      + ", ".join(sorted({p["funkce"].split(".")[-1] for p in _sk})) + ")")
     print(radek)
     return 1 if padlo else 0
 

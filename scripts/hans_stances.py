@@ -276,6 +276,66 @@ class StanceStore:
             _log.warning("StanceStore.add_or_reinforce failed: %s", e)
             return None
 
+    def challenge_held(self, target_claim: str) -> Optional[int]:
+        """KOLAC_CHALLENGE_HELD_V1 (4. 10.) — Koláč postoj zpochybnil a ten
+        OBSTÁL: confidence se nemění, jen bod `challenge_held` do historie.
+        Bez něj nešlo poznat „debata běží, postoj se ubránil“ od „debata
+        neběží“ (hlídač rozvrhu hlásil zaostávání, když došly cíle k oslabení)."""
+        norm = _normalize(target_claim)
+        if not norm:
+            return None
+        try:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT id, confidence FROM stances "
+                    "WHERE claim_norm=? AND status='active' ORDER BY id LIMIT 1",
+                    (norm,)).fetchone()
+                if row is None:
+                    return None
+                conf = row["confidence"] if row["confidence"] is not None else 0.5
+                self._hist(conn, row["id"], time.time(), conf, "challenge_held")
+                conn.commit()
+                return row["id"]
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("StanceStore.challenge_held failed: %s", e)
+            return None
+
+    def defend(self, target_claim: str, factor: float = 0.5) -> Optional[int]:
+        """KOLAC_DEBATE_NIGHT_JUDGE_V1 (4. 10.) — Hans postoj v debatě s Koláčem
+        VĚCNĚ OBHÁJIL (noční soud): posil confidence krokem `alpha*factor`
+        (zrcadlo contradict). evidence_count se NEMĚNÍ — obhajoba není nové
+        pozorování; last_seen ano (postoj je živý, jako u contradict)."""
+        norm = _normalize(target_claim)
+        if not norm:
+            return None
+        now = time.time()
+        try:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT id, confidence FROM stances "
+                    "WHERE claim_norm=? AND status='active' ORDER BY id LIMIT 1",
+                    (norm,)).fetchone()
+                if row is None:
+                    return None
+                conf = row["confidence"] if row["confidence"] is not None else 0.5
+                new_conf = _clamp(conf + (1.0 - conf) * self._alpha * float(factor))
+                conn.execute("UPDATE stances SET confidence=?, last_seen=? WHERE id=?",
+                             (new_conf, now, row["id"]))
+                self._hist(conn, row["id"], now, new_conf, "challenge_defended")
+                conn.commit()
+                _log.info("stance DEFEND [%s] conf %.2f->%.2f: %.60s",
+                          row["id"], conf, new_conf, target_claim)
+                return row["id"]
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("StanceStore.defend failed: %s", e)
+            return None
+
     def contradict(self, target_claim: str, counter_claim: str = None,
                    source: str = "evening_reflection") -> Optional[int]:
         """STANCE_DIALECTIC_V1 — Hans v reflexi popřel dřívější postoj:

@@ -710,7 +710,18 @@ def _ask_classifier(config: dict, system: str, message: str) -> Optional[str]:
         url = str(ic.get("base_url", "http://127.0.0.1:11434")).rstrip("/")
         req = _url.Request(url + "/api/chat", body,
                            {"Content-Type": "application/json"})
-        with _url.urlopen(req, timeout=int(ic.get("timeout", 20))) as r:
+        # HANS_INTENT_BUSY_TIMEOUT_V1 (4. 10.) — když GPU drží noční dávka
+        # nebo render, klasifikátor čekal plných 20 s, než spadl na zálohu
+        # (hlas 3. 10. 23:03, „Přehrej Hvězdné války 3.“, celkem 2 min 13 s).
+        # Chat jede dál vždy — jen se na klasifikátor čeká kratší dobu.
+        _tmo = int(ic.get("timeout", 20))
+        try:
+            from scripts.ollama_client import gpu_busy as _gb
+            if _gb():
+                _tmo = min(_tmo, int(ic.get("timeout_busy", 5)))
+        except Exception:
+            pass
+        with _url.urlopen(req, timeout=_tmo) as r:
             _out = _json.loads(r.read())["message"]["content"]
         _clf_ok()          # HANS_INTENT_CLF_DOWN_LOG_V1
         return _out

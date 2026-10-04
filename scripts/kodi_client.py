@@ -621,7 +621,7 @@ class KodiClient:
         r = self._call("VideoLibrary.GetMovieDetails", {
             "movieid": int(movieid),
             "properties": ["title", "year", "plot", "cast", "director",
-                           "runtime"],
+                           "runtime", "genre"],   # genre: HANS_KODI_FILM_FACT_V1
         })
         return (r or {}).get("result", {}).get("moviedetails") if r else None
 

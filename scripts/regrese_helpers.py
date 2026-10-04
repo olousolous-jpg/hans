@@ -1084,8 +1084,10 @@ def rezim_hlidani(tazatel: str) -> str:
     return "rika" if "Hlídací režim" in t else "mlci"
 
 
-def agent_stav_domu(aid: str, tazatel: str) -> str:
-    """Agentni report o dome k tazateli — 'odmita' / 'pusti' (bez LLM)."""
+def agent_stav_domu(aid: str, tazatel: str, veta: str = "jaká je tu teplota?") -> str:
+    """Agentni report o dome k tazateli — 'odmita' / 'pusti' (bez LLM).
+    HANS_STRANGER_CLIMATE_CUE_V1 (4. 10.): věta se předává — klima bez zmínky
+    o místnosti jde u cizího do běžného hovoru (= neodmítá → 'pusti')."""
     from scripts import hans_agent as ha
     ag = ha.AgentRouter.__new__(ha.AgentRouter)
     ag.config = _cfg()
@@ -1094,7 +1096,7 @@ def agent_stav_domu(aid: str, tazatel: str) -> str:
     ag._actionable = lambda msg: True
     ag._route = lambda h, n, m: {"action": aid, "confidence": 1.0, "args": {}}
     ag._uplatni_pravidla = lambda aid_, *a, **k: aid_
-    t = ag.propose(_H(), _tazatel_jmeno(tazatel), "dotaz") or ""
+    t = ag.propose(_H(), _tazatel_jmeno(tazatel), veta) or ""
     return "odmita" if "jen se svou domácností" in t else "pusti"
 
 
@@ -1152,3 +1154,18 @@ def druh_nabidky(odpoved: str) -> str:
     from scripts import hans_offer as o
     nal = o._najdi(odpoved, "", {}, "")
     return nal[0] if nal else ""
+
+
+def agent_brana(veta: str) -> bool:
+    """HANS_ACTION_VERBS_PLAY_V1 (4. 10.) — pustí pre-gate agenta větu k routeru?"""
+    from scripts.hans_agent import AgentRouter
+    r = AgentRouter.__new__(AgentRouter)
+    r.route_all_requests = True
+    return r._actionable(veta)
+
+
+def route_cue(cid: str, veta: str) -> bool:
+    """HANS_CMD_LLM_ROUTE_CUE_V1 — smí LLM směrovač pro tuhle větu zvolit výpis `cid`?"""
+    from scripts.chat_commands import _ROUTE_CUE, _fold_diacritics
+    c = _ROUTE_CUE.get(cid)
+    return True if c is None else bool(c.search(_fold_diacritics(veta)))

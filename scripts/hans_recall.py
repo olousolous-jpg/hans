@@ -3504,6 +3504,57 @@ def predmet_vlastniho_dila(text: str, db_path: str) -> str:
     return ""
 
 
+# HANS_OWN_WORK_DETAIL_V1 (4. 10.) — /tazatel 3. 10.: přehled děl nesl jen NÁZEV
+# a stav eseje, a na „jaký je váš přístup?“ model obsah vymyslel (Batman,
+# Wonder Woman, Jung — v eseji není ani jedno; je o Starkovi, Quillovi
+# a týmovém traumatu). Obraz „Sen“ popsal jako „olejomalbu na plátně
+# 60×80 cm“ — obrazy jsou digitální. Když se otázka týká vlastního psaní
+# nebo malby, do promptu jde SKUTEČNÁ osnova / popis a technika.
+_DOTAZ_PSANI = re.compile(r"\b(?:esej\w*|pov[íi]dk\w*|d[íi]l[oaue]m?\b|p[íi][šs]e[šs]|p[íi][šs]ete|"
+                          r"sekc\w*|kapitol\w*|osnov\w*)", re.IGNORECASE)
+_DOTAZ_MALBA = re.compile(r"\b(?:obraz\w*|malb\w*|namaloval\w*|maloval\w*|maluj\w*|"
+                          r"pl[áa]tn\w*|techni\w*)", re.IGNORECASE)
+
+
+def detail_vlastniho_dila(text: str, db_path: str) -> list:
+    """Řádky navíc do promptu, když se otázka týká Hansova psaní / malby."""
+    out = []
+    t = text or ""
+    psani, malba = bool(_DOTAZ_PSANI.search(t)), bool(_DOTAZ_MALBA.search(t))
+    if not (psani or malba):
+        return out
+    conn = None
+    try:
+        import json as _json
+        conn = _ro(db_path)
+        conn.row_factory = sqlite3.Row
+        if psani:
+            r = conn.execute("SELECT id, title, current_index, outline FROM writing_project "
+                             "WHERE status='active' ORDER BY id DESC LIMIT 1").fetchone()
+            if r:
+                osn = _json.loads(r["outline"] or "[]")
+                hot = int(r["current_index"] or 0)
+                body = "; ".join("%d) %s%s" % (i + 1, str(o)[:160],
+                                               " [napsáno]" if i < hot else "")
+                                 for i, o in enumerate(osn))
+                out.append("osnova mé rozepsané eseje „%s“ (o obsahu mluv JEN podle ní, "
+                           "jiné příklady ani teorie v ní nejsou): %s" % (r["title"], body))
+        if malba:
+            r = conn.execute("SELECT title, note FROM diary WHERE event_type='artwork' "
+                             "ORDER BY ts DESC LIMIT 1").fetchone()
+            if r and r["title"]:
+                out.append("můj poslední obraz „%s“ — co na něm je: %s"
+                           % (r["title"], re.sub(r"\s+", " ", (r["note"] or "").strip())[:400]))
+            out.append("technika mých obrazů: DIGITÁLNÍ obrazy, které vytvářím na počítači "
+                       "generativním modelem — žádné plátno, olej, štětce ani rozměry v centimetrech")
+    except Exception as e:
+        _log.debug("detail_vlastniho_dila: %s", e)
+    finally:
+        if conn is not None:
+            conn.close()
+    return out
+
+
 def lasting_facts(db_path: str) -> list:
     """HANS_SELF_STATE_LASTING_V1 — trvalé řádky pro chatový prompt (díla, studium)."""
     conn = None

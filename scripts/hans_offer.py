@@ -49,6 +49,19 @@ _STUDY = re.compile(r"\bnastuduji(?:\s+si)?\s+(?:(?:v[íi]ce|v[íi]c|informace|n
 _FILM = re.compile(r"\bsta[čc][íi]\s+[řr][íi]ct\s+a\s+pust[íi]m\s+(?:to|ho|ji)\b|"
                    r"\b(?:mohu|m[ůu][žz]u)\s+(?:v[áa]m\s+|ti\s+)?(?:ho|ji|ten\s+film)\s+"
                    r"(?:pustit|spustit)", re.IGNORECASE)
+# HANS_OFFER_PLAY_CLAIM_V1 (4. 10.) — TVRZENÍ, že film už běží („Přehrávám“,
+# „Pouštím film X“, „Připravuji přehrání“), ačkoli agent v tomto tahu nic
+# nespustil. Hlas 3. 10. 23:05: „Přehrej Hvězdné války 3.“ → volný hovor
+# „Přehrávám, <Jméno>.“ a nespustilo se nic; 5. 8. totéž 3× („Připravuji přehrání
+# filmu Kruh“). Změřeno na 1 679 rozhovorech deníku: 4 nepravdivá tvrzení,
+# 1 skutečné spuštění (agent_action accepted — to se pozná), vyloučit
+# „nechci předstírat, že ho pouštím“ (5×) a „pustil jsem se do studia“ (4×).
+_PLAY_CLAIM = re.compile(
+    r"\b(?:p[řr]ehr[áa]v[áa]m|pou[šs]t[íi]m(?!\s+se\b)|spou[šs]t[íi]m(?!\s+se\b)|"
+    r"(?:pustil|spustil)\s+jsem(?!\s+se\b)|p[řr]ipravuj[iu]\s+(?:p[řr]ehr[áa]n|spu[šs]t)\w*|"
+    r"zap[íi]n[áa]m\s+(?:film|p[řr]ehr\w*))\b", re.IGNORECASE)
+_PLAY_NEG = re.compile(r"p[řr]edst[íi]rat|nemohu|nem[ůu][žz]u|neum[íi]m|nem[áa]m|kdyby|pokud|"
+                       r"\bnepou|\bnep[řr]ehr|\bnespou", re.IGNORECASE)
 _TITUL = re.compile(r"[„\"*]([^„\"“*\n]{2,70})[\"“*]")
 _VETY = re.compile(r"(?<=[.!?])\s+")
 _OPRAVA = re.compile(r"\b(?:nen[íi]|ne\b|nebyl\w*|nesed[íi]|jinak|m[íi]sto|chyb[íi]\w*|"
@@ -58,6 +71,7 @@ _POCTIVE = {
     "paint": "Namalovat to mohu — napište mi prosím „namaluj …“ a co má na obraze být.",
     "study": "Zařadit to ke studiu mohu — napište mi prosím „nastuduj …“.",
     "film": "Pustit film mohu — napište mi prosím „pusť …“.",
+    "film_tvrzeni": "Film se ale nespustil — napište mi prosím „pusť …“ s jeho názvem.",
 }
 
 
@@ -147,7 +161,32 @@ def _najdi(reply: str, user_message: str, config, name):
         if _FILM.search(v):
             tit = _TITUL.findall(v) or _TITUL.findall(reply)
             return ("film", "kodi_play_film", {"titul": tit[-1].strip() if tit else ""}, v)
+        if _PLAY_CLAIM.search(v) and not _PLAY_NEG.search(v):
+            # název bývá ve vedlejší větě („Z knihovny je to *X*. Přehrávám.“),
+            # jinak v dotazu uživatele (grounding ho najde v knihovně)
+            tit = _TITUL.findall(v) or _TITUL.findall(reply)
+            titul = tit[-1].strip() if tit else ""
+            if not titul:
+                m = re.search(r"\b(?:p[řr]ehr\w*|pus[tť]\w*|spus[tť]\w*|zahraj\w*)\s+"
+                              r"(?:(?:mi|n[áa]m|film|seri[áa]l)\s+)*(.{2,60}?)[.?!]*$",
+                              (user_message or "").strip(), re.IGNORECASE)
+                titul = m.group(1).strip() if m else ""
+            return ("film_tvrzeni", "kodi_play_film", {"titul": titul}, v)
     return None
+
+
+def _film_spusten(config, od_ts) -> bool:
+    """Spustil agent v tomto tahu film / přehrávání? (pak „Pouštím“ PLATÍ)"""
+    try:
+        import sqlite3
+        c = sqlite3.connect("file:%s?mode=ro" % _db(config), uri=True, timeout=3)
+        n = c.execute("SELECT count(*) FROM diary WHERE event_type='agent_action' AND ts>=? "
+                      "AND data LIKE '%accepted%' AND (data LIKE '%kodi_play%' "
+                      "OR data LIKE '%kodi_resume%')", (od_ts - 2,)).fetchone()[0]
+        c.close()
+        return n > 0
+    except Exception:
+        return True               # nevím → radši nechat, než vzít platné „Pouštím“
 
 
 def zpracuj(handler, name: str, user_message: str, reply: str, t0: float):
@@ -171,6 +210,10 @@ def zpracuj(handler, name: str, user_message: str, reply: str, t0: float):
             return reply, ""                           # agent už se ptá
         if druh == "paint" and _malba_ve_fronte(config, name, t0):
             return reply, ""                           # malba se opravdu zařadila
+        if druh == "film_tvrzeni":
+            if _film_spusten(config, t0):
+                return reply, ""                       # agent film opravdu pustil
+            _log.info("HANS_OFFER_PLAY_CLAIM_V1: tvrzení o přehrávání bez akce: %.80s", veta)
         bez = re.sub(r"[ \t]{2,}", " ", reply.replace(veta, "")).strip()
         from scripts.hans_agent import ACTIONS, Proposal
         action = _paint_action() if aid == "paint_offer" else ACTIONS.get(aid)

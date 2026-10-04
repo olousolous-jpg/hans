@@ -136,7 +136,7 @@ _SEED = [
     # kterou mechanismus v databázi stejně zanechává (viz `_DERIVED` níž).
     # Prahy = 2x historicke p95 mezery, min. 3 dny; v zavorce namerena p95.
     ("stance_contradict", "derived", None, None, 6 * 24 * 3600,
-     "Oslabeni postoje (Kolac/reflexe zpochybnily nazor) [p95 2,8 d]"),
+     "Kolacova debata o postoji: oslabeni i obhajeni (Kolac/reflexe zpochybnily nazor) [p95 2,8 d]"),
     ("kolac_memory", "derived", None, None, 3 * 24 * 3600,
      "Kolacova vlastni pamet pozic z dialogu [p95 0,6 d]"),
     ("stance_new", "derived", None, None, 16 * 24 * 3600,
@@ -175,7 +175,10 @@ _SEED = [
 # Tabulky lezi v teze DB jako `hans_schedule` (data/hans_diary.db).
 _DERIVED = {
     "stance_contradict":
-        "SELECT MAX(ts) FROM stance_history WHERE event='contradict'",
+        # KOLAC_CHALLENGE_HELD_V1 (4. 10.) — i postoj, který OBSTÁL: když Koláč
+        # srazí všechny zažité postoje pod podlahu 0,4, debata běží dál, jen
+        # bez oslabení (28. 9.–3. 10. falešné „zaostává“)
+        "SELECT MAX(ts) FROM stance_history WHERE event IN ('contradict','challenge_held','challenge_defended')",
     "kolac_memory":      "SELECT MAX(ts) FROM kolac_memory",
     "stance_new":        "SELECT MAX(first_seen) FROM stances",
     "lesson_learned":    "SELECT MAX(ts) FROM diary WHERE event_type='lesson_learned'",

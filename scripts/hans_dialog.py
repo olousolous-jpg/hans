@@ -1031,7 +1031,16 @@ class HansDialog:
             _st = getattr(self, "_challenged_stance", None)
             if _st:
                 try:
-                    self._maybe_weaken_stance(dialog, _st)
+                    # KOLAC_DEBATE_NIGHT_JUDGE_V1 (4. 10.) — soudí se v noci
+                    # silnějším modelem (ustoupil / obhájil / mimo téma);
+                    # okamžitý soud hans-czech jen jako záložní přepínač
+                    if (self.config.get("hans_dialog", {}) or {}).get(
+                            "stance_judge_nightly", True) and self._diary_path:
+                        from scripts.hans_stance_debate import zarad
+                        zarad(self._diary_path, _st.get("claim", ""),
+                              _st.get("conf", 0.0), dialog)
+                    else:
+                        self._maybe_weaken_stance(dialog, _st)
                 except Exception as _we:
                     _log.debug("stance weaken: %s", _we)
 
@@ -1564,10 +1573,12 @@ class HansDialog:
         if verdict is None:
             _log.debug("stance challenge: soud None (mozek/hra) → odloženo")
             return
+        from scripts.hans_stances import StanceStore
         if not verdict.strip().upper().startswith("ANO"):
             _log.info("stance challenge: postoj obstál — %.60s", claim)
+            # KOLAC_CHALLENGE_HELD_V1 — i obhájený postoj je stopa debaty
+            StanceStore(self.config, self._diary_path).challenge_held(claim)
             return
-        from scripts.hans_stances import StanceStore
         store = StanceStore(self.config, self._diary_path)
         sid = store.contradict(claim, counter_claim=hans_lines[-1][:200],
                                source="kolac_debate")
