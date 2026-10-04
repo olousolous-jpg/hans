@@ -1126,7 +1126,10 @@ _ZP_NETEMA = ("noveho", "nove", "zprav", "novin", "pisou", "pise", "stalo", "dej
               "reknete", "vlastne", "porad", "jeste", "nejnov", "aktual", "posledn",
               # HANS_ZPRAVY_HOLY_DOTAZ_V1 (4. 10., hlas 3. 10.): „Jaké jsou dnešní
               # zprávy?“ bralo „jaké“ jako téma → „o tom nic nenašel“
-              "jak", "dulez", "nejdulez", "hlavni", "udal", "dnesk", "sobot")
+              "jak", "dulez", "nejdulez", "hlavni", "udal", "dnesk", "sobot",
+              "cosi", "neco", "nejak", "fakt", "zapom", "vubec", "nesti", "zajim",
+              "sleduj", "zaznam", "zachyt", "nich", "precet", "cetl", "slyse", "videl",
+              "jste", "mate", "budes", "budete", "tedy")
 
 
 def _zp_udalost_popis(uid: int, path: str, kmeny: list = None) -> dict:
@@ -1221,6 +1224,34 @@ def medium_ze_zpravy(zprava: str):
     return None
 
 
+_ZP_DOMENY = re.compile(r"https?://(?:www\.)?(?:[\w-]+\.)*(?:irozhlas\.cz|novinky\.cz|"
+                        r"ceskatelevize\.cz|seznamzpravy\.cz|idnes\.cz|bbc\.co\.uk|bbc\.com|"
+                        r"theguardian\.com|npr\.org|aljazeera\.com|dw\.com|tagesschau\.de|"
+                        r"rfi\.fr|lidovky\.cz|aktualne\.cz|denik\.cz)[^\s)\]>\"'“”]*", re.I)
+
+
+def odkazy_vymyslene(text: str, path: str = DB) -> list:
+    """HANS_ZPRAVY_URL_GUARD_V1 (4. 10.) — odkazy na zpravodajské weby v odpovědi,
+    které NEJSOU v nasbíraných titulcích (= vymyšlené). Živý test 4. 10.: Hans
+    „poslal odkaz“ irozhlas.cz/…hamasu-153749 na zprávu, kterou si vymyslel."""
+    urls = [u.rstrip(").,;]>\"'“") for u in _ZP_DOMENY.findall(text or "")]
+    if not urls:
+        return []
+    out = []
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        for u in dict.fromkeys(urls):
+            r = c.execute("SELECT 1 FROM titulky WHERE url = ? OR url LIKE ? OR url LIKE ? LIMIT 1",
+                          (u, u + "#%", u + "?%")).fetchone()
+            if not r:
+                out.append(u)
+    except Exception:
+        return []                      # DB nejde přečíst → radši nic neškrtat
+    finally:
+        c.close()
+    return out
+
+
 def udalosti_podle_url(urls: list, path: str = DB) -> list:
     """HANS_ZPRAVY_ODKAZY_V1 — id událostí (−id u samostatného titulku) k odkazům
     z předchozího výpisu /zpravy; pořadí jako v `urls`."""
@@ -1248,6 +1279,17 @@ def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: i
     if not os.path.exists(path):
         return {"rezim": "nic", "udalosti": [], "tema": False}
     od = time.time() - hodin * 3600
+    # HANS_ZPRAVY_KLAUZE_V1 (4. 10.) — /tazatel: „fakt jo, zapomněl jsem. a co je
+    # teď ve zprávách? cosi zajímavého?“ → „cosi“ a „zapomněl“ byla „témata“,
+    # hledání podle smyslu nic nenašlo a model si pak titulky VYMYSLEL. Téma
+    # se bere jen z věty, která se na zprávy ptá (s ní i doplněk za otazníkem).
+    _klauze = [k for k in re.split(r"(?<=[.!?;])\s+", dotaz or "") if k.strip()]
+    if len(_klauze) > 1:
+        _i = next((i for i, k in enumerate(_klauze)
+                   if re.search(r"zpr[aá]v|novin|sv[eě]t|p[ií][sš]ou|ud[aá]lo|stalo",
+                                _bez_diakritiky(k))), None)
+        if _i is not None:
+            dotaz = " ".join(_klauze[_i:_i + 2])
     slova = [w for w in re.findall(r"[a-z0-9]+", _bez_diakritiky(dotaz)) if len(w) >= 4]
     tema = [w for w in slova if not w.startswith(_ZP_NETEMA)]
     c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)

@@ -3475,7 +3475,8 @@ _VLASTNI_STOP = {"proc", "jsi", "jste", "sis", "vybral", "zvolil", "zaujalo",
 # obecná slova nic neukotví („obraz“ ~ „s obrázky“ v přehledu → falešná shoda)
 _VLASTNI_OBECNE = ("obraz", "podtem", "tvor", "stud", "tema", "dil", "prac",
                    "esej", "knih", "clan", "sekc", "hotov",
-                   "kter")   # HANS_SELF_STATE_MORE_V1: „která“ v popisu obrazu ≠ předmět
+                   "kter",   # HANS_SELF_STATE_MORE_V1: „která“ v popisu obrazu ≠ předmět
+                   "zprav", "titul", "medi", "odkaz", "sbir", "kazdou", "hodin")  # HANS_SELF_STATE_NEWS_V1
 
 
 def predmet_vlastniho_dila(text: str, db_path: str) -> str:
@@ -3545,6 +3546,21 @@ def detail_vlastniho_dila(text: str, db_path: str) -> list:
             if r and r["title"]:
                 out.append("můj poslední obraz „%s“ — co na něm je: %s"
                            % (r["title"], re.sub(r"\s+", " ", (r["note"] or "").strip())[:400]))
+            # HANS_OWN_WORK_DETAIL_V2 (4. 10.) — i STARŠÍ obrazy: /tazatel zapřel
+            # Lendla s Agassim i Göringa, které o pár tahů dřív sám vyjmenoval
+            import datetime as _dta
+            _vid, _dal = {((r["title"] if r else "") or "").strip().lower()}, []
+            for x in conn.execute("SELECT ts, title FROM diary WHERE event_type='artwork' "
+                                  "ORDER BY ts DESC LIMIT 20").fetchall()[1:]:
+                _t = re.sub(r"\s+", " ", (x["title"] or "").strip())[:90]
+                if _t and _t.lower() not in _vid:
+                    _vid.add(_t.lower())
+                    _d = _dta.datetime.fromtimestamp(x["ts"])
+                    _dal.append("„%s“ (%d. %d.)" % (_t, _d.day, _d.month))
+                if len(_dal) >= 8:
+                    break
+            if _dal:
+                out.append("mé dřívější obrazy (od nejnovějšího): " + "; ".join(_dal))
             out.append("technika mých obrazů: DIGITÁLNÍ obrazy, které vytvářím na počítači "
                        "generativním modelem — žádné plátno, olej, štětce ani rozměry v centimetrech")
     except Exception as e:
@@ -3555,13 +3571,71 @@ def detail_vlastniho_dila(text: str, db_path: str) -> list:
     return out
 
 
+def _radek_zprav() -> str:
+    """HANS_SELF_STATE_NEWS_V1 (4. 10.) — /tazatel 4. 10.: „nemám přístup ke
+    sledování aktuálních zpráv“ (2×), protože výčet schopností se k otázce
+    o sobě nevkládá. Řádek ze SKUTEČNÉHO stavu sběru (poslední běh)."""
+    try:
+        import os as _os
+        import datetime as _dtz
+        p = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                          "data", "hans_zpravy.db")
+        c = sqlite3.connect("file:%s?mode=ro" % p, uri=True, timeout=3)
+        try:
+            ts = c.execute("SELECT MAX(ts) FROM sbery").fetchone()[0]
+        finally:
+            c.close()
+        if not ts:
+            return ""
+        d = _dtz.datetime.fromtimestamp(ts)
+        return ("zprávy: každou hodinu sbírám titulky z českých i zahraničních médií "
+                "(naposledy %d. %d. v %s); CO v nich je, vím jen z výpisu zpráv — titulky "
+                "ani odkazy si nevymýšlej, nabídni, že zprávy vypíšeš (i s odkazy)"
+                % (d.day, d.month, d.strftime("%H:%M")))
+    except Exception:
+        return ""
+
+
+def je_dotaz_na_vlastni_dilo(text: str, db_path: str) -> bool:
+    """HANS_OWN_WORK_A1_SKIP_V1 (4. 10.) — ptá se věta na Hansův VLASTNÍ obraz
+    nebo psaní? (pak opora je v promptu z `detail_vlastniho_dila` a brzda A1
+    ani dohledání na Wikipedii nemají běžet). /tazatel 4. 10.: „jaké postavy
+    v eseji rozebíráte?“ → „nemám spolehlivý záznam“, „jakou technikou jsi to
+    dělal?“ → Wikipedie „Sen“ (stav ve spánku), Lendl s Agassim zapřen.
+    Podmínka: slovo o psaní/malbě A ZÁROVEŇ 2. osoba nebo slovo z názvu
+    vlastního obrazu/eseje (jinak „co víš o obrazu Mona Lisa“ zůstává pod A1)."""
+    import unicodedata as _ud
+    t = text or ""
+    if not (_DOTAZ_PSANI.search(t) or _DOTAZ_MALBA.search(t)):
+        return False
+    if _DRUHA_OS.search(t) or re.search(r"\bsv(?:[ůu]j|[ée]|ou|[ée]m|[ée]ho|ými?)\b", t, re.I):
+        return True
+    fold = lambda s: "".join(c for c in _ud.normalize("NFD", (s or "").lower())
+                             if _ud.category(c) != "Mn")
+    conn = None
+    try:
+        conn = _ro(db_path)
+        nazvy = [r[0] for r in conn.execute(
+            "SELECT title FROM diary WHERE event_type='artwork' ORDER BY ts DESC LIMIT 20")]
+        nazvy += [r[0] for r in conn.execute(
+            "SELECT title FROM writing_project ORDER BY id DESC LIMIT 3")]
+    except Exception:
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+    slova = {w[:5] for n in nazvy for w in re.findall(r"\w{5,}", fold(n))}
+    return any(w[:5] in slova for w in re.findall(r"\w{5,}", fold(t))
+               if not w.startswith(_VLASTNI_OBECNE))
+
+
 def lasting_facts(db_path: str) -> list:
     """HANS_SELF_STATE_LASTING_V1 — trvalé řádky pro chatový prompt (díla, studium)."""
     conn = None
     try:
         conn = _ro(db_path)
         conn.row_factory = sqlite3.Row
-        return _self_state_trvale(conn)
+        return _self_state_trvale(conn) + [x for x in (_radek_zprav(),) if x]
     except Exception as e:
         _log.debug("lasting_facts: %s", e)
         return []

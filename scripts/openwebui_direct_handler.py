@@ -1061,7 +1061,8 @@ class OpenWebUIDirectHandler:
         for x in _q.findall(raw) + _q.findall(posl):
             if x.strip() and x.strip() not in kand:
                 kand.append(x.strip())
-        navaz = bool(re.search(r"\b(?:to|ten|ho|n[ěe]m|n[ěe]j|film\w*|tom)\b", raw, re.I)) \
+        navaz = bool(re.search(r"\b(?:to|ten|ta|ho|ji|n[ěe]m|n[ěe]j|n[íi]|film\w*|tom|tam|"
+                               r"hraje|hraj[íi]|obsazen\w*)\b", raw, re.I)) \
             and len(raw.split()) <= 25
         for k in kand:
             nk = norm(k)
@@ -1313,6 +1314,39 @@ class OpenWebUIDirectHandler:
             pass
 
     def _build_grounding(self, user, name=None) -> str:
+        """HANS_KODI_FILM_FACT_V2 (4. 10.) — obal: fakta o filmu z knihovny se
+        přidají k JAKÉKOLI cestě. /tazatel 4. 10.: V1 seděla uprostřed
+        řetězce a „jsi ji viděl? je to dobrý film?“ vzala cesta názoru,
+        „kdo tam hraje?“ četba (herci úplně jiného filmu) — obě dřív."""
+        g = self._build_grounding_v1(user, name)
+        try:
+            _txt = user[1] if isinstance(user, tuple) and len(user) == 2 else user
+            from scripts import hans_thread as _thr_ff
+            try:
+                _ch_ff = get_current_channel()
+            except Exception:
+                _ch_ff = None
+            _ff = self._kodi_film_fact(str(_txt or ""),
+                                       _thr_ff.recent_turns(self, name, _ch_ff))
+        except Exception as _fe:
+            logging.getLogger(__name__).debug("film fakt: %s", _fe)
+            _ff = ""
+        if not _ff:
+            return g
+        try:
+            from scripts.hans_intent import pta_se_na_obsazeni
+            _obs = pta_se_na_obsazeni(str(_txt or ""))
+        except Exception:
+            _obs = False
+        _bez_opory = getattr(self, "_grounding_outcome", "") == "factual_nofacts"
+        if not g or _obs or _bez_opory:
+            # bez opory (A1 by abstinovala — i když vnitřní cesta vrátila jen
+            # anti-konfab pokyn) nebo otázka na herce → knihovna sama
+            self._vysledek_groundingu('grounded', 'film_kodi')
+            return _ff
+        return g + _ff
+
+    def _build_grounding_v1(self, user, name=None) -> str:
         """G3B_GROUNDING_V1 — vrátí grounding blok pro faktický dotaz.
 
         Faktická zpráva → intent → kolekce → query() pod prahem →
@@ -1687,23 +1721,6 @@ class OpenWebUIDirectHandler:
                 log_once(  # HANS_NO_SILENT_CTX_V1
                     logging.getLogger(__name__), "_build_grounding(obsazeni)",
                     "_build_grounding: blok obsazení selhal: %s", _tiche)
-
-            # HANS_KODI_FILM_FACT_V1 (4. 10.) — film z knihovny, o kterém je řeč
-            try:
-                from scripts import hans_thread as _thr_ff
-                try:
-                    _ch_ff = get_current_channel()
-                except Exception:
-                    _ch_ff = None
-                _ff = self._kodi_film_fact(
-                    str(ctx._text), _thr_ff.recent_turns(self, ctx.name, _ch_ff))
-                if _ff:
-                    self._vysledek_groundingu('grounded', 'film_kodi')
-                    return _ff
-            except Exception as _tiche:
-                log_once(
-                    logging.getLogger(__name__), "_build_grounding(film_kodi)",
-                    "_build_grounding: blok filmu z knihovny selhal: %s", _tiche)
 
             # C1: entity store — deterministické resolvování ZNÁMÉ entity
             # (z Hansova čtení) PŘED RAG. Autoritativní fakt (definiční věta
@@ -5219,6 +5236,12 @@ class OpenWebUIDirectHandler:
                             # 1. 10.) → i původní věta
                             _pv = (predmet_vlastniho_dila(_a1_text, _dbp_vd)
                                    or predmet_vlastniho_dila(ctx._raw_message, _dbp_vd))
+                            # HANS_OWN_WORK_A1_SKIP_V1 (4. 10.) — vlastní obraz /
+                            # esej: opora je v promptu (HANS_OWN_WORK_DETAIL_V1/V2)
+                            if not _pv:
+                                from scripts.hans_recall import je_dotaz_na_vlastni_dilo
+                                if je_dotaz_na_vlastni_dilo(ctx._raw_message, _dbp_vd):
+                                    _pv = "vlastní obraz/psaní"
                             if _pv:
                                 _skip_a1 = True
                                 ctx._vlastni_dilo = True
@@ -5349,6 +5372,23 @@ class OpenWebUIDirectHandler:
         # G4D_DEDUP_ADDRESS_V1 — očisti opakované oslovení PŘED
         # rozdvojením do conv_store i diary→RAG (oba cíle čisté).
         if ctx.response:
+            # HANS_ZPRAVY_URL_GUARD_V1 (4. 10.) — vymyšlený odkaz na zpravodajský
+            # web (není v nasbíraných titulcích) → věty s ním pryč + poctivá věta.
+            # ⚠️ Hlas URL nečte a mluví po větách; opraví se hlavně zápis a Matrix.
+            try:
+                from scripts.hans_zpravy import odkazy_vymyslene
+                _vym = odkazy_vymyslene(ctx.response)
+                if _vym:
+                    _vety = re.split(r"(?<=[.!?])\s+|\n+", ctx.response)
+                    _zbyt = [v for v in _vety if not any(u in v for u in _vym)
+                             and not re.search(r"odkaz\w*\s*(?:na\s+čl[áa]nek)?\s*:\s*$", v)]
+                    ctx.response = (" ".join(x for x in _zbyt if x.strip()).strip()
+                                    + " Odkaz si ale nevymýšlím — jestli chcete, vypíšu "
+                                    "skutečné zprávy i s odkazy.").strip()
+                    logging.getLogger(__name__).info(
+                        "HANS_ZPRAVY_URL_GUARD_V1: vyřazen vymyšlený odkaz %s", _vym[0][:80])
+            except Exception as _zue:
+                logging.getLogger(__name__).debug("url guard: %s", _zue)
             # HANS_DEMAGOG_GUARD_V1 (3. 10.) — model si vymyslel „ověřené výroky“
             # (tvar zkopírovaný z historie, 3× v /tazatel) → nahradit skutečným
             # výpisem z Demagogu. Výstup příkazu sem nedojde (vrací se dřív).

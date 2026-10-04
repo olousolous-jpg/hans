@@ -4068,6 +4068,12 @@ register(
         r"\b(?:nejnov[ěe]j[šs][íi]|aktu[áa]ln[íi]|dne[šs]n[íi]|hlavn[íi]) zpr[áa]v",
         r"\b(?:n[ěe]jak[ée]|jak[ée]) zpr[áa]vy\b",
         r"\bzpr[áa]vy (?:o|ohledn[ěe]|ze sv[ěe]ta)\b",   # ne „zprávy z Matrixu“
+        # HANS_ZPRAVY_SLEDUJES_V1 (4. 10.) — „sledujete vůbec zprávy? co jste
+        # v nich dnes zaznamenal?“ šlo do volného hovoru a model zprávy i odkaz
+        # VYMYSLEL. 1 336 vět deníku: 0 shod (nic neukradne).
+        r"\bsleduj\w*\s+(?:v[ůu]bec\s+|n[ěe]jak[ée]\s+)?zpr[áa]vy\b",
+        r"\bzpr[áa]v\w*\b[^.?!]{0,40}\b(?:zaznamenal|zachytil|zaujal[oa]?|[čc]etl|vid[ěe]l|sly[šs]el)\w*",
+        r"\b(?:zaznamenal|zachytil|[čc]etl|sly[šs]el)\w*\b[^.?!]{0,30}\bve?\s+zpr[áa]v",
         # HANS_ZPRAVY_SVET_NE_DENIK_V1 — „co se dneska událo ve světě“
         r"\bco\s+se\s+(?:\w+\s+){0,2}(?:stalo|d[ěe]je|d[ěe]lo|ud[áa]lo)\w*\s+(?:\w+\s+){0,2}ve?\s+sv[ěe]t",
     ],
