@@ -27,6 +27,7 @@ namespace KWin
 
 class BackgroundEffectItem;
 class BorderMoveFilter;
+class Window;
 
 struct GlassRenderData
 {
@@ -214,6 +215,8 @@ public:
     {
         return m_borderMoves;
     }
+    /// okno, jehož skleněný rámeček (kreslený mimo okno) je pod bodem pos
+    Window *ringWindowAt(const QPointF &pos) const;
 
 private:
 

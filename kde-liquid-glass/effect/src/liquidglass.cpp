@@ -116,6 +116,13 @@ public:
             || event->modifiersRelevantForShortcuts != Qt::NoModifier) {
             return false;
         }
+        // skleněný rámeček je jen nakreslený kolem okna, kliknutí by propadlo
+        // na okno nebo plochu pod ním; tady ho chytíme a okno přesuneme
+        if (Window *ringOwner = m_effect->ringWindowAt(event->position); ringOwner && ringOwner->isMovable()) {
+            ringOwner->performMousePressCommand(Options::MouseActivateRaiseAndMove, event->position);
+            return true;
+        }
+
         // okno pod kurzorem; kurzor musí být na jeho dekoraci, ne v obsahu
         Window *window = input()->pointer()->hover();
         if (!window || !window->decoration() || !window->isMovable()
@@ -138,6 +145,34 @@ public:
 private:
     LiquidGlassEffect *const m_effect;
 };
+
+Window *LiquidGlassEffect::ringWindowAt(const QPointF &pos) const
+{
+    if (m_ringWidth <= 0) {
+        return nullptr;
+    }
+    // od nejvyššího okna dolů: první okno, které bod zakrývá, vyhrává
+    const QList<EffectWindow *> order = effects->stackingOrder();
+    const qreal r = m_ringWidth;
+    for (auto it = order.crbegin(); it != order.crend(); ++it) {
+        EffectWindow *w = *it;
+        if (w->isDeleted() || !w->isVisible() || w->isMinimized() || !w->isOnCurrentDesktop()) {
+            continue;
+        }
+        const RectF frame = w->frameGeometry();
+        if (frame.contains(pos)) {
+            return nullptr; // bod je na okně, ne na rámečku
+        }
+        const auto found = m_windows.find(w);
+        if (found == m_windows.end() || !found->second.ring) {
+            continue;
+        }
+        if (frame.grownBy(QMarginsF(r, r, r, r)).contains(pos)) {
+            return w->window();
+        }
+    }
+    return nullptr;
+}
 
 LiquidGlassEffect::LiquidGlassEffect()
 {
