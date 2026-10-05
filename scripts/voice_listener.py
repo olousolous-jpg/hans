@@ -11,6 +11,24 @@ import requests
 import numpy as np
 
 log = logging.getLogger("voice")
+
+# VOICE_ACK_PHRASE_V1 — potvrzení po dotazu, gender-neutrální
+_ACKS = ["Okamžik, prosím.",
+         "Nechte mě chvíli přemýšlet.",
+         "Zajisté, hned to bude.",
+         "Dovolte mi to zvážit.",
+         "Jistě, již na tom pracuji."]
+# VOICE_GAP_FILL_V1 (2. 10.) — výplně ticha, než Hans začne odpovídat:
+# (po kolika s od přepisu, hlášky). Změřeno 29.–30. 9. (21 výměn, přepis →
+# celá odpověď): čas/počasí 3–11 s, agentní akce 12–16 s (bez streamování),
+# volný hovor 19–36 s. Jedna hláška hned po dotazu pokryla jen začátek.
+_VYPLNE = [
+    (1.2, _ACKS),
+    (7.0, ["Ještě chviličku, prosím.",
+           "Už to skoro mám.",
+           "Hned jsem u toho."]),
+    (15.0, ["Omlouvám se, trvá to déle než obvykle."]),
+]
 if not log.handlers:
     _h = logging.StreamHandler(sys.stderr)
     _h.setFormatter(logging.Formatter("%(message)s"))
@@ -128,6 +146,16 @@ class VoiceListener:
                                          name="VoiceListener")
         self._thread.start()
         log.info("[Voice] Ready — waiting for gesture trigger")
+        # VOICE_ACK_PREPARED_V1 — potvrzení po dotazu připrav předem (jednou)
+        if self._tts is not None and hasattr(self._tts, "priprav"):
+            def _priprav():
+                try:
+                    n = self._tts.priprav([h for _s, hs in _VYPLNE for h in hs])
+                    if n:
+                        log.info("[Voice] připraveno %d hlášek po dotazu", n)
+                except Exception as e:
+                    log.info(f"[Voice] příprava hlášek selhala: {e}")
+            threading.Thread(target=_priprav, daemon=True, name="voice-ack-prep").start()
 
     def stop(self):
         self._running = False
@@ -495,20 +523,6 @@ class VoiceListener:
             log.warning(f"[Voice] uložení nahrávky selhalo: {e}")
 
     def _process(self, audio: np.ndarray):
-        # VOICE_ACK_PHRASE_V1 — Hans řekne krátké uznání (místo pípnutí), v charakteru
-        # majordoma. Gender-neutrální (sedí na muže i ženu). TTS cache → po pár užitích
-        # instant; generování stejně skryté za STT (~7s).
-        try:
-            import random as _rnd
-            _acks = ["Okamžik, prosím.",
-                     "Nechte mě chvíli přemýšlet.",
-                     "Zajisté, hned to bude.",
-                     "Dovolte mi to zvážit.",
-                     "Jistě, již na tom pracuji."]
-            if self._tts is not None and getattr(self._tts, "enabled", False):
-                self._tts.speak(_rnd.choice(_acks), priority=True)
-        except Exception:
-            pass
         log.info(f"[Voice] STT {len(audio)/self.sample_rate:.1f}s...")
         _t0 = time.time()
         text = self._stt(audio)
@@ -517,6 +531,9 @@ class VoiceListener:
             log.info("[Voice] Empty")
             return
         log.info(f"[Voice] Heard: {text}")
+        # VOICE_ACK_PREPARED_V1 (2. 10.) — uznání AŽ PO PŘEPISU a jen když je
+        # dotaz (dřív zaznělo i při falešném probuzení / tichu: „Empty“ 4 ze 14
+        # probuzení 29.–30. 9.); řídí ho výplně v `_dispatch` (VOICE_GAP_FILL_V1).
         self._voice_popup_msg("Vy (hlas)", text)  # VOICE_TRANSCRIPT_POPUP_V1
         self._dispatch(text)
 
@@ -626,12 +643,42 @@ class VoiceListener:
             _spoke = {"any": False}
             def _on_sentence(s):
                 if tts and getattr(tts, "enabled", False) and s and s.strip():
-                    tts.speak(s, priority=not _spoke["any"])
                     _spoke["any"] = True
+                    tts.speak(s, priority=not _spoke.get("veta"))
+                    _spoke["veta"] = True
+            # VOICE_GAP_FILL_V1 — dokud Hans nezačne odpovídat, vyplň ticho
+            # připravenou hláškou (1,2 / 7 / 15 s). Rychlá odpověď (čas, příkaz)
+            # první výplň předběhne. Odpověď má přednost: její první věta
+            # (priority) vyčistí frontu, takže nezačatá výplň už nezazní.
+            hotovo = threading.Event()
+
+            def _vypln():
+                import random as _rnd
+                t0 = time.time()
+                for i, (po_s, hlasky) in enumerate(_VYPLNE):
+                    if hotovo.wait(max(0.0, t0 + po_s - time.time())) or _spoke["any"]:
+                        return
+                    if tts and getattr(tts, "enabled", False):
+                        tts.speak(_rnd.choice(hlasky), priority=(i == 0))
+                        log.info("[Voice] výplň %d po %.1f s", i + 1, time.time() - t0)
+            threading.Thread(target=_vypln, daemon=True, name="voice-vypln").start()
             # HANS_CHAT_CHANNEL_AWARE_V1 — hlasový vstup tag
-            response = ch.send_chat_message(name, text,
-                                            on_sentence=_on_sentence,
-                                            channel="voice")
+            _t0_nab = time.time()   # HANS_OFFER_TO_PENDING_V1
+            try:
+                response = ch.send_chat_message(name, text,
+                                                on_sentence=_on_sentence,
+                                                channel="voice")
+            finally:
+                hotovo.set()
+            # HANS_OFFER_TO_PENDING_V1 — nabídka akce → čekající návrh; když už
+            # odpověď zazněla po větách, dořekni jen otázku / poctivou větu
+            try:
+                from scripts.hans_offer import zpracuj as _nab
+                response, _dod = _nab(ch, name, text, response or "", _t0_nab)
+                if _dod and _spoke["any"] and tts and getattr(tts, "enabled", False):
+                    tts.speak(_dod)
+            except Exception:
+                pass
             if not response:
                 return
             log.info(f"[Voice] ← {response[:80]}")

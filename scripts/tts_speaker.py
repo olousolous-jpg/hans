@@ -41,6 +41,9 @@ except ImportError:
 
 
 # # p3_tts_cleaned
+_PRIPRAVENE_DIR = Path('data/tts_pripravene')   # VOICE_ACK_PREPARED_V1
+
+
 class TTSSpeaker:
     """
     Text-to-speech via edge-tts + mpg123.
@@ -185,6 +188,11 @@ class TTSSpeaker:
         # TTS_VOICE_PITCH_V1 — cache key zahrne voice+pitch
         eff_voice = voice or self._voice
         eff_pitch = pitch or '+0Hz'
+        # VOICE_ACK_PREPARED_V1 — připravené hlášky (nemažou se) mají přednost
+        _pkey = hashlib.md5(f"{eff_voice}:{eff_pitch}:{text}".encode()).hexdigest()
+        _ppath = _PRIPRAVENE_DIR / f"{_pkey}.mp3"
+        if _ppath.exists():
+            return _ppath
         if self._cache_on:
             key  = hashlib.md5(
                 f"{eff_voice}:{eff_pitch}:{text}".encode()).hexdigest()
@@ -205,6 +213,37 @@ class TTSSpeaker:
         except Exception as e:
             print(f"[TTS] edge-tts error: {e}")
             return None
+
+    def priprav(self, texty) -> int:
+        """VOICE_ACK_PREPARED_V1 (2. 10.) — vygeneruj hlášky předem do
+        `data/tts_pripravene/`. Běžná cache drží 200 NEJNOVĚJŠÍCH souborů podle
+        času vzniku (použití ho neobnoví), takže krátké potvrzení po dotazu
+        z ní vypadávalo a generovalo se pokaždé znovu přes síť — a odpověď
+        čekala ve frontě za ním. Vrací počet nově vygenerovaných."""
+        if not self.enabled:
+            return 0
+        _PRIPRAVENE_DIR.mkdir(parents=True, exist_ok=True)
+        nove = 0
+        for t in texty or []:
+            t = self._clean(t)
+            if not t:
+                continue
+            key = hashlib.md5(f"{self._voice}:+0Hz:{t}".encode()).hexdigest()
+            path = _PRIPRAVENE_DIR / f"{key}.mp3"
+            if path.exists():
+                continue
+            try:
+                async def _generate():
+                    await edge_tts.Communicate(t, self._voice, pitch="+0Hz").save(str(path))
+                asyncio.run(_generate())
+                nove += 1
+            except Exception as e:
+                print(f"[TTS] příprava hlášky selhala ({t}): {e}")
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+        return nove
 
     def _play(self, mp3_path: Path):
         """Play MP3 via mpg123. Use --scale for software volume boost."""
