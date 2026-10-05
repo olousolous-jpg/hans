@@ -57,6 +57,8 @@ SOURCES = {
     # poznámka z četby > surový výcuc článku.
     "study_note":       {"label": "z mého studia", "text": "data",
                          "kind": "knowledge"},
+    "study_note_part":  {"label": "z mého studia", "text": "data",   # HANS_STUDY_ARTICLE_REST_V1
+                         "kind": "knowledge"},
     "study_mastery":    {"label": "shrnutí studia", "text": "data",
                          "kind": "knowledge"},
     "reading_takeaway": {"label": "z četby", "text": "data",

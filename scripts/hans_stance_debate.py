@@ -26,14 +26,27 @@ import time
 
 _log = logging.getLogger(__name__)
 
+# KOLAC_DEBATE_JUDGE_STANCE_ONLY_V1 (5. 10.) — ústup se počítá jen tehdy, když
+# se týká SOUZENÉHO postoje. Dřívější zadání bralo za ústup i „máte pravdu“
+# k úplně jinému tématu debaty: postoj o přiznávání nejistoty byl 2× oslaben
+# za to, že Hans uznal námitku ke studijnímu tématu. Měřeno párově na 39
+# debatách z logu (`data/mereni/soud_debat/`): CONCEDED 10 → 4, DEFENDED 18 → 6,
+# OFFTOPIC 11 → 29; ze 7 ručně čtených rozdílů 5 správně, 1 přehlédnutý
+# skutečný ústup (skončí neutrálně), 1 sporný. Chyba nového zadání tedy
+# postoj nechá být, místo aby ho měnila neprávem.
 SOUD_SYS = (
     "You judge a debate transcript (in Czech) between Hans and Kolac. Kolac was supposed "
-    "to challenge Hans's STANCE. Classify Hans's behaviour toward THAT stance with exactly "
-    "one word:\n"
+    "to challenge Hans's STANCE, but the debate often drifts to a different subject. "
+    "Judge ONLY what happens to THAT stance, with exactly one word.\n"
+    "First decide whether the core idea of the stance is actually debated in the transcript. "
+    "If the transcript is about another subject, the verdict is OFFTOPIC, no matter how "
+    "Hans behaves.\n"
     "DEFENDED = Hans explicitly addressed the stance (or its core idea) and supported it "
     "with a concrete reason or counter-argument;\n"
-    "CONCEDED = Hans softened it, admitted doubt, or agreed Kolac is right;\n"
-    "OFFTOPIC = the stance was not really discussed, or Hans only insisted politely "
+    "CONCEDED = Hans gave up, softened or doubted THE STANCE ITSELF. Agreeing with Kolac "
+    "about some other subject (a fact, a method, the topic under discussion), or admitting "
+    "uncertainty or a mistake about something else, is NOT conceding the stance;\n"
+    "OFFTOPIC = the stance itself was not really discussed, or Hans only insisted politely "
     "without any reason.\n"
     "Answer with one word: DEFENDED, CONCEDED or OFFTOPIC.")
 _VERDIKTY = ("DEFENDED", "CONCEDED", "OFFTOPIC")

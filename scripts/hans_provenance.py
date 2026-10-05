@@ -55,6 +55,7 @@ EVENT_MAP: dict[str, str] = {
     "web_read": "cetl", "reading_takeaway": "cetl", "book_read": "cetl",
     "book_reflection": "cetl", "book_completion_reflection": "cetl",
     "study_note": "cetl", "study_mastery": "cetl",
+    "study_note_part": "cetl",   # HANS_STUDY_ARTICLE_REST_V1
     # odvodil jsem (analytika / reflexe = vlastní úsudek, ne přímý fakt)
     "introspection": "odvodil", "night_summary": "odvodil",
     "synthesis_idea": "odvodil", "tendency_snapshot": "odvodil",

@@ -986,6 +986,26 @@ class HansDialog:
                 self._topics.deactivate_toaster()
 
             topic = self._topics.choose_or_keep(_context_parts)
+            # KOLAC_STANCE_OWN_TOPIC_V1 (5. 10.) — zpochybnění postoje je VLASTNÍ
+            # výměna, kde postoj JE tématem a Koláč začíná. Dřív byla výzva jen
+            # odstavec ve scéně cizího tématu a debata se k postoji nedostala
+            # (soudce: mimo téma 15 z 18; jako vlastní výměna 7 z 18 —
+            # `data/mereni/soud_debat/`). Výměna nespotřebuje kolo tématu ani
+            # se nepíše do jeho historie replik.
+            _solo_st = None
+            _dcs = self.config.get("hans_dialog", {}) or {}
+            if (getattr(topic, "is_debate", False)
+                    and not getattr(topic, "is_toaster", False)
+                    and _dcs.get("two_minds", True)
+                    and _dcs.get("stance_own_topic", True)
+                    and time.time() - getattr(self, "_stance_solo_ts", 0.0)
+                    >= float(_dcs.get("stance_own_topic_min_gap_s", 14400))):
+                from scripts.hans_persona import persona_name as _pns
+                self._challenged_stance = None
+                if self._stance_challenge_block(_pns(self.config)):
+                    _solo_st = self._challenged_stance
+            _tema_log = (("zpochybnění postoje: " + _solo_st["claim"])
+                         if _solo_st else getattr(topic, "subject", ""))
             directive = self._topics.build_directive(topic, _context_str)
 
             # Continuity — pošli posledních pár replik (jen pokud téma drží)
@@ -1012,7 +1032,14 @@ class HansDialog:
             _two = (self.config.get("hans_dialog", {}).get("two_minds", True)
                     and not getattr(topic, "is_toaster", False))
             dialog = None
-            if _two:
+            if _solo_st:
+                dialog = self._generate_stance_exchange(_solo_st["claim"])
+                if not dialog:
+                    self._challenged_stance = None
+                    return                 # mozek/replika nevyšla → příští tick
+                self._challenged_stance = _solo_st
+                self._stance_solo_ts = time.time()
+            elif _two:
                 dialog = self._generate_two_minds(topic, _context_str, history_block)
             if not dialog:
                 # KOLAC_STANCE_CHALLENGE_V1 — two_minds selhal → dialog bez injektáže
@@ -1024,7 +1051,7 @@ class HansDialog:
 
             self._last_dialog = time.time()
             _log.info("Dialog (turn %s, téma '%s'):\n%s",
-                      topic.turn_label(), topic.subject, dialog)
+                      topic.turn_label(), _tema_log, dialog)
 
             # KOLAC_STANCE_CHALLENGE_V1 (část B) — zpochybnil-li Koláč konkrétní
             # postoj a Hans poctivě ustoupil, oslab ten postoj.
@@ -1044,58 +1071,59 @@ class HansDialog:
                 except Exception as _we:
                     _log.debug("stance weaken: %s", _we)
 
-            # Pokrok tématu + uchovat repliky pro continuity
-            # Přidej stopu do Kolačova případu (z dialogu)
-            if _cases:
-                _active = _cases.get_active_case()
-                if not _active:
-                    _active = _cases.get_or_create_case(_context_parts)
-                if _active and dialog:
-                    # Kolačova poslední replika = nová stopa
-                    _lines = [l.strip() for l in dialog.strip().split('\n')
-                              if l.strip() and ':' in l]
-                    _kpre = _kolac_prefixy(self.config)  # HANS_KOLAC_LABEL_MATCH_V1
-                    _kolac_lines = [l for l in _lines
-                                    if l.lower().startswith(_kpre)]
-                    if _kolac_lines:
-                        _clue = _kolac_lines[-1].split(':', 1)[1].strip()
-                        # jen KOMPLETNÍ replika — ne useknutá („S tím nemohu sou")
-                        if (len(_clue) >= 16 and len(_clue.split()) >= 4
-                                and _clue[-1] in ".!?\"“”)"):
-                            _cases.add_clue(_active.id, _clue[:200])
-            self._topics.advance()
-            # HANS_KOLAC_MIND_V1 — Koláč si pamatuje svou pozici z dialogu
-            try:
-                _km = self._kolac()
-                if _km:
-                    _kpre2 = _kolac_prefixy(self.config)  # HANS_KOLAC_LABEL_MATCH_V1
-                    _kl = [l for l in dialog.strip().split("\n")
-                           if l.strip().lower().startswith(_kpre2) and ":" in l]
-                    if _kl:
-                        _pos = _kl[-1].split(":", 1)[1].strip()
-                        # neukládej do Koláčovy paměti useknuté/nekompletní pozice
-                        if (len(_pos) >= 16 and len(_pos.split()) >= 4
-                                and _pos[-1] in ".!?\"“”)"):
-                            _km.remember(getattr(topic, "subject", ""), _pos)
-            except Exception as _ke:
-                _log.debug("kolac remember: %s", _ke)
-            for line in dialog.strip().split("\n"):
-                line = line.strip()
-                if line and ":" in line:
-                    self._recent_replies.append(line)
-            # KOLAC_DIALOG_COHERENCE_V1 — drž víc historie (16, ne 8), ať vlákno
-            # tématu přežije napříč víc exchangi (history_in_prompt=16 jinak
-            # nemá z čeho brát → dialog působí „rozsekaně").
-            _max_repl = int(self.config.get('hans_dialog', {}).get(
-                'recent_replies_max', 16))
-            self._recent_replies = self._recent_replies[-_max_repl:]
+            if not _solo_st:        # KOLAC_STANCE_OWN_TOPIC_V1
+                # Pokrok tématu + uchovat repliky pro continuity
+                # Přidej stopu do Kolačova případu (z dialogu)
+                if _cases:
+                    _active = _cases.get_active_case()
+                    if not _active:
+                        _active = _cases.get_or_create_case(_context_parts)
+                    if _active and dialog:
+                        # Kolačova poslední replika = nová stopa
+                        _lines = [l.strip() for l in dialog.strip().split('\n')
+                                  if l.strip() and ':' in l]
+                        _kpre = _kolac_prefixy(self.config)  # HANS_KOLAC_LABEL_MATCH_V1
+                        _kolac_lines = [l for l in _lines
+                                        if l.lower().startswith(_kpre)]
+                        if _kolac_lines:
+                            _clue = _kolac_lines[-1].split(':', 1)[1].strip()
+                            # jen KOMPLETNÍ replika — ne useknutá („S tím nemohu sou")
+                            if (len(_clue) >= 16 and len(_clue.split()) >= 4
+                                    and _clue[-1] in ".!?\"“”)"):
+                                _cases.add_clue(_active.id, _clue[:200])
+                self._topics.advance()
+                # HANS_KOLAC_MIND_V1 — Koláč si pamatuje svou pozici z dialogu
+                try:
+                    _km = self._kolac()
+                    if _km:
+                        _kpre2 = _kolac_prefixy(self.config)  # HANS_KOLAC_LABEL_MATCH_V1
+                        _kl = [l for l in dialog.strip().split("\n")
+                               if l.strip().lower().startswith(_kpre2) and ":" in l]
+                        if _kl:
+                            _pos = _kl[-1].split(":", 1)[1].strip()
+                            # neukládej do Koláčovy paměti useknuté/nekompletní pozice
+                            if (len(_pos) >= 16 and len(_pos.split()) >= 4
+                                    and _pos[-1] in ".!?\"“”)"):
+                                _km.remember(getattr(topic, "subject", ""), _pos)
+                except Exception as _ke:
+                    _log.debug("kolac remember: %s", _ke)
+                for line in dialog.strip().split("\n"):
+                    line = line.strip()
+                    if line and ":" in line:
+                        self._recent_replies.append(line)
+                # KOLAC_DIALOG_COHERENCE_V1 — drž víc historie (16, ne 8), ať vlákno
+                # tématu přežije napříč víc exchangi (history_in_prompt=16 jinak
+                # nemá z čeho brát → dialog působí „rozsekaně").
+                _max_repl = int(self.config.get('hans_dialog', {}).get(
+                    'recent_replies_max', 16))
+                self._recent_replies = self._recent_replies[-_max_repl:]
 
             # # TEDDY_DIALOG_VIA_LOG_ENTRY
             # Zapsat přes hans_idle._log_entry → spustí synthesis_hooks.enqueue
             # (vytvoří reflexi + upload do hans_pripady RAG kolekce).
             # Fallback na přímý SQL pokud reference chybí.
             # TEDDY_TOPIC_NOTE_V1 — téma na začátek note (přežije _build_facts[:600])
-            _teddy_note = f"Téma: {getattr(topic, 'subject', '')}\n\n{dialog}"
+            _teddy_note = f"Téma: {_tema_log}\n\n{dialog}"
             _hi_log = getattr(self, '_hans_idle', None)
             if _hi_log and hasattr(_hi_log, '_log_entry'):
                 try:
@@ -1427,7 +1455,8 @@ class HansDialog:
             scene += ("\nTOHLE JE VĚCNÝ SPOR: drž svůj názor a oponuj druhé "
                       "straně konkrétním protiargumentem — s respektem a vtipem, "
                       "ne hádka.\n")
-            scene += self._stance_challenge_block(name)  # KOLAC_STANCE_CHALLENGE_V1
+            if not dc.get("stance_own_topic", True):   # KOLAC_STANCE_OWN_TOPIC_V1
+                scene += self._stance_challenge_block(name)  # KOLAC_STANCE_CHALLENGE_V1
         # continuity seed (navázání na předchozí repliky, drží-li téma)
         convo_seed = []
         if (history_block and getattr(topic, "turns_so_far", 0) > 0
@@ -1461,6 +1490,49 @@ class HansDialog:
                 break
             convo.append(f"{label}: {line}")
         return "\n".join(convo) if convo else None
+
+    def _generate_stance_exchange(self, claim: str) -> str | None:
+        """KOLAC_STANCE_OWN_TOPIC_V1 — čtyři repliky JEN o zpochybněném postoji:
+        Koláč útočí, Hans odpovídá, Koláč naléhá, Hans uzavírá. Pokyn Hansovi je
+        záměrně souměrný (obhaj, nebo uznej) — verdikt dává až noční soud."""
+        from scripts.hans_persona import persona_name
+        name = persona_name(self.config)
+        kname = kolac_name(self.config)
+        dc = self.config.get("hans_dialog", {}) or {}
+        base = self.config.get("openwebui_chat", {}).get(
+            "base_url", "http://127.0.0.1:11434")
+        hans_model = (self.config.get("models", {}).get("dialog")
+                      or dc.get("ollama_model")
+                      or self.config.get("openwebui_chat", {}).get(
+                          "model_name", "jobautomation/OpenEuroLLM-Czech:latest"))
+        kolac_model = dc.get("kolac_model") or hans_model
+        scene = (f"TÉMA HOVORU: postoj, který {name} zastává:\n  \u201e{claim}\u201c\n"
+                 f"{kname} ho dnes zpochybňuje. Mluví se JEN o tomto postoji — jiné téma "
+                 f"(film, kniha, studium) smí zaznít nanejvýš jako krátký příklad k němu.\n")
+        hans_sys = _build_hans_solo_system(self.config, claim)
+        km = self._kolac()
+        kolac_sys = km.build_system(claim, "") if km else _build_system_prompt(self.config)
+        convo = []
+        for i in range(4):
+            je_kolac = (i % 2 == 0)
+            convo_txt = "\n".join(convo) if convo else "(rozhovor teprve začíná)"
+            if je_kolac and i == 0:
+                ukol = (f"Teď řekni JEDNU repliku jako {kname}: zaútoč na ten postoj věcně — "
+                        f"uveď konkrétní situaci, kdy neplatí nebo škodí.")
+            elif je_kolac:
+                ukol = (f"Teď řekni JEDNU repliku jako {kname}: reaguj na to, co {name} právě "
+                        f"řekl o svém postoji, a nenech se odbýt obecnou odpovědí.")
+            else:
+                ukol = (f"Teď řekni JEDNU repliku jako {name}. Odpověz PŘÍMO k tomu postoji: "
+                        f"obhaj ho konkrétním důvodem, nebo poctivě řekni, v čem má {kname} "
+                        f"pravdu. Rozhodni se podle síly jeho námitky, ne ze zdvořilosti.")
+            user = scene + "\nDOSAVADNÍ ROZHOVOR:\n" + convo_txt + "\n\n" + ukol
+            line = self._one_line(kolac_model if je_kolac else hans_model,
+                                  kolac_sys if je_kolac else hans_sys, user, base)
+            if not line:
+                break
+            convo.append(f"{kname if je_kolac else name}: {line}")
+        return "\n".join(convo) if len(convo) == 4 else None
 
     # ── KOLAC_STANCE_CHALLENGE_V1 — Koláč tlačí Hanse k pochybám ────────────
     def _load_challengeable_stances(self):

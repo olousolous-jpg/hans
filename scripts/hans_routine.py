@@ -614,6 +614,10 @@ class HansRoutine:
             self._last_facts_date = s.get("last_facts_date", "")      # HANS_FACTS_NIGHTLY_V1
             self._last_pc_shutdown_date = s.get("last_pc_shutdown_date", "")  # HANS_PC_NIGHT_SHUTDOWN
             self._last_analytics_wake_date = s.get("last_analytics_wake_date", "")  # HANS_PC_NIGHT_ANALYTICS_WAKE
+            # HANS_NIGHT_DAY_CATCHUP_V1
+            self._night_brain_date = s.get("night_brain_date", "")
+            self._night_catchup_date = s.get("night_catchup_date", "")
+            self._night_catchup_until = float(s.get("night_catchup_until") or 0.0)
             self._last_dream_date = s.get("last_dream_date", "")  # HANS_DREAM_DEFER_V1 — restart nepřidá sen
             # HANS_SLEEP_TS_PERSIST_V1 — restart v noci nesmí zkrátit ranní scan
             self._sleep_started_ts = s.get("sleep_started_ts") or None
@@ -648,6 +652,10 @@ class HansRoutine:
                     "last_facts_date": self._last_facts_date,      # HANS_FACTS_NIGHTLY_V1
                     "last_pc_shutdown_date": self._last_pc_shutdown_date,  # HANS_PC_NIGHT_SHUTDOWN
                     "last_analytics_wake_date": self._last_analytics_wake_date,  # HANS_PC_NIGHT_ANALYTICS_WAKE
+                    # HANS_NIGHT_DAY_CATCHUP_V1
+                    "night_brain_date": getattr(self, "_night_brain_date", ""),
+                    "night_catchup_date": getattr(self, "_night_catchup_date", ""),
+                    "night_catchup_until": getattr(self, "_night_catchup_until", 0.0),
                     "last_dream_date": self._last_dream_date,  # HANS_DREAM_DEFER_V1
                     # HANS_SLEEP_TS_PERSIST_V1 — okno noci musí přežít restart
                     "sleep_started_ts": self._sleep_started_ts,
@@ -1989,6 +1997,7 @@ class HansRoutine:
                 continue  # předchozí běh ještě neskončil → přeskoč
             try:
                 self._maybe_wake_for_analytics()  # HANS_PC_NIGHT_ANALYTICS_WAKE
+                self._maybe_start_night_catchup()  # HANS_NIGHT_DAY_CATCHUP_V1
                 self._run_night_tasks()
                 self._maybe_shutdown_pc()  # HANS_PC_NIGHT_SHUTDOWN
             except Exception as _e:
@@ -2022,6 +2031,13 @@ class HansRoutine:
     # + dream v 00:00 (běží s mozkem ještě nahoře) jinak zablokovaly probuzení
     # PC na reasoning tier ve 3:00 → qwen3 analytika se nikdy nespustila.
     _HEAVY_ANALYTICS_EVENTS = ("synthesis_idea", "self_critique")
+    # HANS_NIGHT_DAY_CATCHUP_V1 — co se smí dohnat přes den: jen úlohy, které
+    # potřebují mozek a mají vlastní denní/kadenční pojistku. Večerní a půlnoční
+    # úlohy (shrnutí, sen, reflexe, malba, hygiena) sem NEPATŘÍ — mají vlastní
+    # hodinu nebo vlastní dohánění. `drain_setup` musí zůstat (nastavuje ctx).
+    _NIGHT_CATCHUP_TASKS = frozenset((
+        'stance_debates', 'narrative', 'drain_setup', 'study', 'toolscout',
+        'maker', 'authorship', 'synthesis', 'selfcritique', 'immune'))
 
     def _pc_up(self):
         """Rychlá kontrola, jestli PC běží (ping, ~2s)."""
@@ -2070,6 +2086,46 @@ class HansRoutine:
             _log.warning("PC night wake: PC nenaběhl do 90s")
         except Exception as _e:
             _log.warning("pc_night_wake: %s", _e)
+
+    def _maybe_start_night_catchup(self):
+        """HANS_NIGHT_DAY_CATCHUP_V1 (5. 10.) — noc, ve které po půlnoci nebyl
+        mozek ani jednou k dispozici (PC nenaběhl: výpadek proudu, selhané
+        buzení), se dožene přes den, jakmile mozek naběhne. Dřív noční úlohy
+        běžely jen pod `is_night` a propadlá noc čekala do dalšího večera.
+
+        Po půlnoci jen zapisuje, že mozek byl vidět (= noc měla šanci).
+        Přes den (morning_hour..night_hour) otevře 1× za den okno
+        `night_catchup_budget_min`; v něm `_run_night_tasks` pustí úlohy
+        z `_NIGHT_CATCHUP_TASKS`. Jejich vlastní pojistky (datum, kadence,
+        klid v místnosti, herní mód) platí beze změny."""
+        try:
+            _rcfg = self.config.get("hans_routine", {}) or {}
+            if not _rcfg.get("night_catchup_enabled", True):
+                return
+            now = datetime.now()
+            today = now.strftime("%Y-%m-%d")
+            if now.hour < self._morning_hour:
+                if (getattr(self, "_night_brain_date", "") != today
+                        and self._brain_up()):
+                    self._night_brain_date = today
+                    self._save_routine_state()
+                return
+            if now.hour >= self._night_hour:
+                return                  # večerní okno → běžný noční tick
+            if (getattr(self, "_night_brain_date", "") == today
+                    or getattr(self, "_night_catchup_date", "") == today):
+                return
+            from scripts.ollama_client import game_mode_on
+            if game_mode_on() or not self._brain_up():
+                return
+            _min = float(_rcfg.get("night_catchup_budget_min", 120))
+            self._night_catchup_date = today
+            self._night_catchup_until = time.time() + 60.0 * _min
+            self._save_routine_state()
+            _log.info("HANS_NIGHT_DAY_CATCHUP_V1: noc proběhla bez mozku → "
+                      "doháním noční práci přes den (okno %.0f min)", _min)
+        except Exception as _e:
+            _log.warning("night catchup: %s", _e)
 
     def _night_work_pending(self, nowts) -> bool:
         """HANS_NIGHT_WAKE_GATE_V2 — zbývá v nočním okně (2-6) práce, co
@@ -2275,12 +2331,18 @@ class HansRoutine:
         # drain rozpočet, `creative_busy`). Výjimky se chovají jako dřív: blok bez
         # vlastního try shodí zbytek dávky. Nové je jen hlášení úloh nad 30 s.
         today = datetime.now().strftime("%Y-%m-%d")
-        if self.is_night:
+        # HANS_NIGHT_DAY_CATCHUP_V1 — mimo noční fázi jen při dohánění
+        # a jen úlohy z `_NIGHT_CATCHUP_TASKS` (ostatní patří večeru/půlnoci).
+        _dohaneni = (not self.is_night and time.time()
+                     < getattr(self, "_night_catchup_until", 0.0))
+        if self.is_night or _dohaneni:
             import types as _types
             ctx = _types.SimpleNamespace(today=today, creative_busy=False,
                                          brain_down=False, drain_all=True,
                                          drain_until=0.0)
             for _jmeno, _uloha in self._night_task_list():
+                if _dohaneni and _jmeno not in self._NIGHT_CATCHUP_TASKS:
+                    continue
                 _t0 = time.time()
                 _uloha(ctx)
                 _dt = time.time() - _t0
@@ -3183,6 +3245,10 @@ class HansRoutine:
         nového dne' (art/hygiena/studium): restart po půlnoci ani rušné pre-midnight
         okno pak nestojí celou noc. Reflexe/narativ/tendence záměrně zůstávají
         premidnight (po 00:00 flipne datum → konfabulace z tenkých dat)."""
+        # HANS_NIGHT_DAY_CATCHUP_V1 — běží-li denní dohánění propadlé noci,
+        # úlohy vázané na noční okno se smějí spustit i přes den.
+        if time.time() < getattr(self, "_night_catchup_until", 0.0):
+            return True
         h = datetime.now().hour
         return h >= self._night_hour or h < self._morning_hour
 

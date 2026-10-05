@@ -1603,6 +1603,97 @@ _NOTE_SYSTEM = (
 )
 
 
+# ── HANS_STUDY_ARTICLE_REST_V1 (5. 10.) — dočítání dlouhého článku ───────────
+# Hlavní čtení bere prvních `article_max_chars` (12 000) znaků článku; dlouhá
+# hesla (anglická odborná mají 24–55 tisíc) tak Hans četl jen z části — v logu
+# 42 ze 123 session na stropu. Pouhé zvednutí stropu by přeteklo okno modelu
+# (`num_ctx`), proto se ZBYTEK článku dělí na části a z každé vzniká vlastní
+# poznámka `study_note_part`. Hlavní poznámka `study_note` zůstává jedna na
+# pod-téma (mistrovská reflexe a další čtenáři s tím počítají).
+# Měření: `data/mereni/studium_citace/` (dělení 4 dlouhých hesel, ~70 s/část).
+_REST_KONEC = re.compile(
+    r"\n+==\s*(References|Notes|See also|External links|Further reading|Bibliography|"
+    r"Citations|Sources|Footnotes|Reference|Odkazy|Poznámky|Literatura|Externí odkazy|"
+    r"Související články)\s*==\s*\n", re.I)
+_REST_NADPIS = re.compile(r"\n+(==+[^=\n]+==+)\s*\n")
+
+
+def _article_rest_parts(full: str, art_max: int, part_max: int, max_parts: int):
+    """Vrátí (části, nepřečteno_znaků): text ZA stropem hlavního čtení, dělený
+    na hranicích sekcí/odstavců; koncové sekce s odkazy se vynechají."""
+    full = full or ""
+    m = _REST_KONEC.search(full)
+    telo = full[:m.start()] if m else full
+    if len(telo) <= art_max or max_parts <= 0:
+        return [], 0
+    start = telo.rfind("\n", 0, art_max)
+    rest = telo[start if start > art_max * 0.8 else art_max:]
+    kusy, pos = [], 0
+    for mm in _REST_NADPIS.finditer(rest):
+        if mm.start() > pos:
+            kusy.append(rest[pos:mm.start()])
+        pos = mm.start()
+    kusy.append(rest[pos:])
+    drobne = []
+    for k in kusy:                      # sekce delší než část → po odstavcích
+        while len(k) > part_max:
+            cut = k.rfind("\n", 0, part_max)
+            cut = cut if cut > part_max * 0.5 else part_max
+            drobne.append(k[:cut])
+            k = k[cut:]
+        drobne.append(k)
+    parts, cur = [], ""
+    for k in drobne:
+        if cur and len(cur) + len(k) > part_max:
+            parts.append(cur)
+            cur = ""
+        cur += k
+    if cur.strip():
+        if parts and len(cur) < 800:
+            parts[-1] += cur
+        else:
+            parts.append(cur)
+    parts = [p.strip() for p in parts if len(p.strip()) >= 300]
+    return parts[:max_parts], sum(len(p) for p in parts[max_parts:])
+
+
+_PART_SYSTEM = (
+    "Jsi {persona_name}. Dočítáš DALŠÍ ČÁST článku, jehož začátek sis už "
+    "prostudoval a zapsal. Napiš si STUDIJNÍ POZNÁMKU v první osobě (5-8 vět): "
+    "co podstatného tato část přináší a co tě zaujalo či překvapilo. Tato část "
+    "nemusí souviset s tvým pod-tématem — nepropojuj ji s ním uměle a nedomýšlej "
+    "souvislosti, které v textu nejsou. Drž se FAKTŮ z textu — nic si "
+    "nepřimýšlej, nehádej, nedoplňuj z vlastní paměti a nevkládej žádné značky "
+    "v hranatých závorkách. Piš česky, souvisle, bez nadpisů a odrážek."
+)
+
+
+def _generate_part_note(config: dict, topic: str, sub: str, title: str,
+                        part: str, i: int, n: int) -> str:
+    """Poznámka z jedné dočítané části článku. '' při selhání (LLM dole)."""
+    c = _cfg(config)
+    prompt = (f"Koníček: {topic}\nPod-téma, kvůli kterému článek čtu: {sub}\n\n"
+              f"Článek: {title} — pokračování, část {i} z {n}:\n{part}\n\n"
+              f"Napiš si poznámku k této části článku.")
+    try:
+        from scripts.ollama_client import ollama_generate
+        from scripts.hans_persona import persona_name as _pn
+    except ImportError:
+        return ""
+    try:
+        raw = ollama_generate(model=_model(config), prompt=prompt,
+                              system=_PART_SYSTEM.format(persona_name=_pn(config)),
+                              config=config, timeout=int(c.get("llm_timeout", 300)),
+                              keep_alive=0,
+                              options={"temperature": 0.4,
+                                       "num_ctx": int(c.get("num_ctx", 8192)),
+                                       "num_predict": 600})
+        return (raw or "").strip()
+    except Exception as e:
+        _log.warning("_generate_part_note LLM selhal: %s", e)
+        return ""
+
+
 def _generate_note(config: dict, topic: str, sub: str, material: str) -> str:
     """Base LLM napíše studijní poznámku z materiálu. '' při selhání.
     num_ctx zvednut (default Ollama je 2048 → tichý ořez) ať se vejde plný
@@ -2280,6 +2371,14 @@ class StudyStore:
         _log.info("study: session [%d] '%s' — pod-téma %d/%d: %s",
                   prog["id"], topic, new_idx, len(curriculum), sub)
 
+        # 5a) HANS_STUDY_ARTICLE_REST_V1 — dočti zbytek dlouhého článku po
+        # částech (až po posunu: selže-li dočítání, pod-téma se neopakuje)
+        try:
+            self._read_article_rest(config, prog, idx, topic, sub, _main,
+                                    source_url, knowledge, diary_writer)
+        except Exception as e:
+            _log.warning("study: dočítání článku '%s' selhalo: %s", _main, e)
+
         # 6) dokončení?
         if new_idx >= len(curriculum):
             prog["current_index"] = new_idx
@@ -2287,6 +2386,50 @@ class StudyStore:
             return {"result": "completed", "topic": topic, "sub": sub}
         return {"result": "studied", "topic": topic, "sub": sub,
                 "index": new_idx, "total": len(curriculum)}
+
+    def _read_article_rest(self, config: dict, prog: dict, idx: int, topic: str,
+                           sub: str, main_title, url, knowledge=None,
+                           diary_writer=None) -> int:
+        """HANS_STUDY_ARTICLE_REST_V1 — z každé části článku za stropem hlavního
+        čtení zapíše poznámku `study_note_part` (deník + RAG). Vrací počet
+        zapsaných částí. Jen články Wikipedie; `article_rest_parts` 0 = vypnuto."""
+        c = _cfg(config)
+        max_parts = int(c.get("article_rest_parts", 4))
+        m = re.match(r"https://(\w+)\.wikipedia\.org/wiki/", url or "")
+        if max_parts <= 0 or not m or not main_title:
+            return 0
+        from scripts.web_reader import WebReader
+        full = WebReader(config)._wiki_extract(main_title, m.group(1),
+                                               intro_only=False)
+        parts, zbyva = _article_rest_parts(
+            full, int(c.get("article_max_chars", 12000)),
+            int(c.get("article_part_chars", 12000)), max_parts)
+        if not parts:
+            return 0
+        hotovo = 0
+        for i, part in enumerate(parts, 1):
+            note = _generate_part_note(config, topic, sub, main_title, part,
+                                       i, len(parts))
+            if not note:
+                break                      # LLM dole → zbytek se nedočte
+            title = (f"Studium: {topic} — {sub} · dočítání článku "
+                     f"{main_title} ({i}/{len(parts)})")
+            self._write_diary("study_note_part", title, note, diary_writer)
+            if knowledge is not None and getattr(knowledge, "enabled", False):
+                try:
+                    knowledge.upload(
+                        collection_key=str(c.get("rag_collection", "hans_cetba")),
+                        doc_id=f"study_{prog['id']}_{idx}_p{i}",
+                        title=title, text=note,
+                        metadata={"koníček": topic, "pod-téma": sub,
+                                  "zdroj": url, "typ": "study_note_part"})
+                except Exception as e:
+                    _log.debug("study part RAG upload: %s", e)
+            hotovo += 1
+        _log.info("study: HANS_STUDY_ARTICLE_REST_V1 '%s' — dočteno %d/%d částí "
+                  "(článek %d zn, nepřečteno %d zn)", main_title, hotovo,
+                  len(parts), len(full or ""), zbyva)
+        return hotovo
 
     def _save_source(self, prog: dict, idx: int, topic: str, sub: str,
                      main_title, url, material) -> None:
