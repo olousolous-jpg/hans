@@ -106,7 +106,10 @@ class TTSSpeaker:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def speak(self, text: str, priority: bool = False,
-              voice: str | None = None, pitch: str | None = None):
+              voice: str | None = None, pitch: str | None = None,
+              on_start=None):
+        # VOICE_GAP_FILL_LOG_V1 — `on_start()` se zavolá těsně před přehráním;
+        # položka vyčištěná z fronty (přednostní věta) ho nikdy nezavolá.
         # TTS_VOICE_PITCH_V1 — volitelné per-call voice/pitch (Hans+Kolač dialog)
         if not self.enabled:
             return
@@ -115,7 +118,7 @@ class TTSSpeaker:
             return
         if priority:
             self._clear_queue()
-        self._queue.put((text, voice, pitch))
+        self._queue.put((text, voice, pitch, on_start))
     def is_speaking(self) -> bool:
         return self._speaking
 
@@ -166,7 +169,10 @@ class TTSSpeaker:
             if not self.enabled:
                 continue
             # TTS_VOICE_PITCH_V1 — rozbal tuple, plain string = zpětná kompat
-            if isinstance(item, tuple) and len(item) == 3:
+            on_start = None
+            if isinstance(item, tuple) and len(item) == 4:   # VOICE_GAP_FILL_LOG_V1
+                text, voice, pitch, on_start = item
+            elif isinstance(item, tuple) and len(item) == 3:
                 text, voice, pitch = item
             else:
                 text, voice, pitch = item, None, None
@@ -177,6 +183,11 @@ class TTSSpeaker:
             try:
                 mp3 = self._get_mp3(text, voice, pitch)
                 if mp3 and mp3.exists():
+                    if on_start is not None:
+                        try:
+                            on_start()
+                        except Exception:
+                            pass
                     self._play(mp3)
             except Exception as e:
                 print(f"[TTS] Playback error: {e}")

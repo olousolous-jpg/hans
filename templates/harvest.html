@@ -99,13 +99,39 @@ function msg(t, cls) {
   setTimeout(() => { m.style.display = 'none'; }, 4000);
 }
 
+// HARVEST_SKRYT_TIP_V1 — `/harvest?skryt=<jméno>` schová skupiny, u kterých Hans
+// tipuje to jméno (víc jmen čárkou). Nic se neoznačí ani nemaže: skupiny
+// zůstávají neoznačené a bez parametru se ukážou znovu.
+const _Q = new URLSearchParams(location.search);
+const _seznam = k => (_Q.get(k) || '').split(',').map(x => x.trim()).filter(Boolean);
+const SKRYT = _seznam('skryt');
+// další volitelné filtry: tip=<jméno>,<jméno>,zadny · den=RRRR-MM-DD · cast=den|vecer (den = 7–17 h)
+const F_TIP = _seznam('tip'), F_DEN = _Q.get('den') || '', F_CAST = _Q.get('cast') || '';
+const FILTR = SKRYT.length || F_TIP.length || F_DEN || F_CAST;
+function projde(g) {
+  if (SKRYT.includes(g.tip)) return false;
+  if (F_TIP.length && !F_TIP.includes(g.tip || 'zadny')) return false;
+  if (F_DEN && g.day !== F_DEN) return false;
+  if (F_CAST) {
+    const h = parseInt((g.first || '').slice(11, 13), 10);
+    const den = h >= 7 && h < 17;
+    if ((F_CAST === 'den') !== den) return false;
+  }
+  return true;
+}
+
 async function nacti() {
-  const r = await fetch('/api/harvest/groups');
+  const r = await fetch('/api/harvest/groups' + (FILTR ? '?limit=5000' : ''));
   const d = await r.json();
-  JMENA = d.jmena || []; GRP = d.skupiny || [];
+  JMENA = d.jmena || [];
+  const vse = d.skupiny || [];
+  const vyber = FILTR ? vse.filter(projde) : vse;
+  GRP = FILTR ? vyber.slice(0, 60) : vse;
+  const snimku = FILTR ? vyber.reduce((a, g) => a + (g.pocet || 0), 0) : d.celkem;
   document.getElementById('stav').textContent =
-    GRP.length ? `${GRP.length} skupin k označení · ${d.celkem} snímků`
-               : 'vše označeno';
+    (vyber.length ? `${vyber.length} skupin k označení · ${snimku} snímků`
+                  : (FILTR ? 've filtru nic nezbývá' : 'vše označeno'))
+    + (FILTR ? ` · filtr schoval ${vse.length - vyber.length} skupin` : '');
   kresli();
 }
 

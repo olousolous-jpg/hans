@@ -12,6 +12,14 @@ import numpy as np
 
 log = logging.getLogger("voice")
 
+# VOICE_MIC_WATCHDOG_V1
+import json
+import os
+_MIC_ERR = os.path.join("data", ".arecord_err.log")
+_MIC_STATE = os.path.join("data", ".mic_state.json")
+_MIC_TICHO_S = 20      # živý arecord bez dat → považuj za mrtvý
+_MIC_RETRY_S = 30      # jak často zkoušet nahrávání obnovit
+
 # VOICE_ACK_PHRASE_V1 — potvrzení po dotazu, gender-neutrální
 _ACKS = ["Okamžik, prosím.",
          "Nechte mě chvíli přemýšlet.",
@@ -218,8 +226,76 @@ class VoiceListener:
         cmd = ["arecord", "-D", self.alsa_device,
                "-f", "S16_LE", "-r", str(self.sample_rate),
                "-c", "1", "--buffer-size=16384", "-t", "raw", "-"]
+        # VOICE_MIC_WATCHDOG_V1 — chybová hláška arecordu jde do SOUBORU (dřív
+        # DEVNULL = selhání beze stopy; roura by se bez čtení mohla zaplnit).
+        try:
+            _err = open(_MIC_ERR, "wb")
+        except Exception:
+            _err = subprocess.DEVNULL
+        self._mic_start_ts = time.time()
         return subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, bufsize=0)
+                                stderr=_err, bufsize=0)
+
+    # ── VOICE_MIC_WATCHDOG_V1 (5. 10.) ───────────────────────────────────────
+    # Po restartu Pi se přečíslovaly zvukové karty, arecord hned skončil a smyčka
+    # běžela dál naprázdno: v logu nic, při startu „mic ✓“, den bez hlasu.
+    # Hlídač pozná mrtvý arecord i živý bez dat, zapíše důvod, stav pro
+    # `hans_health.probe_mic` a zkouší nahrávání obnovit.
+    def _mic_stav(self, ok: bool, duvod: str = "") -> None:
+        try:
+            with open(_MIC_STATE, "w", encoding="utf-8") as f:
+                json.dump({"ok": bool(ok), "ts": time.time(), "duvod": duvod,
+                           "zarizeni": self.alsa_device}, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def _mic_duvod(self) -> str:
+        try:
+            with open(_MIC_ERR, "rb") as f:
+                t = f.read()[-300:].decode("utf-8", "replace")
+            return " ".join(t.split())[-200:]
+        except Exception:
+            return ""
+
+    def _mic_hlidej(self) -> bool:
+        """True = právě spuštěn nový arecord (volající pustí čtecí vlákno)."""
+        now = time.time()
+        start = getattr(self, "_mic_start_ts", now)
+        chunk = getattr(self, "_mic_chunk_ts", 0.0)
+        mrtvy = self._proc is None or self._proc.poll() is not None
+        ticho = (not mrtvy) and now - max(chunk, start) > _MIC_TICHO_S
+        if not mrtvy and not ticho:
+            if chunk > start and getattr(self, "_mic_ok_zapsan", None) is not True:
+                if getattr(self, "_mic_bad_od", 0.0):
+                    log.info("[Voice] mikrofon zase nahrává (výpadek %.0f s)",
+                             now - self._mic_bad_od)
+                self._mic_bad_od = 0.0
+                self._mic_ok_zapsan = True
+                self._mic_stav(True)
+            return False
+        if ticho:
+            try: self._proc.kill()
+            except Exception: pass
+        if not getattr(self, "_mic_bad_od", 0.0):
+            self._mic_bad_od = now
+            self._mic_ok_zapsan = False
+            if ticho:
+                duvod = "žádná data %d s" % _MIC_TICHO_S
+            else:
+                duvod = "arecord skončil (kód %s) %s" % (
+                    getattr(self._proc, "returncode", "?"), self._mic_duvod())
+            log.warning("[Voice] mikrofon NENAHRÁVÁ (%s) — %s; zkouším obnovit "
+                        "každých %d s", self.alsa_device, duvod.strip(), _MIC_RETRY_S)
+            self._mic_stav(False, duvod.strip())
+        if now < getattr(self, "_mic_dalsi_pokus", 0.0):
+            return False
+        self._mic_dalsi_pokus = now + _MIC_RETRY_S
+        try:
+            self._proc = self._start_arecord()
+        except Exception as e:
+            log.debug("[Voice] arecord restart: %s", e)
+            return False
+        return True
 
     # ── STT ───────────────────────────────────────────────────────────────────
 
@@ -317,15 +393,20 @@ class VoiceListener:
 
         # Reader thread — neustále drénuje pipe
         _q = queue.Queue(maxsize=500)
-        def _reader():
+        def _reader(proc):
             while self._running:
-                chunk = self._proc.stdout.read(frame_blen)
+                chunk = proc.stdout.read(frame_blen)
                 if not chunk:
                     break
+                self._mic_chunk_ts = time.time()   # VOICE_MIC_WATCHDOG_V1
                 try: _q.put_nowait(chunk)
                 except queue.Full: pass
-            _q.put(None)
-        threading.Thread(target=_reader, daemon=True, name="VoiceReader").start()
+            try: _q.put_nowait(None)
+            except queue.Full: pass
+        def _spust_reader():
+            threading.Thread(target=_reader, args=(self._proc,), daemon=True,
+                             name="VoiceReader").start()
+        _spust_reader()
 
         vad        = _webrtcvad.Vad(self.vad_mode) if _VAD_OK else None
         max_silent = int(self.silence_s * 1000 / frame_ms)
@@ -333,6 +414,8 @@ class VoiceListener:
                  f"thr={self._wake_threshold} vad={_VAD_OK}")  # WAKE_WORD_LOG_V1
 
         while self._running:
+            if self._mic_hlidej():          # VOICE_MIC_WATCHDOG_V1
+                _spust_reader()
             # Recreate Vad if aggressiveness changed via reload_config
             if self._vad_dirty and _VAD_OK:
                 vad = _webrtcvad.Vad(self.vad_mode)
@@ -659,8 +742,12 @@ class VoiceListener:
                     if hotovo.wait(max(0.0, t0 + po_s - time.time())) or _spoke["any"]:
                         return
                     if tts and getattr(tts, "enabled", False):
-                        tts.speak(_rnd.choice(hlasky), priority=(i == 0))
-                        log.info("[Voice] výplň %d po %.1f s", i + 1, time.time() - t0)
+                        # VOICE_GAP_FILL_LOG_V1 — „zařazena“ ≠ „zazněla“: přednostní
+                        # věta odpovědi nezačatou výplň z fronty vyčistí.
+                        tts.speak(_rnd.choice(hlasky), priority=(i == 0),
+                                  on_start=lambda _n=i + 1: log.info(
+                                      "[Voice] výplň %d zazněla", _n))
+                        log.info("[Voice] výplň %d zařazena po %.1f s", i + 1, time.time() - t0)
             threading.Thread(target=_vypln, daemon=True, name="voice-vypln").start()
             # HANS_CHAT_CHANNEL_AWARE_V1 — hlasový vstup tag
             _t0_nab = time.time()   # HANS_OFFER_TO_PENDING_V1

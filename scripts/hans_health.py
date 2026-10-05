@@ -214,6 +214,24 @@ def probe_stt(config: dict) -> dict:
         return {"status": DOWN, "detail": str(e)[:80]}
 
 
+# ── Mikrofon (VOICE_MIC_WATCHDOG_V1) ─────────────────────────────────────────
+def probe_mic(config: dict) -> dict:
+    """Stav nahrávání z mikrofonu podle značky, kterou píše voice_listener.
+    DOWN až po minutě výpadku (krátký zádrhel si hlídač opraví sám)."""
+    if not (config.get("voice", {}) or {}).get("enabled", False):
+        return {"status": UNKNOWN, "detail": "hlas vypnut"}
+    try:
+        with open(Path("data") / ".mic_state.json", encoding="utf-8") as f:
+            st = json.load(f)
+    except Exception:
+        return {"status": UNKNOWN, "detail": "stav mikrofonu neznámý"}
+    if st.get("ok"):
+        return {"status": OK, "detail": str(st.get("zarizeni") or "")}
+    if time.time() - float(st.get("ts") or 0) < 60:
+        return {"status": OK, "detail": "krátký výpadek, obnovuji"}
+    return {"status": DOWN, "detail": str(st.get("duvod") or "nenahrává")[:120]}
+
+
 # ── PC (SSH) ─────────────────────────────────────────────────────────────────
 def probe_pc(config: dict) -> dict:
     try:
@@ -494,6 +512,7 @@ def probe_all(config: dict) -> dict:
         "comfyui": probe_comfyui,
         "kodi": probe_kodi,
         "stt": probe_stt,
+        "mic": probe_mic,          # VOICE_MIC_WATCHDOG_V1
         "pc": probe_pc,
         "disk": probe_disk,
         "schedule": probe_schedule,  # HANS_SCHEDULE_V1 (behaviorální)
@@ -648,6 +667,7 @@ def summary_sentence(health: dict, healed: list) -> str:
         return sched  # čistá dependency, jen rozvrh/restarty (nebo prázdno)
     labels = {"ollama": "můj mozek (Ollama)", "comfyui": "malování (ComfyUI)",
               "kodi": "televize (Kodi)", "stt": "sluch (přepis řeči)",
+              "mic": "sluch (mikrofon)",
               "pc": "počítač", "disk": "místo na disku"}
     parts = [labels.get(b, b) for b in bad]
     s = "Zaznamenal jsem potíž: " + ", ".join(parts) + "."

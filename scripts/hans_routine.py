@@ -1897,6 +1897,16 @@ class HansRoutine:
                                      bad, healed, self._health_wedge_strikes)
                 elif prev_bad:
                     _log.info('health: obnoveno — vše OK (bylo %s)', list(prev_bad))
+                # VOICE_MIC_WATCHDOG_V1 — hluchý mikrofon se hlasem neohlásí;
+                # na hraně pošli zprávu (v tichých hodinách počká do rána).
+                if 'mic' in bad and 'mic' not in prev_bad and self._notifier:
+                    try:
+                        self._notifier(
+                            "Neslyším: nahrávání z mikrofonu nejde (%s). "
+                            "Zkouším ho sám obnovit."
+                            % ((health.get('mic') or {}).get('detail') or 'důvod neznám'))
+                    except Exception as _me:
+                        _log.debug('health: hlaseni mikrofonu: %s', _me)
                 self._health_last_bad = bad_key
                 # HANS_SCHEDULE_NOTIFY_V1 (19. 9.) — hlidac tichych selhani mel
                 # vetu pro uzivatele (`_schedule_sentence`), ale NIKDO ji
@@ -1940,7 +1950,12 @@ class HansRoutine:
                         _brain_down = True       # → větev „čeká“, hrana zůstane
                     _sched = (health.get('schedule') or {}).get('stale') or []
                     _sched_key = tuple(sorted(s['name'] for s in _sched))
-                    _sched_prev = getattr(self, '_health_last_sched', ())
+                    # HANS_SCHEDULE_NOTIFY_PERSIST_V1 (5. 10.) — hrana přežije restart:
+                    # dřív žila jen v paměti, takže každý restart ohlásil tutéž
+                    # množinu zaostávajících rutin znovu (5. 10. sedmkrát za den).
+                    if not hasattr(self, '_health_last_sched'):
+                        self._health_last_sched = self._sched_notified_load()
+                    _sched_prev = self._health_last_sched
                     if _sched_key and _brain_down:
                         # Stopa na HRANE (tyz vzor jako log degradovanych
                         # sluzeb vys): jednou pri vzniku, pak ticho. Bez ni
@@ -1952,7 +1967,9 @@ class HansRoutine:
                                       ', '.join(_sched_key))
                         self._health_sched_muted = _sched_key
                     else:
-                        if _sched_key and _sched_key != _sched_prev:
+                        # HANS_SCHEDULE_NOTIFY_PERSIST_V1 — hlásí se jen NOVĚ zaostávající
+                        # rutina; když se množina jen zmenší (jedna doběhla), mlčí se.
+                        if _sched_key and not set(_sched_key) <= set(_sched_prev):
                             _veta = hans_health._schedule_sentence(health)
                             if _veta and self._notifier:
                                 self._notifier(_veta)
@@ -1961,6 +1978,8 @@ class HansRoutine:
                             elif _veta:
                                 _log.warning('health: rozvrh zaostava, ale most '
                                              'chybi — NEODESLANO: %s', _veta)
+                        if _sched_key != self._health_last_sched:
+                            self._sched_notified_save(_sched_key)
                         self._health_last_sched = _sched_key
                 except Exception as _se:
                     _log.debug('health: hlaseni rozvrhu: %s', _se)
@@ -1983,6 +2002,30 @@ class HansRoutine:
                 _log.debug('health: reclaim GPU: %s', _ge)
             if self._stop.wait(self._health_interval):
                 break
+
+    _SCHED_NOTIFIED = os.path.join("data", ".sched_notified.json")
+
+    def _sched_notified_load(self) -> tuple:
+        """HANS_SCHEDULE_NOTIFY_PERSIST_V1 — naposledy ohlášená množina
+        zaostávajících rutin. Starší než `hans_schedule.notify_repeat_h`
+        (24 h) se nebere → co visí déle, připomene se po restartu znovu."""
+        try:
+            with open(self._SCHED_NOTIFIED, encoding="utf-8") as f:
+                d = json.load(f)
+            _h = float((self.config.get('hans_schedule', {}) or {})
+                       .get('notify_repeat_h', 24))
+            if time.time() - float(d.get('ts') or 0) > _h * 3600:
+                return ()
+            return tuple(d.get('rutiny') or ())
+        except Exception:
+            return ()
+
+    def _sched_notified_save(self, key) -> None:
+        try:
+            with open(self._SCHED_NOTIFIED, "w", encoding="utf-8") as f:
+                json.dump({'ts': time.time(), 'rutiny': list(key)}, f)
+        except Exception as _e:
+            _log.debug('sched notified save: %s', _e)
 
     def _night_worker_loop(self):
         """NIGHT_WORKER_THREAD_V1 — periodicky spouští noční analytiku NEZÁVISLE

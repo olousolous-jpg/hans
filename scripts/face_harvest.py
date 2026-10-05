@@ -96,6 +96,11 @@ class FaceHarvester:
         # tvořily 53 % sběru a uživatel je musel odklikávat ručně.
         self._neg = None
         self._neg_thr = float(cfg.get("negative_thresh", 0.65))
+        # FACE_HARVEST_SKIP_GUESS_V1 (5. 10.) — nesbírat tváře, u kterých rozpoznání
+        # tipuje někoho z `skip_guesses` (osoba, která už má vzorků dost). Jméno je
+        # soukromý údaj: `config_io.save` ho uloží do privátní části configu.
+        self._skip_guess = {str(x).strip().lower()
+                            for x in (cfg.get("skip_guesses") or []) if str(x).strip()}
         try:
             import pickle as _pk
             with open(cfg.get("negatives_path",
@@ -157,6 +162,8 @@ class FaceHarvester:
     def _offer_inner(self, track_id, crop, emb, box, guess, conf):
         now = time.time()
         self._roll_day()
+        if self._skip_guess and guess and str(guess).lower() in self._skip_guess:
+            return self._reject('preskoc_tip')     # FACE_HARVEST_SKIP_GUESS_V1
         if self._hour_count >= self._max_hour:
             return self._reject('strop_hodina')
         if self._day_count >= self._max_day:
