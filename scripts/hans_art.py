@@ -798,6 +798,24 @@ _OPRAVA_SYS = (
     "být nemá (žádné 'bez …', 'ne …'). Vrať jen tu větu, bez uvozovek.")
 
 
+# HANS_ART_REPAINT_KEEP_NAMES_V1 (6. 10.) — s výtkou k podobě v připomínce
+# model jméno nahradil obecným slovem („Muž v uniformě přijímá odměnu“, 6/6)
+# → námět ztratil entitu a s ní cestu k podobě. Pokyn v zadání („zachovej
+# jména“) změřen a ZAMÍTNUT: jména držel, ale přestal přebírat obsah
+# připomínky (klobouk 3/3 → 0/3). Proto kontrola výsledku: ztratil-li námět
+# jméno, platí původní zadání (výtka jde do lekce).
+_NAMET_OBECNE = re.compile(r"\b(?:muz|muzi|zena|zeny|postava|osoba|clovek|chlap|divka)\b")
+_NAMET_JMENO = re.compile(r"\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w]{2,}")
+
+
+def namet_ztratil_jmeno(puvodni: str, novy: str) -> bool:
+    fp, fn = _fb_fold(puvodni), _fb_fold(novy)
+    for m in list(_NAMET_JMENO.finditer(puvodni or ""))[1:] or []:
+        if _fb_fold(m.group(0))[:4] not in fn:
+            return True
+    return bool(set(_NAMET_OBECNE.findall(fn)) - set(_NAMET_OBECNE.findall(fp)))
+
+
 def je_zadost_o_opakovani(text: str) -> bool:
     return bool(_OPAKUJ.search(text or ""))
 
@@ -859,6 +877,10 @@ def opraveny_namet(config: dict, puvodni: str, pripominka: str) -> str:
             system=_OPRAVA_SYS, config=config, timeout=60,
             options={"temperature": 0.2, "num_predict": 60})
         v = ((out or "").strip().splitlines() or [""])[0].strip().strip('"„“').rstrip(".")
+        if v and namet_ztratil_jmeno(puvodni, v):
+            _log.info("art: HANS_ART_REPAINT_KEEP_NAMES_V1 opravený námět „%s“ "
+                      "ztratil jméno → původní zadání", v[:80])
+            return puvodni
         return v[:160] or puvodni
     except Exception as e:
         _log.warning("art: opravený námět selhal: %s", e)
@@ -903,8 +925,73 @@ def rederive_lesson_with_feedback(config: dict, db_path: str, artwork_rowid) -> 
         return ""
     lesson = _derive_art_lesson(config, db_path, title, vision, verdict or "",
                                 store=True, feedback_this=(rating, " / ".join(koment)))
+    # HANS_ART_LESSON_PENDING_V1 — model nedostupný (herní mód, PC spí) → dohnat
+    if vision:
+        _lekce_ceka_zmen(artwork_rowid, pridat=not lesson)
     _log.info("art: HANS_ART_FEEDBACK_V2 lekce k „%s“ po hodnocení: %.120s", title, lesson)
     return lesson
+
+
+# HANS_ART_LESSON_PENDING_V1 (6. 10.) — lekce po hodnocení se při nedostupném
+# modelu neodvodila a nikdo ji nedohnal (2 ze 7 odvození, obě za herního módu).
+# Obraz se zapíše do fronty a dožene ho pracovník těžké fronty (nejvýš 1× za
+# 10 min, ne při herním módu); záznam starší 7 dní se zahodí.
+_LEKCE_CEKA = "data/.art_lesson_pending.json"
+_lekce_ceka_pokus = 0.0
+
+
+def _lekce_ceka_nacti() -> dict:
+    try:
+        with open(_LEKCE_CEKA, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _lekce_ceka_zmen(artwork_rowid, pridat: bool) -> None:
+    try:
+        d = _lekce_ceka_nacti()
+        k = str(artwork_rowid)
+        if pridat and k not in d:
+            d[k] = time.time()
+            _log.info("art: HANS_ART_LESSON_PENDING_V1 lekce k obrazu %s odložena "
+                      "(model nedostupný), čeká %d", k, len(d))
+        elif not pridat and k in d:
+            d.pop(k)
+        else:
+            return
+        if d:
+            with open(_LEKCE_CEKA, "w", encoding="utf-8") as f:
+                json.dump(d, f)
+        elif os.path.exists(_LEKCE_CEKA):
+            os.remove(_LEKCE_CEKA)
+    except Exception as e:
+        _log.debug("art: fronta lekcí: %s", e)
+
+
+def dozen_lekce_po_hodnoceni(config: dict, db_path: str) -> int:
+    """Dožeň odložené lekce po hodnocení. Vrací počet dohnaných. Nikdy nehází."""
+    global _lekce_ceka_pokus
+    if not os.path.exists(_LEKCE_CEKA) or time.time() - _lekce_ceka_pokus < 600:
+        return 0
+    _lekce_ceka_pokus = time.time()
+    try:
+        from scripts.ollama_client import game_mode_on
+        if game_mode_on():
+            return 0
+    except Exception:
+        return 0
+    n = 0
+    for k, ts in list(_lekce_ceka_nacti().items()):
+        if time.time() - float(ts or 0) > 7 * 86400:
+            _lekce_ceka_zmen(k, pridat=False)
+            continue
+        if rederive_lesson_with_feedback(config, db_path, int(k)):
+            n += 1
+    if n:
+        _log.info("art: HANS_ART_LESSON_PENDING_V1 dohnáno %d lekcí po hodnocení", n)
+    return n
 
 
 def recent_art_feedback(db_path: str, days: int = 21, limit: int = 3) -> list:
@@ -1115,6 +1202,24 @@ _LESSON_SYSTEM = (
     "default. Max 22 words. Output ONLY the guidance line — no preamble, no quotes."
 )
 
+# HANS_ART_FEEDBACK_V3 (6. 10.) — lekce po LIDSKÉM hodnocení má vlastní zadání.
+# S obecným zadáním („neopakuj dřívější rady, jdi k novému aspektu“) lekce
+# výtku míjela nebo obracela: výtka na podobu → „podstata před detailem“,
+# protože radu o podobě už malíř jednou dostal. Měřeno párově na 5 hodnoceních
+# × 3 běhy: výtky se drží 8/15 → 14/15 (bez přehledu rad, aspektů a bez
+# malířova vlastního verdiktu, který táhl lekci k jeho tématu).
+_LESSON_SYSTEM_HUMAN = (
+    "You are an art director. A human judged a rendered image. You receive an "
+    "independent description of the image, the painter's own verdict and the "
+    "human's verdict (it may be written in Czech). Output ONE short line of "
+    "reusable guidance IN ENGLISH for the painter's NEXT image that addresses "
+    "exactly what the human said. If the human criticised something, the "
+    "guidance must fix THAT thing, even if similar guidance was given before - "
+    "repeat it more firmly. If the human praised the image, say what to keep. "
+    "Do not add aspects the human did not mention. Max 22 words. Output ONLY "
+    "the guidance line - no preamble, no quotes."
+)
+
 
 # HANS_ART_COVERED_ASPECTS_V1 — aspekty malby, podle kterych se meri "uz probrano".
 # Klice jsou ANGLICKE: jdou primo do promptu (model pracuje anglicky).
@@ -1176,7 +1281,8 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
     acfg = _acfg(config)
     model = str(acfg.get("verdict_model")
                 or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest"))
-    recent = _recent_lessons(db_path, 3)
+    # HANS_ART_FEEDBACK_V3 — u lidského verdiktu o tomhle obraze bez přehledů
+    recent = [] if feedback_this else _recent_lessons(db_path, 3)
     recent_block = ""
     if recent:
         recent_block = ("Painter's recent guidance lines (do NOT repeat these — "
@@ -1184,9 +1290,9 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
                         + "\n".join("- %s" % r for r in recent) + "\n\n")
     # HANS_ART_COVERED_ASPECTS_V1 — 3 posledni texty pokryvaji ~37 h; bez tohohle
     # prehledu se model po ctvrtem obraze vrati k tomuze aspektu.
-    _covered = _covered_aspects(db_path,
-                                days=int(acfg.get("covered_days", 30)),
-                                min_n=int(acfg.get("covered_min", 4)))
+    _covered = [] if feedback_this else _covered_aspects(
+        db_path, days=int(acfg.get("covered_days", 30)),
+        min_n=int(acfg.get("covered_min", 4)))
     if _covered:
         # ⚠️ Nestaci rict "tohle uz mas" — zmereno 10. 9., ze nad prahem je
         # VSECH SEDM aspektu (10-22x za 30 dni), takze "jdi jinam" nema kam.
@@ -1210,7 +1316,7 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
                   _nej[0][0] if _nej else "?",
                   _mez[0][0] if _mez else "—")
     # HANS_ART_FEEDBACK_V1 — lidský soud má přednost před vlastním verdiktem
-    _fb = recent_art_feedback(db_path)
+    _fb = [] if feedback_this else recent_art_feedback(db_path)
     if _fb:
         recent_block += (
             "HUMAN FEEDBACK on recent paintings (the real judge — it OUTRANKS the "
@@ -1240,9 +1346,11 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
     user = (recent_block
             + "Independent description of the rendered image:\n%s\n\n"
             "Painter's verdict:\n%s\n\nWrite the ONE-line guidance."
-            % (vision_desc, verdict))
+            % (vision_desc, "(withheld)" if feedback_this else verdict))
     try:
-        raw = ollama_generate(model, user, system=_LESSON_SYSTEM, config=config,
+        raw = ollama_generate(model, user,
+                              system=(_LESSON_SYSTEM_HUMAN if feedback_this
+                                      else _LESSON_SYSTEM), config=config,
                               timeout=int(acfg.get("lesson_timeout", 90)))
     except Exception as e:
         _log.warning("art: lesson LLM failed: %s", e)

@@ -283,6 +283,11 @@ def start_worker(config: dict, db: str, deliver: Callable) -> None:
                 _tick(config, db, deliver)
             except Exception as e:
                 _log.warning("heavy_queue tick: %s", e)
+            try:    # HANS_ART_LESSON_PENDING_V1 — odložené lekce po hodnocení
+                from scripts.hans_art import dozen_lekce_po_hodnoceni
+                dozen_lekce_po_hodnoceni(config, db)
+            except Exception as e:
+                _log.debug("heavy_queue: dohnání lekcí: %s", e)
             _kick.wait(interval)
             _kick.clear()
     _worker = threading.Thread(target=_loop, daemon=True, name="heavy-queue")
