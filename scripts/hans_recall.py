@@ -3044,16 +3044,35 @@ def _reorder_object_first(text: str) -> str:
         return t
 
 
+# HANS_KNOWLEDGE_NOT_RELATIVE_V1 (6. 10.) — „znáte“ ve VZTAŽNÉ větě není dotaz
+# na znalost. /tazatel: „…když mluvíte s někým, koho znáte delší dobu
+# z domácnosti?“ → téma „delší dobu z domácnosti“ → „nemám záznamy o … stačí
+# říct ‚nastuduj delší dobu z domácnosti‘“. Na 1 920 větách 3 ze 46 shod,
+# všechny tři s nesmyslným tématem („dlouho“, „z domácnosti“).
+_KC_VZTAZNA = re.compile(
+    r"\b(?:koho|kter(?:[ée]ho|ou|[ée]|[ýy]|[ýy]m|[ýy]ch|[ée]mu)|jeho[zž]|jen[zž])"
+    r"\s+(?:\w+\s+){0,2}$", re.IGNORECASE)
+
+
+def _kc_match(text: str):
+    """Shoda `_KNOWLEDGE_CHECK_RE`, která není vztažnou větou. None = není dotaz."""
+    t = text or ""
+    m = _KNOWLEDGE_CHECK_RE.search(t)
+    if m and _KC_VZTAZNA.search(t[:m.start()]):
+        return None
+    return m
+
+
 def is_knowledge_check_query(text: str) -> bool:
     """Ptá se uživatel „znáš X?" / „co víš o X?" / „máš záznam o X?"? Levný gate.
     Regex je unicode-safe → volám na ORIGINÁLU (bez _fold), ať `_extract_topic`
     dostane originální text s diakritikou."""
-    return bool(_KNOWLEDGE_CHECK_RE.search(_reorder_object_first(text)))
+    return bool(_kc_match(_reorder_object_first(text)))
 
 
 def _extract_knowledge_topic(text: str) -> Optional[str]:
     """Vytáhne X z „znáš X?" — capture group regexu. Očištěno o pomocná slova."""
-    m = _KNOWLEDGE_CHECK_RE.search(text or "")
+    m = _kc_match(text or "")
     if not m:
         return None
     x = m.group(1).strip(" .,?!;:'\"")
@@ -3451,8 +3470,22 @@ def _self_state_trvale(conn) -> list:
                          "AND ts > ? ORDER BY ts DESC LIMIT 1",
                          (time.time() - 3 * 86400,)).fetchone()
         if r and r["title"]:
-            out.append("teď čtu: %s" % re.sub(r"\s+—\s+kap\.\s*(\d+)$", r" (kapitola \1)",
-                                              r["title"].strip()))
+            _cte = "teď čtu: %s" % re.sub(r"\s+—\s+kap\.\s*(\d+)$", r" (kapitola \1)",
+                                          r["title"].strip())
+            # HANS_SELF_STATE_AUTHOR_V1 (6. 10.) — bez autora v přehledu si ho
+            # model na otázku „kdo to napsal“ vymyslel (/tazatel: jiné jméno
+            # v každém pokusu, 3 ze 4) — a autor v knihovně celou dobu je.
+            try:
+                _kn = re.sub(r"\s+—\s+kap\..*$", "", r["title"].strip())
+                _a = conn.execute("SELECT author, total_chapters FROM hans_library "
+                                  "WHERE book_title = ? LIMIT 1", (_kn,)).fetchone()
+                if _a and (_a[0] or "").strip():
+                    _cte += " — autor: %s" % _a[0].strip()
+                    if _a[1]:
+                        _cte += ", kniha má %d kapitol" % int(_a[1])
+            except Exception as _ae:
+                _log.debug("self_state trvale (autor): %s", _ae)
+            out.append(_cte)
     except Exception as e:
         _log.debug("self_state trvale (cteni): %s", e)
     try:

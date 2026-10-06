@@ -506,6 +506,18 @@ _CAP_STOP = {"kdyz", "mel", "budes", "posles", "poslat", "muzes", "mohl",
              "vlastne", "ten", "toho", "tomu", "jak", "kam", "kde", "prosim"}
 
 
+# HANS_CAP_HOWTO_RATIO_V1 (6. 10.) — dvě společná slova najde DLOUHÁ věta skoro
+# s každou schopností: z 386 vět s „jak/kde/kam“ (korpus + přepisy /tazatel)
+# dostalo „ověřený fakt o schopnosti“ 174, většinou cizí (otázka na východní
+# Evropu → malování). Proto (1) běžné kmeny bez významu a (2) POMĚR: shoda
+# musí pokrýt aspoň 40 % obsahových slov dotazu. Po zásahu 174 → jednotky;
+# krátké mířené dotazy („kam mi pošleš ten snímek“) drží.
+_CAP_STOP_KMENY = frozenset((
+    "dela", "jako", "jest", "jsem", "kdyz", "koli", "konk", "kter", "mysl",
+    "nebo", "neco", "posl", "prav", "prip", "pris", "proc", "pros", "toho",
+    "vlas", "dlou", "nema", "mnou", "jeji", "svuj", "pres", "bude", "tech"))
+
+
 def capability_for(text: str, min_shoda: int = 2) -> str:
     """Popis JEDNÉ schopnosti, na kterou dotaz míří. Prázdné = nic jistého.
 
@@ -521,14 +533,17 @@ def capability_for(text: str, min_shoda: int = 2) -> str:
     # „místnost" netrefí. Čtyři znaky stačí a nezvedly falešné shody
     # (ověřeno na dotazech mimo téma — „kam jdeš večer", „co je k obědu").
     kmen = lambda w: w[:4]
-    dotaz_k = {kmen(w) for w in dotaz}
+    dotaz_k = {kmen(w) for w in dotaz} - _CAP_STOP_KMENY
+    if not dotaz_k:
+        return ""
     nej, nej_skore = None, 0
     for cid, popis, jak in _all_capabilities():
         slova = {kmen(w) for w in _norm_cap(popis + " " + jak + " " + cid)}
         skore = sum(1 for w in dotaz_k if w in slova)
         if skore > nej_skore:
             nej, nej_skore = (popis, jak), skore
-    if not nej or nej_skore < min_shoda:
+    # HANS_CAP_HOWTO_RATIO_V1 — shoda musí pokrýt aspoň 40 % obsahových slov
+    if not nej or nej_skore < min_shoda or nej_skore < 0.4 * len(dotaz_k):
         return ""
     popis, jak = nej
     return popis + ((" (" + jak + ")") if jak else "")

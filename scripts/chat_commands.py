@@ -4084,6 +4084,10 @@ register(
         r"\b(?:nejnov[ěe]j[šs][íi]|aktu[áa]ln[íi]|dne[šs]n[íi]|hlavn[íi]) zpr[áa]v",
         r"\b(?:n[ěe]jak[ée]|jak[ée]) zpr[áa]vy\b",
         r"\bzpr[áa]vy (?:o|ohledn[ěe]|ze sv[ěe]ta)\b",   # ne „zprávy z Matrixu“
+        # HANS_ZPRAVY_CO_SE_DEJE_V1 (6. 10.) — /tazatel: „co se děje v poslední
+        # době zajímavého ve světě?“ šlo do volného hovoru a model si zprávy
+        # vymyslel (soud v Německu kvůli AI souhrnům — v titulcích není).
+        r"\bco\s+se\s+(?:\w+\s+){0,5}?d[ěe]je\b[^.?!]{0,40}\bve?\s+sv[ěe]t[ěe]\b",
         # HANS_ZPRAVY_SLEDUJES_V1 (4. 10.) — „sledujete vůbec zprávy? co jste
         # v nich dnes zaznamenal?“ šlo do volného hovoru a model zprávy i odkaz
         # VYMYSLEL. 1 336 vět deníku: 0 shod (nic neukradne).

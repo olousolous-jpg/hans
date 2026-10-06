@@ -1287,8 +1287,12 @@ def _zp_vyslovne_tema(dotaz: str) -> bool:
     d = (dotaz or "").strip()
     if len(d.split()) <= 4:
         return True
-    if _ZP_VYSLOVNE.search(_bez_diakritiky(d)):
-        return True
+    # „o sledování titulků“ / „o tom“ téma nejmenuje (HANS_ZPRAVY_CO_SE_DEJE_V1)
+    for m in _ZP_VYSLOVNE.finditer(_bez_diakritiky(d)):
+        w = m.group(0).split()[-1]
+        if not w.startswith(_ZP_NETEMA + ("sledov", "titul", "medi", "tech", "cemz",
+                                          "nicem", "vsem", "dobe", "tomto")):
+            return True
     return bool(re.search(r"(?<![.!?]\s)(?<!^)\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w]{2,}", d))
 
 
