@@ -1168,6 +1168,11 @@ def route_cue(cid: str, veta: str) -> bool:
     """HANS_CMD_LLM_ROUTE_CUE_V1 — smí LLM směrovač pro tuhle větu zvolit výpis `cid`?"""
     from scripts.chat_commands import _ROUTE_CUE, _fold_diacritics
     c = _ROUTE_CUE.get(cid)
+    # HANS_STUDIUM_NOT_WHY_V1 — i zamitaci vzor (duvod/dojem misto stavu)
+    from scripts.chat_commands import _ROUTE_ANTICUE
+    a = _ROUTE_ANTICUE.get(cid)
+    if a is not None and a.search(_fold_diacritics(veta)):
+        return False
     return True if c is None else bool(c.search(_fold_diacritics(veta)))
 
 

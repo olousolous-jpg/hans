@@ -4751,10 +4751,24 @@ class OpenWebUIDirectHandler:
                 except Exception as _che:
                     logging.getLogger(__name__).debug(
                         "HANS_CLAIM_HOLD_V1: %s", _che)
+            _reply = None
             if _cmd:
                 # CHAT_COMMANDS_LOG_FIX
                 print(f"[Chat] command detected: {_cmd[0]}")
                 _reply = dispatch(_cmd, self, name=ctx.name)
+                # HANS_CMD_EMPTY_FALLTHROUGH_V1 (6. 10.) — obsluha, ktera nic
+                # nenasla, vraci prazdno se zamerem „propadni do bezneho
+                # hovoru“ (/vycet od 26. 8.). Tady se ale prazdno VRATILO
+                # jako odpoved: clovek dostal prazdnou zpravu, v logu ani
+                # radek a prazdna vymena sla do historie. Ted veta pokracuje
+                # beznou cestou, jako by prikaz nesepnul.
+                if not (_reply or "").strip():
+                    logging.getLogger(__name__).info(
+                        "HANS_CMD_EMPTY_FALLTHROUGH_V1: /%s vratil prazdno "
+                        "→ bezna cesta (%.60s)", _cmd[0], ctx.user_message)
+                    _cmd = None
+                    _hold_claim = None
+            if _cmd:
                 if _hold_claim:
                     from scripts.claim_hold import hold
                     # Bez uvození by odpověď vypadala jako přeslechnutá

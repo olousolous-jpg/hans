@@ -2279,7 +2279,10 @@ register(
 _ZAJMY_NA_HANSE = re.compile(
     r"\b(?:tv[\u016fu]j|tvoje|tvoji|tv[\u00e1a]|tv[\u00e9e]|va[\u0161s]e|va[\u0161s]i|va[\u0161s]ich)\b[^?.!]{0,24}"
     r"\b(?:z[\u00e1a]j(?:em|my|m[\u016fu])|kon[\u00edi][\u010dc]\w*|bav[\u00edi])"
-    r"|\bco\s+(?:t[\u011be]|v[\u00e1a]s)\s+(?:\w+\s+){0,3}zaj[\u00edi]m\w*",  # HANS_ZAJMY_O_HANSOVI_V2
+    # HANS_ZAJMY_NA_TEMA_V1 (6. 10.) — „co te NA TOM zajima“ se pta na
+    # pojmenovane tema, ne na vycet konicku → mezera nesmi nest „na“;
+    # a „tebe“ je 2. osoba stejne jako „te“.
+    r"|\bco\s+(?:t[\u011be]|tebe|v[\u00e1a]s)\s+(?:(?!na\b)\w+\s+){0,3}zaj[\u00edi]m\w*",  # HANS_ZAJMY_O_HANSOVI_V2
     re.IGNORECASE)
 
 
@@ -2292,7 +2295,7 @@ _ZAJEM_SLOVO = re.compile(
     r"kon[\u00edi][\u010dc]|bav[\u00edi]|bavil|hobb|\br[\u00e1a]d[aoy]?\b|obl[\u00edi]b",
     re.IGNORECASE)
 _DRUHA_OSOBA = re.compile(
-    r"\b(?:t[\u011be]|tob[\u011be]|ti|tv[\u016fu]j|tvoje|tvoji|tv[\u00e1a]|tv[\u00e9e]|"
+    r"\b(?:t[\u011be]|tebe|tob[\u011be]|ti|tv[\u016fu]j|tvoje|tvoji|tv[\u00e1a]|tv[\u00e9e]|"
     r"v[\u00e1a]s|v[\u00e1a]m|va[\u0161s]e|va[\u0161s]i|va[\u0161s]eho|v[\u00e1a][\u0161s])\b",
     re.IGNORECASE)
 # HANS_ZAJMY_VERB_2ND_V1 (1. 10.) — 2. osoba bývá jen ve SLOVESE („mas rad
@@ -2651,8 +2654,16 @@ _VYCET_PAT = re.compile(
     # `a` v třídě je nutné: bez diakritiky se píše „jakA města" a extrakce
     # slova pak spadla na celé souvětí (routing to přežil, ten diakritiku
     # odstraňuje — extrakce ne).
-    r"\b(jak[éeáa]|kter[éeáa])\s+([a-zá-žA-ZÁ-Ž]{4,})\w*\s+(?:\w+\s+){0,2}"
-    r"(zn[áa][sš]|m[áa][sš]|v[íi][sš]|pamatuje[sš]|studoval)", re.IGNORECASE)
+    # HANS_VYCET_NOT_RELATIVE_V1 (6. 10.) — tri zuzeni, zmereno na 2 055
+    # vetach (6 shod → 4, nove zadna): (a) carka pred „ktera“ = vztazna
+    # veta („mista, ktera jste studoval“), ne vyctovy dotaz; (b) pomocne
+    # sloveso neni hledana kategorie; (c) „jake X mas na mysli“ se pta
+    # na vyznam, ne na vycet.
+    r"(?<!,\s)\b(jak[éeáa]|kter[éeáa])\s+"
+    r"(?!js(?:te|i|me|em)\b|by(?:ste|ch|s)\b)"
+    r"([a-zá-žA-ZÁ-Ž]{4,})\w*\s+(?:\w+\s+){0,2}"
+    r"(zn[áa][sš]|m[áa][sš]|v[íi][sš]|pamatuje[sš]|studoval)"
+    r"(?!\s+na\s+mysli)", re.IGNORECASE)
 
 
 def _vycet_dotaz(text: str) -> str:
@@ -6020,7 +6031,10 @@ register(
     # a na kontrolnim seznamu 11 vet klesnou chybne verdikty 7 → 0.
     nl_patterns=[r"(?:^|[?!.]\s*)co\b.{0,12}\bje\s+jinak",
                  r"(?:^|[?!.]\s*)co\b.{0,12}\bse\b.{0,12}\bzm[ěe]nilo",
-                 r"\banom[áa]li", r"\bodchyl"],
+                 # HANS_ANOMALIE_NOUN_ONLY_V1 (6. 10.) — hole „odchyl“
+                 # chytalo i sloveso („to se trochu odchyluje od zamereni“
+                 # → vypis tydennich odchylek). Jen podstatne jmeno.
+                 r"\banom[áa]li", r"\bodchyl(?:k|ek)"],
     handler=_cmd_anomalie,
     help_text="Týdenní odchylky ve tvém chování (algoritmicky) — /anomalie teď = spusť detekci",
 )
@@ -6146,6 +6160,21 @@ _ROUTE_CUE = {
     # domácnosti; za ~50 dní jediná LLM volba /kalendar a chybná
     "kalendar": re.compile(r"kalend|udalost|schuz|termin|narozen|svat[ek]|akce|akci|"
                            r"navstev|\bmam\b|\bmame\b|\bmi\b|\bnas\b|\bnam\b|\bmuj\b", re.I),
+    # HANS_VZPOMINKA_CUE_V1 (6. 10.) — za 15 dni logu 4 volby routeru, 3 mimo
+    # („kdy ses potkal s hudbou poprve?“, „ktery z nich je nejstarsi?“)
+    # → nejstarsi zaznam deniku. Vypis jen kdyz veta mluvi o pameti ci vzniku.
+    "vzpominka": re.compile(r"vzpomin|pamatuj|pamet|zapamat|existuj|vznik|"
+                            r"narodi|zaznam|denik", re.I),
+}
+
+# HANS_STUDIUM_NOT_WHY_V1 (6. 10.) — opak pojistky tematu: /studium je vypis
+# STAVU programu. Router si ho bral i na otazku po duvodu, dojmu a volbe
+# („proc jsi zacal studovat…“, „co te na tom studiu zajima?“, „sam si
+# vybiras, co studovat?“). Z 20 voleb za 15 dni logu 7 mimo; vzor zamitne 5
+# z nich a zadnou z 8 spravnych. Na 853 vetach lidi 1 shoda (o studentech).
+_ROUTE_ANTICUE = {
+    "studium": re.compile(r"\bproc\b|\bco\s+(?:te|tebe|vas)\b[^?.!]{0,30}(?:zajima|bavi)|"
+                          r"zaskoc|prekvap|\bvybir|\bvybral", re.I),
 }
 
 
@@ -6832,6 +6861,12 @@ def resolve_command_llm(message: str, config: dict, turns=None):
     if _cue is not None and not _cue.search(_fold_diacritics(msg)):
         _log.info("HANS_CMD_LLM_ROUTE_CUE_V1: '%.40s' → /%s ZAMÍTNUTO "
                   "(věta nenese téma výpisu)", msg, cid)
+        _llm_route_cache[_ckey] = ""
+        return None
+    _anti = _ROUTE_ANTICUE.get(cid) if cid else None
+    if _anti is not None and _anti.search(_fold_diacritics(msg)):
+        _log.info("HANS_STUDIUM_NOT_WHY_V1: '%.40s' → /%s ZAMÍTNUTO "
+                  "(ptá se na důvod nebo dojem, ne na stav)", msg, cid)
         _llm_route_cache[_ckey] = ""
         return None
     if cid:
