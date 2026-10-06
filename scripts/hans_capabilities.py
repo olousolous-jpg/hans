@@ -28,7 +28,11 @@ _KNOWN_FILE = "data/hans_known_capabilities.json"
 # id = trvalý klíč (text lze přepsat bez falešného „nová schopnost").
 _CAPABILITIES = [
     ("paint", "Umím MALOVAT obrazy (výtvarná pipeline SDXL) — své sny, dojmy ze "
-     "dne, svůj domov, obrazy ke knihám, i na libovolné téma či dojem z rozhovoru",
+     "dne, svůj domov, obrazy ke knihám, i na libovolné téma či dojem z rozhovoru. "
+     # HANS_ART_POSTAVA_PULID_V1 (6. 10.) — podoba v seznamu dosud chyběla
+     "Skutečné osoby a filmové či seriálové postavy, které mají na Wikipedii "
+     "fotku s tváří, maluji s jejich PODOBOU; u kreslených postav a postav "
+     "s maskou vycházím jen z popisu",
      "namaluj <téma> / nakresli <téma>; /art <kniha>; galerie „Co Hans namaloval\""),
     ("zpravy", "Sleduji ZPRÁVY — každou hodinu sbírám titulky z českých i zahraničních médií "
      "(ČT24, iROZHLAS, Seznam Zprávy, Novinky, BBC, Guardian, DW, Le Monde…) a umím říct, co se "
@@ -119,6 +123,11 @@ _CAPABILITIES = [
     # HANS_CAP_IMAGES_V1 (4. 10.) — /tazatel 3. 10.: na „umíš dělat fotky?“ Hans
     # vymyslel povel „vyfoť“ (takový NENÍ) a na „můžeš mi ji poslat?“ tvrdil
     # „nemohu posílat obrázky, komunikuji textem“ (přes Matrix posílá).
+    # HANS_ART_FEEDBACK_TEXT_V1 (6. 10.) — hodnocení obrazu dosud v seznamu chybělo
+    ("art_feedback", "K obrazu, který jsem namaloval na požádání a poslal přes "
+     "MATRIX, si zapíšu HODNOCENÍ a příště z něj vyjdu; na webu hodnocení nepřijímám",
+     "do 24 hodin po doručení v Matrixu: palec nahoru/dolů, odpověď na obraz, nebo "
+     "prostě napsat, co se povedlo a co ne; „zkus to ještě jednou“ = namaluji znovu"),
     ("send_images", "Přes MATRIX umím POSLAT obrázky: své namalované obrazy (poslední "
      "nebo náhodný), upravené fotky a obrázky osob a míst z Wikipedie. V chatu na "
      "webu obrázky neposílám — tam je ukáže galerie",

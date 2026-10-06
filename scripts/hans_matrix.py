@@ -502,6 +502,17 @@ class MatrixBridge:
         except Exception as e:
             _log.warning("matrix: reakce selhala: %s", e)
 
+    @staticmethod
+    def _je_prikaz(text: str) -> bool:
+        """HANS_ART_FEEDBACK_TEXT_V1 — větu, kterou pozná příkazová vrstva,
+        hodnocení obrazu nesmí spotřebovat."""
+        try:
+            from scripts.chat_commands import parse_command
+            from scripts.bridge_commands import detect_intent
+            return bool(parse_command(text) or detect_intent(text))
+        except Exception:
+            return True     # selhání kontroly nesmí zprávu spotřebovat
+
     async def _art_fb_zprava(self, room, event, text: str, person: str) -> bool:
         """Odpověď na obraz, nebo krátká zpráva s palcem po doručení → hodnocení.
         True = zpráva spotřebována (nejde do příkazů ani hovoru)."""
@@ -528,10 +539,24 @@ class MatrixBridge:
                 _log.info("matrix: HANS_ART_REPAINT_V1 „%s“ + připomínka → „%s“",
                           _cil_o["title"], _namet)
                 return "namaluj " + _namet
+            _slovni = False
             if reply_to:
                 cil = self._art_fb_cil(reply_to)
             elif r is not None and len(text) <= 300:
                 cil = self._art_fb_cil()
+            elif len(text) <= 600:
+                # HANS_ART_FEEDBACK_TEXT_V1 — slovní hodnocení bez palce;
+                # komentář k čerstvě poslané FOTCE má přednost (HANS_FOTO_V1)
+                from scripts.hans_art import je_slovni_hodnoceni
+                from scripts import hans_foto as _hf2
+                cil = self._art_fb_cil()
+                if cil and not (je_slovni_hodnoceni(
+                        text, (time.time() - cil["ts"]) / 60.0)
+                        and not _hf2.patri_k_fotce(person, room.room_id, text,
+                                                   self.config)
+                        and not self._je_prikaz(text)):
+                    cil = None
+                _slovni = bool(cil)
             else:
                 cil = None
             if not cil:
@@ -543,7 +568,8 @@ class MatrixBridge:
             koment = koment.strip(" ,.-\n")
             record_art_feedback(self._diary_path(), cil["rowid"], cil["title"],
                                 rating=r, comment=koment, person=person,
-                                via="matrix_odpoved" if reply_to else "matrix_zprava")
+                                via="matrix_odpoved" if reply_to else (
+                                    "matrix_slovo" if _slovni else "matrix_zprava"))
             self._art_fb_rederive(cil["rowid"])
             await self._a_send("Děkuji, zapsal jsem si to k obrazu „%s“ — "
                                "příště z toho vyjdu." % cil["title"], room.room_id)

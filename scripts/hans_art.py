@@ -802,6 +802,49 @@ def je_zadost_o_opakovani(text: str) -> bool:
     return bool(_OPAKUJ.search(text or ""))
 
 
+# HANS_ART_FEEDBACK_TEXT_V1 (6. 10.) — slovní hodnocení BEZ palce a bez odpovědi
+# na obraz se ztrácelo (7 z 9 připomínek po 11 doručených obrazech, např.
+# „obrázek je pěkný, ale osoby na něm si podobné nejsou“). Predikát změřen
+# nad 181 zprávami z Matrixu: 9 shod, všechny hodnocení. Zpráva se
+# spotřebuje, proto povel (rozkazovací sloveso na začátku) hodnocením není.
+_FB_SLOVO = re.compile(
+    r"\b(?:obraz\w*|obrazek\w*|obrazk\w*|malb\w*|kresb\w*|kompozic\w*|styl\w*"
+    r"|barv\w*|podob\w*|namalova\w*)\b")
+_FB_NE = re.compile(
+    r"^\s*/|\?|\b(?:namaluj\w*|nakresli\w*|zkus(?:te)?\s+namalovat)\b"
+    r"|^\s*(?:jak|co|kdo|kde|kdy|proc|kolik|umis|umite|muzes|muzete|ukaz|ukazte"
+    r"|posli|poslete|pust|pustte|prehraj|prehrajte|pripomen|pripomente|zapis|zapiste"
+    r"|vypni|vypnete|zapni|zapnete|najdi|najdete|vyhledej|precti|prectete|rekni"
+    r"|reknete|nastuduj|preloz|stahni|hlidej|napis|napiste|poznamenej|zastav"
+    r"|spust|otevri|pridej|smaz|vzbud|probud)\b")
+# hned po doručení bez slova o obraze: jen věta, která hodnotí
+_FB_SOUD = re.compile(
+    r"\b(?:pekn\w*|hezk\w*|krasn\w*|nadhern\w*|dobr[yeai]|skvel\w*|supr|super|parad\w*"
+    r"|obstojn\w*|poved\w*|nepoved\w*|libi|nelibi|lepsi|lepe|horsi|hur|spatn\w*"
+    r"|divn\w*|oskliv\w*|sedi|nesedi|chybi|neni|nejsou|nechtel\w*"
+    r"|mel\w*\s+jsem\s+na\s+mysli)\b")
+
+
+def _fb_fold(text: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", (text or "").lower())
+                   if unicodedata.category(c) != "Mn")
+
+
+def je_slovni_hodnoceni(text: str, minut_od_doruceni: float,
+                        blizko_min: float = 10.0) -> bool:
+    """Je zpráva slovním hodnocením naposledy doručeného obrazu? Slovo o obraze
+    kdykoli v okně, nebo hodnotící věta hned po doručení. Příkaz, otázka
+    a nová žádost o malbu hodnocením nejsou."""
+    f = _fb_fold(text)
+    if not f.strip() or _FB_NE.search(f):
+        return False
+    if _FB_SLOVO.search(f):
+        return True
+    return (0 <= minut_od_doruceni <= blizko_min and len(f.split()) >= 3
+            and bool(_FB_SOUD.search(f)))
+
+
 def opraveny_namet(config: dict, puvodni: str, pripominka: str) -> str:
     """Původní námět + připomínka → opravený námět (rezidentní hans-czech).
     Změřeno 6/6 („zralok zapasi s ponorkou“ + „mel jsem na mysli okusovat…“
@@ -2139,9 +2182,30 @@ def _subject_beyond_name(subject: str, person_name: str) -> bool:
     return bool(rest)
 
 
+def _ref_ma_tvar(path: str) -> bool:
+    """HANS_ART_POSTAVA_PULID_V1 — je na referenčním obrázku lidská tvář?
+    PuLID bere z reference jen obličej; kreslená postava nebo figurka ho nemá.
+    Haar (změřeno 6. 10. na uložených obrázcích entit: osoby 17/21, ostatní
+    4/38). Chyba detekce = False → malba podle textu jako dřív."""
+    try:
+        import cv2
+        im = cv2.imread(path)
+        if im is None:
+            return False
+        g = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+        m = max(24, int(min(g.shape) * 0.12))
+        c = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        return len(c.detectMultiScale(g, 1.1, 6, minSize=(m, m))) > 0
+    except Exception as e:
+        _log.debug("art: detekce tváře na referenci selhala: %s", e)
+        return False
+
+
 def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
                             ref_path: str, style: str = "",
-                            person_name: str = "") -> Optional[tuple]:
+                            person_name: str = "",
+                            force_scene: bool = False) -> Optional[tuple]:
     """HANS_ART_PERSON_LIKENESS_V3 — přemaluj REÁLNÝ portrét osoby do Hansova
     stylu (img2img, denoise ~0.5 → drží podobu). Vrací (rel_path, caption) nebo
     None (→ volající spadne na text-grounded malbu). Nikdy nehází."""
@@ -2187,7 +2251,9 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
     # 0.50 = přemalovaná fotka, 0.75 už posouvá rysy, 0.70 drží podobu
     # a přitom je to malba). `denoise` čte JEN img2img větev — PuLID jede na
     # `pulid_weight`, tahle hodnota mu nesahá do scén.
-    _wants_scene = _subject_beyond_name(subject, nm)
+    # HANS_ART_POSTAVA_PULID_V1 — u postavy vždy scéna (i holé jméno): img2img
+    # by jen překreslil civilní fotku herce.
+    _wants_scene = force_scene or _subject_beyond_name(subject, nm)
     _use_pulid = (bool(pcfg.get("use_pulid", False))
                   and bool(acfg.get("use_flux", False))
                   and (_wants_scene or not pcfg.get("portrait_img2img", True)))
@@ -2693,6 +2759,11 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             # Ponecháno jen `etype=='osoba'` (reálné osoby: Matka Tereza, kde
             # Wiki obrázek = ta osoba). etype='postava' klasifikace zůstává
             # (neškodná metadata), jen NEROUTUJE na img2img.
+            # HANS_ART_POSTAVA_PULID_V1 (6. 10.) — zamítnutí výš platí pro
+            # IMG2IMG. Přes FLUX+PuLID (tvář z fotky, scéna a kostým z textu)
+            # podoba sedí — ověřeno zkušebním renderem a posouzeno uživatelem.
+            # Větev je níž; bez tváře na referenci a při neúspěchu → text.
+            # Mez: postava s maskou vyjde jako herec bez masky.
             if _ent and _ent.get("etype") == "osoba":
                 _ref = _fetch_person_ref(config, _ent, diary_db_path)
                 if _ref:
@@ -2702,6 +2773,36 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
                     if _r:
                         return _r
                     _log.info("art: podoba osoby nevyšla → text-grounded malba")
+            else:
+                _plc = (_acfg(config).get("person_likeness", {}) or {})
+                if (_plc.get("postava_pulid", True) and _plc.get("use_pulid", False)
+                        and _acfg(config).get("use_flux", False)):
+                    _pent = _ent if (_ent and _ent.get("etype") == "postava") else None
+                    if not _pent:
+                        from scripts.hans_entities import EntityStore as _ES3
+                        _pent = _ES3(config, diary_db_path).resolve(
+                            subject, loose=True, etype="postava")
+                    _pref = _fetch_person_ref(config, _pent, diary_db_path) if _pent else None
+                    if _pref and _ref_ma_tvar(_pref):
+                        _log.info("art: HANS_ART_POSTAVA_PULID_V1 postava '%s' — "
+                                  "tvář z fotky na Wikipedii", _pent.get("name"))
+                        _r = paint_person_from_photo(
+                            config, diary_db_path, subject, _pref, style,
+                            person_name=_pent.get("name", subject),
+                            force_scene=True)
+                        if _r:
+                            return _r
+                        _log.info("art: HANS_ART_POSTAVA_PULID_V1 podoba postavy "
+                                  "nevyšla → malba podle textu")
+                    elif _pent:
+                        _log.info("art: HANS_ART_POSTAVA_PULID_V1 postava '%s' — %s "
+                                  "→ malba podle textu", _pent.get("name"),
+                                  "na obrázku není tvář" if _pref else "bez obrázku")
+                        if _pref:
+                            try:
+                                os.remove(_pref)
+                            except Exception:
+                                pass
         except Exception as _pe:
             _log.debug("art: person-likeness cesta selhala: %s", _pe)
     # HANS_ART_SUBJECT_GROUNDING_V1 — ukotvi námět (kdo/co to je) PŘED renderem
