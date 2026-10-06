@@ -181,12 +181,28 @@ def parse_command(message: str) -> Optional[tuple[str, str]]:
         for pat in spec["nl"]:
             if pat.search(msg):
                 _set_route_origin("nl")
-                return (cmd_id, msg)
+                return (_cetl_nebo_zpravy(cmd_id, msg_fold), msg)
         for pat in spec.get("nl_fold", []):
             if pat.search(msg_fold):
                 _set_route_origin("nl")
-                return (cmd_id, msg)
+                return (_cetl_nebo_zpravy(cmd_id, msg_fold), msg)
     return None
+
+
+# HANS_CETL_ZPRAVY_V1 (6. 10.) — „četl jsi dnes nějaké zprávy?“ sedne na vzor
+# četby dřív než na vzor zpráv (pořadí registrace) → výpis četby místo zpráv
+# (/tazatel 6. 10.). Předmětem čtení jsou zprávy/noviny v téže části věty →
+# příkaz zpráv. Na 1 920 větách změní 1 (tu z tazatele).
+_CETL_ZPRAVY = re.compile(
+    r"\b(?:pre)?c(?:etl\w*|tes|tete)\b[^.?!,]{0,30}\b(?:zpravy|noviny|zpravodajstvi)\b",
+    re.IGNORECASE)
+
+
+def _cetl_nebo_zpravy(cmd_id: str, msg_fold: str) -> str:
+    if cmd_id == "cetl" and "zpravy" in _COMMANDS and _CETL_ZPRAVY.search(msg_fold or ""):
+        _log.info("HANS_CETL_ZPRAVY_V1: čtení zpráv → /zpravy místo /cetl")
+        return "zpravy"
+    return cmd_id
 
 
 # ── Dispatcher ─────────────────────────────────────────────────────────
