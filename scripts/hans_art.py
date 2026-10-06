@@ -914,8 +914,15 @@ def rederive_lesson_with_feedback(config: dict, db_path: str, artwork_rowid) -> 
     if not row:
         return ""
     title, verdict, data = row
+    _zadani = ""
     try:
-        vision = (json.loads(data or "{}") or {}).get("vision", "")
+        _dj = json.loads(data or "{}") or {}
+        vision = _dj.get("vision", "")
+        if _dj.get("source") == "subject":        # HANS_ART_SUBJECT_CHECK_V1
+            _sc = _dj.get("subject_check") or {}
+            _zadani = (title or "") + ((" (English: %s)" % _sc["en"]) if _sc.get("en") else "")
+            if _sc.get("match") == "no" and _sc.get("instead"):
+                _zadani += " — an independent check found the image shows instead: %s" % _sc["instead"]
     except Exception:
         vision = ""
     rating, koment = None, []
@@ -933,7 +940,8 @@ def rederive_lesson_with_feedback(config: dict, db_path: str, artwork_rowid) -> 
     if rating is None and not koment:
         return ""
     lesson = _derive_art_lesson(config, db_path, title, vision, verdict or "",
-                                store=True, feedback_this=(rating, " / ".join(koment)))
+                                store=True, feedback_this=(rating, " / ".join(koment)),
+                                zadani=_zadani)
     # HANS_ART_LESSON_PENDING_V1 — model nedostupný (herní mód, PC spí) → dohnat
     if vision:
         _lekce_ceka_zmen(artwork_rowid, pridat=not lesson)
@@ -1099,9 +1107,63 @@ def _past_verdicts(db_path: str, limit: int = 5) -> list:
         return []
 
 
+# HANS_ART_SUBJECT_CHECK_V1 (6. 10.) — JE NA OBRAZE, CO BYLO ZADÁNO?
+# Zadáno „tučňáci z Madagaskaru“, nezávislý popis: „tvor podobný kryse“ — a verdikt
+# přesto zněl „zhotovil jsem obraz tučňáka“ (opsal název). Verdikt ani lekce
+# zadání s obrazem neporovnávaly. Soudí ODDĚLENÝ dotaz (teplota 0), ne sám
+# verdikt. Změřeno na 16 vyžádaných obrazech: „no“ 5×, všech 5 pravých (krysy
+# místo tučňáků 2×, vlak a loď místo letadla, croissant bez Pána prstenů),
+# žádné falešné. „partly“ padá u osob (popis nikoho nejmenuje) → bere se jen „no“.
+_SOUD_NAMETU_SYS = (
+    "You check whether a painting shows what was ordered. You get the ORDER "
+    "(a Czech phrase, possibly typed without diacritics, sometimes with a known "
+    "English name) and an independent DESCRIPTION of the finished image. Decide "
+    "only about the main subject and the main action - ignore style, mood and "
+    "likeness of faces. Answer on ONE line exactly in this form:\n"
+    "MATCH: yes|partly|no; MISSING: <what from the order is not in the image, or ->; "
+    "INSTEAD: <what the image shows instead, or ->")
+_EN_V_ZADANI = re.compile(r"English name to use in the image prompt: ([^)\n]{2,80})\)")
+
+
+def soud_nametu(config: dict, subject: str, grounded: str, vision_desc: str) -> dict:
+    """{'match': 'yes'|'partly'|'no', 'missing': str, 'instead': str, 'en': str}
+    nebo {} (nejde posoudit / model nedostupný). Nikdy nehází."""
+    if not (subject and vision_desc):
+        return {}
+    try:
+        from scripts.ollama_client import ollama_generate
+        acf = _acfg(config)
+        m = _EN_V_ZADANI.search(grounded or "")
+        en = m.group(1).strip() if m else ""
+        out = ollama_generate(
+            str(acf.get("verdict_model")
+                or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest")),
+            "ORDER: %s%s\n\nDESCRIPTION:\n%s" % (
+                subject, (" (known English name: %s)" % en) if en else "",
+                vision_desc[:1500]),
+            system=_SOUD_NAMETU_SYS, config=config, timeout=90,
+            options={"temperature": 0.0, "num_predict": 90})
+        o = (out or "").strip().replace("\n", " ")
+        mm = re.search(r"MATCH:\s*(yes|partly|no)", o, re.I)
+        if not mm:
+            return {}
+        cist = lambda x: re.sub(r"^[\s<\-\u2013>]+|[\s<>\-\u2013;.]+$", "", x or "")[:120]
+        mi = re.search(r"MISSING:\s*(.*?)(?:;?\s*(?:->)?\s*INSTEAD:|$)", o, re.I)
+        ins = re.search(r"INSTEAD:\s*(.*)$", o, re.I)
+        r = {"match": mm.group(1).lower(), "missing": cist(mi.group(1) if mi else ""),
+             "instead": cist(ins.group(1) if ins else ""), "en": en}
+        _log.info("art: HANS_ART_SUBJECT_CHECK_V1 „%s“ → %s (chybí: %s; místo toho: %s)",
+                  subject[:50], r["match"], r["missing"] or "-", r["instead"] or "-")
+        return r
+    except Exception as e:
+        _log.debug("art: soud námětu selhal: %s", e)
+        return {}
+
+
 def _evaluate_artwork(config: dict, db_path: str, title: str,
                       reflection: str, vision_desc: str,
-                      source_label: str = "knihou") -> str:
+                      source_label: str = "knihou",
+                      soud: dict = None) -> str:
     """Hansovo hodnocení (hans-czech persona): co namaloval + jestli se mu obraz
     povedl/líbí — reaguje na SKUTEČNOU kvalitu (llava popis) a svůj vyvíjející se
     vkus (minulé verdikty). Vrací český text = caption. Fallback _caption.
@@ -1183,6 +1245,11 @@ def _evaluate_artwork(config: dict, db_path: str, title: str,
         _log.warning("art: verdict LLM failed: %s", e)
         return fallback
     out = (out or "").strip().strip('"')
+    # HANS_ART_SUBJECT_CHECK_V1 — nezávislý soud se k verdiktu PŘIPÍŠE kódem.
+    # Jako pokyn v zadání ho model respektoval jen 1× ze 3 (měřeno 6. 10.).
+    if out and (soud or {}).get("match") == "no":
+        out = ("Zadaný námět („%s“) se mi nezdařil — podle nezávislého popisu "
+               "na obraze není. %s" % (title, out))
     if out:
         _log.info("art: Hansův verdikt: %.120s", out)
         # ořez na CELOU větu (ne uprostřed) — hard cap až kdyby to ujelo
@@ -1277,7 +1344,7 @@ def _covered_aspects(db_path: str, days: int = 30, min_n: int = 4) -> list:
 
 def _derive_art_lesson(config: dict, db_path: str, title: str,
                        vision_desc: str, verdict: str, store: bool = True,
-                       feedback_this=None) -> str:
+                       feedback_this=None, zadani: str = "") -> str:
     """Odvodí ponaučení pro příští render z vize + verdiktu. Běží na hans-czech
     (warm, žádný extra model do VRAM). Uloží do deníku 'art_lesson' (když store).
     Vrací ponaučení nebo ''. Nikdy nehází."""
@@ -1351,6 +1418,10 @@ def _derive_art_lesson(config: dict, db_path: str, title: str,
         else:
             _pokyn = ("The human commented on this image: \"%s\". Build the "
                       "guidance on that comment first." % _c)
+        # HANS_ART_SUBJECT_CHECK_V1 — bez zadání model výtku „není to tučňák“
+        # (psanou bez diakritiky) nepřečetl a radil „zvětši tvora“.
+        if zadani:
+            recent_block += "THE ORDER for this image was: %s\n\n" % zadani
         recent_block += "HUMAN VERDICT ON THIS VERY IMAGE (final word):\n%s\n\n" % _pokyn
     user = (recent_block
             + "Independent description of the rendered image:\n%s\n\n"
@@ -3013,8 +3084,9 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             _log.debug("art: notifikace o odloženém renderu: %s", _ne)
         return None
     rel_path, prompt, vision_desc = res
+    _soud = soud_nametu(config, subject, grounded, vision_desc)   # HANS_ART_SUBJECT_CHECK_V1
     caption = _evaluate_artwork(config, diary_db_path, title, subject, vision_desc,
-                                source_label="tím, oč jsem byl požádán")
+                                source_label="tím, oč jsem byl požádán", soud=_soud)
     _derive_art_lesson(config, diary_db_path, title, vision_desc, caption)
     try:
         db = sqlite3.connect(diary_db_path, timeout=5.0)
@@ -3022,7 +3094,7 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
              json.dumps({"path": rel_path, "prompt": prompt, "source": "subject",
-                         "vision": vision_desc,
+                         "vision": vision_desc, "subject_check": _soud,
                          "painted_ts": time.time()}, ensure_ascii=False)))
         db.commit()
         db.close()
