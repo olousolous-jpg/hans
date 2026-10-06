@@ -1169,3 +1169,13 @@ def route_cue(cid: str, veta: str) -> bool:
     from scripts.chat_commands import _ROUTE_CUE, _fold_diacritics
     c = _ROUTE_CUE.get(cid)
     return True if c is None else bool(c.search(_fold_diacritics(veta)))
+
+
+def f1_o_tazateli(prepis: str, kdo: str) -> bool:
+    """HANS_F1_NOT_ABOUT_ASKER_V2 — přehodil přepis dotazu podmět na tazatele?"""
+    from scripts import openwebui_direct_handler as h
+    cls = next(c for c in vars(h).values()
+               if isinstance(c, type) and hasattr(c, "_f1_o_tazateli"))
+    o = cls.__new__(cls)
+    o.config = {}
+    return bool(o._f1_o_tazateli(prepis, kdo))

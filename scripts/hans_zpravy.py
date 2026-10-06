@@ -1272,8 +1272,28 @@ def udalosti_podle_url(urls: list, path: str = DB) -> list:
     return out
 
 
+# HANS_ZPRAVY_TEMA_ZALOHA_V1 (6. 10.) — /tazatel: „Jaké byly dnes v médiích
+# nejzajímavější zprávy? Pokud sledujete, co se děje ve světě?“ → jako „téma“
+# zbyla slova byly/médiích/nejzajímavější/pokud → „o tom jsem nic nenašel“.
+# Seznam slov bez tématu se doplňuje od 4. 10. a nestačí; proto: nenajde-li se
+# nic a věta téma VÝSLOVNĚ nejmenuje, je to obecný dotaz → přehled dne.
+_ZP_VYSLOVNE = re.compile(
+    r"\b(?:o|ohledne|kolem|okolo|tykajici\s+se|na\s+tema|k\s+tematu)\s+[a-z0-9]{4,}")
+
+
+def _zp_vyslovne_tema(dotaz: str) -> bool:
+    """Jmenuje dotaz téma výslovně? Krátký dotaz (heslo), vazba „o X“ nebo
+    vlastní jméno uvnitř věty."""
+    d = (dotaz or "").strip()
+    if len(d.split()) <= 4:
+        return True
+    if _ZP_VYSLOVNE.search(_bez_diakritiky(d)):
+        return True
+    return bool(re.search(r"(?<![.!?]\s)(?<!^)\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w]{2,}", d))
+
+
 def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: int = 4,
-                  path: str = DB) -> dict:
+                  path: str = DB, zaloha_prehled: bool = False) -> dict:
     """{rezim: 'prehled'|'vyznam'|'slova'|'nic', udalosti: [...], tema: bool}."""
     import numpy as np
     if not os.path.exists(path):
@@ -1372,6 +1392,12 @@ def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: i
         out.append(d)
         if len(out) >= limit:
             break
+    # jen pro příkaz /zpravy (věta se na zprávy PTÁ); podklad ze zpráv k běžné
+    # otázce by jinak dostal přehled dne k čemukoli
+    if zaloha_prehled and not out and tema and not _zp_vyslovne_tema(dotaz):
+        _log.info("HANS_ZPRAVY_TEMA_ZALOHA_V1: %s nenašlo nic a věta téma nejmenuje "
+                  "→ přehled dne", tema[:5])
+        return zpravy_hledej("", config, hodin, limit, path)
     return {"rezim": rezim if out else "nic", "hledano": rezim, "udalosti": out, "tema": bool(tema)}
 
 

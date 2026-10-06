@@ -2301,6 +2301,16 @@ class OpenWebUIDirectHandler:
         r"vas|vase|vasi|vasem|vasich)(?![a-z])")
     _F1_2OS_SLOVESA = re.compile(
         r"(?<![a-z])\w{2,}(?:ujes|ujete|es|is|as|ys|ite|ate|ete)(?![a-z])")
+    # HANS_F1_NOT_ABOUT_ASKER_V2 (6. 10.) — slova, která na ten vzor sednou
+    # a slovesem ve 2. osobě nejsou („dnes“, „čas“): kvůli nim pojistka pustila
+    # „Kolik času <Jméno> musí věnovat…“. A jméno na samohlásku se hledá podle
+    # kmene (5. pád a další pády kmen mění). Z 327 puštěných přepisů v logu
+    # nově zachytí 13, všechny s přehozeným podmětem.
+    _F1_NE_SLOVESA = frozenset((
+        "dnes", "cas", "vcas", "zas", "hlas", "les", "pes", "ples", "napis",
+        "zapis", "popis", "rozpis", "spis", "kdys", "pas", "tenis", "servis",
+        "adres", "proces", "kongres", "stres", "kompromis", "rukopis",
+        "casopis", "predpis", "dopis", "zivotopis"))
 
     def _f1_o_tazateli(self, novy: str, kdo: str = "") -> bool:
         """HANS_F1_NOT_ABOUT_ASKER_V1 (16. 9.) — prehodil prepis podmet na tazatele?
@@ -2327,13 +2337,22 @@ class OpenWebUIDirectHandler:
                     _formy.add(_f(display_name(_kdo, self.config)))
             except Exception:
                 pass
+            _formy |= {x[:-1] for x in _formy
+                       if len(x) >= 5 and x[-1] in "aeiouy"}    # V2: kmen jména
             _jmenuje = any(
-                re.search(r"(?<![a-z])" + re.escape(x) + r"[a-z]{0,3}(?![a-z])",
+                re.search(r"(?<![a-z])" + re.escape(x) + r"[a-z]{0,4}(?![a-z])",
                           _txt)
                 for x in _formy if len(x) >= 4)
             if not _jmenuje:
                 return False
-            if self._F1_2OS.search(_txt) or self._F1_2OS_SLOVESA.search(_txt):
+            # V2: jméno tazatele v 1. pádě = podmět věty, i když vedlejší věta
+            # mluví ve 2. osobě („Kolikrát musí <Jméno> čistit…, o kterém jsi mluvil?“)
+            if _kdo and len(_kdo) >= 4 and re.search(
+                    r"(?<![a-z])" + re.escape(_kdo) + r"(?![a-z])", _txt):
+                return True
+            if self._F1_2OS.search(_txt) or any(
+                    m.group(0) not in self._F1_NE_SLOVESA
+                    for m in self._F1_2OS_SLOVESA.finditer(_txt)):
                 return False        # porad se pta Hanse → prepis je v poradku
             return True
         except Exception:

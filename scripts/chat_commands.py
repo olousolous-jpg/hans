@@ -3996,7 +3996,7 @@ def _cmd_zpravy(handler, name, args) -> str:
         if cfg is None:
             from scripts.config_io import load as _cl
             cfg = _cl()
-        r = zpravy_hledej(args or "", cfg)
+        r = zpravy_hledej(args or "", cfg, zaloha_prehled=True)   # HANS_ZPRAVY_TEMA_ZALOHA_V1
     except Exception:
         return "Do sebraných zpráv se mi teď nepodařilo nahlédnout."
 
