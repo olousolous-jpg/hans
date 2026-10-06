@@ -412,7 +412,7 @@ def _cs_leak(subject_cs: str, prompt_en: str) -> str:
     return ""
 
 
-def _translate_subject(config: dict, subject_cs: str) -> str:
+def _translate_subject(config: dict, subject_cs: str, en_nazev: str = "") -> str:
     """Český námět → anglicky, vyhrazeným krátkým dotazem (ne uvnitř psaní
     scény). Změřeno 5/5 správně vč. „vodníka" → water sprite a zachovaného
     „Karlštejn Castle". POUŽÍVÁ SE JEN JAKO NÁPOVĚDA při úniku — překládat
@@ -433,10 +433,18 @@ def _translate_subject(config: dict, subject_cs: str) -> str:
         str(_acf.get("subject_translate_model")
             or _acf.get("verdict_model")
             or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest")),
-        "Czech: %s\nEnglish:" % subject_cs,
+        # HANS_ART_SUBJECT_EN_V2 (6. 10.) — námět bez diakritiky překládá model
+        # špatně („tucnaky z madagaskaru“ → Madagascar jumping rats; i když
+        # Wikipedie mezitím dohledala „The Penguins of Madagascar“, do zadání šlo
+        # obojí a vyšla krysa). Zná-li ukotvení anglický název, dostane ho
+        # i překladač: 9/9 správně včetně děje („…on the beach“).
+        ("Czech: %s\nKnown English name: %s\nEnglish:" % (subject_cs, en_nazev))
+        if en_nazev else ("Czech: %s\nEnglish:" % subject_cs),
         system=("Translate the Czech noun phrase into ENGLISH. Output ONLY the "
                 "English words, 1-6 words, nothing else. Never transliterate — "
-                "if it is a creature or thing, use its real English name."),
+                "if it is a creature or thing, use its real English name."
+                + (" If a known English name of something in the phrase is "
+                   "given, use that name exactly." if en_nazev else "")),
         config=config, timeout=60,
         options={"temperature": 0.0, "num_predict": 24})
     return (out or "").strip().strip('."\'').splitlines()[0][:60] if out else ""
@@ -554,7 +562,8 @@ def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str =
     # bez háčků („zraloka“) a `_cs_leak` nerozliší jazyk. U anglického námětu
     # vyjde překlad stejně a nápověda se nepřidá.
     if cs_subject:
-        _en0 = _translate_subject(config, cs_subject)
+        _zn = re.search(r"English name to use in the image prompt: ([^)\n]{2,80})\)", user)
+        _en0 = _translate_subject(config, cs_subject, _zn.group(1).strip() if _zn else "")
         if _en0 and _en0.lower() != cs_subject.lower() and not _cs_leak(cs_subject, _en0):
             if cs_subject in user:
                 user = user.replace(cs_subject, "%s (%s)" % (cs_subject, _en0), 1)
