@@ -56,7 +56,8 @@ _INSPECT_CMDS = frozenset({"studium", "dilo", "napad", "kritika", "nitky",
 # KOLAC_EXAM_CONFIRM_V1 — `/nalez` je mutující: potvrzení zapisuje trvalou
 # zkušební otázku do souboru. Patří sem, ne mezi read-only inspect příkazy.
 _MUTATING_CMDS = frozenset({"hlidej", "preloz", "experiment", "smer", "stop", "pauza",
-                            "nalez", "vpnprepni"})  # HANS_ROUTER_V1
+                            "nalez", "vpnprepni",   # HANS_ROUTER_V1
+                            "zrusmalbu"})           # HANS_PAINT_CANCEL_V1
 
 # HANS_STUDY_NUDGE_V1 (4.8.) — některé příkazy jsou read-only JEN v základním
 # tvaru: `/studium` vypíše stav (inspect), ale `/studium přeskoč` posune program

@@ -256,6 +256,7 @@ _JEN_ZNAMYM = frozenset({
     "zapis", "work", "denik", "dialog", "zaptej", "enroll", "sleep", "herni",
     "severka", "hlidej", "preloz", "vypnipc", "vpnprepni", "router",
     "experiment", "stop", "pauza", "hledani", "nalez", "brief", "vytvor",
+    "zrusmalbu",                                  # HANS_PAINT_CANCEL_V1
     # HANS_STRANGER_NO_INSPECT_V1 (24. 9.) — sebekritika vznika z rozhovoru
     # s domacnosti a nese jejich jmena (i v 7. pade, ktery privacy vzor
     # nom/acc/voc nechyti). Doloženo: LLM router ji poslal cizimu.
@@ -6846,8 +6847,33 @@ def resolve_command_llm(message: str, config: dict, turns=None):
 # film PUSTIT (agentní akce kodi_play_film), ale zastavit ne; uživatel zkusil
 # „/film stop" a dostal výpis, co Hans viděl (`film` je čtecí příkaz, `stop`
 # jen ignorovaný argument). Kodi to přitom umí (`stop_playback`/`pause`).
+def _cmd_zrusmalbu(handler, name, args) -> str:
+    """HANS_PAINT_CANCEL_V1 — zruš moje čekající i běžící malování."""
+    cfg = getattr(handler, "config", {}) or {}
+    try:
+        from scripts import hans_heavy_queue as _hq
+        r = _hq.zrus_malovani(cfg, _recall_db(handler), name or "")
+    except Exception as e:
+        _log.warning("zrušení malby selhalo: %s", e)
+        return "Malování se mi teď zrušit nepodařilo, pane."
+    vse = ([r["bezici"]] if r["bezici"] else []) + r["cekajici"]
+    if not vse:
+        return "Teď pro vás nic nemaluji ani nemám ve frontě, pane."
+    return ("Zrušeno, pane — %s %s." % (
+        "nebudu malovat" if len(vse) > 1 or not r["bezici"] else "přestávám malovat",
+        ", ".join("„%s“" % x[:60] for x in vse)))
+
+
 def _cmd_stop(handler, name, args) -> str:
     cfg = getattr(handler, "config", {}) or {}
+    # HANS_PAINT_CANCEL_V1 — „stop“ do tří minut po zadání malby patří malbě
+    # (doloženo 6. 10.: „stop“ po omylem zadaném obrazu zastavilo film v Kodi).
+    try:
+        from scripts import hans_heavy_queue as _hq
+        if _hq.cerstva_malba(_recall_db(handler), name or ""):
+            return _cmd_zrusmalbu(handler, name, args)
+    except Exception as _ze:
+        _log.debug("stop → malba: %s", _ze)
     try:
         from scripts.kodi_client import KodiClient
         k = KodiClient(cfg)
@@ -6880,6 +6906,20 @@ def _cmd_pauza(handler, name, args) -> str:
     except Exception as e:
         _log.warning("/pauza selhal: %s", e)
         return "K televizi se teď nedostanu, pane."
+
+
+register(
+    "zrusmalbu",
+    slash_aliases=["zrusmalbu", "zrušmalbu", "nemaluj"],
+    nl_patterns=[
+        r"\b(?:zru[šs]|zastav|stopni|ukon[čc]i|p[řr]eru[šs])\w*\s+(?:\w+\s+){0,2}?"
+        r"(?:malov[áa]n[íi]|malbu|kresbu|kreslen[íi]|ten\s+obraz|obraz|obr[áa]zek)",
+        r"\bnemaluj(?:te)?\b",
+        r"\bp[řr]esta[ňn](?:te)?\s+malovat\b",
+    ],
+    handler=_cmd_zrusmalbu,
+    help_text="Zruší moje čekající i právě běžící malování: /zrusmalbu (i „zruš malování“, „nemaluj to“)",
+)
 
 
 register(

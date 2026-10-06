@@ -35,6 +35,39 @@ from scripts.avatar_render import (
     _resize_to_temp,   # AVATAR_IDENTITY_REF_V1 — přesunuto do avatar_render
 )
 
+# HANS_PAINT_CANCEL_V1 (6. 10.) — zrušení běžící malby. Přerušení ComfyUI ukončí
+# právě běžící render; příznak zabrání, aby táž úloha hned poslala další
+# (záložní cesta „podoba nevyšla → malba podle textu“). Shazuje ho fronta.
+_malba_zrusena = False
+_comfy_submit_bez_zruseni = _comfy_submit
+
+
+def _comfy_submit(base, workflow, client_id):
+    if _malba_zrusena:
+        _log.info("art: HANS_PAINT_CANCEL_V1 malba zrušena — render neposílám")
+        return None
+    return _comfy_submit_bez_zruseni(base, workflow, client_id)
+
+
+def zrus_malbu(config: dict) -> None:
+    """Přeruš běžící render a nepouštěj další, dokud fronta zrušení neshodí."""
+    global _malba_zrusena
+    _malba_zrusena = True
+    base = _comfy_url(config)
+    for cesta, data in (("/interrupt", {}), ("/queue", {"clear": True})):
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                base + cesta, data=json.dumps(data).encode(),
+                headers={"Content-Type": "application/json"}), timeout=10).read()
+        except Exception as e:
+            _log.debug("art: zrušení malby %s: %s", cesta, e)
+    _log.info("art: HANS_PAINT_CANCEL_V1 běžící render přerušen")
+
+
+def zruseni_malby_konec() -> None:
+    global _malba_zrusena
+    _malba_zrusena = False
+
 _log = logging.getLogger("hans_art")
 ART_DIR = os.path.join("data", "hans_art")
 
@@ -412,7 +445,48 @@ def _cs_leak(subject_cs: str, prompt_en: str) -> str:
     return ""
 
 
-def _translate_subject(config: dict, subject_cs: str, en_nazev: str = "") -> str:
+# HANS_ART_SUBJECT_EN_V3 (6. 10.) — PRVNÍ SLOVO námětu bez diakritiky, které
+# překlad ztratil („tucnaky“ → peanuts, „mroze“ → hares, „smouly“ → owls).
+# Brána = zpětný překlad: nevrátí-li se kmen prvního slova, dohledá se to
+# slovo na cs.wikipedii a anglický název hesla jde překladači jako slovník.
+# Měřeno na 34 námětech: 24 → 30 správně, 35 dotazů na Wikipedii; varianta
+# se všemi slovy měla stejný zisk, ale šum („vyznamenani = Order“) a 53 dotazů.
+# Do paměti entit se NIC neukládá (obecné slovo by ji zaneslo).
+def _napoveda_prvniho_slova(config: dict, subject_cs: str, en0: str) -> tuple:
+    """(slovo, anglický název) nebo ('', ''). Nikdy nehází."""
+    try:
+        prvni = re.findall(r"\w{4,}", subject_cs or "")[:1]
+        if not prvni or not en0:
+            return "", ""
+        w = prvni[0]
+        from scripts.ollama_client import ollama_generate
+        _acf = _acfg(config)
+        zp = ollama_generate(
+            str(_acf.get("subject_translate_model") or _acf.get("verdict_model")
+                or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest")),
+            "English: %s\nCzech:" % en0,
+            system=("Translate the English phrase into CZECH. Output ONLY the "
+                    "Czech words, nothing else."),
+            config=config, timeout=60,
+            options={"temperature": 0.0, "num_predict": 30})
+        k = _fb_fold(w)[:4]
+        if any(x[:4] == k for x in re.findall(r"\w{3,}", _fb_fold(zp or ""))):
+            return "", ""                       # slovo se vrátilo → překlad sedí
+        from scripts.web_reader import WebReader
+        for tit, _sc in WebReader(config).wikipedia_search_candidates(w, lang="cs", limit=3):
+            if _fb_fold(tit).split()[0][:4] == k and len(tit.split()) <= 2:
+                time.sleep(1.5)                 # kvóta Wikipedie je sdílená se studiem
+                en = _en_name(tit, lang="cs") or ""
+                if en:
+                    return w, en
+        return "", ""
+    except Exception as e:
+        _log.debug("art: nápověda prvního slova selhala: %s", e)
+        return "", ""
+
+
+def _translate_subject(config: dict, subject_cs: str, en_nazev: str = "",
+                       slovnik: str = "") -> str:
     """Český námět → anglicky, vyhrazeným krátkým dotazem (ne uvnitř psaní
     scény). Změřeno 5/5 správně vč. „vodníka" → water sprite a zachovaného
     „Karlštejn Castle". POUŽÍVÁ SE JEN JAKO NÁPOVĚDA při úniku — překládat
@@ -439,12 +513,16 @@ def _translate_subject(config: dict, subject_cs: str, en_nazev: str = "") -> str
         # obojí a vyšla krysa). Zná-li ukotvení anglický název, dostane ho
         # i překladač: 9/9 správně včetně děje („…on the beach“).
         ("Czech: %s\nKnown English name: %s\nEnglish:" % (subject_cs, en_nazev))
-        if en_nazev else ("Czech: %s\nEnglish:" % subject_cs),
+        if en_nazev else
+        ("Czech: %s\nDictionary: %s\nEnglish:" % (subject_cs, slovnik))   # V3
+        if slovnik else ("Czech: %s\nEnglish:" % subject_cs),
         system=("Translate the Czech noun phrase into ENGLISH. Output ONLY the "
                 "English words, 1-6 words, nothing else. Never transliterate — "
                 "if it is a creature or thing, use its real English name."
                 + (" If a known English name of something in the phrase is "
-                   "given, use that name exactly." if en_nazev else "")),
+                   "given, use that name exactly." if en_nazev else "")
+                + (" If a dictionary of some words is given, use it."
+                   if (slovnik and not en_nazev) else "")),
         config=config, timeout=60,
         options={"temperature": 0.0, "num_predict": 24})
     return (out or "").strip().strip('."\'').splitlines()[0][:60] if out else ""
@@ -564,6 +642,18 @@ def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str =
     if cs_subject:
         _zn = re.search(r"English name to use in the image prompt: ([^)\n]{2,80})\)", user)
         _en0 = _translate_subject(config, cs_subject, _zn.group(1).strip() if _zn else "")
+        if not _zn and _en0:                    # HANS_ART_SUBJECT_EN_V3
+            _w1, _en1 = _napoveda_prvniho_slova(config, cs_subject, _en0)
+            if _en1:
+                _en0b = _translate_subject(config, cs_subject,
+                                           slovnik="%s = %s" % (_w1, _en1))
+                _log.info('art: HANS_ART_SUBJECT_EN_V3 „%s“ = %s (Wikipedie) → '
+                          'překlad „%s“ místo „%s“', _w1, _en1, _en0b, _en0)
+                _en0 = _en0b or _en0
+        if _en0:                                # HANS_ART_SUBJECT_CHECK_V3 — pro soud námětu
+            _posledni_preklad[cs_subject] = _en0
+            while len(_posledni_preklad) > 8:
+                _posledni_preklad.pop(next(iter(_posledni_preklad)))
         if _en0 and _en0.lower() != cs_subject.lower() and not _cs_leak(cs_subject, _en0):
             if cs_subject in user:
                 user = user.replace(cs_subject, "%s (%s)" % (cs_subject, _en0), 1)
@@ -720,11 +810,37 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
     p = _scene_prompt_core(config, title, reflection, db_path, *args, **kwargs)
     if not p or not db_path:
         return p
+    # HANS_ART_REPAINT_NO_KW_V1 (6. 10.) — u PŘEMALOVÁNÍ nese výtku opravený
+    # námět. Klíčová slova lekce z právě vytknutého obrazu jdou na KONEC promptu
+    # a námět přebila: námět „skupina žlutých postaviček…“ + lekce (výtku
+    # přečetla obráceně) „realistic primate fur, diverse monkey faces“ → opice.
+    if _lekce_z_vytky_premalovani(db_path):
+        _log.info("art: HANS_ART_REPAINT_NO_KW_V1 přemalování — klíčová slova "
+                  "poslední lekce vynechána (výtku nese opravený námět)")
+        return p
     _l, kw = _lesson_keywords(config, db_path)
     if kw:
         p = p.rstrip(" ,.;") + ", " + kw
         _log.info("art: HANS_ART_LESSON_KEYWORDS_V1 → do promptu: %s", kw)
     return p
+
+
+def _lekce_z_vytky_premalovani(db_path: str, okno_s: float = 900.0) -> bool:
+    """Je poslední lekce odvozená z výtky, po které se právě přemalovává?
+    (žádost o opakování v posledních 15 min a nejnovější lekce není starší
+    než ona). Chyba → False."""
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        fb = con.execute(
+            "SELECT ts FROM diary WHERE event_type='art_feedback' AND ts > ? "
+            "AND data LIKE '%\"matrix_opakuj\"%' ORDER BY ts DESC LIMIT 1",
+            (time.time() - okno_s,)).fetchone()
+        le = con.execute("SELECT ts FROM diary WHERE event_type='art_lesson' "
+                         "AND note IS NOT NULL AND note!='' ORDER BY ts DESC LIMIT 1").fetchone()
+        con.close()
+        return bool(fb and le and le[0] >= fb[0] - 5)
+    except Exception:
+        return False
 
 
 # ── HANS_ART_VERDICT_GROUNDED_V1 (24. 9.) — splněno z popisu, ne z dojmu ──────
@@ -1125,6 +1241,14 @@ _SOUD_NAMETU_SYS = (
 _EN_V_ZADANI = re.compile(r"English name to use in the image prompt: ([^)\n]{2,80})\)")
 
 
+# HANS_ART_SUBJECT_CHECK_V3 (6. 10.) — soudce česky bez diakritiky nerozuměl
+# („mroze na ledu“ × lední medvědi → partly). Nemá-li ukotvení anglický název,
+# dostane KRÁTKÝ překlad námětu, podle kterého se malovalo. ⛔ Celé anglické
+# zadání scény soudci NEDÁVAT — změřeno: porovnává pak detaily (asteroid,
+# hologramy) a hlásí nesoulad i u správných obrazů (4 falešné ze 14).
+_posledni_preklad = {}
+
+
 def soud_nametu(config: dict, subject: str, grounded: str, vision_desc: str) -> dict:
     """{'match': 'yes'|'partly'|'no', 'missing': str, 'instead': str, 'en': str}
     nebo {} (nejde posoudit / model nedostupný). Nikdy nehází."""
@@ -1135,6 +1259,7 @@ def soud_nametu(config: dict, subject: str, grounded: str, vision_desc: str) -> 
         acf = _acfg(config)
         m = _EN_V_ZADANI.search(grounded or "")
         en = m.group(1).strip() if m else ""
+        en = en or _posledni_preklad.get(subject, "")     # V3
         out = ollama_generate(
             str(acf.get("verdict_model")
                 or (config.get("models", {}) or {}).get("dialog", "hans-czech:latest")),
@@ -1151,13 +1276,26 @@ def soud_nametu(config: dict, subject: str, grounded: str, vision_desc: str) -> 
         mi = re.search(r"MISSING:\s*(.*?)(?:;?\s*(?:->)?\s*INSTEAD:|$)", o, re.I)
         ins = re.search(r"INSTEAD:\s*(.*)$", o, re.I)
         r = {"match": mm.group(1).lower(), "missing": cist(mi.group(1) if mi else ""),
-             "instead": cist(ins.group(1) if ins else ""), "en": en}
+             "instead": cist(ins.group(1) if ins else ""), "en": en,
+             # V2: námět s osobou/postavou (ukotvení nese vzhled postavy / podobu)
+             "osoba": bool(re.search(r"Vzhled postavy|podob[au] osoby", grounded or ""))}
         _log.info("art: HANS_ART_SUBJECT_CHECK_V1 „%s“ → %s (chybí: %s; místo toho: %s)",
                   subject[:50], r["match"], r["missing"] or "-", r["instead"] or "-")
         return r
     except Exception as e:
         _log.debug("art: soud námětu selhal: %s", e)
         return {}
+
+
+def soud_castecne_nesoulad(soud: dict) -> bool:
+    """`partly` + pojmenované chybějící + místo toho něco jiného, a chybějící
+    není vlastní jméno ani jde o námět s osobou/postavou (`osoba` v soudu)."""
+    s = soud or {}
+    if s.get("match") != "partly" or not s.get("missing") or not s.get("instead"):
+        return False
+    if s.get("osoba"):
+        return False
+    return not re.search(r"\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]\w+", s["missing"])
 
 
 def _evaluate_artwork(config: dict, db_path: str, title: str,
@@ -1250,6 +1388,13 @@ def _evaluate_artwork(config: dict, db_path: str, title: str,
     if out and (soud or {}).get("match") == "no":
         out = ("Zadaný námět („%s“) se mi nezdařil — podle nezávislého popisu "
                "na obraze není. %s" % (title, out))
+    # HANS_ART_SUBJECT_CHECK_V2 (6. 10.) — „partly“ s tím, co chybí, je u námětu
+    # BEZ osoby taky nesoulad („chybí žlutí mimoni, místo toho opice“). U osob
+    # a postav se nebere: popis obrazu nikoho nejmenuje, „chybí <Jméno>“ je
+    # tam pokaždé.
+    elif out and soud_castecne_nesoulad(soud):
+        out = ("Zadání („%s“) jsem splnil jen zčásti — podle nezávislého popisu "
+               "na obraze chybí: %s. %s" % (title, soud["missing"], out))
     if out:
         _log.info("art: Hansův verdikt: %.120s", out)
         # ořez na CELOU větu (ne uprostřed) — hard cap až kdyby to ujelo

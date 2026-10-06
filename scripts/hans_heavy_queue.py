@@ -225,10 +225,12 @@ def _tick(config: dict, db: str, deliver: Callable) -> None:
         c.close()
         _log.info("heavy_queue: ▶ #%d %s (pokus %d)", job["id"], job["kind"],
                   job["attempts"] + 1)
+        _zruseni_konec()                        # HANS_PAINT_CANCEL_V1
         try:
             ok, vysl, chyba = _HANDLERS[job["kind"]](config, db, p)
         except Exception as e:
             ok, vysl, chyba = False, None, repr(e)[:200]
+        _zruseni_konec()
         c = _conn(db)
         _st = c.execute("SELECT status FROM heavy_jobs WHERE id=?",
                         (job["id"],)).fetchone()
@@ -293,6 +295,67 @@ def start_worker(config: dict, db: str, deliver: Callable) -> None:
     _worker = threading.Thread(target=_loop, daemon=True, name="heavy-queue")
     _worker.start()
     _log.info("heavy_queue: pracovník běží (á %.0f s)", interval)
+
+
+# ── HANS_PAINT_CANCEL_V1 (6. 10.) — zrušení malování na požádání ──────────────
+# Zadání omylem (vložený cizí text) nešlo vzít zpět: „stop“ zastavilo film
+# v Kodi a obraz se maloval dál. Čekající úlohy se zruší, běžící render se
+# přeruší a nedoručí (větev „zrušena během běhu“ v `_tick` už existovala).
+def _zruseni_konec() -> None:
+    try:
+        from scripts.hans_art import zruseni_malby_konec
+        zruseni_malby_konec()
+    except Exception:
+        pass
+
+
+def cerstva_malba(db: str, person: str, okno_s: float = 180.0) -> bool:
+    """Má osoba malbu zadanou v posledních `okno_s` s, která ještě neskončila?"""
+    try:
+        c = _conn(db)
+        try:
+            r = c.execute("SELECT 1 FROM heavy_jobs WHERE kind='paint' AND person=? "
+                          "AND status IN ('pending','running') AND created_ts > ? LIMIT 1",
+                          ((person or "").lower(), time.time() - okno_s)).fetchone()
+        finally:
+            c.close()
+        return bool(r)
+    except Exception:
+        return False
+
+
+def zrus_malovani(config: dict, db: str, person: str) -> dict:
+    """Zruš malby osoby: {'cekajici': [náměty], 'bezici': námět|''}."""
+    out = {"cekajici": [], "bezici": ""}
+    c = _conn(db)
+    try:
+        c.row_factory = sqlite3.Row
+        rows = c.execute("SELECT id, status, payload FROM heavy_jobs WHERE kind='paint' "
+                         "AND person=? AND status IN ('pending','running') ORDER BY id",
+                         ((person or "").lower(),)).fetchall()
+        for r in rows:
+            try:
+                nam = (json.loads(r["payload"] or "{}") or {}).get("subject", "")
+            except Exception:
+                nam = ""
+            c.execute("UPDATE heavy_jobs SET status='cancelled', done_ts=? WHERE id=?",
+                      (time.time(), r["id"]))
+            if r["status"] == "running":
+                out["bezici"] = nam or "?"
+            else:
+                out["cekajici"].append(nam or "?")
+            _log.info("heavy_queue: HANS_PAINT_CANCEL_V1 #%d (%s) zrušena na žádost %s",
+                      r["id"], r["status"], person)
+        c.commit()
+    finally:
+        c.close()
+    if out["bezici"]:
+        try:
+            from scripts.hans_art import zrus_malbu
+            zrus_malbu(config)
+        except Exception as e:
+            _log.warning("heavy_queue: přerušení renderu selhalo: %s", e)
+    return out
 
 
 def stav(db: str) -> list:

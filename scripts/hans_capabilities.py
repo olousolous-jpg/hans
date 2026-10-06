@@ -128,6 +128,10 @@ _CAPABILITIES = [
      "MATRIX, si zapíšu HODNOCENÍ a příště z něj vyjdu; na webu hodnocení nepřijímám",
      "do 24 hodin po doručení v Matrixu: palec nahoru/dolů, odpověď na obraz, nebo "
      "prostě napsat, co se povedlo a co ne; „zkus to ještě jednou“ = namaluji znovu"),
+    # HANS_PAINT_CANCEL_V1 (6. 10.)
+    ("paint_cancel", "Zadané malování umím ZRUŠIT — čekající obraz nezačnu a právě "
+     "malovaný přeruším a nepošlu",
+     "„zruš malování“ / „nemaluj to“ / /zrusmalbu; i „stop“ do tří minut po zadání obrazu"),
     ("send_images", "Přes MATRIX umím POSLAT obrázky: své namalované obrazy (poslední "
      "nebo náhodný), upravené fotky a obrázky osob a míst z Wikipedie. V chatu na "
      "webu obrázky neposílám — tam je ukáže galerie",
