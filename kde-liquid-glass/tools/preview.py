@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Náhled shaderu Liquid Glass bez KWinu.
+"""Preview of the Liquid Glass shader without KWin.
 
-Vykreslí glass.frag (stejný soubor, jaký používá efekt) nad zkušebním
-pozadím a uloží PNG. Hodí se k ladění vzhledu a ke kontrole, že se shader
-přeloží (GLSL 1.40, stejně jako v KWinu).
+Renders glass.frag (the same file the effect uses) over a test background
+and saves PNGs. Useful for tuning the look and for checking that the shader
+compiles (GLSL 1.40, same as in KWin).
 
     pip install moderngl pillow numpy
-    python3 tools/preview.py                 # všechny scény do ./preview/
+    python3 tools/preview.py                 # all scenes into ./preview/
     python3 tools/preview.py --refraction 20 --chroma 0.6 --scene ring
 
-Na stroji bez GPU stačí Mesa (llvmpipe) přes EGL.
+On a machine without a GPU, Mesa (llvmpipe) via EGL is enough.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 SHADERS = HERE.parent / "effect" / "src" / "shaders"
 W, H = 1280, 800
 
-# KWin si sdf.glsl doplní sám (#include), tady ho vložíme ručně
+# KWin resolves sdf.glsl itself (#include); here we inline it
 SDF_GLSL = """
 float sdfRoundedBox(vec2 position, vec2 center, vec2 extents, vec4 radius) {
     vec2 p = position - center;
@@ -107,7 +107,7 @@ def render(args, scene: str, out: Path):
     sharp_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
     sharp_tex.repeat_x = sharp_tex.repeat_y = False
 
-    # okno uprostřed
+    # window in the middle
     win = (360, 220, 360 + 560, 220 + 360)
     radius = 12
     if scene in ("ring", "wave"):
@@ -170,7 +170,7 @@ def render(args, scene: str, out: Path):
     vao.render()
     raw = np.frombuffer(fbo.read(components=4), np.uint8).reshape(H, W, 4)[::-1]
 
-    # složení: ostré pozadí + sklo (premultiplied) + obsah okna
+    # composite: sharp background + glass (premultiplied) + window content
     base = np.asarray(sharp, np.float32) / 255
     glass = raw[..., :3].astype(np.float32) / 255
     a = raw[..., 3:4].astype(np.float32) / 255
@@ -179,20 +179,20 @@ def render(args, scene: str, out: Path):
 
     d = ImageDraw.Draw(img, "RGBA")
     if scene in ("ring", "wave"):
-        # neprůhledné okno přes střed rámečku
+        # opaque window over the middle of the rim
         m = rounded_mask((W, H), win, radius)
         img.paste(Image.new("RGB", (W, H), (236, 236, 238)), (0, 0), m)
         d = ImageDraw.Draw(img, "RGBA")
-        d.text((win[0] + 30, win[1] + 30), "neprůhledné okno se skleněným rámečkem", fill=(20, 20, 20), font=load_font(20))
+        d.text((win[0] + 30, win[1] + 30), "opaque window with a glass rim", fill=(20, 20, 20), font=load_font(20))
     else:
-        # průhledné okno: 19 % bílé přes sklo
+        # translucent window: 19 % white over the glass
         overlay = Image.new("RGBA", (W, H), (255, 255, 255, 48))
         m = rounded_mask((W, H), win, radius)
         img.paste(overlay, (0, 0), Image.fromarray((np.asarray(m) * (48 / 255)).astype(np.uint8)))
-        d.text((win[0] + 30, win[1] + 30), "průhledné okno (%s)" % scene, fill=(20, 20, 20), font=load_font(20))
+        d.text((win[0] + 30, win[1] + 30), "translucent window (%s)" % scene, fill=(20, 20, 20), font=load_font(20))
     out.parent.mkdir(parents=True, exist_ok=True)
     img.save(out)
-    print("uloženo:", out)
+    print("saved:", out)
 
 
 def main():
@@ -207,9 +207,9 @@ def main():
     ap.add_argument("--specular", type=float, default=0.55)
     ap.add_argument("--tint", type=float, default=0.08)
     ap.add_argument("--ring", type=float, default=6)
-    ap.add_argument("--clarity", type=float, default=0.7, help="čirost rámečku 0..1")
-    ap.add_argument("--wave", type=float, default=0.6, help="síla vlnění 0..1")
-    ap.add_argument("--egl", action="store_true", help="EGL bez displeje (Mesa llvmpipe)")
+    ap.add_argument("--clarity", type=float, default=0.7, help="rim clarity 0..1")
+    ap.add_argument("--wave", type=float, default=0.6, help="ripple strength 0..1")
+    ap.add_argument("--egl", action="store_true", help="headless EGL (Mesa llvmpipe)")
     args = ap.parse_args()
     scenes = ["glass", "ring", "light", "motion", "wave"] if args.scene == "all" else [args.scene]
     for s in scenes:

@@ -15,7 +15,7 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Quick DBus)
 find_package(KF6 6.0 REQUIRED COMPONENTS Config CoreAddons KCMUtils)
 find_package(KWin 6.7 REQUIRED)
 find_package(KDecoration3 REQUIRED)
-# kód pro X11 okna (Xwayland) volá xcb přímo
+# code for X11 windows (Xwayland) calls xcb directly
 find_package(XCB COMPONENTS XCB)
 
 set(liquidglass_SOURCES
@@ -31,7 +31,7 @@ kcoreaddons_add_plugin(liquidglass
     INSTALL_NAMESPACE "kwin/effects/plugins"
 )
 
-# továrna efektu je schovaná v makru KWinu, automoc o něm musí vědět
+# the effect factory is hidden in a KWin macro, automoc has to know about it
 set_property(TARGET liquidglass APPEND PROPERTY AUTOMOC_MACRO_NAMES "KWIN_EFFECT_FACTORY_SUPPORTED_ENABLED")
 
 target_include_directories(liquidglass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -45,7 +45,7 @@ if(TARGET XCB::XCB)
     target_link_libraries(liquidglass PRIVATE XCB::XCB)
 endif()
 
-# ── nastavení v Nastavení systému → Efekty plochy → Tekuté sklo (ozubené kolo)
+# ── settings in System Settings → Desktop Effects → Liquid Glass (gear icon)
 set(liquidglass_config_SOURCES src/config/liquidglass_config.cpp)
 kconfig_add_kcfg_files(liquidglass_config_SOURCES src/liquidglassconfig.kcfgc)
 kcoreaddons_add_plugin(kwin_liquidglass_config

@@ -1,10 +1,10 @@
 #version 140
 
 // Liquid Glass – onscreen pass.
-// Vstup je rozmazané pozadí (výsledek dual-kawase z blur efektu KWinu).
-// Shader přidává lom na okrajích, barevný rozptyl, lesk na hraně a tón skla.
-// Všechny délky jsou v device pixelech relativně k levému hornímu rohu
-// zachyceného pozadí (osa y roste dolů, uv.y nahoru).
+// The input is the blurred background (dual Kawase result from KWin's blur).
+// The shader adds refraction at the edges, chromatic dispersion, a specular
+// rim and a glass tint. All lengths are in device pixels relative to the
+// top-left corner of the captured background (y grows down, uv.y grows up).
 
 #include "sdf.glsl"
 
@@ -14,29 +14,29 @@ uniform float offset;
 uniform vec2 halfpixel;
 uniform float opacity;
 
-uniform vec2 texSize;       // velikost zachyceného pozadí v px
-uniform vec4 box;           // tvar skla: střed.xy, poloviční rozměr.zw
-uniform vec4 cornerRadius;  // zaoblení tvaru skla
-uniform float clipEnabled;  // 1 = ořezat do zaobleného tvaru
+uniform vec2 texSize;       // size of the captured background in px
+uniform vec4 box;           // glass shape: center.xy, half size.zw
+uniform vec4 cornerRadius;  // corner radii of the glass shape
+uniform float clipEnabled;  // 1 = clip to the rounded shape
 
-uniform float edgeWidth;    // šířka pásu u hrany, kde se láme světlo (px)
-uniform float refraction;   // o kolik px se pozadí na hraně posune
-uniform float chroma;       // barevný rozptyl 0..1
-uniform float specular;     // síla lesku 0..1
-uniform vec4 tint;          // rgb = barva skla, a = síla
-uniform vec2 lightPos;      // poloha kurzoru (px)
-uniform float lightOn;      // 1 = lesk sleduje kurzor
-uniform vec2 motion;        // setrvačnost při posunu okna (px)
-uniform float lightAngle;   // směr pevného světla (rad), animuje se
+uniform float edgeWidth;    // width of the band along the edge where light refracts (px)
+uniform float refraction;   // how many px the background shifts at the edge
+uniform float chroma;       // chromatic dispersion 0..1
+uniform float specular;     // specular strength 0..1
+uniform vec4 tint;          // rgb = glass color, a = strength
+uniform vec2 lightPos;      // cursor position (px)
+uniform float lightOn;      // 1 = highlight follows the cursor
+uniform vec2 motion;        // inertia while a window moves (px)
+uniform float lightAngle;   // direction of the fixed light (rad), animated
 
-uniform sampler2D sharpTex; // ostré (nerozmazané) pozadí
-uniform vec4 frameBox;      // rám okna (díra v rámečku): střed.xy, poloviční rozměr.zw
+uniform sampler2D sharpTex; // sharp (unblurred) background
+uniform vec4 frameBox;      // window frame (hole in the rim): center.xy, half size.zw
 uniform vec4 frameRadius;
-uniform float hasRing;      // 1 = sklo tvoří i rámeček kolem okna
-uniform float ringClarity;  // 0 = rámeček mléčný, 1 = čirý
+uniform float hasRing;      // 1 = the glass includes a rim around the window
+uniform float ringClarity;  // 0 = frosted rim, 1 = clear rim
 uniform float time;         // s
-uniform float waveAmp;      // amplituda vlnění (px), odeznívá po posunu okna
-uniform vec2 waveDir;       // směr posledního pohybu okna
+uniform float waveAmp;      // ripple amplitude (px), fades out after the window stops
+uniform vec2 waveDir;       // direction of the last window movement
 
 in vec2 uv;
 in vec2 vertex;
@@ -61,7 +61,7 @@ float shape(vec2 p)
     return sdfRoundedBox(p, box.xy, box.zw, cornerRadius);
 }
 
-// posun v px (y dolů) -> posun v uv (v nahoru)
+// offset in px (y down) -> offset in uv (v up)
 vec2 pxToUv(vec2 px)
 {
     return vec2(px.x / texSize.x, -px.y / texSize.y);
@@ -69,25 +69,25 @@ vec2 pxToUv(vec2 px)
 
 void main(void)
 {
-    float d = shape(vertex);           // < 0 uvnitř skla
-    float inside = max(-d, 0.0);       // vzdálenost od hrany
+    float d = shape(vertex);           // < 0 inside the glass
+    float inside = max(-d, 0.0);       // distance from the edge
 
-    // vnější normála hrany (gradient vzdálenostního pole)
+    // outward edge normal (gradient of the distance field)
     vec2 g = vec2(shape(vertex + vec2(1.0, 0.0)) - shape(vertex - vec2(1.0, 0.0)),
                   shape(vertex + vec2(0.0, 1.0)) - shape(vertex - vec2(0.0, 1.0)));
     vec2 n = dot(g, g) > 1e-6 ? normalize(g) : vec2(0.0);
 
-    // profil čočky: 1 na hraně, plynule 0 uvnitř
+    // lens profile: 1 at the edge, smoothly 0 inside
     float e = clamp(1.0 - inside / max(edgeWidth, 1.0), 0.0, 1.0);
     float lens = e * e * (3.0 - 2.0 * e);
     lens *= lens;
 
-    // lom: hrana ukazuje pozadí zpoza okraje, jako by se ohýbalo do skla
+    // refraction: the edge shows the background from beyond it, bent into the glass
     vec2 dispPx = n * refraction * lens;
-    // setrvačnost: obsah se při pohybu okna „opozdí“, nejvíc u hran
+    // inertia: the content "lags behind" while the window moves, most at the edges
     dispPx -= motion * (0.3 + 0.7 * lens);
 
-    // vlnění: dvě postupující vlny podél a napříč směru pohybu okna
+    // ripples: two travelling waves along and across the window movement
     if (waveAmp > 0.01) {
         vec2 perp = vec2(-waveDir.y, waveDir.x);
         float along = dot(vertex, waveDir);
@@ -97,7 +97,7 @@ void main(void)
         dispPx += waveDir * w1 * waveAmp + perp * w2 * waveAmp * 0.45;
     }
 
-    // rámeček kolem okna je čirý (ostré pozadí), uvnitř okna mléčné sklo
+    // the rim around the window is clear (sharp background), the inside is frosted
     float ring = 0.0;
     if (hasRing > 0.5) {
         ring = smoothstep(-1.0, 1.0, sdfRoundedBox(vertex, frameBox.xy, frameBox.zw, frameRadius));
@@ -118,10 +118,10 @@ void main(void)
     }
     c = c * colorMatrix;
 
-    // tón skla (světlé „mléčné“ nebo tmavé); čirý rámeček skoro bez tónu
+    // glass tint (light "frosted" or dark); the clear rim gets almost no tint
     c.rgb = mix(c.rgb, tint.rgb, tint.a * (1.0 - 0.8 * clear));
 
-    // lesk: tenká linka na hraně + měkký odlesk v pásu čočky
+    // specular: a thin line on the edge + a soft highlight in the lens band
     float rim = 1.0 - smoothstep(0.0, 2.5, inside);
     float fres = e * e * e;
     vec2 L = vec2(cos(lightAngle), sin(lightAngle));

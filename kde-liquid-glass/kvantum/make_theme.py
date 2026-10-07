@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Složí .kvconfig motivu: základní motiv + přepsané hodnoty.
+"""Build a theme .kvconfig: base theme + overridden values.
 
-    make_theme.py ZAKLAD.kvconfig overrides.ini VYSTUP.kvconfig
+    make_theme.py BASE.kvconfig overrides.ini OUTPUT.kvconfig
 """
 import configparser
 import sys
@@ -10,7 +10,7 @@ import sys
 def load(path):
     cp = configparser.ConfigParser(interpolation=None, strict=False, delimiters=("=",),
                                    comment_prefixes=(";", "#"), inline_comment_prefixes=None)
-    cp.optionxform = str  # Kvantum rozlišuje velikost písmen
+    cp.optionxform = str  # Kvantum keys are case-sensitive
     with open(path, encoding="utf-8") as f:
         cp.read_file(f)
     return cp

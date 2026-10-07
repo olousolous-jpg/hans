@@ -1,5 +1,5 @@
 /*
-    Liquid Glass – nastavení efektu v Nastavení systému (Efekty plochy).
+    Liquid Glass – effect settings in System Settings (Desktop Effects).
 
     SPDX-License-Identifier: GPL-2.0-or-later
 */
@@ -30,7 +30,7 @@ private:
     QString kvantumThemeFile() const;
 
     QComboBox *m_preset = nullptr;
-    // průhlednost aplikací (motiv Kvantum LiquidGlass), mimo kwinrc
+    // app translucency (Kvantum theme LiquidGlass), stored outside kwinrc
     QSlider *m_windowOpacity = nullptr;
     QSlider *m_menuOpacity = nullptr;
 };

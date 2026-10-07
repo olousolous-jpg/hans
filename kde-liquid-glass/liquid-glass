@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# liquid-glass – nastavení efektu Liquid Glass (KWin) z příkazové řádky.
+# liquid-glass – configure the Liquid Glass KWin effect from the command line.
 #
-#   liquid-glass show                 aktuální nastavení
-#   liquid-glass set KLÍČ HODNOTA      změnit jednu hodnotu (projeví se hned)
-#   liquid-glass preset NÁZEV          iphone | jemne | vychozi | silne | bez-ramecku | tmave | svetle
-#   liquid-glass on | off              zapnout / vrátit vestavěné rozostření
-#   liquid-glass status                běží efekt?
+#   liquid-glass show                 current settings
+#   liquid-glass set KEY VALUE         change one value (applied immediately)
+#   liquid-glass preset NAME           iphone | subtle | default | strong | no-ring | dark | light
+#   liquid-glass on | off              enable / go back to the built-in Blur effect
+#   liquid-glass status                is the effect running?
 #
-# Klíče: BlurStrength (1–15), NoiseStrength (0–14), Saturation (%),
+# Keys: BlurStrength (1–15), NoiseStrength (0–14), Saturation (%),
 #   EdgeWidth (px), Refraction (px), ChromaticAberration (0–100),
 #   Specular (0–100), TintStrength (0–100), DarkTint (true/false),
-#   CornerRadius (px), RingWidth (px, 0 = bez rámečku kolem oken),
-#   RingClarity (0–100, čirost rámečku), WaveStrength (0–100, vlnění při posunu),
-#   BorderMoves (true/false, tažení za okraj okna = přesun),
-#   RingExcludeClasses, ForceGlassClasses (třídy oken oddělené čárkou),
+#   CornerRadius (px), RingWidth (px, 0 = no glass rim around windows),
+#   RingClarity (0–100, rim clarity), WaveStrength (0–100, ripples while moving),
+#   BorderMoves (true/false, dragging a window border moves the window),
+#   RingExcludeClasses, ForceGlassClasses (comma-separated window classes),
 #   MouseLight, LiquidMotion, IdleShimmer (true/false), MotionStrength (0–100)
 set -euo pipefail
 
@@ -37,24 +37,25 @@ reload() {
 set_key() {
     local key="$1" value="$2" k found=0
     for k in "${KEYS[@]}"; do [[ "$k" == "$key" ]] && found=1; done
-    (( found )) || { echo "Neznámý klíč: $key" >&2; usage 1; }
+    (( found )) || { echo "Unknown key: $key" >&2; usage 1; }
     kwriteconfig6 --file kwinrc --group "$GROUP" --key "$key" "$value"
 }
 
 preset() {
+    # the Czech names from earlier versions still work as aliases
     case "$1" in
-        iphone)      set_key BlurStrength 4; set_key RingWidth 10; set_key RingClarity 90
-                     set_key Refraction 28; set_key EdgeWidth 30; set_key ChromaticAberration 25
-                     set_key Specular 80; set_key TintStrength 4; set_key WaveStrength 60 ;;
-        jemne)       set_key Refraction 10; set_key EdgeWidth 18; set_key ChromaticAberration 15
-                     set_key Specular 35; set_key MotionStrength 30 ;;
-        vychozi)     for k in "${KEYS[@]}"; do kwriteconfig6 --file kwinrc --group "$GROUP" --key "$k" --delete; done ;;
-        silne)       set_key Refraction 32; set_key EdgeWidth 36; set_key ChromaticAberration 60
-                     set_key Specular 75; set_key MotionStrength 80; set_key RingWidth 8 ;;
-        bez-ramecku) set_key RingWidth 0 ;;
-        tmave)       set_key DarkTint true; set_key TintStrength 22 ;;
-        svetle)      set_key DarkTint false; set_key TintStrength 8 ;;
-        *) echo "Neznámá předvolba: $1" >&2; usage 1 ;;
+        iphone)              set_key BlurStrength 4; set_key RingWidth 10; set_key RingClarity 90
+                             set_key Refraction 28; set_key EdgeWidth 30; set_key ChromaticAberration 25
+                             set_key Specular 80; set_key TintStrength 4; set_key WaveStrength 60 ;;
+        subtle|jemne)        set_key Refraction 10; set_key EdgeWidth 18; set_key ChromaticAberration 15
+                             set_key Specular 35; set_key MotionStrength 30 ;;
+        default|vychozi)     for k in "${KEYS[@]}"; do kwriteconfig6 --file kwinrc --group "$GROUP" --key "$k" --delete; done ;;
+        strong|silne)        set_key Refraction 32; set_key EdgeWidth 36; set_key ChromaticAberration 60
+                             set_key Specular 75; set_key MotionStrength 80; set_key RingWidth 8 ;;
+        no-ring|bez-ramecku) set_key RingWidth 0 ;;
+        dark|tmave)          set_key DarkTint true; set_key TintStrength 22 ;;
+        light|svetle)        set_key DarkTint false; set_key TintStrength 8 ;;
+        *) echo "Unknown preset: $1" >&2; usage 1 ;;
     esac
 }
 
@@ -62,7 +63,7 @@ case "${1:-}" in
     show)
         for k in "${KEYS[@]}"; do
             v="$(kreadconfig6 --file kwinrc --group "$GROUP" --key "$k" 2>/dev/null || true)"
-            printf '  %-20s %s\n' "$k" "${v:-${DEFAULTS[$k]} (výchozí)}"
+            printf '  %-20s %s\n' "$k" "${v:-${DEFAULTS[$k]} (default)}"
         done ;;
     set)    [[ $# -eq 3 ]] || usage 1; set_key "$2" "$3"; reload ;;
     preset) [[ $# -eq 2 ]] || usage 1; preset "$2"; reload ;;
@@ -78,9 +79,9 @@ case "${1:-}" in
         qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect blur >/dev/null 2>&1 || true ;;
     status)
         if [[ "$(qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded liquidglass 2>/dev/null)" == "true" ]]; then
-            echo "Liquid Glass běží."
+            echo "Liquid Glass is running."
         else
-            echo "Liquid Glass neběží. Zkus: liquid-glass on (nebo po aktualizaci KWinu: install.sh --rebuild)."
+            echo "Liquid Glass is not running. Try: liquid-glass on (or after a KWin update: install.sh --rebuild)."
         fi ;;
     -h|--help|"") usage ;;
     *) usage 1 ;;

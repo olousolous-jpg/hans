@@ -1,7 +1,8 @@
 /*
-    Liquid Glass – efekt pro KWin 6.7, upravená kopie vestavěného blur efektu
-    (kwin v6.7.5, src/plugins/blur/blur.cpp). Změny: onscreen průchod se
-    sklem (lom, rozptyl, lesk), skleněný rámeček kolem oken, animace.
+    Liquid Glass – an effect for KWin 6.7, a modified copy of the built-in blur
+    effect (kwin v6.7.5, src/plugins/blur/blur.cpp). Changes: an onscreen pass
+    with glass (refraction, dispersion, specular), a glass rim around windows,
+    animation, and moving windows by dragging their borders.
 
     SPDX-FileCopyrightText: 2010 Fredrik Höglund <fredrik@kde.org>
     SPDX-FileCopyrightText: 2011 Philipp Knechtges <philipp-dev@knechtges.com>
@@ -94,11 +95,11 @@ static QMatrix4x4 colorTransformMatrix(qreal saturation, qreal contrast)
 }
 
 /**
- * Stisk levého tlačítka na okraji dekorace (levý, pravý, horní, dolní okraj,
- * ne roh) spustí přesun okna jako při tažení za titulek. Filtr stojí těsně
- * před filtrem dekorací KWinu, takže dekorace stisk vůbec nedostane a
- * nezačne roztahovat. Rohy, modifikátory (Meta+tažení) a ostatní tlačítka
- * zůstávají beze změny.
+ * A left button press on a decoration border (left, right, top or bottom edge,
+ * not a corner) starts moving the window, like dragging the titlebar. The
+ * filter sits right before KWin's decoration filter, so the decoration never
+ * receives the press and does not start resizing. Corners, modifiers
+ * (Meta+drag) and other buttons are left unchanged.
  */
 class BorderMoveFilter : public InputEventFilter
 {
@@ -116,14 +117,14 @@ public:
             || event->modifiersRelevantForShortcuts != Qt::NoModifier) {
             return false;
         }
-        // skleněný rámeček je jen nakreslený kolem okna, kliknutí by propadlo
-        // na okno nebo plochu pod ním; tady ho chytíme a okno přesuneme
+        // the glass rim is only drawn around the window, a click would fall
+        // through to the window or desktop below; catch it and move the window
         if (Window *ringOwner = m_effect->ringWindowAt(event->position); ringOwner && ringOwner->isMovable()) {
             ringOwner->performMousePressCommand(Options::MouseActivateRaiseAndMove, event->position);
             return true;
         }
 
-        // okno pod kurzorem; kurzor musí být na jeho dekoraci, ne v obsahu
+        // window under the cursor; the cursor must be on its decoration, not its content
         Window *window = input()->pointer()->hover();
         if (!window || !window->decoration() || !window->isMovable()
             || window->clientGeometry().contains(event->position)) {
@@ -136,7 +137,7 @@ public:
         case Qt::BottomSection:
             break;
         default:
-            return false; // titulek, tlačítka a rohy řeší dekorace jako obvykle
+            return false; // titlebar, buttons and corners are handled by the decoration as usual
         }
         window->performMousePressCommand(Options::MouseActivateRaiseAndMove, event->position);
         return true;
@@ -151,7 +152,7 @@ Window *LiquidGlassEffect::ringWindowAt(const QPointF &pos) const
     if (m_ringWidth <= 0) {
         return nullptr;
     }
-    // od nejvyššího okna dolů: první okno, které bod zakrývá, vyhrává
+    // from the topmost window down: the first window covering the point wins
     const QList<EffectWindow *> order = effects->stackingOrder();
     const qreal r = m_ringWidth;
     for (auto it = order.crbegin(); it != order.crend(); ++it) {
@@ -161,7 +162,7 @@ Window *LiquidGlassEffect::ringWindowAt(const QPointF &pos) const
         }
         const RectF frame = w->frameGeometry();
         if (frame.contains(pos)) {
-            return nullptr; // bod je na okně, ne na rámečku
+            return nullptr; // the point is on a window, not on a rim
         }
         const auto found = m_windows.find(w);
         if (found == m_windows.end() || !found->second.ring) {
@@ -271,13 +272,13 @@ LiquidGlassEffect::LiquidGlassEffect()
     });
 #endif
 
-    // přesun okna tažením za okraj (jen Wayland, na X11 input() chybí)
+    // moving windows by dragging the border (Wayland only, input() is missing on X11)
     if (input()) {
         m_borderFilter = std::make_unique<BorderMoveFilter>(this);
         input()->installInputEventFilter(m_borderFilter.get());
     }
 
-    // Liquid Glass: lesk sleduje kurzor, pomalé „dýchání“ světla
+    // Liquid Glass: the highlight follows the cursor, slow "breathing" light
     connect(effects, &EffectsHandler::mouseChanged, this,
             [this](const QPointF &pos, const QPointF &oldpos, Qt::MouseButtons, Qt::MouseButtons, Qt::KeyboardModifiers, Qt::KeyboardModifiers) {
                 slotMouseChanged(pos, oldpos);
@@ -415,7 +416,7 @@ void LiquidGlassEffect::reconfigure(ReconfigureFlags flags)
     }
 
     if (m_valid) {
-        // nastavení rámečku a vynuceného skla mění tvar skla u všech oken
+        // rim and forced-glass settings change the glass shape of all windows
         const auto stackingOrder = effects->stackingOrder();
         for (EffectWindow *window : stackingOrder) {
             updateBlurRegion(window);
@@ -476,7 +477,7 @@ void LiquidGlassEffect::updateBlurRegion(EffectWindow *w)
         frame = decorationBlurRegion(w);
     }
 
-    // sklo přes celé okno pro vybrané aplikace (prázdný region = celé okno)
+    // glass behind the whole window for selected apps (empty region = whole window)
     if (!content.has_value() && forcesGlass(w)) {
         content = RegionF();
     }
@@ -530,8 +531,8 @@ void LiquidGlassEffect::slotWindowAdded(EffectWindow *w)
     });
     connect(w, &EffectWindow::windowFrameGeometryChanged, this, &LiquidGlassEffect::slotFrameGeometryChanged);
     if (WindowItem *item = w->windowItem()) {
-        // BackgroundEffectItem si při změně velikosti okna ořízne geometrii
-        // na rám okna; rámeček skla a okraj pro lom leží mimo, tak ji vrátíme.
+        // BackgroundEffectItem clips its geometry to the window frame on resize;
+        // the glass rim and the refraction margin lie outside, so restore it.
         connect(item->windowContainer(), &Item::boundingRectChanged, this, [this, w]() {
             updateItemGeometry(w);
         });
@@ -661,8 +662,8 @@ RegionF LiquidGlassEffect::blurRegion(EffectWindow *w) const
         }
 
         if (it->second.ring) {
-            // skleněný rámeček kolem okna; díra uprostřed je zmenšená o
-            // zaoblení, aby sklo bylo i pod zaoblenými rohy okna
+            // glass rim around the window; the hole in the middle is shrunk by
+            // the corner radius so there is glass under the rounded corners too
             const RectF frameRect(0, 0, w->width(), w->height());
             const QVector4D r = shapeRadius(w, false).toVector();
             const qreal inner = std::max({r.x(), r.y(), r.z(), r.w()});
@@ -733,7 +734,7 @@ BorderRadius LiquidGlassEffect::shapeRadius(const EffectWindow *w, bool ring) co
 
 int LiquidGlassEffect::sampleMargin() const
 {
-    // lom a setrvačnost čtou pozadí až za hranou skla
+    // refraction and inertia read the background beyond the glass edge
     return m_refraction + (m_liquidMotion ? 24 : 0) + 4;
 }
 
@@ -777,7 +778,7 @@ void LiquidGlassEffect::slotFrameGeometryChanged(EffectWindow *w, const RectF &o
     }
     const QPointF delta = now.topLeft() - oldGeometry.topLeft();
     if (m_waveStrength > 0 && !delta.isNull() && now.size() == oldGeometry.size()) {
-        // vlnění: každý posun přidá energii, směr se plynule natáčí za pohybem
+        // ripples: every move adds energy, the direction smoothly follows the movement
         const qreal len = std::hypot(delta.x(), delta.y());
         GlassWindowData &glass = it->second;
         glass.wave = std::min<qreal>(1.0, glass.wave + len * 0.04);
@@ -807,8 +808,9 @@ void LiquidGlassEffect::slotMouseChanged(const QPointF &pos, const QPointF &oldp
     if (!m_mouseLight || m_specular <= 0 || (pos - oldpos).manhattanLength() < 2) {
         return;
     }
-    // Lesk od kurzoru je vidět jen u hrany (útlum na ~300 px), takže se
-    // překresluje, jen když je kurzor v pásu kolem hrany, ne nad celým oknem.
+    // The cursor highlight is only visible near the edge (falls off over ~300 px),
+    // so repaint only when the cursor is in a band around the edge, not anywhere
+    // over the window.
     const qreal reach = 260;
     const auto nearEdge = [reach](const RectF &bounds, const QPointF &p) {
         const RectF outer = bounds.grownBy(QMarginsF(reach, reach, reach, reach));
@@ -832,7 +834,7 @@ void LiquidGlassEffect::prePaintScreen(ScreenPrePaintData &data)
 {
     m_currentView = data.view;
 
-    // dozvuk setrvačnosti: posun skla se po zastavení okna plynule vrátí
+    // inertia decay: the glass offset smoothly returns after the window stops
     const qint64 now = m_clock.elapsed();
     const qreal dt = std::clamp<qint64>(now - m_lastFrameMs, 0, 100);
     m_lastFrameMs = now;
@@ -946,8 +948,8 @@ void LiquidGlassEffect::blur(const RenderTarget &renderTarget, const RenderViewp
 
     blurShape.translate(w->pos());
 
-    // Pozadí se zachytává s okrajem navíc: lom a setrvačnost čtou i to, co je
-    // za hranou skla. Oříznuto na právě kreslený výstup.
+    // Capture the background with an extra margin: refraction and inertia also
+    // read what is beyond the glass edge. Clipped to the output being painted.
     const RectF shapeBounds = blurShape.boundingRect();
     const qreal margin = sampleMargin();
     const Rect backgroundRect = shapeBounds.grownBy(QMarginsF(margin, margin, margin, margin)).rounded()
@@ -1204,7 +1206,7 @@ void LiquidGlassEffect::blur(const RenderTarget &renderTarget, const RenderViewp
 
         const QPointF cursor = effects->cursorPos() * scale - QPointF(scaledBackgroundRect.topLeft());
         const QPointF motion = blurInfo.motion * scale;
-        // pevné světlo shora zleva, při „dýchání“ pomalu krouží
+        // fixed light from the top left, slowly circling when "breathing"
         const float lightAngle = float(M_PI * 1.25 + (m_idleShimmer ? std::sin(m_clock.elapsed() / 1000.0 * 0.6) * 0.9 : 0.0));
         const QVector4D tint = m_darkTint ? QVector4D(0.05, 0.06, 0.08, m_tintStrength)
                                           : QVector4D(1.0, 1.0, 1.0, m_tintStrength);
@@ -1229,7 +1231,7 @@ void LiquidGlassEffect::blur(const RenderTarget &renderTarget, const RenderViewp
         shader->setUniform(m_glassPass.motionLocation, QVector2D(motion));
         shader->setUniform(m_glassPass.lightAngleLocation, lightAngle);
 
-        // rámeček: tvar okna (díra v rámečku) a ostré pozadí pro čiré sklo
+        // rim: window shape (hole in the rim) and the sharp background for clear glass
         const RectF frameBox = w->frameGeometry()
                                    .scaled(scale)
                                    .rounded()

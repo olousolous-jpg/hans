@@ -1,9 +1,9 @@
 /*
-    Liquid Glass – nastavení efektu v Nastavení systému (Efekty plochy).
+    Liquid Glass – effect settings in System Settings (Desktop Effects).
 
-    Prvky s názvem kcfg_<Klíč> spravuje KConfigDialogManager automaticky
-    (načtení, uložení, výchozí hodnoty) podle liquidglass.kcfg. Průhlednost
-    aplikací se zapisuje zvlášť do motivu Kvantum LiquidGlass.
+    Widgets named kcfg_<Key> are managed by KConfigDialogManager automatically
+    (load, save, defaults) according to liquidglass.kcfg. App translucency is
+    written separately into the Kvantum theme LiquidGlass.
 
     SPDX-License-Identifier: GPL-2.0-or-later
 */
@@ -44,8 +44,8 @@ namespace KWin
 namespace
 {
 
-// Kolečko myši nad posuvníkem bez fokusu nemá měnit hodnotu, ale posouvat
-// stránku. Hodnota se kolečkem mění až po kliknutí na posuvník.
+// The mouse wheel over a slider without focus should scroll the page, not
+// change the value. The wheel changes the value only after clicking the slider.
 class WheelGuard : public QObject
 {
 public:
@@ -54,7 +54,7 @@ public:
     {
         if (event->type() == QEvent::Wheel) {
             if (auto *w = qobject_cast<QWidget *>(watched); w && !w->hasFocus()) {
-                event->ignore(); // propaguje se rodiči (posuvná oblast)
+                event->ignore(); // propagates to the parent (scroll area)
                 return true;
             }
         }
@@ -114,11 +114,11 @@ QLabel *hint(const QString &text)
     QFont f = l->font();
     f.setPointSizeF(f.pointSizeF() * 0.9);
     l->setFont(f);
-    l->setEnabled(false); // šedý text
+    l->setEnabled(false); // grey text
     return l;
 }
 
-// Motiv Kvantum se upravuje po řádcích, zbytek souboru zůstane, jak je.
+// The Kvantum theme is edited line by line, the rest of the file stays as it is.
 int readKvantum(const QString &path, const QString &key, int fallback)
 {
     QFile f(path);
@@ -167,23 +167,23 @@ QList<Preset> presets()
 {
     using V = QVariant;
     return {
-        {QStringLiteral("iPhone (čiré sklo, silná čočka)"),
+        {QStringLiteral("iPhone (clear glass, strong lens)"),
          {{QStringLiteral("BlurStrength"), V(4)}, {QStringLiteral("RingWidth"), V(10)},
           {QStringLiteral("RingClarity"), V(90)}, {QStringLiteral("Refraction"), V(28)},
           {QStringLiteral("EdgeWidth"), V(30)}, {QStringLiteral("ChromaticAberration"), V(25)},
           {QStringLiteral("Specular"), V(80)}, {QStringLiteral("TintStrength"), V(4)},
           {QStringLiteral("WaveStrength"), V(60)}}},
-        {QStringLiteral("Jemné"),
+        {QStringLiteral("Subtle"),
          {{QStringLiteral("Refraction"), V(10)}, {QStringLiteral("EdgeWidth"), V(18)},
           {QStringLiteral("ChromaticAberration"), V(15)}, {QStringLiteral("Specular"), V(35)},
           {QStringLiteral("MotionStrength"), V(30)}}},
-        {QStringLiteral("Silné"),
+        {QStringLiteral("Strong"),
          {{QStringLiteral("Refraction"), V(32)}, {QStringLiteral("EdgeWidth"), V(36)},
           {QStringLiteral("ChromaticAberration"), V(60)}, {QStringLiteral("Specular"), V(75)},
           {QStringLiteral("MotionStrength"), V(80)}, {QStringLiteral("RingWidth"), V(8)}}},
-        {QStringLiteral("Tmavé (kouřové) sklo"),
+        {QStringLiteral("Dark (smoky) glass"),
          {{QStringLiteral("DarkTint"), V(true)}, {QStringLiteral("TintStrength"), V(22)}}},
-        {QStringLiteral("Světlé (mléčné) sklo"),
+        {QStringLiteral("Light (frosted) glass"),
          {{QStringLiteral("DarkTint"), V(false)}, {QStringLiteral("TintStrength"), V(8)}}},
     };
 }
@@ -195,7 +195,7 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
 {
     LiquidGlassConfig::instance(QStringLiteral("kwinrc"));
 
-    // nahoře předvolba, pod ní záložky; každá záložka se vejde bez posouvání
+    // preset on top, tabs below; each tab fits without scrolling
     auto *outer = new QVBoxLayout(widget());
     outer->setContentsMargins(0, 0, 0, 0);
     auto *top = new QWidget;
@@ -229,78 +229,78 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
     const QString px = QStringLiteral(" px");
     const QString pct = QStringLiteral(" %");
 
-    // ── předvolby
+    // ── presets
     {
-        auto *form = group(QStringLiteral("Předvolba"));
+        auto *form = group(QStringLiteral("Preset"));
         m_preset = new QComboBox;
-        m_preset->addItem(QStringLiteral("— vyber předvolbu —"));
+        m_preset->addItem(QStringLiteral("— choose a preset —"));
         for (const Preset &p : presets()) {
             m_preset->addItem(p.name);
         }
-        m_preset->addItem(QStringLiteral("Výchozí hodnoty"));
+        m_preset->addItem(QStringLiteral("Default values"));
         connect(m_preset, &QComboBox::activated, this, &LiquidGlassEffectConfig::applyPreset);
-        form->addRow(QStringLiteral("Použít:"), m_preset);
-        form->addRow(hint(QStringLiteral("Předvolba jen nastaví hodnoty níže; uloží se tlačítkem Použít.")));
+        form->addRow(QStringLiteral("Load:"), m_preset);
+        form->addRow(hint(QStringLiteral("A preset only sets the values below; they are saved with the Apply button.")));
     }
 
-    // ── sklo
-    newTab(QStringLiteral("Sklo"));
+    // ── glass
+    newTab(QStringLiteral("Glass"));
     {
-        auto *form = group(QStringLiteral("Sklo"));
-        form->addRow(QStringLiteral("Rozmazání:"), slider(QStringLiteral("BlurStrength"), 1, 15, QString()));
-        form->addRow(QStringLiteral("Sytost barev:"), slider(QStringLiteral("Saturation"), 50, 250, pct));
-        form->addRow(QStringLiteral("Lom na hraně:"), slider(QStringLiteral("Refraction"), 0, 64, px));
-        form->addRow(QStringLiteral("Šířka čočky u hrany:"), slider(QStringLiteral("EdgeWidth"), 4, 80, px));
-        form->addRow(QStringLiteral("Barevný rozptyl:"), slider(QStringLiteral("ChromaticAberration"), 0, 100, pct));
-        form->addRow(QStringLiteral("Lesk:"), slider(QStringLiteral("Specular"), 0, 100, pct));
-        form->addRow(QStringLiteral("Tón skla:"), slider(QStringLiteral("TintStrength"), 0, 100, pct));
-        form->addRow(QString(), check(QStringLiteral("DarkTint"), QStringLiteral("Tmavé (kouřové) sklo místo mléčného")));
-        form->addRow(QStringLiteral("Šum proti pruhům:"), slider(QStringLiteral("NoiseStrength"), 0, 14, QString()));
-        form->addRow(QStringLiteral("Zaoblení (výchozí):"), slider(QStringLiteral("CornerRadius"), 0, 40, px));
-    }
-
-    finishTab();
-
-    // ── rámeček kolem oken
-    newTab(QStringLiteral("Rámeček"));
-    {
-        auto *form = group(QStringLiteral("Skleněný rámeček kolem oken"));
-        form->addRow(QStringLiteral("Šířka:"), slider(QStringLiteral("RingWidth"), 0, 40, px));
-        form->addRow(hint(QStringLiteral("0 = bez rámečku. Rámeček je i kolem neprůhledných aplikací (Firefox, GTK).")));
-        form->addRow(QStringLiteral("Čirost:"), slider(QStringLiteral("RingClarity"), 0, 100, pct));
-        form->addRow(QString(), check(QStringLiteral("BorderMoves"), QStringLiteral("Tažení za okraj okna okno přesouvá (rohy dál mění velikost)")));
-        form->addRow(QStringLiteral("Bez rámečku:"), line(QStringLiteral("RingExcludeClasses"), QStringLiteral("např. steam, firefox")));
+        auto *form = group(QStringLiteral("Glass"));
+        form->addRow(QStringLiteral("Blur:"), slider(QStringLiteral("BlurStrength"), 1, 15, QString()));
+        form->addRow(QStringLiteral("Saturation:"), slider(QStringLiteral("Saturation"), 50, 250, pct));
+        form->addRow(QStringLiteral("Edge refraction:"), slider(QStringLiteral("Refraction"), 0, 64, px));
+        form->addRow(QStringLiteral("Lens width at the edge:"), slider(QStringLiteral("EdgeWidth"), 4, 80, px));
+        form->addRow(QStringLiteral("Chromatic dispersion:"), slider(QStringLiteral("ChromaticAberration"), 0, 100, pct));
+        form->addRow(QStringLiteral("Specular:"), slider(QStringLiteral("Specular"), 0, 100, pct));
+        form->addRow(QStringLiteral("Glass tint:"), slider(QStringLiteral("TintStrength"), 0, 100, pct));
+        form->addRow(QString(), check(QStringLiteral("DarkTint"), QStringLiteral("Dark (smoky) glass instead of frosted")));
+        form->addRow(QStringLiteral("Anti-banding noise:"), slider(QStringLiteral("NoiseStrength"), 0, 14, QString()));
+        form->addRow(QStringLiteral("Corner radius (fallback):"), slider(QStringLiteral("CornerRadius"), 0, 40, px));
     }
 
     finishTab();
 
-    // ── animace
-    newTab(QStringLiteral("Animace"));
+    // ── rim around windows
+    newTab(QStringLiteral("Rim"));
     {
-        auto *form = group(QStringLiteral("Animace"));
-        form->addRow(QString(), check(QStringLiteral("MouseLight"), QStringLiteral("Lesk na hraně sleduje kurzor")));
-        form->addRow(QString(), check(QStringLiteral("LiquidMotion"), QStringLiteral("Setrvačnost skla při přesouvání okna")));
-        form->addRow(QStringLiteral("Síla setrvačnosti:"), slider(QStringLiteral("MotionStrength"), 0, 100, pct));
-        form->addRow(QStringLiteral("Vlnění při přesouvání:"), slider(QStringLiteral("WaveStrength"), 0, 100, pct));
-        form->addRow(QString(), check(QStringLiteral("IdleShimmer"), QStringLiteral("Světlo pomalu „dýchá“ (stále překresluje)")));
+        auto *form = group(QStringLiteral("Glass rim around windows"));
+        form->addRow(QStringLiteral("Width:"), slider(QStringLiteral("RingWidth"), 0, 40, px));
+        form->addRow(hint(QStringLiteral("0 = no rim. The rim is also drawn around opaque apps (Firefox, GTK).")));
+        form->addRow(QStringLiteral("Clarity:"), slider(QStringLiteral("RingClarity"), 0, 100, pct));
+        form->addRow(QString(), check(QStringLiteral("BorderMoves"), QStringLiteral("Dragging a window border moves the window (corners still resize)")));
+        form->addRow(QStringLiteral("No rim for:"), line(QStringLiteral("RingExcludeClasses"), QStringLiteral("e.g. steam, firefox")));
     }
 
     finishTab();
 
-    // ── ostatní
-    newTab(QStringLiteral("Aplikace"));
+    // ── animation
+    newTab(QStringLiteral("Animation"));
     {
-        auto *form = group(QStringLiteral("Aplikace"));
-        form->addRow(QStringLiteral("Sklo přes celé okno:"), line(QStringLiteral("ForceGlassClasses"), QStringLiteral("třídy oken oddělené čárkou")));
-        form->addRow(hint(QStringLiteral("Smysl má jen u aplikací s průhledným pozadím.")));
+        auto *form = group(QStringLiteral("Animation"));
+        form->addRow(QString(), check(QStringLiteral("MouseLight"), QStringLiteral("Edge highlight follows the cursor")));
+        form->addRow(QString(), check(QStringLiteral("LiquidMotion"), QStringLiteral("Glass inertia while moving a window")));
+        form->addRow(QStringLiteral("Inertia strength:"), slider(QStringLiteral("MotionStrength"), 0, 100, pct));
+        form->addRow(QStringLiteral("Ripples while moving:"), slider(QStringLiteral("WaveStrength"), 0, 100, pct));
+        form->addRow(QString(), check(QStringLiteral("IdleShimmer"), QStringLiteral("Light slowly \"breathes\" (repaints continuously)")));
+    }
+
+    finishTab();
+
+    // ── other
+    newTab(QStringLiteral("Apps"));
+    {
+        auto *form = group(QStringLiteral("Apps"));
+        form->addRow(QStringLiteral("Glass behind whole window:"), line(QStringLiteral("ForceGlassClasses"), QStringLiteral("comma-separated window classes")));
+        form->addRow(hint(QStringLiteral("Only useful for apps with a translucent background.")));
     }
 
     // ── Kvantum
     {
-        auto *form = group(QStringLiteral("Průhlednost aplikací (Kvantum)"));
-        form->addRow(QStringLiteral("Okna:"), slider(QString(), 0, 90, pct, &m_windowOpacity));
-        form->addRow(QStringLiteral("Nabídky:"), slider(QString(), 0, 90, pct, &m_menuOpacity));
-        form->addRow(hint(QStringLiteral("Projeví se v nově spuštěných aplikacích; nabídka na ploše po restartu Plasmy nebo novém přihlášení.")));
+        auto *form = group(QStringLiteral("App translucency (Kvantum)"));
+        form->addRow(QStringLiteral("Windows:"), slider(QString(), 0, 90, pct, &m_windowOpacity));
+        form->addRow(QStringLiteral("Menus:"), slider(QString(), 0, 90, pct, &m_menuOpacity));
+        form->addRow(hint(QStringLiteral("Applies to newly started apps; the desktop menu after restarting Plasma or logging in again.")));
         const bool haveTheme = QFileInfo::exists(kvantumThemeFile());
         for (QSlider *s : {m_windowOpacity, m_menuOpacity}) {
             s->setEnabled(haveTheme);
@@ -309,7 +309,7 @@ LiquidGlassEffectConfig::LiquidGlassEffectConfig(QObject *parent, const KPluginM
             });
         }
         if (!haveTheme) {
-            form->addRow(hint(QStringLiteral("Motiv Kvantum LiquidGlass není nainstalovaný (install.sh --only kvantum).")));
+            form->addRow(hint(QStringLiteral("The Kvantum theme LiquidGlass is not installed (install.sh --only kvantum).")));
         }
     }
 

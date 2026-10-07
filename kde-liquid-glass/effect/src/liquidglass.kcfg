@@ -5,7 +5,7 @@
     http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
     <kcfgfile arg="true"/>
     <group name="Effect-liquidglass">
-        <!-- rozostření (stejné jako vestavěný blur) -->
+        <!-- blur (same as the built-in Blur effect) -->
         <entry name="BlurStrength" type="Int">
             <default>10</default>
             <min>1</min>
@@ -19,7 +19,7 @@
         <entry name="Saturation" type="Int">
             <default>160</default>
         </entry>
-        <!-- sklo -->
+        <!-- glass -->
         <entry name="EdgeWidth" type="Int">
             <default>26</default>
         </entry>
@@ -47,28 +47,28 @@
         <entry name="CornerRadius" type="Int">
             <default>10</default>
         </entry>
-        <!-- skleněný rámeček kolem běžných oken (0 = vypnuto) -->
+        <!-- glass rim around normal windows (0 = off) -->
         <entry name="RingWidth" type="Int">
             <default>6</default>
         </entry>
-        <!-- jak čiré je sklo rámečku: 0 = mléčné jako uvnitř, 100 = čiré -->
+        <!-- how clear the rim glass is: 0 = frosted like the inside, 100 = clear -->
         <entry name="RingClarity" type="Int">
             <default>70</default>
             <min>0</min>
             <max>100</max>
         </entry>
-        <!-- tažení za okraj okna okno přesouvá (rohy dál mění velikost) -->
+        <!-- dragging a window border moves the window (corners still resize) -->
         <entry name="BorderMoves" type="Bool">
             <default>true</default>
         </entry>
         <entry name="RingExcludeClasses" type="String">
             <default></default>
         </entry>
-        <!-- sklo přes celé okno pro vybrané aplikace (třídy oken oddělené čárkou) -->
+        <!-- glass behind the whole window for selected apps (comma-separated window classes) -->
         <entry name="ForceGlassClasses" type="String">
             <default></default>
         </entry>
-        <!-- animace -->
+        <!-- animation -->
         <entry name="MouseLight" type="Bool">
             <default>true</default>
         </entry>
@@ -80,7 +80,7 @@
             <min>0</min>
             <max>100</max>
         </entry>
-        <!-- vlnění pozadí pod sklem při přesouvání okna (0 = vypnuto) -->
+        <!-- ripples of the background under the glass while moving a window (0 = off) -->
         <entry name="WaveStrength" type="Int">
             <default>60</default>
             <min>0</min>

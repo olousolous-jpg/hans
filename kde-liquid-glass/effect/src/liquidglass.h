@@ -1,7 +1,7 @@
 /*
     Liquid Glass – efekt pro KWin 6.7.
 
-    Vychází z vestavěného blur efektu KWinu (src/plugins/blur, v6.7.5):
+    Based on KWin's built-in blur effect (src/plugins/blur, v6.7.5):
     SPDX-FileCopyrightText: 2010 Fredrik Höglund <fredrik@kde.org>
     SPDX-FileCopyrightText: 2018 Alex Nemeth <alex.nemeth329@gmail.com>
 
@@ -51,7 +51,7 @@ struct GlassWindowData
     /// Liquid motion: lagging offset in logical px, decays over time
     QPointF motion;
 
-    /// Vlnění pod sklem při posunu okna: síla 0..1 (pomalu odeznívá) a směr
+    /// Ripples under the glass while the window moves: strength 0..1 (fades slowly) and direction
     qreal wave = 0;
     QPointF waveDir = QPointF(1, 0);
 
@@ -206,7 +206,7 @@ private:
     float m_ringClarity = 0.7f;
     float m_waveStrength = 0.6f;
 
-    // tažení za okraj okna (ne roh) okno přesouvá místo roztahování
+    // dragging a window border (not a corner) moves the window instead of resizing it
     bool m_borderMoves = true;
     std::unique_ptr<BorderMoveFilter> m_borderFilter;
 
@@ -215,7 +215,7 @@ public:
     {
         return m_borderMoves;
     }
-    /// okno, jehož skleněný rámeček (kreslený mimo okno) je pod bodem pos
+    /// the window whose glass rim (drawn outside the window) is under pos
     Window *ringWindowAt(const QPointF &pos) const;
 
 private:

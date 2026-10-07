@@ -1,187 +1,206 @@
-# Liquid Glass pro KDE Plasma 6 (Arch Linux)
+# Liquid Glass for KDE Plasma 6 (Arch Linux)
 
-Vzhled „tekutého skla“ jako v novém macOS/iOS: pozadí za průhlednými okny,
-panelem a nabídkami je rozmazané, **na hranách se láme jako přes čočku**, hrana
-má **lesk**, který **sleduje kurzor**, a při posouvání okna se sklo
-**setrvačností „přelije“**. Kolem běžných (neprůhledných) oken je navíc tenký
-**skleněný rámeček**, takže sklo je vidět u všech aplikací, i u GTK.
+*[Česká verze](README.cs.md)*
 
-![náhled](docs/nahled.png)
+A "liquid glass" look like the new macOS/iOS: the background behind translucent
+windows, panels and menus is blurred, **refracted at the edges like a lens**,
+the edge has a **specular highlight** that **follows the cursor**, and the glass
+**sloshes with inertia and ripples** while a window is moved. Normal (opaque)
+windows get a thin **glass rim**, so the glass is visible around every app,
+GTK apps included. The rim and the window borders can also be **dragged to
+move the window**.
 
-*Náhled je vykreslený tím samým shaderem nad zkušebním obrázkem
-(`tools/preview.py`), ne snímek skutečné plochy.* Vlevo nahoře je průhledné okno,
-vpravo nahoře neprůhledné okno se skleněným rámečkem, vlevo dole lesk od kurzoru
-a vpravo dole setrvačnost při posunu okna.
+![preview](docs/preview.png)
 
-## Co je uvnitř
+*The preview is rendered by the same shader over a test image
+(`tools/preview.py`), not a screenshot of a real desktop.* Top left: a
+translucent window; top right: an opaque window with a glass rim; bottom left:
+the cursor highlight; bottom right: inertia while the window moves.
 
-| Část | Co dělá |
+## What's inside
+
+| Part | What it does |
 |---|---|
-| `effect/` | efekt pro KWin v C++ a GLSL, upravená kopie vestavěného rozostření z KWinu 6.7.5 |
-| `kvantum/` | motiv Kvantum `LiquidGlass`: průhledná okna a nabídky Qt/KDE aplikací (základ KvMojaveLight, resp. KvMojave) |
-| `install.sh` | instalace balíčků, překlad, zapnutí, vzhled, odinstalace |
-| `liquid-glass` | nástroj pro nastavení z příkazové řádky |
-| `tools/preview.py` | náhled shaderu bez KWinu (ladění vzhledu) |
+| `effect/` | KWin effect in C++ and GLSL, a modified copy of the built-in Blur effect from KWin 6.7.5, plus its settings page |
+| `kvantum/` | Kvantum theme `LiquidGlass`: translucent windows and menus for Qt/KDE apps (based on KvMojaveLight or KvMojave) |
+| `install.sh` | packages, build, enabling, app style, backup/restore, uninstall |
+| `liquid-glass` | command-line settings tool |
+| `tools/preview.py` | shader preview without KWin (for tuning the look) |
 
-## Instalace
+## Installation
 
 ```bash
-./install.sh --dry-run     # nejdřív se podívat, co se bude dít
-./install.sh               # instalace (sudo si řekne samo)
-./install.sh --dark        # tmavá varianta
+./install.sh --dry-run     # first see what will happen
+./install.sh               # install (asks for sudo when needed)
+./install.sh --dark        # dark variant
 ```
 
-Skript udělá tohle:
-0. **Zazálohuje současný vzhled** do `~/liquid-glass-zalohy/` (viz níže).
-1. Doinstaluje balíčky: `base-devel cmake extra-cmake-modules kwin qt6-base kconfig kvantum …`.
-2. Přeloží efekt a nainstaluje ho do `/usr/lib/qt6/plugins/kwin/effects/plugins/`.
-3. Vypne vestavěný efekt *Rozostření* a zapne *Tekuté sklo*.
-4. Vytvoří motiv Kvantum `LiquidGlass` a nastaví ho jako styl aplikací.
-5. Po dotazu nastaví panely jako plovoucí a průhledné (restartuje panel).
-6. Přidá pacman hook, který po aktualizaci KWinu připomene přeložení.
+The script:
+0. **Backs up the current look** to `~/liquid-glass-backups/` (see below).
+1. Installs packages: `base-devel cmake extra-cmake-modules kwin qt6-base kconfig kcmutils kvantum …`.
+2. Builds the effect and installs it into `/usr/lib/qt6/plugins/kwin/effects/`.
+3. Disables the built-in *Blur* effect and enables *Liquid Glass*.
+4. Creates the Kvantum theme `LiquidGlass` and sets it as the app style.
+5. After asking, makes panels floating and translucent (restarts the panel).
+6. Adds a pacman hook that reminds you to rebuild after a KWin update.
 
-Původní hodnoty si uloží do `~/.local/share/liquid-glass/state.env` a
-`./install.sh --uninstall` je vrátí.
+Original values are saved in `~/.local/share/liquid-glass/state.env` and
+`./install.sh --uninstall` restores them.
 
-Části jdou spustit i zvlášť: `./install.sh --only effect`, `--only kvantum`,
+Parts can be run separately: `./install.sh --only effect`, `--only kvantum`,
 `--only panel`.
 
-### Záloha a obnova vzhledu
+### Backing up and restoring the look
 
-Před každou instalací se uloží záloha
-`~/liquid-glass-zalohy/zaloha-DATUM-pred-instalaci.tar.gz`. Obsahuje nastavení
-vzhledu: `kwinrc`, `kdeglobals`, `plasmarc`, `plasmashellrc`, rozložení plochy
-a panelů, Kvantum, dekorace Breeze/Klassy, profily Konsole, nastavení GTK a
-uživatelské motivy, barvy a ikony v `~/.local/share`. V souboru
-`LIQUID-GLASS-ZALOHA.txt` uvnitř je zapsáno, jaký motiv byl nastavený.
+Before every installation a backup
+`~/liquid-glass-backups/backup-DATE-before-install.tar.gz` is created. It
+contains the look settings: `kwinrc`, `kdeglobals`, `plasmarc`,
+`plasmashellrc`, the desktop and panel layout, Kvantum, Breeze/Klassy
+decorations, Konsole profiles, GTK settings and user themes, colors and icons
+in `~/.local/share`. `LIQUID-GLASS-BACKUP.txt` inside records which theme was
+set.
 
 ```bash
-./install.sh --backup                 # zálohovat kdykoli ručně
-./install.sh --list-backups           # vypsat zálohy
-./install.sh --restore                # obnovit z poslední zálohy
-./install.sh --restore ~/liquid-glass-zalohy/zaloha-….tar.gz
+./install.sh --backup                 # back up manually at any time
+./install.sh --list-backups           # list backups
+./install.sh --restore                # restore the latest backup
+./install.sh --restore ~/liquid-glass-backups/backup-….tar.gz
 ```
 
-Obnova před přepsáním zazálohuje i současný stav (`…-pred-obnovou`), takže se
-dá vrátit. Obnovují se jen soubory ze seznamu vzhledu, nic jiného. Po obnově se
-odhlas a přihlas.
+A restore first backs up the current state (`…-before-restore`), so it can be
+undone. Only files from the look list are restored, nothing else. Backups made
+by the older Czech version in `~/liquid-glass-zalohy/` are found too. Log out
+and back in after a restore.
 
-### Po aktualizaci KWinu
+### After a KWin update
 
-KWin načte jen efekt přeložený přesně pro jeho verzi. Po aktualizaci Plasmy tedy
-sklo zmizí, ale nic se nerozbije. Vrátí ho:
+KWin only loads an effect built for exactly its version. After a Plasma update
+the glass disappears, but nothing breaks. To bring it back:
 
 ```bash
 ./install.sh --rebuild
 ```
 
-Pak se odhlas a přihlas.
+Then log out and back in.
 
-## Nastavení
+## Settings
 
-**V grafickém rozhraní:** *Nastavení systému → Správa oken → Efekty plochy → Tekuté
-sklo → ikona ozubeného kola.* Najdeš tam všechny hodnoty níže, výběr předvolby
-(iPhone, jemné, silné…) a průhlednost oken a nabídek z motivu Kvantum.
-Uloží se tlačítkem *Použít* a hned se projeví.
+**GUI:** *System Settings → Window Management → Desktop Effects → Liquid Glass
+→ gear icon.* It has all the values below in tabs (Glass, Rim, Animation, Apps),
+presets (iPhone, Subtle, Strong…) and the window and menu translucency of the
+Kvantum theme. *Apply* saves and applies the changes immediately.
 
-**Z příkazové řádky:**
+**Command line:**
 
 ```bash
-liquid-glass show                  # aktuální hodnoty
-liquid-glass preset iphone         # iphone | jemne | vychozi | silne | bez-ramecku | tmave | svetle
-liquid-glass set Refraction 28     # jedna hodnota, projeví se hned
-liquid-glass off / on              # vrátit vestavěné rozostření / zapnout sklo
+liquid-glass show                  # current values
+liquid-glass preset iphone         # iphone | subtle | default | strong | no-ring | dark | light
+liquid-glass set Refraction 28     # one value, applied immediately
+liquid-glass off / on              # back to the built-in Blur / enable the glass
 ```
 
-| Klíč | Výchozí | Význam |
+| Key | Default | Meaning |
 |---|---|---|
-| `BlurStrength` | 10 | síla rozmazání (1–15) |
-| `Saturation` | 160 | sytost barev za sklem (%) |
-| `NoiseStrength` | 3 | jemný šum proti pruhování |
-| `Refraction` | 20 | o kolik px se pozadí na hraně „ohne“ |
-| `EdgeWidth` | 26 | šířka pásu u hrany, kde se světlo láme (px) |
-| `ChromaticAberration` | 35 | barevný rozptyl na hraně (0–100) |
-| `Specular` | 55 | síla lesku (0–100) |
-| `TintStrength` / `DarkTint` | 8 / false | mléčný (světlý) nebo kouřový (tmavý) tón |
-| `RingWidth` | 6 | skleněný rámeček kolem běžných oken (px, 0 = vypnuto) |
-| `RingClarity` | 70 | jak čiré je sklo rámečku (0 = mléčné, 100 = skoro ostré pozadí) |
-| `WaveStrength` | 60 | vlnění pozadí pod sklem při přesouvání okna (0 = vypnuto) |
-| `BorderMoves` | true | tažení za okraj okna (ne roh) okno **přesouvá** místo roztahování; rohy dál mění velikost |
-| `RingExcludeClasses` | – | okna bez rámečku, např. `steam,firefox` |
-| `ForceGlassClasses` | – | sklo přes celé okno pro dané aplikace (smysl má jen u průhledných) |
-| `CornerRadius` | 10 | zaoblení, když ho okno samo neudává |
-| `MouseLight` | true | lesk sleduje kurzor |
-| `LiquidMotion` / `MotionStrength` | true / 50 | setrvačnost skla při posunu okna |
-| `IdleShimmer` | false | světlo pomalu „dýchá“ (stále překresluje, víc odběru) |
+| `BlurStrength` | 10 | blur strength (1–15) |
+| `Saturation` | 160 | color saturation behind the glass (%) |
+| `NoiseStrength` | 3 | subtle noise against banding |
+| `Refraction` | 20 | how many px the background "bends" at the edge |
+| `EdgeWidth` | 26 | width of the band along the edge where light refracts (px) |
+| `ChromaticAberration` | 35 | color dispersion at the edge (0–100) |
+| `Specular` | 55 | highlight strength (0–100) |
+| `TintStrength` / `DarkTint` | 8 / false | frosted (light) or smoky (dark) tint |
+| `RingWidth` | 6 | glass rim around normal windows (px, 0 = off) |
+| `RingClarity` | 70 | how clear the rim is (0 = frosted, 100 = almost sharp background) |
+| `WaveStrength` | 60 | ripples of the background under the glass while moving a window (0 = off) |
+| `BorderMoves` | true | dragging a window border (not a corner) or the glass rim **moves** the window instead of resizing; corners still resize |
+| `RingExcludeClasses` | – | windows without a rim, e.g. `steam,firefox` |
+| `ForceGlassClasses` | – | glass behind the whole window for these apps (only useful for translucent ones) |
+| `CornerRadius` | 10 | corner radius when the window does not report one |
+| `MouseLight` | true | the highlight follows the cursor |
+| `LiquidMotion` / `MotionStrength` | true / 50 | glass inertia while moving a window |
+| `IdleShimmer` | false | the light slowly "breathes" (repaints continuously, uses more power) |
 
-Hodnoty jsou v `~/.config/kwinrc` ve skupině `[Effect-liquidglass]`.
+The values live in `~/.config/kwinrc`, group `[Effect-liquidglass]`.
 
-### Tipy
+### Tips
 
-- **Konsole:** v profilu *Vzhled → Průhlednost* nastav 15–25 % a zapni
-  *Rozostřit pozadí*. Konsole si pak sklo vyžádá sama.
-- **Firefox, Chrome, GTK aplikace** mají vlastní neprůhledné pozadí, uvnitř okna
-  sklo nebude. Kolem nich je ale skleněný rámeček.
-- **Čitelnost:** pokud je text na skle hůř čitelný, zvyš `BlurStrength` nebo
-  `TintStrength`, případně v `~/.config/Kvantum/LiquidGlass/LiquidGlass.kvconfig`
-  sniž `reduce_window_opacity`.
-- **Stíny:** rámeček leží pod stínem okna. Pro výraznější sklo zmenši stín
-  v *Nastavení → Vzhled → Dekorace oken → Breeze → Stíny*.
+- **Konsole:** in the profile, *Appearance → color scheme → Edit…*, set
+  *Background transparency* to 15–25 % and enable *Blur background*. Konsole
+  then requests the glass itself.
+- **Firefox, Chrome, GTK apps** paint their own opaque background, so there is
+  no glass inside the window, but they get the glass rim.
+- **Firefox toolbars** can be made translucent with `userChrome.css`
+  (`toolkit.legacyUserProfileCustomizations.stylesheets` and
+  `browser.tabs.allow_transparent_browser` in `about:config`) plus
+  `liquid-glass set ForceGlassClasses firefox`.
+- **Readability:** if text on the glass is hard to read, raise `BlurStrength` or
+  `TintStrength`, or lower the window translucency in the settings (Apps tab).
+- **Shadows:** the rim lies under the window shadow. For a stronger glass look,
+  make the shadow smaller in the window decoration settings.
+- **Moving windows:** besides the border and rim, Meta + drag anywhere in a
+  window moves it (KDE default).
 
-## Řešení potíží
+## Troubleshooting
 
-| Potíž | Co zkusit |
+| Problem | What to try |
 |---|---|
-| `liquid-glass status` hlásí, že efekt neběží | odhlásit a přihlásit; po aktualizaci KWinu `./install.sh --rebuild` |
-| překlad selže (chyba v `liquidglass.cpp`) | KWin je jiné verze, než pro jakou je efekt psaný (6.7); viz níže |
-| sklo „bliká“ nebo je cítit zpomalení | `liquid-glass preset bez-ramecku`, `IdleShimmer false`, nižší `BlurStrength` |
-| nic nepomáhá | `liquid-glass off` vrátí vestavěné rozostření |
+| `liquid-glass status` says the effect is not running | log out and back in; after a KWin update `./install.sh --rebuild` |
+| `liquid-glass: command not found` | `~/.local/bin` is not in `PATH`: `source ~/.bashrc` or open a new terminal |
+| build fails (error in `liquidglass.cpp`) | KWin is a different version than the effect was written for (6.7); see below |
+| the glass flickers or things feel slow | `liquid-glass preset no-ring`, `IdleShimmer false`, lower `BlurStrength` |
+| nothing helps | `liquid-glass off` goes back to the built-in Blur |
 
-Logy efektu se zobrazí příkazem:
+Effect logs:
 ```bash
 journalctl --user -b | grep -i liquidglass
 ```
 
-## Jak to funguje
+## How it works
 
-Efekt vychází z vestavěného rozostření KWinu (algoritmus dual Kawase). Mění se
-poslední průchod, který kreslí na obrazovku (`effect/src/shaders/glass.frag`):
+The effect is based on KWin's built-in Blur (dual Kawase algorithm). The last
+pass, which draws to the screen, is replaced (`effect/src/shaders/glass.frag`):
 
-- **Lom:** vzdálenost od zaoblené hrany se počítá vzdálenostním polem
-  (`sdfRoundedBox`). V pásu u hrany se pozadí čte posunuté ve směru normály
-  hrany, takže obsah zpoza okraje se „ohne“ do skla.
-- **Barevný rozptyl:** červený a modrý kanál se čtou s mírně jiným posunem.
-- **Lesk:** tenká světlá linka na hraně s pevným světlem shora zleva, k tomu
-  odlesk, který sílí u kurzoru.
-- **Setrvačnost:** při posunu okna se ukládá vektor pohybu, který posune čtení
-  pozadí proti směru pohybu a pak plynule odezní (asi 90 ms).
-- **Rámeček kolem okna:** k oblasti skla se přidá pruh šířky `RingWidth` kolem
-  rámu okna. Pozadí se zachytává s okrajem navíc, aby lom měl co číst.
+- **Refraction:** the distance from the rounded edge comes from a signed
+  distance field (`sdfRoundedBox`). In a band along the edge the background is
+  read shifted along the edge normal, so content from beyond the edge "bends"
+  into the glass.
+- **Dispersion:** the red and blue channels are read with slightly different
+  offsets.
+- **Specular:** a thin light line on the edge lit from the top left, plus a
+  highlight that grows near the cursor.
+- **Inertia and ripples:** when a window moves, a motion vector shifts the
+  background reading against the movement and two travelling waves ripple it;
+  both fade out after the window stops.
+- **Rim around the window:** a band of `RingWidth` around the window frame is
+  added to the glass area and drawn with the sharp background for a clear look.
+  The background is captured with an extra margin so the refraction has
+  something to read.
+- **Moving by the border or rim:** an input filter inside KWin catches left
+  clicks on a decoration edge or on the rim and starts moving the window.
 
-Shader se dá ladit bez KWinu:
+The shader can be tuned without KWin:
 
 ```bash
 pip install moderngl pillow numpy
 python3 tools/preview.py --refraction 28 --chroma 0.6
 ```
 
-## Stav a omezení
+## Status and limitations
 
-- Efekt je přeložený a ověřený proti hlavičkám **KWinu 6.7.5** (stejná verze
-  jako na Archu k 2. 10. 2026). Shader se překládá a vykresluje (Mesa,
-  GLSL 1.40). Instalace a odinstalace jsou vyzkoušené naostro v kontejneru, jen
-  pacman byl nahrazený atrapou.
-- **Na skutečné ploše Plasmy to vyzkoušené není.** V kontejneru není grafický
-  čip, takže KWin nešel spustit s OpenGL. Je možné, že bude potřeba doladit
-  výchozí hodnoty nebo opravit drobnosti v kreslení rámečku.
-- Plasma 6.8 a novější: API KWinu se mezi verzemi mění. Pokud se efekt
-  nepřeloží, je potřeba ho upravit podle `src/plugins/blur` z dané verze KWinu
-  (změny bývají malé).
-- Nastavení panelu (`panelOpacity`, `floating` v `plasmashellrc`) je dělané
-  podle současné Plasmy. Kdyby nezabralo, nastav panel ručně v režimu úprav.
-- Na X11 efekt funguje, ale je laděný pro Wayland.
+- Built and checked against the **KWin 6.7.5** headers. The shader compiles and
+  renders (Mesa, GLSL 1.40). Installation and uninstallation were tested for
+  real in a container with pacman stubbed out.
+- Plasma 6.8 and newer: the KWin API changes between versions. If the effect
+  does not build, it needs to be adapted to `src/plugins/blur` of that KWin
+  version (changes are usually small).
+- The panel settings (`panelOpacity`, `floating` in `plasmashellrc`) follow
+  current Plasma. If they do not take effect, set the panel up manually in edit
+  mode.
+- Dragging the border or rim to move a window works on Wayland only. Over a
+  border the cursor still shows resize arrows (drawn by the decoration).
+- The effect works on X11 but is tuned for Wayland.
 
-## Licence
+## License
 
-GPL-2.0-or-later. Efekt je odvozený z KWinu (© autoři KWinu, viz hlavičky
-souborů).
+GPL-2.0-or-later. The effect is derived from KWin (© the KWin authors, see the
+file headers).
