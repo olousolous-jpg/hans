@@ -1297,7 +1297,8 @@ def _zp_vyslovne_tema(dotaz: str) -> bool:
 
 
 def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: int = 4,
-                  path: str = DB, zaloha_prehled: bool = False) -> dict:
+                  path: str = DB, zaloha_prehled: bool = False,
+                  bez_klauzi: bool = False) -> dict:
     """{rezim: 'prehled'|'vyznam'|'slova'|'nic', udalosti: [...], tema: bool}."""
     import numpy as np
     if not os.path.exists(path):
@@ -1308,7 +1309,7 @@ def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: i
     # hledání podle smyslu nic nenašlo a model si pak titulky VYMYSLEL. Téma
     # se bere jen z věty, která se na zprávy ptá (s ní i doplněk za otazníkem).
     _klauze = [k for k in re.split(r"(?<=[.!?;])\s+", dotaz or "") if k.strip()]
-    if len(_klauze) > 1:
+    if len(_klauze) > 1 and not bez_klauzi:
         _i = next((i for i, k in enumerate(_klauze)
                    if re.search(r"zpr[aá]v|novin|sv[eě]t|p[ií][sš]ou|ud[aá]lo|stalo",
                                 _bez_diakritiky(k))), None)
@@ -1550,6 +1551,16 @@ def zpravy_podklad(dotaz: str, config: dict, path: str = DB):
     a začátek plného českého článku, s médiem a časem."""
     from datetime import datetime as _dt
     r = zpravy_hledej(dotaz, config, limit=2, path=path)
+    # HANS_ZPRAVY_PODKLAD_CELA_VETA_V1 (7. 10.) — zúžení na klauzi (KLAUZE_V1)
+    # je stavěné pro příkaz /zpravy. U podkladu umí téma ZAHODIT: „…o detailech
+    # toho útoku z dneška? Jak se to stalo…“ → vybrána druhá věta (kvůli „stalo“),
+    # téma zůstalo v první → nic → dohledání na Wikipedii místo zprávy, kterou
+    # Hans má. Když zúžené hledání nic nedá, zkusí se celá věta.
+    # 📏 1 356 reálných vět: zúžení se týká 12, změna podkladu 0.
+    if ((r.get("rezim") != "vyznam" or not r["udalosti"]
+         or r["udalosti"][0]["skore"] < PODKLAD_PRAH)
+            and len([k for k in re.split(r"(?<=[.!?;])\s+", dotaz or "") if k.strip()]) > 1):
+        r = zpravy_hledej(dotaz, config, limit=2, path=path, bez_klauzi=True)
     if r.get("rezim") != "vyznam" or not r["udalosti"]:
         return None
     top = r["udalosti"][0]

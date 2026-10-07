@@ -210,7 +210,39 @@ class HansEveningReflection:
         except Exception as _rwe:
             _log.debug("resume_warmup nedostupné: %s", _rwe)
 
-    def run(self, target_date: Optional[str] = None) -> Optional[str]:
+    def _existing_reflection(self, date_str: str):
+        """HANS_NIGHT_RESTART_ONCE_V1 — (id, text) posledni reflexe daneho
+        dne z deniku, nebo None. Hleda se podle TITULKU (ts je cas zapisu)."""
+        try:
+            db = sqlite3.connect(self._diary_path, timeout=5.0)
+            row = db.execute(
+                "SELECT id, note FROM diary WHERE event_type='evening_reflection' "
+                "AND title=? ORDER BY id DESC LIMIT 1",
+                (f"Reflexe dne {date_str}",)).fetchone()
+            db.close()
+            if row and (row[1] or "").strip():
+                return int(row[0]), row[1]
+        except Exception as _e:
+            _log.debug("existing_reflection: %s", _e)
+        return None
+
+    def _stance_run_done(self, diary_id: int) -> bool:
+        """HANS_NIGHT_RESTART_ONCE_V1 — probehla uz z teto reflexe extrakce
+        postoju s vysledkem (cokoli krome vypadku modelu)?"""
+        try:
+            conn = self._stance_runs_conn()
+            try:
+                row = conn.execute(
+                    "SELECT result FROM stance_extract_runs WHERE diary_id=?",
+                    (int(diary_id),)).fetchone()
+            finally:
+                conn.close()
+            return bool(row and row[0] and row[0] != "llm_down")
+        except Exception:
+            return False
+
+    def run(self, target_date: Optional[str] = None,
+            reuse_existing: bool = False) -> Optional[str]:
         """Vygeneruje reflexi pro daný den (default: dnes).
 
         Args:
@@ -242,6 +274,19 @@ class HansEveningReflection:
         # mela chranit (tataz trida jako HANS_PAPER_TAKEAWAY_DEFERRED_V1).
         self._vram_handoff()
 
+        # HANS_NIGHT_RESTART_ONCE_V1 (7. 10.) — nocni tick po restartu
+        # prevezme reflexi, ktera uz v deniku je, a jen dojede navazujici
+        # analytiku. Rucni /denik (reuse_existing=False) pise dal novou.
+        _hotova = self._existing_reflection(date_str) if reuse_existing else None
+        if _hotova:
+            _refl_id, text = _hotova
+            _log.info("HANS_NIGHT_RESTART_ONCE_V1: reflexe %s uz v deniku je "
+                      "(id %d) — nepisu novou, dojizdim analytiku",
+                      date_str, _refl_id)
+            if not self._stance_run_done(_refl_id):
+                self._extract_stances(text, date_str, diary_id=_refl_id)
+            return self._after_reflection(text, date_str)
+
         # Pošli do synthesis
         text = self._synthesis.synthesize(
             topic="můj den",
@@ -268,7 +313,11 @@ class HansEveningReflection:
 
         # STANCE_EXTRACT_V1 — nazory z reflexe do stance store (mimo RAG)
         self._extract_stances(text, date_str, diary_id=_refl_id)
+        return self._after_reflection(text, date_str)
 
+    def _after_reflection(self, text: str, date_str: str) -> Optional[str]:
+        """HANS_NIGHT_RESTART_ONCE_V1 — navazujici analytika po reflexi
+        (vydeleno z `run`, aby ji slo dojet i nad jiz zapsanou reflexi)."""
         # HANS_TENDENCIES_V2 (3b) — po extrakci postojů přepočti tendence.
         # Tady (ne v calleru), ať to dostane manuální /denik i noční automatika.
         try:

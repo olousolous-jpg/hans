@@ -419,6 +419,10 @@ def korpus_kotva_balast() -> str:
     if not vety:
         return "OK"
     for v in vety:
+        # lomítkový příkaz hledáním v rozhovorech nejde a dvojtečka v názvu
+        # díla („/hledej <film> 2: <podtitul>“) není konec věty
+        if v.lstrip().startswith("/"):
+            continue
         for i, w in kotvy_ve_vete(v):
             pred = v[:v.find(w)].rstrip()
             if pred and pred[-1] in ".!?…:;":

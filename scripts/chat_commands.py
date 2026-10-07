@@ -3763,6 +3763,19 @@ _ZDROJ_STOP = {"cem", "čem", "kom", "sobe", "sobě", "tom", "tobe", "tobě",
                "nich", "ni", "ní", "nem", "něm", "tomhle", "tomto", "nem"}
 _ZDROJ_TEMA_PAT = re.compile(
     r"\b(?:o|k|ke)\s+([\w ěščřžýáíéúůďťňó-]{2,45}?)\s*[?.!]?$", re.IGNORECASE)
+# HANS_SOURCES_TOPIC_OBJECT_V1 (7. 10.) — téma i jako PŘEDMĚT („odkud znáš X“),
+# s iniciálami („o F. L. <Příjmení>“) a v PRVNÍ klauzi, když věta pokračuje
+# („…? četl jsi to někde?“). Bez tématu /zdroje vypíše jen poslední čtení —
+# na věc čtenou před měsícem tedy neodpoví.
+# 📏 36 reálných i testovacích vět na /zdroje: +3 témata, všechna správná.
+_ZDROJ_STOP2 = {"to", "ho", "ji", "je", "jej", "tohle", "toto", "tuhle", "ten",
+                "ta", "ty", "tu", "tuto", "tenhle", "me", "mě", "mne", "nas",
+                "nás", "vsechno", "všechno"}
+_ZDROJ_TEMA_KL = re.compile(
+    r"\b(?:o|k|ke)\s+([\w ěščřžýáíéúůďťňó.-]{2,45}?)\s*$", re.IGNORECASE)
+_ZDROJ_OBJ_KL = re.compile(
+    r"\bodkud\s+(?:zn[áa][šs]|zn[áa]te)\s+([\w ěščřžýáíéúůďťňó.-]{2,45}?)\s*$",
+    re.IGNORECASE)
 
 
 # HANS_VIDEL_KOHO_V2 — věta MÍŘÍ NA TAZATELE („kdy jsi MĚ viděl").
@@ -3792,6 +3805,22 @@ def _tema_ze_zdrojoveho_dotazu(raw: str) -> str:
     try:
         m = _ZDROJ_TEMA_PAT.search((raw or "").strip())
         if not m:
+            # HANS_SOURCES_TOPIC_OBJECT_V1 — první klauze věty
+            for _kl in re.split(r"[?!]+|\.(?=\s+[a-zěščřžýáíéúůďťňó])|,",
+                                (raw or "").strip()):
+                _kl = _kl.strip().rstrip(".")
+                if not _kl:
+                    continue
+                for _p in (_ZDROJ_TEMA_KL, _ZDROJ_OBJ_KL):
+                    _m = _p.search(_kl)
+                    if not _m:
+                        continue
+                    _sl = _m.group(1).split()
+                    if (_sl and len(_sl) <= 4 and not any(
+                            w.lower().strip(",.?!") in (_ZDROJ_STOP | _ZDROJ_STOP2)
+                            for w in _sl)):
+                        return " ".join(_sl).lower()
+                break
             return ""
         slova = m.group(1).split()
         # ⚠️ Strop 4 slov je kvůli anglickým souslovím („Icon of the Seas");
@@ -4106,6 +4135,21 @@ register(
         r"\bsleduj\w*\s+(?:v[ůu]bec\s+|n[ěe]jak[ée]\s+)?zpr[áa]vy\b",
         r"\bzpr[áa]v\w*\b[^.?!]{0,40}\b(?:zaznamenal|zachytil|zaujal[oa]?|[čc]etl|vid[ěe]l|sly[šs]el)\w*",
         r"\b(?:zaznamenal|zachytil|[čc]etl|sly[šs]el)\w*\b[^.?!]{0,30}\bve?\s+zpr[áa]v",
+        # HANS_ZPRAVY_DENI_MISTO_V1 (7. 10.) — „co se DNES děje v <zemi>?“ šlo do
+        # volného hovoru (shoda se zprávami pod prahem podkladu) a model vypsal
+        # VYMYŠLENÉ titulky ve tvaru přehledu zpráv. Příkaz na tutéž větu vrací
+        # skutečné zprávy s odkazy, na neznámé místo „nic jsem nenašel“.
+        # Úzké ZÁMĚRNĚ: musí zaznít časové slovo A místo za „v/ve/na“; věta
+        # o tazateli (ti, vám) a místa domácnosti, dny a TV nesednou.
+        # 📏 1 356 reálných vět + 1 262 vět tazatele: 0 shod (nic neukradne).
+        (r"^(?![^?!]*\b(?:ti|tob[ěe]|tebe|v[áa]m|v[áa]s)\b)"
+         r"(?=[^?!]*\b(?:dnes\w*|te[ďd]|aktu[áa]ln\w*|pr[áa]v[ěe]|v[čc]era|nyn[íi]|moment[áa]ln\w*)\b)"
+         r"[^?!]*\bco\s+(?:se\s+)?(?:\w+\s+){0,3}?"
+         r"(?:d[ěe]je|stalo|ud[áa]lo|d[ěe]lo|je\s+(?:\w+\s+)?nov[ée]ho)\s+(?:\w+\s+){0,2}?(?:v|ve|na)\s+"
+         r"(?!dom|byt|pokoj|kuchyn|ob[ýy]v|lo[žz]n|zahrad|m[ée]\b|moj|na[šs]|va[šs]|tv[éeoůu]|posledn|noci|pond|"
+         r"[úu]ter|st[řr]ed|[čc]tvrt|p[áa]t|sobot|ned[ěe]l|t[ýy]d|v[íi]kend|pr[áa]c|[šs]kol|televiz|tv\b|kodi|"
+         r"film|tom|t[ée]\b|tomhle|hlav|studi|den[íi]k|sv[ěe]t|zpr[áa]v|novin|okol|m[íi]stnost|kamer|pam[ěe]t|"
+         r"syst[ée]m|po[čc][íi]ta|pc\b)\w{3,}"),
         # HANS_ZPRAVY_SVET_NE_DENIK_V1 — „co se dneska událo ve světě“
         r"\bco\s+se\s+(?:\w+\s+){0,2}(?:stalo|d[ěe]je|d[ěe]lo|ud[áa]lo)\w*\s+(?:\w+\s+){0,2}ve?\s+sv[ěe]t",
     ],
@@ -4349,6 +4393,13 @@ register(
         # to zamítla („ptá se na svět") — takže Hans řekl, že zdroj nemá,
         # ačkoli ho v deníku s odkazem MÁ. Povoleno až 4 slova mezi.
         r"\bodkud\s+(\w+\s+){0,4}[čc]erp[áa]([šs]|te)\b",
+        # HANS_SOURCES_ODKUD_ZNAS_V1 (7. 10.) — „odkud znáš/víš X“ bez
+        # „to/jsi“ propadlo: router zvolil /cetl, druhá brána ho zamítla
+        # („ptá se na svět“) a Hans řekl, že odkaz nemá, ačkoli článek
+        # s odkazem četl týž den. 📏 2 369 reálných vět: +3 („odkud víš
+        # o <osobnosti>?“ 2×, dřív abstinence; „odkud víš, že tu někdo je?“).
+        r"\bodkud\s+((to|ho|ji|je|jej|tohle|o\s+tom)\s+)?"
+        r"(zn[áa][šs]|zn[áa]te|v[íi][šs]|v[íi]te)\b",
         r"\b(z\s+)?[čc]eho\s+(jsi|si|jste)\s+.{0,10}(čerpal|cerpal|vych[áa]zel)",
         r"\b(z\s+)?[čc]eho\s+(studuje[šs]|studujete)\b",
         r"\b(d[áa][šs]|d[áa]te|m[áa][šs]|m[áa]te|po[šs]le[šs]|po[šs]lete)"

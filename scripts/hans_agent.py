@@ -197,6 +197,28 @@ def _ma_tv_podnet(msg: str) -> bool:
     return bool(_TV_PODNET.search(f))
 
 
+# ── HANS_AGENT_WEATHER_CUE_V1 (7. 10.) — počasí jen se ZMÍNKOU o počasí ─────
+# Doloženo testem 7. 10.: „co se tam deje dnes?“ (o cizí zemi) a dotaz na
+# zprávu o útoku na město → `report_weather` (conf 0,80) → „Za oknem: …“.
+# Stejná stavba jako `HANS_AGENT_TV_CUE_V1`; popis akce se NEMĚNÍ.
+# 📏 Retro korpus 758 vět: router zvolil počasí u 9; bez podnětu 3 a všechny
+# špatně (sport zítra, kalendář na zítra, „ani internet o to nepíše?“),
+# všech 6 skutečných dotazů podnět má. Po zamítnutí jde věta běžnou cestou.
+_POCASI_PODNET = re.compile(
+    r"\b(pocasi\w*|venku|venkovni\w*|prs\w*|snez\w*|snih\w*|dest\w*|lij\w*|"
+    r"tepl\w*|zim\w*|chlad\w*|mraz\w*|mrzn\w*|stup\w*|slun\w*|vitr|vetr\w*|"
+    r"fouk\w*|bour\w*|predpoved\w*|okn\w*|mlh\w*|oblac\w*|zatazen\w*|jasno|"
+    r"vedr\w*|hork\w*|mokr\w*|obleci\w*|oblect|bund\w*|destnik\w*|"
+    r"hezk\w*|pekn\w*|oskliv\w*|vikend\w*)\b")
+
+
+def _ma_pocasi_podnet(msg: str) -> bool:
+    import unicodedata as _ud
+    f = "".join(c for c in _ud.normalize("NFD", (msg or "").lower())
+                if _ud.category(c) != "Mn")
+    return bool(_POCASI_PODNET.search(f))
+
+
 # ── HANS_STUDY_QUESTION_GUARD_V1 (30.8.) — OTÁZKA NENÍ POKYN KE STUDIU ──────
 # Doloženo dlouhým ověřovacím rozhovorem 30.8.:
 #   „jaké hrady jsou v Českém ráji?"  → „Mám si »hrady v Českém ráji« zařadit
@@ -2209,6 +2231,10 @@ class AgentRouter:
         dict(marker="HANS_AGENT_TV_CUE_V1", akce=("report_now_playing",),
              podminka=lambda s, aid, msg, dec, h: not _ma_tv_podnet(msg),
              verdikt=None, duvod="věta nemluví o TV ani přehrávání"),
+        # HANS_AGENT_WEATHER_CUE_V1 (7. 10.) — viz `_ma_pocasi_podnet`.
+        dict(marker="HANS_AGENT_WEATHER_CUE_V1", akce=("report_weather",),
+             podminka=lambda s, aid, msg, dec, h: not _ma_pocasi_podnet(msg),
+             verdikt=None, duvod="věta nemluví o počasí"),
     )
 
     def _zapis_zajem_mluvciho(self, decision: dict, handler, message: str):

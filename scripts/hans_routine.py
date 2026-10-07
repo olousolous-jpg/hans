@@ -599,6 +599,8 @@ class HansRoutine:
             with open(self._state_path, "r", encoding="utf-8") as f:
                 s = json.load(f)
             self._last_reflection_date = s.get("last_reflection_date", "")
+            # HANS_NIGHT_RESTART_ONCE_V1 — shrnuti dne se po restartu neopakuje
+            self._last_summary_date = s.get("last_summary_date", "")
             self._last_rel_reflection_date = s.get(
                 "last_rel_reflection_date", "")
             self._last_severka_check = s.get("last_severka_check", "")
@@ -637,6 +639,7 @@ class HansRoutine:
             with open(self._state_path, "w", encoding="utf-8") as f:
                 json.dump({
                     "last_reflection_date": self._last_reflection_date,
+                    "last_summary_date": getattr(self, "_last_summary_date", ""),  # HANS_NIGHT_RESTART_ONCE_V1
                     "last_rel_reflection_date":
                         self._last_rel_reflection_date,
                     "last_severka_check": self._last_severka_check,
@@ -2534,6 +2537,7 @@ class HansRoutine:
     def _nt_night_summary(self, ctx):
         if self._night_summary_enabled and self._last_summary_date != ctx.today:
             self._last_summary_date = ctx.today
+            self._save_routine_state()  # HANS_NIGHT_RESTART_ONCE_V1
             self._write_night_summary()
 
     def _nt_dream(self, ctx):
@@ -2599,7 +2603,11 @@ class HansRoutine:
                     self._g5d_verify_day(ctx.today)
                 except Exception as _ve:
                     _log.warning('G5D: noční verifikace selhala (reflexe pokračuje): %s', _ve)
-                result = self._reflection.run()
+                # HANS_NIGHT_RESTART_ONCE_V1 (7. 10.) — text reflexe se do
+                # deniku zapise hned, razitko az po ~25 min navazujici
+                # analytiky. Restart mezi tim psal reflexi tehoz dne znovu
+                # (6. 10.: 4x). Nocni tick proto existujici text PREVEZME.
+                result = self._reflection.run(reuse_existing=True)
                 if result:
                     self._last_reflection_date = ctx.today
                     self._save_routine_state()  # ROUTINE_STATE_PERSIST_V1
