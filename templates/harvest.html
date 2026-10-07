@@ -53,12 +53,22 @@
        align-items:center;justify-content:center;padding:16px}
   #big img{max-width:96vw;max-height:92vh;image-rendering:pixelated;border-radius:6px}
   .pozn{color:var(--fg2);font-size:12.5px;margin:10px 0 16px;line-height:1.5}
+  /* FACE_HARVEST_MIXED_V1 */
+  .th.men img{outline:3px solid var(--org);outline-offset:-1px}
+  .th .kdo{position:absolute;left:0;right:0;bottom:0;background:#000b;color:var(--org);
+           font-size:10.5px;text-align:center;border-radius:0 0 5px 5px;pointer-events:none}
+  .rozbor{font-size:13px;color:var(--fg2);margin:-3px 0 9px}
+  .rozbor.mix{color:var(--org)} .rozbor.mix b{color:var(--org)}
+  .vic{background:none;border:1px dashed #6c7086;color:var(--acc);height:74px;padding:0 12px}
+  .sedi{background:#2c4a34;border-color:#3d6e4a}
+  .nav{margin-top:6px;font-size:13px} .nav a{color:var(--acc);margin-right:14px}
 </style>
 </head>
 <body>
 <header>
   <h1>Označení nasbíraných tváří</h1>
   <div class="sub" id="stav">načítám…</div>
+  <div class="nav"><a href="/harvest">k označení</a><a href="/harvest?podezrele=1">revize už označených</a></div>
 </header>
 
 <div class="wrap">
@@ -68,6 +78,11 @@
     <b>projeď je očima</b>, a když v jedné uvidíš dva různé lidi, dej
     <b>Rozdělit</b>. Hansův tip je nápověda, ne hotová odpověď.
     Kliknutím na náhled se zvětší.
+    <br><br>
+    U větší skupiny je vidět jen výběr — tlačítkem <b>ukázat všech N</b> ji rozbalíš celou.
+    Řádek „podle dřívějších štítků“ říká, komu se snímky skupiny podobají;
+    <b style="color:var(--org)">oranžově orámované</b> jdou proti většině a jsou vždy vpředu.
+    Je to nápověda — rozhodují tvoje oči.
     <br><br>
     <b>⚠️ Profily a natočené hlavy NEMAŽ.</b> Vypadají k ničemu, ale galerie je
     potřebuje — bez nich tě systém nepozná pokaždé, když se nedíváš do kamery.
@@ -92,6 +107,9 @@
 
 <script>
 let JMENA = [], GRP = [], dlgTarget = null;
+// FACE_HARVEST_MIXED_V1 — rozbalené skupiny přežijí překreslení i pravidelné načtení
+const ROZBALENO = new Set();
+const klic = g => g.day + '|' + (g.files[0] || '');
 
 function msg(t, cls) {
   const m = document.getElementById('msg');
@@ -108,6 +126,9 @@ const SKRYT = _seznam('skryt');
 // další volitelné filtry: tip=<jméno>,<jméno>,zadny · den=RRRR-MM-DD · cast=den|vecer (den = 7–17 h)
 const F_TIP = _seznam('tip'), F_DEN = _Q.get('den') || '', F_CAST = _Q.get('cast') || '';
 const FILTR = SKRYT.length || F_TIP.length || F_DEN || F_CAST;
+// FACE_HARVEST_MIXED_V1 — `/harvest?podezrele=1`: už OZNAČENÉ snímky, které podle
+// snímků z jiných dnů vypadají jako jiná osoba. Vždy se ukazují všechny.
+const REVIZE = _Q.has('podezrele');
 function projde(g) {
   if (SKRYT.includes(g.tip)) return false;
   if (F_TIP.length && !F_TIP.includes(g.tip || 'zadny')) return false;
@@ -120,7 +141,19 @@ function projde(g) {
   return true;
 }
 
+async function nactiRevizi() {
+  const d = await (await fetch('/api/harvest/podezrele')).json();
+  JMENA = d.jmena || [];
+  GRP = (d.bloky || []).map(b => ({day: b.day, files: b.files, pocet: b.pocet,
+    first: b.first, last: b.last, tip: null, nahledy: b.files, revize: b}));
+  document.getElementById('stav').textContent = GRP.length
+    ? `revize: ${GRP.length} bloků · ${d.celkem} označených snímků vypadá jako jiná osoba`
+    : 'revize: nic podezřelého';
+  kresli();
+}
+
 async function nacti() {
+  if (REVIZE) return nactiRevizi();
   const r = await fetch('/api/harvest/groups' + (FILTR ? '?limit=5000' : ''));
   const d = await r.json();
   JMENA = d.jmena || [];
@@ -144,20 +177,43 @@ function kresli() {
     el.className = 'grp'; el.id = 'g' + gi;
     const cas = g.first.slice(11, 16) + '–' + g.last.slice(11, 16);
     const den = g.day;
-    const thumbs = (g.nahledy || g.files).map(f =>
-      `<div class="th" data-f="${f}">
+    const men = (g.rozbor && g.rozbor.mensina) || {};
+    const cele = g.revize || ROZBALENO.has(klic(g));
+    const ukaz = cele ? [...g.files].sort((a, b) => (b in men) - (a in men))
+                      : (g.nahledy || g.files);
+    const skryto = g.files.length - ukaz.length;
+    const thumbs = ukaz.map(f =>
+      `<div class="th${f in men ? ' men' : ''}" data-f="${f}"${f in men ? ` title="vypadá jako ${men[f]}"` : ''}>
          <img loading="lazy" src="/api/harvest/img/${den}/${f}" alt="">
+         ${f in men ? `<span class="kdo">${men[f]}</span>` : ''}
          <button class="del" title="vyřadit tenhle snímek (ventilátor, zátylek…)"
                  onclick="smaz(event,${gi},'${f}')">✕</button>
-       </div>`).join('');
+       </div>`).join('')
+      + (skryto > 0 ? `<button class="vic" onclick="rozbal(${gi})">ukázat všech ${g.files.length}</button>` : '')
+      + (!g.revize && cele && g.files.length > 12 ? `<button class="vic" onclick="rozbal(${gi})">sbalit</button>` : '');
+    let rozbor = '';
+    if (g.revize) {
+      rozbor = `<div class="rozbor mix">označeno <b>${g.revize.label}</b>, podle snímků z jiných dnů vypadá jako
+        <b>${g.revize.vypada}</b> · ten den má štítek ${g.revize.label} celkem ${g.revize.stitku_ten_den} snímků</div>`;
+    } else if (g.rozbor && (Object.keys(g.rozbor.hlasy).length || g.rozbor.nejiste)) {
+      const h = Object.entries(g.rozbor.hlasy).sort((a, b) => b[1] - a[1])
+        .map(([n, c]) => `${c}× ${n}`).join(' · ');
+      const nm = Object.keys(men).length;
+      const jinak = g.tip && g.rozbor.vetsina && g.rozbor.vetsina !== g.tip;
+      rozbor = `<div class="rozbor${nm || jinak ? ' mix' : ''}">podle dřívějších štítků: ${h || '—'}`
+        + (g.rozbor.nejiste ? ` · ${g.rozbor.nejiste}× nejisté` : '')
+        + (jinak ? ` — <b>⚠ neshoduje se s Hansovým tipem</b>` : '')
+        + (nm ? ` — <b>⚠ ${nm} snímků jde proti většině, rozbal a zkontroluj</b>` : '') + `</div>`;
+    }
     const btns = JMENA.map(n =>
       `<button class="jmeno" onclick="oznac(${gi},'${n}')">${n}</button>`).join('');
     el.innerHTML =
       `<div class="hd"><span class="cas">${den} ${cas}</span>
          <span class="pocet">${g.pocet} snímků</span>
          ${g.tip ? `<span class="tip">Hans tipuje: <b>${g.tip}</b></span>` : ''}</div>
+       ${rozbor}
        <div class="thumbs">${thumbs}</div>
-       <div class="btns">${btns}
+       <div class="btns">${g.revize ? `<button class="sedi" onclick="sedi(${gi})">štítek ${g.revize.label} sedí</button>` : ''}${btns}
          <button onclick="jinyDlg(${gi})">někdo jiný…</button>
          <button class="neni" onclick="oznac(${gi},'neni_tvar')">není tvář</button>
          <button class="split" onclick="rozdel(${gi})">rozdělit</button>
@@ -175,6 +231,23 @@ function kresli() {
 }
 
 document.getElementById('big').onclick = e => { e.currentTarget.style.display = 'none'; };
+
+// FACE_HARVEST_MIXED_V1
+function rozbal(gi) {
+  const k = klic(GRP[gi]);
+  if (ROZBALENO.has(k)) ROZBALENO.delete(k); else ROZBALENO.add(k);
+  kresli();
+}
+// Revize: snímky jsem viděl a štítek sedí → příště se nenabídnou.
+async function sedi(gi) {
+  const g = GRP[gi];
+  document.getElementById('g' + gi).classList.add('done');
+  const d = await (await fetch('/api/harvest/overeno', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({day: g.day, files: g.files})})).json();
+  if (d.ok) { msg(`Potvrzeno ${d.overeno} snímků`, 'ok'); GRP.splice(gi, 1); kresli(); }
+  else { document.getElementById('g' + gi).classList.remove('done'); msg('Chyba při ukládání', 'err'); }
+}
 
 function jinyDlg(gi) {
   dlgTarget = gi;
@@ -221,7 +294,11 @@ async function oznac(gi, label, potvrzeno) {
                           potvrzeno: !!potvrzeno})
   });
   const d = await r.json();
-  if (d.ok) { msg(`Označeno ${d.oznaceno} snímků jako „${label}“`, 'ok'); nacti(); return; }
+  if (d.ok) {
+    msg(`Označeno ${d.oznaceno} snímků jako „${label}“`, 'ok');
+    if (REVIZE) { GRP.splice(gi, 1); kresli(); } else nacti();
+    return;
+  }
   if (d.potvrdit) {
     // pojistka proti úkliku — 10.8. bylo takhle 66 snímků označeno cizím jménem
     el.classList.remove('done');
@@ -244,7 +321,7 @@ async function rozdel(gi) {
   if (!d.ok || d.casti.length < 2) { msg('Rozdělit se nepodařilo (málo snímků)', 'err'); return; }
   const nove = d.casti.map(files => ({
     day: g.day, files: files, pocet: files.length,
-    first: g.first, last: g.last, tip: g.tip,
+    first: g.first, last: g.last, tip: g.tip, revize: g.revize,
     nahledy: files.length > 12
       ? [...new Set(Array.from({length: 12}, (_, i) =>
           files[Math.round(i * (files.length - 1) / 11)]))]
@@ -256,7 +333,7 @@ async function rozdel(gi) {
 }
 
 nacti();
-setInterval(() => { if (!document.getElementById('dlg').open) nacti(); }, 120000);
+setInterval(() => { if (!REVIZE && !document.getElementById('dlg').open) nacti(); }, 120000);
 </script>
 </body>
 </html>

@@ -96,6 +96,8 @@ def posud(config: dict, diary_path: str, max_n: int = 30) -> dict:
     dc = _cfg(config)
     model = str(dc.get("stance_judge_model", "qwen2.5:14b"))
     faktor = float(dc.get("stance_defend_factor", 0.5))
+    # KOLAC_DEFEND_GAP_V1 — rozhodnutí uživatele 7. 10.: posílení obhajobou nejvýš 1× za 5 dní
+    mezera = float(dc.get("stance_defend_gap_days", 5))
     stari = float(dc.get("stance_judge_max_age_days", 14)) * 86400
     out = {"posouzeno": 0, "CONCEDED": 0, "DEFENDED": 0, "OFFTOPIC": 0, "nevyslo": 0}
     c = _conn(diary_path)
@@ -130,7 +132,7 @@ def posud(config: dict, diary_path: str, max_n: int = 30) -> dict:
             store.contradict(claim, counter_claim=_posledni_replika(dialog, jmeno),
                              source="kolac_debate")
         elif slovo == "DEFENDED":
-            store.defend(claim, faktor)
+            store.defend(claim, faktor, min_gap_days=mezera)
         else:
             store.challenge_held(claim)
         c = _conn(diary_path)

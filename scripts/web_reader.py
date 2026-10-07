@@ -418,6 +418,7 @@ class WebReader:
         # tím neztrácíme — anglické „of the" v seznamu není.
         _phrase = bool(re.search(r"[,:;]|\s(?:a|i|nebo|se|si|v|ve|na|o|od|"
                                  r"pro|při|za|s|k|do)\s", query or "", re.I))
+        _pfx_zaloha = None      # HANS_WIKI_BEST_COVERAGE_V1
         # 1) prefixsearch — přesné začátky titulů (u fráze se přeskočí)
         try:
             if _phrase:
@@ -458,7 +459,13 @@ class WebReader:
                             .get("wiki_title_min_coverage", 0.4))
                         and not (_pcov < 1.0
                                  and not _ma_presny_token(query, _best))):
-                    return _best
+                    # HANS_WIKI_BEST_COVERAGE_V1 (7. 10.) — našeptávač na SKLONĚNÉ
+                    # slovo vrací heslo se stejným začátkem: „Anglii“ → „Angličtina“
+                    # (plné pokrytí jen prefixem). Bez přesného tokenu se proto
+                    # nejdřív zeptáme srsearch; prefixový nález je záloha.
+                    if _ma_presny_token(query, _best):
+                        return _best
+                    _pfx_zaloha = _best
                 _log.debug("Wikipedia prefixsearch %r pro %r pod prahem → "
                            "zkouším srsearch", _best, query)
         except _SkipPrefix:
@@ -476,7 +483,7 @@ class WebReader:
             self._note_http(r)
             hits = r.json().get("query", {}).get("search", [])
             if not hits:
-                return None
+                return _pfx_zaloha
             # threshold 0.6 = min 60% query tokens musí být v titulu. Nastaveno
             # po ostrém testu (0.5 pouštělo „Technologie 3D rekonstrukce" →
             # „Pozemské technologie ve Hvězdné bráně" jen na shodu „technologie").
@@ -484,12 +491,21 @@ class WebReader:
                               .get("wiki_title_min_score", 0.6))
             best_title = None
             best_score = 0.0
+            _best_cov = -1.0
             for h in hits:
                 t = h.get("title") or ""
                 s = _title_similarity(query, t)
-                if s > best_score:
+                # HANS_WIKI_BEST_COVERAGE_V1 — při STEJNÉ shodě vyhrává titul, který
+                # dotaz pokrývá líp („Anglii“: „Ovládnutí Anglie Normany“ 0,33 ×
+                # „Anglie“ 1,00 — dřív se bral první a pak se zamítl pro pokrytí),
+                # při stejném pokrytí kratší titul.
+                c = _title_coverage(query, t)
+                if (s > best_score or (s == best_score and s > 0 and (
+                        c > _best_cov or (c == _best_cov and best_title
+                                          and len(t) < len(best_title))))):
                     best_score = s
                     best_title = t
+                    _best_cov = c
             # HANS_WIKI_COVERAGE_V1 — shoda musí platit i opačně
             _min_cov = float((self.config.get("curiosity", {}) or {})
                              .get("wiki_title_min_coverage", 0.4))
@@ -504,12 +520,12 @@ class WebReader:
                             "(pokrytí %.2f jen prefixové, žádný token nesedí "
                             "přesně) — raději nic než cizí článek",
                             query, best_title, _cov)
-                        return None
+                        return _pfx_zaloha
                     return best_title
                 _log.info("HANS_WIKI_COVERAGE_V1: %r → %r zamítnuto "
                           "(pokrytí titulu %.2f < %.2f) — raději nic než "
                           "cizí článek", query, best_title, _cov, _min_cov)
-                return None
+                return _pfx_zaloha
             # HANS_STUDY_WIKI_RELAX_V1 — dobré parafráze („Románské stavebnictví"
             # → „Románská architektura") skórují 0.5 STEJNĚ jako garbage, ALE
             # garbage je DLOUHÝ tangenciální titul („Pozemské technologie ve
@@ -529,7 +545,7 @@ class WebReader:
                        best_title, best_score, min_score)
         except Exception as e:
             _log.debug("Wikipedia srsearch error: %s", e)
-        return None
+        return _pfx_zaloha      # HANS_WIKI_BEST_COVERAGE_V1 (None, když prefix nic nedal)
 
     def wikipedia_search_candidates(self, query: str, lang: str = "cs",
                                     limit: int = 6) -> list:

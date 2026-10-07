@@ -1097,6 +1097,10 @@ def agent_stav_domu(aid: str, tazatel: str, veta: str = "jaká je tu teplota?") 
     ag.config = _cfg()
     ag.enabled = True
     ag.threshold = 0.5
+    # stav, který jinak zakládá __init__ — bez něj `propose` spadlo na
+    # AttributeError a do provozního logu šlo varování při každém běhu sady
+    ag._rejected, ag._last_fire, ag._pending = {}, {}, {}
+    ag.reject_cooldown, ag.cooldown_default = 3600, 60
     ag._actionable = lambda msg: True
     ag._route = lambda h, n, m: {"action": aid, "confidence": 1.0, "args": {}}
     ag._uplatni_pravidla = lambda aid_, *a, **k: aid_

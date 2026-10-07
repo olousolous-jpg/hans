@@ -414,8 +414,14 @@ async def objekty_label(payload: dict):
 
 @app.get("/api/harvest/groups")
 async def harvest_groups(limit: int = 60):
-    from scripts.face_harvest import known_names, load_sessions
+    from scripts.face_harvest import known_names, load_sessions, rozbor_skupin
     gs = load_sessions()[:limit]
+    # FACE_HARVEST_MIXED_V1 — komu se snímky skupiny podobají podle dřívějších štítků
+    try:
+        rozbor_skupin(gs)
+    except Exception as _e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning("harvest rozbor: %s", _e)
     for g in gs:
         f = g["files"]
         # rozptýlený vzorek přes CELOU skupinu — kdyby se do ní vloudil
@@ -423,6 +429,10 @@ async def harvest_groups(limit: int = 60):
         idx = sorted({round(i * (len(f) - 1) / 11) for i in range(12)}) if len(f) > 12 \
             else list(range(len(f)))
         g["nahledy"] = [f[i] for i in idx]
+        # snímky proti většině dopředu, ať jsou vidět i bez rozkliknutí
+        _men = [x for x in f if x in ((g.get("rozbor") or {}).get("mensina") or {})][:8]
+        if _men:
+            g["nahledy"] = _men + [x for x in g["nahledy"] if x not in _men]
     return {"skupiny": gs, "jmena": known_names(),
             "celkem": sum(g["pocet"] for g in gs)}
 
@@ -453,6 +463,24 @@ async def harvest_label(payload: dict):
                     "navrh": chk.get("navrh"), "skore": chk.get("skore")}
     n = set_label_files(day, files, label)
     return {"ok": True, "oznaceno": n, "label": label}
+
+
+@app.get("/api/harvest/podezrele")
+async def harvest_podezrele():
+    """FACE_HARVEST_MIXED_V1 — už označené snímky, které vypadají jako jiná osoba."""
+    from scripts.face_harvest import known_names, podezrele_oznacene
+    bl = podezrele_oznacene()
+    return {"bloky": bl, "jmena": known_names(),
+            "celkem": sum(b["pocet"] for b in bl)}
+
+
+@app.post("/api/harvest/overeno")
+async def harvest_overeno(payload: dict):
+    from scripts.face_harvest import potvrd_stitek
+    day = payload.get("day"); files = payload.get("files") or []
+    if not day or not files:
+        raise HTTPException(400, "chybí day/files")
+    return {"ok": True, "overeno": potvrd_stitek(day, files)}
 
 
 @app.post("/api/harvest/delete")

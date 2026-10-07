@@ -537,6 +537,7 @@ def set_label_files(day: str, files: list, label: str, root="data/harvest") -> i
             continue
         if r.get("file") in want:
             r["label"] = label
+            r.pop("overeno", None)      # FACE_HARVEST_MIXED_V1
             n += 1
         rows.append(r)
     tmp = p.with_suffix(".tmp")
@@ -895,3 +896,183 @@ def coverage(root="data/harvest", full=False) -> dict:
             if j is not None:
                 d["tmava_tvar" if j < 90 else "svetla_tvar"] += 1
     return res
+
+
+# ── FACE_HARVEST_MIXED_V1 (7. 10.) — smíšené skupiny a revize štítků ────────
+# Stránka ukazovala z velké skupiny jen 12 náhledů, takže druhý člověk uvnitř
+# nebyl vidět a celá skupina dostala jedno jméno. Měření 7. 10.: 444 z 8 302
+# označených snímků má ≥ 12 z 15 nejpodobnějších snímků z JINÝCH dnů pod jiným
+# jménem, soustředěně v blocích (např. 67 ze 147 v jedné hodině).
+# Tři věci: rozbor skupiny před označením, výpis podezřelých už označených,
+# a potvrzení „štítek sedí“ (pole `overeno`), aby se blok nenabízel znovu.
+# ⚠️ Je to NÁPOVĚDA, ne pravda: tytéž vektory pletou členy domácnosti i při
+# rozpoznávání. Nic se samo nepřeznačuje.
+_REF_CACHE = {"klic": None, "val": None}
+
+
+def _oznacene_matice(root="data/harvest"):
+    """(jména, dny, soubory, časy, ověřeno, E) označených vzorků známých osob;
+    cache podle času změny `meta.jsonl`."""
+    rootp = Path(root)
+    klic = tuple((d.name, (d / "meta.jsonl").stat().st_mtime_ns)
+                 for d in sorted(rootp.iterdir())
+                 if d.is_dir() and (d / "meta.jsonl").is_file())
+    if _REF_CACHE["klic"] == klic:
+        return _REF_CACHE["val"]
+    jm, dny, soub, casy, over, E = [], [], [], [], [], []
+    for den, _ in klic:
+        for line in open(rootp / den / "meta.jsonl", encoding="utf-8"):
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            lab = r.get("label")
+            if not lab or lab in ("nikdo", "neni_tvar") or lab.startswith("_"):
+                continue
+            e = np.frombuffer(base64.b64decode(r["emb"]), np.float16).astype(np.float32)
+            n = float(np.linalg.norm(e))
+            if n < 1e-6:
+                continue
+            jm.append(lab); dny.append(den); soub.append(r.get("file"))
+            casy.append(r.get("time") or ""); over.append(bool(r.get("overeno")))
+            E.append(e / n)
+    val = (np.array(jm), np.array(dny), soub, casy, np.array(over, bool),
+           np.array(E, np.float32) if E else np.zeros((0, 512), np.float32))
+    _REF_CACHE.update(klic=klic, val=val)
+    return val
+
+
+def _hlasuj(Eq, den, ref, k=15):
+    """Pro každý řádek `Eq` (snímky dne `den`): (jméno, podíl) většiny mezi `k`
+    nejpodobnějšími OZNAČENÝMI snímky z jiných dnů. Bez podkladu (None, 0)."""
+    jm, dny, _s, _c, _o, E = ref
+    m = dny != den
+    if not len(Eq) or int(m.sum()) < k:
+        return [(None, 0.0)] * len(Eq)
+    S = Eq @ E[m].T
+    idx = np.argpartition(-S, k - 1, axis=1)[:, :k]
+    jmm = jm[m]
+    out = []
+    for radek in jmm[idx]:
+        u, c = np.unique(radek, return_counts=True)
+        i = int(np.argmax(c))
+        out.append((str(u[i]), float(c[i]) / k))
+    return out
+
+
+def rozbor_skupin(groups: list, root="data/harvest", k=15, min_podil=0.8) -> list:
+    """Ke každé skupině doplní `rozbor`: komu se její snímky podobají podle
+    dřívějších štítků a které snímky jdou proti většině.
+
+    {"hlasy": {jméno: počet}, "nejiste": n, "vetsina": jméno|None,
+     "mensina": {soubor: jméno}}  — `mensina` = snímky s jistým hlasem pro
+    JINOU osobu než většina skupiny."""
+    try:
+        ref = _oznacene_matice(root)
+    except Exception as e:
+        log.debug("rozbor skupin: %s", e)
+        return groups
+    if not len(ref[0]):
+        return groups
+    emb = {}
+    for den in {g["day"] for g in groups}:
+        chci = {f for g in groups if g["day"] == den for f in g["files"]}
+        mp = Path(root) / den / "meta.jsonl"
+        if not mp.is_file():
+            continue
+        for line in open(mp, encoding="utf-8"):
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if r.get("file") in chci:
+                e = np.frombuffer(base64.b64decode(r["emb"]), np.float16).astype(np.float32)
+                n = float(np.linalg.norm(e))
+                if n > 1e-6:
+                    emb[(den, r["file"])] = e / n
+    # hlasování po DNECH naráz (maska „jiné dny“ se staví jednou na den, ne na skupinu)
+    hlas = {}
+    for den in {d for d, _f in emb}:
+        klice = [kf for kf in emb if kf[0] == den]
+        for kf, h in zip(klice, _hlasuj(np.array([emb[kf] for kf in klice]), den, ref, k)):
+            hlas[kf] = h
+    for g in groups:
+        soub = [f for f in g["files"] if (g["day"], f) in hlas]
+        if not soub:
+            continue
+        hl = [hlas[(g["day"], f)] for f in soub]
+        jiste = [(f, j) for f, (j, p) in zip(soub, hl) if j and p >= min_podil]
+        hlasy = {}
+        for _f, j in jiste:
+            hlasy[j] = hlasy.get(j, 0) + 1
+        vets = max(hlasy, key=hlasy.get) if hlasy else None
+        g["rozbor"] = {"hlasy": hlasy, "nejiste": len(soub) - len(jiste), "vetsina": vets,
+                       "mensina": {f: j for f, j in jiste if j != vets}}
+    return groups
+
+
+def podezrele_oznacene(root="data/harvest", k=15, min_podil=0.8, gap_s=1800) -> list:
+    """Už OZNAČENÉ snímky, které podle sousedů z jiných dnů vypadají jako jiná
+    osoba, složené do bloků (den × štítek × podoba × souvislý čas).
+    Snímky s `overeno` se nenabízejí. Největší bloky první."""
+    ref = _oznacene_matice(root)
+    jm, dny, soub, casy, over, E = ref
+    nalezy = []
+    for den in sorted(set(dny.tolist())):
+        ii = np.where((dny == den) & (~over))[0]
+        if not len(ii):
+            continue
+        hl = _hlasuj(E[ii], den, ref, k)
+        for i, (j, p) in zip(ii, hl):
+            if j and p >= min_podil and j != jm[i]:
+                nalezy.append((den, str(jm[i]), j, casy[i], soub[i]))
+    nalezy.sort()
+    celkem = {}
+    for d, l in zip(dny.tolist(), jm.tolist()):
+        celkem[(d, l)] = celkem.get((d, l), 0) + 1
+
+    def _s(t):
+        try:
+            h, m, s = t.split()[-1].split(":")
+            return int(h) * 3600 + int(m) * 60 + int(float(s))
+        except Exception:
+            return 0
+    bloky = []
+    for den, lab, vyp, cas, f in nalezy:
+        b = bloky[-1] if bloky else None
+        if (b and b["day"] == den and b["label"] == lab and b["vypada"] == vyp
+                and _s(cas) - _s(b["last"]) <= gap_s):
+            b["files"].append(f); b["last"] = cas
+        else:
+            bloky.append({"day": den, "label": lab, "vypada": vyp, "files": [f],
+                          "first": cas, "last": cas,
+                          "stitku_ten_den": celkem.get((den, lab), 0)})
+    for b in bloky:
+        b["pocet"] = len(b["files"])
+    bloky.sort(key=lambda b: -b["pocet"])
+    return bloky
+
+
+def potvrd_stitek(day: str, files: list, root="data/harvest") -> int:
+    """Uživatel snímky VIDĚL a štítek sedí → pole `overeno`, revize je už nenabídne.
+    Štítek ani snímek se nemění."""
+    p = Path(root) / day / "meta.jsonl"
+    if not p.exists():
+        return 0
+    want = set(files)
+    rows, n = [], 0
+    for line in open(p, encoding="utf-8"):
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if r.get("file") in want and r.get("label"):
+            r["overeno"] = True
+            n += 1
+        rows.append(r)
+    tmp = p.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, p)
+    return n

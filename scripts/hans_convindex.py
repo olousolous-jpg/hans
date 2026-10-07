@@ -714,7 +714,11 @@ def _mezi_slovy(veta: str, prvni: str, druhe: str) -> list:
 
 
 # HANS_ANCHOR_ADJ_V1 — české adjektivní koncovky (viz komentář v `kotva_tematu`).
-_ADJ_KONCOVKA = re.compile(r"(ý|á|é|ém|ých|ého|ému|ou|ým|í)$", re.IGNORECASE)
+# HANS_ANCHOR_POSSESSIVE_V1 (7. 10.) — i PŘIVLASTŇOVACÍ tvar je jen přívlastek:
+# „…stavby Karlova mostu“ dalo kotvu „Karlova“ = rozcestník → nic nedohledáno.
+# 📏 2 613 vět: 5 změn kotvy (2× most, 3× neutrální), žádná horší.
+_ADJ_KONCOVKA = re.compile(r"(ý|á|é|ém|ých|ého|ému|ou|ým|í|ova|ovu|ově|ovy|ových|ovým|ův)$",
+                           re.IGNORECASE)
 
 
 def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:

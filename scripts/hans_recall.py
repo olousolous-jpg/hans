@@ -3101,6 +3101,15 @@ def _extract_knowledge_topic(text: str) -> Optional[str]:
     # („odkud znas TU KNIHU?", „a odkud znas TOHLE?"). S požadavkem na mezeru
     # za slovem vzor na konci věty nesepne a zbude téma 'knihu' / 'tohle' —
     # týž tvar chyby jako `kamer` × „kameře" (20. 9.).
+    # HANS_KNOWLEDGE_TOPIC_FILLER_V1 (7. 10.) — VÝPLŇ PŘED TÉMATEM A HOLÉ ZÁJMENO.
+    # /tazatel 7. 10.: „znas neco o starych hradech?“ → téma „neco o starych
+    # hradech“ → „nemám žádné záznamy“, ačkoli hrady Hans studoval; „…znas je?“
+    # → téma „je“. Výplň se odřízne, osobní zájmeno tématem není (None = běžná
+    # cesta, kde předmět doplní vlákno). 📏 2 369 reálných vět: 0 změn.
+    x = re.sub(r"^(?:n[ěe]co(?:\s+m[áa]lo)?|n[ěe]jak\w*|cokoli\w*|p[áa]r\s+v[ěe]c[íi]|"
+               r"v[íi]ce?|trochu)\s+(?:o|z|ze)\s+", "", x, flags=re.I)
+    if re.fullmatch(r"(?:je|ho|ji|jej|jich|n[ěe]m|n[íi]|nich|n[ěe]j|jim|mu)", x, flags=re.I):
+        return None
     x = re.sub(r"^(?:ten|ta|to|tu|toho|tom|tomu|t[ée]|ty|ti|t[ěe]ch|t[íi]m|"
                r"tohle|tenhle|tahle|tamten|tamta|onen|ona)(?:\s+|$)",
                "", x, flags=re.I)
@@ -3293,7 +3302,7 @@ def knowledge_check_answer(db_path: str, user_text: str) -> Optional[str]:
     topic = _extract_knowledge_topic(user_text)
     if not topic:
         return None
-    if _topic_in_memory(db_path, topic):
+    if _topic_in_memory(db_path, topic) or _hlavni_slovo_v_pameti(db_path, topic):
         # X JE v paměti — nech film_knowledge_answer / recall / RAG odpovědět
         return None
     return (
@@ -3313,6 +3322,25 @@ def knowledge_check_answer(db_path: str, user_text: str) -> Optional[str]:
         "sám prožil/četl/zapsal). Nesměšuj je." % (topic, topic, topic))
 
 
+def _hlavni_slovo_v_pameti(db_path: str, topic: str) -> bool:
+    """HANS_KNOWLEDGE_HEAD_NOUN_V1 (7. 10.) — víceslovné téma, které jako celek
+    v paměti není, ale jeho POSLEDNÍ slovo ano („starých hradech“ → hrady).
+
+    `_topic_in_memory` žádá všechna slova v témže záznamu (záměr z 13. 8., brání
+    falešnému „mám záznam“). Pro ZAPŘENÍ je to ale moc přísné: přívlastek
+    („staré“, „gotické“) v zápisku být nemusí a Hans pak tvrdí „nic jsem si
+    o tom nezapsal ani nečetl“ o tématu, které studoval — a dohledá místo toho
+    náhodné heslo. Tady se nic netvrdí, jen se NEzapře: věta jde běžnou cestou.
+    📏 2 613 vět: 22 zapření, 6 z nich takhle přejde na běžnou cestu."""
+    w = [x for x in re.findall(r"\w+", topic or "") if len(x) >= 5]
+    if len((topic or "").split()) < 2 or not w:
+        return False
+    try:
+        return bool(_topic_in_memory(db_path, w[-1]))
+    except Exception:
+        return False
+
+
 def knowledge_check_bypass(db_path: str, user_text: str,
                            asker: Optional[str] = None) -> Optional[str]:
     """HANS_KNOWLEDGE_CHECK_V1 BYPASS (18.7.) — deterministická odpověď na
@@ -3329,7 +3357,7 @@ def knowledge_check_bypass(db_path: str, user_text: str,
     topic = _extract_knowledge_topic(user_text)
     if not topic:
         return None
-    if _topic_in_memory(db_path, topic):
+    if _topic_in_memory(db_path, topic) or _hlavni_slovo_v_pameti(db_path, topic):
         return None  # nech normální cestu, X JE v paměti
     oslov = _cz_address(asker) if asker else "pane"  # HANS_NAME_INFLECTION_V1
     # Kompaktní honestní odpověď + nabídka pokud chce ať Hans si to zapíše

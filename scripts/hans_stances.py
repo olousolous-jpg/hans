@@ -303,7 +303,8 @@ class StanceStore:
             _log.warning("StanceStore.challenge_held failed: %s", e)
             return None
 
-    def defend(self, target_claim: str, factor: float = 0.5) -> Optional[int]:
+    def defend(self, target_claim: str, factor: float = 0.5,
+               min_gap_days: float = 0.0) -> Optional[int]:
         """KOLAC_DEBATE_NIGHT_JUDGE_V1 (4. 10.) — Hans postoj v debatě s Koláčem
         VĚCNĚ OBHÁJIL (noční soud): posil confidence krokem `alpha*factor`
         (zrcadlo contradict). evidence_count se NEMĚNÍ — obhajoba není nové
@@ -322,6 +323,21 @@ class StanceStore:
                 if row is None:
                     return None
                 conf = row["confidence"] if row["confidence"] is not None else 0.5
+                # KOLAC_DEFEND_GAP_V1 (7. 10.) — obhajoba posiluje TÝŽ postoj nejvýš
+                # jednou za `min_gap_days`. Hans v debatě skoro neustupuje (nový
+                # soudce 6 obhajob : 0 ústupů), takže každá noc znamenala krok
+                # nahoru (postoj 2: 0,714 → 0,755 za dvě noci) = rohatka jedním
+                # směrem. Dřívější obhajoba se jen zapíše jako `challenge_held`.
+                if min_gap_days and conn.execute(
+                        "SELECT 1 FROM stance_history WHERE stance_id=? AND "
+                        "event='challenge_defended' AND ts>=? LIMIT 1",
+                        (row["id"], now - float(min_gap_days) * 86400.0)).fetchone():
+                    self._hist(conn, row["id"], now, conf, "challenge_held")
+                    conn.commit()
+                    _log.info("KOLAC_DEFEND_GAP_V1: postoj [%s] obhájen, ale posílen "
+                              "už v posledních %.0f dnech → bez posílení",
+                              row["id"], float(min_gap_days))
+                    return row["id"]
                 new_conf = _clamp(conf + (1.0 - conf) * self._alpha * float(factor))
                 conn.execute("UPDATE stances SET confidence=?, last_seen=? WHERE id=?",
                              (new_conf, now, row["id"]))

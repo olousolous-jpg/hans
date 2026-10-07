@@ -50,6 +50,27 @@ def enabled(config: dict) -> bool:
 
 
 # ── Ollama: ok / paused / wedged / down ──────────────────────────────────────
+_EMBED_FAIL = {"n": 0}     # HANS_HEALTH_EMBED_V1 — selhání vektorů po sobě
+
+
+def _probe_embed(config: dict):
+    """HANS_HEALTH_EMBED_V1 — True = vektor spočítán, False = neodpovědělo,
+    None = neměřeno (sonda vypnutá configem)."""
+    if not _cfg(config).get("embed_probe", True):
+        return None
+    try:
+        import requests
+        from scripts.ollama_client import _resolve_url
+        from scripts.hans_zpravy import EMBED_MODEL
+        r = requests.post(_resolve_url(None, config) + "/api/embed",
+                          json={"model": EMBED_MODEL, "input": ["ok"], "keep_alive": "2m"},
+                          timeout=(5, int(_cfg(config).get("embed_probe_timeout", 30))))
+        return bool(r.ok and (r.json().get("embeddings") or [None])[0])
+    except Exception as e:
+        _log.info("health: sonda vektorů selhala: %s", str(e)[:100])
+        return False
+
+
 def probe_ollama(config: dict) -> dict:
     """Reálná probe: nejdřív zkus TRIVIÁLNÍ inference (odhalí wedge). Když selže,
     rozliš herní mód (paused) vs. server žije-ale-visí (wedged) vs. mrtvý (down)."""
@@ -87,6 +108,23 @@ def probe_ollama(config: dict) -> dict:
         _log.debug("probe_ollama generate: %s", e)
     lat = round(time.time() - t0, 1)
     if raw is not None and str(raw).strip() != "":
+        # HANS_HEALTH_EMBED_V1 (7. 10.) — generování běží, ale VEKTORY mohou viset:
+        # 7. 10. 10:22–10:49 po přenačtení modelu neodpověděl `/api/embed` ani
+        # jednou (klasifikátor záměru na záloze, zprávy bez hledání podle
+        # významu, odpovědi 130–238 s) a hlídač hlásil „inference ok“.
+        # Zásek až při DRUHÉM selhání po sobě — vektory běží na CPU a jeden
+        # pomalý výpočet (noční úsudek na CPU) není porucha.
+        _eok = _probe_embed(config)
+        if _eok is False:
+            _EMBED_FAIL["n"] += 1
+            if _EMBED_FAIL["n"] >= 2:
+                return {"status": WEDGED, "latency_s": lat,
+                        "detail": "generování běží, vektory visí (%d× po sobě)"
+                                  % _EMBED_FAIL["n"]}
+            return {"status": OK, "latency_s": lat,
+                    "detail": "inference ok, vektory neodpověděly (1×)"}
+        if _eok:
+            _EMBED_FAIL["n"] = 0
         return {"status": OK, "detail": "inference ok", "latency_s": lat}
     # 2) inference selhala — žije aspoň HTTP server? (rozliš wedged vs down)
     try:

@@ -287,6 +287,10 @@ _FACTUAL_SIGNAL = re.compile(
     re.IGNORECASE,
 )
 
+# HANS_INTENT_COURTESY_V1 — slova zdvořilosti (viz `_classify_keyword`).
+_ZDVORILOST = re.compile(r"\b(pros[íi]m\w*|d[íi]ky|d[ěe]kuj\w*|promi[ňn]\w*)\b",
+                         re.IGNORECASE)
+
 # G2_COREF_V1 — pronomenální reference („o něm", „o něj", „o ní", „o nich",
 # „ho", „mu", „ji") = navazovací dotaz na předchozí obrat. Sám o sobě SLABÝ
 # signál (i „mám ho rád" = emoce), proto se použije JEN v kombinaci:
@@ -492,6 +496,17 @@ class HansIntent:
         volna_hit = _any_match(_VOLNA_PAT, _VOLNA_PAT_A, msg, msg_a)
         factual_signal = _any_match(_FACTUAL_SIGNAL, _FACTUAL_SIGNAL_A,
                                     msg, msg_a)
+        # HANS_INTENT_COURTESY_V1 (7. 10.) — ZDVOŘILOSTNÍ SLOVO NENÍ POZDRAV.
+        # „Mohl byste mi prosím říci, co víte o historii <stavby>?“ bylo `volna`
+        # 0,65 jen kvůli „prosím“ → žádný podklad → vymyšlený stavitel.
+        # Když kromě prosím/děkuji/promiň žádný pozdrav ani emoce nezazní a věta
+        # nese otázkový signál, rozhodne se bez něj (→ šedá zóna → malý model).
+        # 📏 2 613 vět: 55 (4 reálné, např. „můžeš prosím říct, jaké kapely…“);
+        # malý model z nich 28 určil jako faktické, 27 jako volné.
+        if volna_hit and factual_signal:
+            _bez = _ZDVORILOST.sub(" ", msg)
+            if not _any_match(_VOLNA_PAT, _VOLNA_PAT_A, _bez, _deaccent(_bez)):
+                volna_hit = False
 
         # G2_COREF_V1 — coreference booster: pronomenální reference +
         # continuation slovo („o něm víc") = follow-up dotaz na PŘEDCHOZÍ

@@ -161,6 +161,22 @@ def slozit_prompt(hodnoty: dict, varianta: str) -> str:
                    if varianta in kde)
 
 
+# ── HANS_NO_FALSE_MEMORY_CLAIM_V1 (7. 10.) — vzory, viz `_sc_pojistky` ──────
+_FALESNA_PAMET_A = re.compile(
+    r"\b([Vv]) pam[ěe]ti m[áa]m (?:\w+ ){0,2}?z[áa]znamy?\b")
+_FALESNA_PAMET_B = re.compile(
+    r"\bm[áa]m (?:pom[ěe]rn[ěe] |dost |velmi )?(?:obs[áa]hl[ée] |podrobn[ée] |rozs[áa]hl[ée] )"
+    r"z[áa]znamy\b")
+_VLASTNI_DILO_TVRZENI = re.compile(
+    r"\b(?:vytvo[řr]il|namaloval|nakreslil|napsal|zhotovil)\s+jsem\s+(?:si\s+)?[^.!?\n]{0,70}?"
+    r"\b(?:obraz\w*|malb\w+|kresb\w+|skic\w+|esej\w*|ilustrac\w+|portr[ée]t\w*)", re.I)
+_NABIDKA_POSLAT = re.compile(r"\b(?:poslat|po[šs]lu|uk[áa]zat|uk[áa][žz]u)\b", re.I)
+
+
+def _falesna_pamet_nahrada(m):
+    return ("Z" if m.group(1) == "V" else "z") + " obecných znalostí vím"
+
+
 # ── HANS_OWN_WORK_NOT_FACT_V1 (22.8.) — VLASTNÍ TVORBA NENÍ DOKLAD O SVĚTĚ ──
 # Kolekce `hans_identita` je ve faktické cestě ZÁMĚRNĚ: vztahové karty jsou
 # zdroj pravdy o lidech (`G5A_IDENTITY_GROUNDING_V1`). Míchá ale karty
@@ -5162,7 +5178,22 @@ class OpenWebUIDirectHandler:
             # HANS_ZPRAVY_PODKLAD_V1 (3. 10.) — otázka na DĚNÍ ve světě dostane
             # sebrané zprávy (Matrix 3. 10.: Francie vymyšlená a připsaná Demagogu).
             # Ne u otázek na Hanse samotného a u názorů (tam zprávy nepatří).
-            if getattr(self, '_grounding_outcome', '') not in ('self_state', 'opinion'):
+            # HANS_ZPRAVY_NE_FILOZOFIE_V1 (7. 10.) — „…ženou odsouzenou k trestu SMRTI,
+            # která přežila popravu?“ je dotaz na ZPRÁVU, ne na smysl smrti; názorová
+            # větev ji vzala podle filozofického slova, podklad se přeskočil a model
+            # si případ vymyslel (jméno, zemi, rok). Přímá žádost o názor („co si
+            # myslíš o…“) zprávy dál nedostává; věta zařazená jen podle tématu ano,
+            # když pro ni sebrané zprávy shodu MAJÍ.
+            # 📏 2 613 vět: jen podle slova 37 (4 reálné), podklad by dostala 0.
+            _nazor_jen_slovem = False
+            if getattr(self, '_grounding_outcome', '') == 'opinion':
+                try:
+                    from scripts.hans_opinion import _ASK_PAT as _op_ask
+                    _nazor_jen_slovem = not _op_ask.search(str(ctx.user_message or ""))
+                except Exception:
+                    _nazor_jen_slovem = False
+            if (getattr(self, '_grounding_outcome', '') not in ('self_state', 'opinion')
+                    or _nazor_jen_slovem):
                 try:
                     from scripts.hans_zpravy import zpravy_podklad
                     _zpb = zpravy_podklad(ctx.user_message, self.config)
@@ -5422,6 +5453,38 @@ class OpenWebUIDirectHandler:
                         "HANS_ZPRAVY_URL_GUARD_V1: vyřazen vymyšlený odkaz %s", _vym[0][:80])
             except Exception as _zue:
                 logging.getLogger(__name__).debug("url guard: %s", _zue)
+            # HANS_NO_FALSE_MEMORY_CLAIM_V1 (7. 10.) — na cestě BEZ FAKT (v zápiscích
+            # nic nebylo) odpověď začínala „V paměti mám záznamy o…“ a pokračovala
+            # obecnou znalostí; jednou i „vytvořil jsem si k tomu obraz“ (v deníku
+            # žádný). Tvrzení o vlastní paměti je údaj o DATECH, ne tón → opravuje
+            # se kódem: fráze se přepíše na obecnou znalost, věta o vlastním díle
+            # (na téhle cestě nemá čím být podložená) vypadne i s nabídkou poslání.
+            # 📏 Přepisy: 171 odpovědí bez fakt, 7× fráze o záznamech, 1× dílo;
+            # na cestách S podkladem se nic nemění.
+            try:
+                if getattr(self, "_grounding_outcome", "") == "factual_nofacts":
+                    _puv = ctx.response
+                    _nov = _FALESNA_PAMET_A.sub(_falesna_pamet_nahrada, _puv)
+                    _nov = _FALESNA_PAMET_B.sub("vím jen z obecných znalostí", _nov)
+                    _vety = re.split(r"(?<=[.!?])\s+", _nov)
+                    _bez = []
+                    _vyp = False
+                    for _v in _vety:
+                        if _VLASTNI_DILO_TVRZENI.search(_v):
+                            _vyp = True
+                            continue
+                        if _vyp and _NABIDKA_POSLAT.search(_v):
+                            continue
+                        _bez.append(_v)
+                    if _vyp and "".join(_bez).strip():
+                        _nov = " ".join(_bez)
+                    if _nov != _puv:
+                        ctx.response = _nov
+                        logging.getLogger(__name__).info(
+                            "HANS_NO_FALSE_MEMORY_CLAIM_V1: opraveno tvrzení o vlastní "
+                            "paměti%s (cesta bez fakt)", " a vlastním díle" if _vyp else "")
+            except Exception as _fme:
+                logging.getLogger(__name__).debug("false memory claim: %s", _fme)
             # HANS_DEMAGOG_GUARD_V1 (3. 10.) — model si vymyslel „ověřené výroky“
             # (tvar zkopírovaný z historie, 3× v /tazatel) → nahradit skutečným
             # výpisem z Demagogu. Výstup příkazu sem nedojde (vrací se dřív).

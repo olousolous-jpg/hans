@@ -288,3 +288,114 @@ def sber(config: dict, db_path: str) -> dict:
     except Exception as e:
         _log.warning("HANS_PREVENTION_V1: sběr selhal: %s", e)
         return {"ok": False, "chyba": str(e)}
+
+
+# ── HANS_PREVENTION_REPORT_V1 (7. 10.) — krok 2: HLÁŠENÍ nad nasbíranými dny ──
+# Jen čte `health_daily` a porovná poslední dny se základem (okno 14 dní):
+# co je NOVÉ, co SKOČILO, kolik bylo samooprav, kam míří disky a paměť.
+# Nic neopravuje ani neposílá — vrací seznam řádků; kam hlášení půjde
+# (ranní kontrola, Matrix), se rozhoduje jinde.
+def hlaseni(db_path: str, dnes: str = None, okno: int = 14, cerstve: int = 2,
+            nasobek: float = 3.0, min_pocet: int = 10) -> dict:
+    """{"dny": n, "radky": [text…], "nove": [...], "skoky": [...], "disky": [...]}"""
+    import datetime as _dt
+    import statistics as _st
+    c = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=10)
+    try:
+        dny_vse = [r[0] for r in c.execute("SELECT DISTINCT day FROM health_daily ORDER BY day")]
+        if not dny_vse:
+            return {"dny": 0, "radky": ["Prevence: zatím žádná data."]}
+        dnes = dnes or dny_vse[-1]
+        d0 = _dt.date.fromisoformat(dnes)
+        den = lambda i: (d0 - _dt.timedelta(days=i)).isoformat()
+        nove_dny = [den(i) for i in range(cerstve)]
+        zaklad = [den(i) for i in range(cerstve, okno)]
+        zaklad = [d for d in zaklad if d in dny_vse]
+        out = {"dny": len([d for d in dny_vse if d >= den(okno - 1)]), "radky": [],
+               "nove": [], "skoky": [], "disky": []}
+        R = out["radky"]
+        if len(zaklad) < 5:
+            R.append("Prevence: základ má jen %d dní — hlášení je orientační." % len(zaklad))
+
+        def tab(kind):
+            t = {}
+            for day, key, v in c.execute(
+                    "SELECT day, key, value FROM health_daily WHERE kind=? AND day>=?",
+                    (kind, den(okno - 1))):
+                t.setdefault(key, {})[day] = v
+            return t
+
+        nazev = {"err": "chyba", "warn": "varování", "kodi_err": "chyba Kodi",
+                 "kodi_warn": "varování Kodi"}
+        for kind in ("err", "warn", "kodi_err", "kodi_warn"):
+            for key, dd in tab(kind).items():
+                ted = sum(dd.get(d, 0) for d in nove_dny)
+                if not ted:
+                    continue
+                drive = [dd.get(d, 0) for d in zaklad]
+                if zaklad and not any(drive):
+                    if ted >= (1 if kind == "err" else 3):
+                        out["nove"].append((kind, key, int(ted)))
+                elif zaklad:
+                    med = _st.median(drive) or 0.5
+                    prum = ted / float(cerstve)
+                    if prum >= min_pocet and prum >= nasobek * med:
+                        out["skoky"].append((kind, key, int(ted), round(med, 1)))
+        out["nove"].sort(key=lambda x: (x[0] != "err", -x[2]))
+        out["skoky"].sort(key=lambda x: -x[2])
+        if out["nove"]:
+            R.append("NOVÉ za poslední %d dny (v předchozích %d dnech ani jednou):"
+                     % (cerstve, len(zaklad)))
+            for kind, key, n in out["nove"][:8]:
+                R.append("  • %s %d× — %s" % (nazev[kind], n, key[:110]))
+            if len(out["nove"]) > 8:
+                R.append("  … a dalších %d" % (len(out["nove"]) - 8))
+        if out["skoky"]:
+            R.append("SKOK proti obvyklému dni:")
+            for kind, key, n, med in out["skoky"][:6]:
+                R.append("  • %s %d× za %d dny (obvykle %s/den) — %s"
+                         % (nazev[kind], n, cerstve, med, key[:90]))
+        heal = tab("heal")
+        for key, dd in sorted(heal.items()):
+            ted = sum(dd.get(d, 0) for d in nove_dny)
+            drive = sum(dd.get(d, 0) for d in zaklad)
+            if ted or drive:
+                R.append("Samoopravy %s: %d× za poslední %d dny, předtím %d× za %d dní"
+                         % (key, ted, cerstve, drive, len(zaklad)))
+        for key, dd in sorted(tab("disk_used_pct").items()):
+            body = sorted(dd.items())
+            if len(body) < 3:
+                continue
+            x = [(_dt.date.fromisoformat(d) - d0).days for d, _ in body]
+            y = [v for _, v in body]
+            mx, my = sum(x) / len(x), sum(y) / len(y)
+            jm = sum((a - mx) ** 2 for a in x) or 1.0
+            smer = sum((a - mx) * (b - my) for a, b in zip(x, y)) / jm   # % za den
+            posl = y[-1]
+            do95 = (95.0 - posl) / smer if smer > 0.05 else None
+            out["disky"].append((key, round(posl, 1), round(smer, 2), do95))
+            if posl >= 85 or (do95 is not None and do95 < 60):
+                R.append("Disk %s: %.1f %% plný, %+.2f %% za den%s"
+                         % (key, posl, smer,
+                            (" → 95 %% za ~%d dní" % do95) if do95 is not None else ""))
+        for kind, klic, jedn in (("mem_mb", "hans_rss", "MB"),):
+            dd = tab(kind).get(klic) or {}
+            body = [v for _, v in sorted(dd.items())]
+            if len(body) >= 5:
+                zac, kon = _st.median(body[:3]), _st.median(body[-3:])
+                if kon > 1.5 * zac and kon - zac > 200:
+                    R.append("Paměť Hanse roste: %d → %d %s (medián prvních a posledních 3 dnů)"
+                             % (zac, kon, jedn))
+        if len(R) == (1 if len(zaklad) < 5 else 0):
+            R.append("Prevence: za poslední %d dny nic nového ani neobvyklého." % cerstve)
+        return out
+    finally:
+        c.close()
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    if "--hlaseni" in _sys.argv:
+        print("\n".join(hlaseni(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "data", "hans_diary.db"))["radky"]))
+
