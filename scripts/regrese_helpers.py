@@ -1192,3 +1192,30 @@ def f1_o_tazateli(prepis: str, kdo: str) -> bool:
     o = cls.__new__(cls)
     o.config = {}
     return bool(o._f1_o_tazateli(prepis, kdo))
+
+
+def filtr_tvrzeni(odpoved: str, otazka: str, vzorky: list) -> str:
+    """HANS_CLAIM_FILTER_V1 — text odpovědi po filtru podle vzorků A1."""
+    from scripts.hans_claim_filter import filtruj
+    return filtruj(odpoved, otazka, vzorky, ())[0]
+
+
+def zdroje_vsechna_slova(tema: str) -> str:
+    """HANS_SOURCES_ALL_WORDS_V1 — má víceslovné téma záznam se VŠEMI slovy
+    v titulu? 'titul' / 'jen_text' / 'nic' / 'jednoslovne' (nad živým deníkem
+    jen čte; případy drž na tématech, která v deníku trvale jsou)."""
+    import sqlite3
+    from scripts.chat_commands import _zdroje_vsechna_slova
+    from scripts.hans_recall import _fold
+    cx = sqlite3.connect("file:data/hans_diary.db?mode=ro", uri=True, timeout=5.0)
+    try:
+        r = _zdroje_vsechna_slova(cx, tema)
+    finally:
+        cx.close()
+    if r is None:
+        return "jednoslovne"
+    if not r:
+        return "nic"
+    slova = [_fold(w).lower()[:4] for w in tema.split() if len(w) >= 4]
+    return "titul" if all(w in _fold(r[0][1] or "").lower() for w in slova) else "jen_text"
+

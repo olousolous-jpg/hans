@@ -18,11 +18,23 @@ Deferral-safe: Ollama/embed dole nebo herní mód → None → přeskoč
 """
 from __future__ import annotations
 
+import time
 import logging
 import math
 from typing import List, Optional
 
 _log = logging.getLogger(__name__)
+
+
+_LAST = {"ts": 0.0, "q": "", "answers": []}     # HANS_CLAIM_FILTER_V1
+
+
+def last_samples(max_age_s: float = 180.0) -> list:
+    """HANS_CLAIM_FILTER_V1 — vzorky z posledního běhu `factual_stability`
+    (jen čerstvé; jinak prázdný seznam)."""
+    if time.time() - float(_LAST.get("ts") or 0) > max_age_s:
+        return []
+    return list(_LAST.get("answers") or [])
 
 
 def _cfg(config: dict) -> dict:
@@ -117,6 +129,8 @@ def factual_stability(config: dict, question: str,
 
     answers = _sample_answers(config, q, model, n, temperature, timeout,
                               num_predict)
+    # HANS_CLAIM_FILTER_V1 — vzorky si pamatuj: hotová odpověď se proti nim kontroluje
+    _LAST.update(ts=time.time(), q=q, answers=list(answers))
     if len(answers) < max(2, n - 1):
         return None  # moc málo vzorků (výpadek) → nespolehlivé → skip
 

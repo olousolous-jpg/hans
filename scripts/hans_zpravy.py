@@ -1546,6 +1546,63 @@ PODKLAD_PRAH = 0.65
 PODKLAD_JISTE = 0.72
 
 
+_POSLEDNI_PODKLAD = {"dotaz": None, "uid": 0, "ts": 0.0, "radky": []}
+
+
+def posledni_podklad(dotaz: str, max_age_s: float = 120.0):
+    """HANS_ZPRAVY_RETELL_V1 — titulky („Médium: titulek — perex“) a id události
+    z právě sestaveného podkladu pro TENTÝŽ dotaz, jinak None."""
+    p = _POSLEDNI_PODKLAD
+    if p.get("dotaz") != dotaz or time.time() - float(p.get("ts") or 0) > max_age_s \
+            or not p.get("radky"):
+        return None
+    return {"uid": p["uid"], "radky": list(p["radky"])}
+
+
+# ── HANS_ZPRAVY_RETELL_V1 (7. 10.) — zprávy se PŘEVYPRÁVĚJÍ, nevykládají ──────
+# Měření 7. 10. na 8 událostech: volná odpověď nad podkladem měla 25 z 51 vět
+# bez opory (příčiny protestů domyšleny, Nobelova cena z hlavy = loňská, ve
+# 4 z 8 vymyšlený odkaz). Holý výpis by zase nešel číst hlasem. Úzké zadání
+# „řekni, co píšou titulky, a jmenuj médium“ dalo na 7 událostech věrné krátké
+# odpovědi („titulky neuvádějí důvod protestů…“, správný laureát).
+# Výsledek se kontroluje (žádné nové jméno ani letopočet, žádný vlastní zdroj);
+# když neprojde, řeknou se titulky samotné. Odkazy se přikládají kódem.
+_RETELL_SYS = (
+    "Jsi {jmeno}, zdvořilý a přemýšlivý společník. Mluvíš česky a tazateli vykáš.\n"
+    "ÚKOL: Dostaneš OTÁZKU a TITULKY ZPRÁV s médii. Dvěma až třemi větami řekni, co o tom "
+    "zprávy píšou, a jmenuj médium.\n"
+    "PRAVIDLA: Říkej jen to, co stojí v titulcích. Čísla a jména opiš přesně. Nevysvětluj "
+    "příčiny ani souvislosti, které v titulcích nejsou. Když titulky na otázku neodpovídají, "
+    "řekni to. Žádné odkazy, nic nenabízej. Tazatele oslov jednou tvarem, který dostaneš.")
+
+
+def prevypravej(config: dict, otazka: str, radky: list, osloveni: str = "",
+                jmeno: str = "Hans") -> tuple:
+    """(text, 'hlasem' | 'titulky'). Nikdy nevrací prázdno, když jsou řádky."""
+    zaklad = "\n".join(radky[:4])
+    zaloha = ("Ve zprávách k tomu mám tohle%s: " % ((", " + osloveni) if osloveni else "")
+              + " ".join((x.split(" — ")[0].rstrip(".") + ".") for x in radky[:3]))
+    try:
+        from scripts.ollama_client import ollama_generate
+        from scripts.hans_claim_filter import filtruj, _ROK, _CISLO_SLOVY
+        model = str((config.get("models", {}) or {}).get("voice")
+                    or (config.get("dialog", {}) or {}).get("model") or "hans-czech:latest")
+        r = (ollama_generate(
+            model, "OSLOVENÍ: %s\nOTÁZKA: %s\nTITULKY ZPRÁV:\n%s\n\nTvoje odpověď:"
+            % (osloveni or "(bez oslovení)", (otazka or "")[:300], zaklad),
+            system=_RETELL_SYS.format(jmeno=jmeno or "Hans"), config=config, timeout=60,
+            options={"temperature": 0.3, "num_predict": 190}) or "").strip()
+        if r and not (set(_ROK.findall(r)) - set(_ROK.findall(zaklad))) \
+                and not (_CISLO_SLOVY.search(r) and not _CISLO_SLOVY.search(zaklad)):
+            _n, st = filtruj(r, otazka, [zaklad] * 3, (osloveni,))
+            if not (st["zdroj"] or st["tvrzeni"]):
+                return r, "hlasem"
+            _log.info("HANS_ZPRAVY_RETELL_V1: převyprávění neprošlo kontrolou %s → titulky", st)
+    except Exception as e:
+        _log.info("HANS_ZPRAVY_RETELL_V1: převyprávění nejde (%s) → titulky", str(e)[:80])
+    return zaloha, "titulky"
+
+
 def zpravy_podklad(dotaz: str, config: dict, path: str = DB):
     """Text podkladu ze zpráv (nebo None) — titulky + perexy nejbližší události
     a začátek plného českého článku, s médiem a časem."""
@@ -1585,6 +1642,10 @@ def zpravy_podklad(dotaz: str, config: dict, path: str = DB):
                                          (" — " + z["perex"][:240]) if z.get("perex") else ""))
     if not radky:
         radky.append("- %s: %s" % (top["zdroj"], top["titulek"]))
+    # HANS_ZPRAVY_RETELL_V1 — titulky a událost si pamatuj pro převyprávění
+    _POSLEDNI_PODKLAD.update(
+        dotaz=dotaz, uid=uid, ts=time.time(),
+        radky=[re.sub(r"^- \d\d\. \d\d\. \d\d:\d\d, ", "", x)[:300] for x in radky])
     clanek = ""
     if uid > 0:
         c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)

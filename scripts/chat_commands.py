@@ -3834,6 +3834,28 @@ def _tema_ze_zdrojoveho_dotazu(raw: str) -> str:
         return ""
 
 
+def _zdroje_vsechna_slova(cx, q: str):
+    """HANS_SOURCES_ALL_WORDS_V1 — čtení, ve kterých jsou VŠECHNA slova tématu.
+    None = téma není víceslovné (volající hledá po staru); jinak seznam
+    (ts, titul, url) — i prázdný."""
+    from scripts.hans_recall import _fold
+    slova = [_fold(w).lower() for w in re.findall(r"\w+", q or "") if len(w) >= 4]
+    if len(slova) < 2:
+        return None
+    vzory = [re.compile(r"(?<![a-z0-9])" + re.escape(w[:max(4, len(w) - 3)]))
+             for w in slova]
+    nalez = []
+    for ts, title, url, text in cx.execute(
+            "SELECT ts, title, source_url, COALESCE(NULLIF(note,''), data, '') "
+            "FROM diary WHERE event_type IN ('web_read','reading_takeaway','study_note')"):
+        ft = _fold(title or "").lower()
+        v_titulu = all(v.search(ft) for v in vzory)
+        if v_titulu or all(v.search(ft) or v.search(_fold(text or "").lower()) for v in vzory):
+            nalez.append((0 if v_titulu else 1, -float(ts or 0), ts, title, url))
+    nalez.sort()
+    return [(ts, title, url) for _a, _b, ts, title, url in nalez[:12]]
+
+
 # HANS_BOOK_ORIGIN_V1 — sloveso ZÍSKÁNÍ věci (ne čerpání informace).
 _PUVOD_KNIHY_PAT = re.compile(
     r"\b(vzal|vzala|na[šs]el|na[šs]la|sehnal|sehnala|dostal|dostala)\b"
@@ -3891,7 +3913,20 @@ def _cmd_zdroje(handler, name, args) -> str:
             _log.debug("puvod knihy selhal: %s", _be)
     try:
         cx = _sq.connect("file:%s?mode=ro" % db, uri=True, timeout=5.0)
-        if q:
+        # HANS_SOURCES_ALL_WORDS_V1 (7. 10.) — VÍCESLOVNÉ TÉMA CHCE VŠECHNA SLOVA.
+        # Dosud se hledalo jen podle NEJDELŠÍHO slova tématu (`_topic_stems`):
+        # „hradu kost“ → „Tajemství hradu v Karpatech“, „Harry Potter…“ (čtení
+        # „Hrad Kost“ s odkazem přitom v deníku je), „kvantové počítače“ →
+        # článek o rakovině. Teď musí KAŽDÉ slovo (≥ 4 znaky) začínat některé
+        # slovo titulu nebo textu téhož záznamu; shoda všech slov v titulu jde
+        # první. Jednoslovná témata jdou původní cestou níž.
+        # 📏 7 víceslovných témat: 2 správně místo špatně (hrad Kost, Icon of
+        # the Seas), 1 beze změny (japonské zahrady), 1 poctivé „nemám“ místo
+        # 7 cizích řádků (kvantové počítače), 3 prázdná jako dřív.
+        _vice = _zdroje_vsechna_slova(cx, q) if q else None
+        if _vice is not None:
+            rows = [(r[0], r[1], r[2]) for r in _vice][:8]
+        elif q:
             # HANS_SOURCES_TOPIC_V1 (21.8.) — hledat přes PAHÝLY, ne přes holé
             # téma. `_topic_stems` (české skloňování) tu existuje odjakživa,
             # jen je /zdroje jako jediné nepoužívalo → „normalizaci" by nikdy

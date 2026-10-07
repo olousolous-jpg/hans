@@ -5204,6 +5204,11 @@ class OpenWebUIDirectHandler:
                         ctx._grounding = ANTIKONFAB + "\n\n" + _zpb + (
                             ("\n\n" + _stary) if _stary else "")
                         self._vysledek_groundingu('grounded', 'zpravy')
+                        try:   # HANS_ZPRAVY_RETELL_V1 — titulky pro převyprávění
+                            from scripts.hans_zpravy import posledni_podklad
+                            ctx._zpravy = posledni_podklad(ctx.user_message)
+                        except Exception:
+                            ctx._zpravy = None
                 except Exception as _zpe:
                     logging.getLogger(__name__).debug('zprávy podklad: %s', _zpe)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
@@ -5350,8 +5355,17 @@ class OpenWebUIDirectHandler:
                             'HANS_A1_ONLY_FOR_QUESTIONS_V1: %s', _lre)
                 if not _skip_a1:
                     from scripts.hans_selfconsistency import is_unstable
-                    if is_unstable(self.config, ctx._raw_message) is True:
+                    _a1_vysl = is_unstable(self.config, ctx._raw_message)
+                    if _a1_vysl is True:
                         ctx._a1_abstain = True
+                    elif _a1_vysl is False:
+                        # HANS_CLAIM_FILTER_V1 — stabilní vzorky poslouží jako měřítko
+                        # pro hotovou odpověď (viz `_sc_pojistky`)
+                        try:
+                            from scripts.hans_selfconsistency import last_samples
+                            ctx._a1_samples = last_samples()
+                        except Exception:
+                            ctx._a1_samples = []
         except Exception as _a1e:
             logging.getLogger(__name__).warning('A1 gate failed: %s', _a1e)
             ctx._grounding = _GROUNDING_UNSET
@@ -5427,6 +5441,38 @@ class OpenWebUIDirectHandler:
                     ctx.on_sentence(ctx.response)   # ať to TTS vysloví
                 except Exception:
                     pass
+        elif (getattr(ctx, "_zpravy", None)
+              and (self.config.get("zpravy", {}) or {}).get("prevypraveni", True)):
+            # HANS_ZPRAVY_RETELL_V1 (7. 10.) — otázka má podklad ze zpráv → místo
+            # volné odpovědi krátké převyprávění titulků (viz `hans_zpravy.prevypravej`)
+            # + skutečné odkazy přiložené kódem (hlas adresy nečte).
+            try:
+                from scripts.hans_zpravy import prevypravej, zpravy_odkazy
+                from scripts.cz_names import vocative as _zr_voc
+                from scripts.hans_persona import persona_name as _zr_pn
+                _zr_text, _zr_jak = prevypravej(
+                    self.config, ctx._raw_message, ctx._zpravy["radky"],
+                    _zr_voc(ctx.name) if ctx.name else "", _zr_pn(self.config))
+                if ctx.on_sentence:
+                    try:
+                        ctx.on_sentence(_zr_text)      # hlas řekne už ověřený text
+                    except Exception:
+                        pass
+                _zr_odk = []
+                try:
+                    _zr_odk = [o_["url"] for o_ in zpravy_odkazy(ctx._zpravy["uid"], limit=2)]
+                except Exception:
+                    pass
+                ctx.response = _zr_text + ("\n" + "\n".join(_zr_odk) if _zr_odk else "")
+                logging.getLogger(__name__).info(
+                    "HANS_ZPRAVY_RETELL_V1: odpověď z titulků (%s, %d řádků, odkazů %d)",
+                    _zr_jak, len(ctx._zpravy["radky"]), len(_zr_odk))
+            except Exception as _zre:
+                logging.getLogger(__name__).warning(
+                    "HANS_ZPRAVY_RETELL_V1 selhalo (%s) → běžná odpověď", _zre)
+                ctx.response = self._stream_message(
+                    (ctx.system, ctx.user_message), name=ctx.name,
+                    on_sentence=ctx.on_sentence, grounding=ctx._grounding)
         else:
             ctx.response = self._stream_message(
                 (ctx.system, ctx.user_message), name=ctx.name,
@@ -5483,6 +5529,41 @@ class OpenWebUIDirectHandler:
                         logging.getLogger(__name__).info(
                             "HANS_NO_FALSE_MEMORY_CLAIM_V1: opraveno tvrzení o vlastní "
                             "paměti%s (cesta bez fakt)", " a vlastním díle" if _vyp else "")
+                    # HANS_CLAIM_FILTER_V1 (7. 10.) — jen když A1 OPRAVDU běžela
+                    # a prošla (otázka na svět, ne na Hanse): odpověď se drží
+                    # toho, co se opakuje ve vzorcích; věty o vlastním zdroji pryč.
+                    _vz = getattr(ctx, "_a1_samples", None) or []
+                    if (len(_vz) >= 3 and not getattr(ctx, "_dohledano", False)
+                            and (self.config.get("selfconsistency", {}) or {}).get(
+                                "claim_filter", True)):
+                        from scripts.hans_claim_filter import filtruj as _cf_filtruj
+                        from scripts.cz_names import vocative as _cf_voc
+                        _cf_new, _cf_st = _cf_filtruj(
+                            ctx.response, ctx._raw_message, _vz,
+                            (ctx.name or "", _cf_voc(ctx.name) if ctx.name else ""))
+                        # HANS_CLAIM_RESTYLE_V1 — strohý vzorek zkusit říct Hansovým
+                        # hlasem (krátké volání + kontrola věrnosti); když neprojde,
+                        # zůstane strohý vzorek.
+                        if _cf_st.get("nahrazeno"):
+                            try:
+                                from scripts.hans_claim_filter import prestyluj as _cf_styl
+                                from scripts.hans_persona import persona_name as _cf_pn
+                                _cf_hlas = _cf_styl(self.config, ctx._raw_message, _cf_new,
+                                                    _cf_voc(ctx.name) if ctx.name else "",
+                                                    _cf_pn(self.config))
+                                if _cf_hlas:
+                                    _cf_new = _cf_hlas
+                                    _cf_st["hlasem"] = True
+                            except Exception as _cse:
+                                logging.getLogger(__name__).debug("claim restyle: %s", _cse)
+                        if _cf_new != ctx.response:
+                            logging.getLogger(__name__).info(
+                                "HANS_CLAIM_FILTER_V1: vyřazeno vět o vlastním zdroji %d, "
+                                "s údajem mimo vzorky %d%s", _cf_st["zdroj"], _cf_st["tvrzeni"],
+                                (" → nahrazeno stabilním vzorkem"
+                                 + (" (Hansovým hlasem)" if _cf_st.get("hlasem") else " (strohý)"))
+                                if _cf_st["nahrazeno"] else "")
+                            ctx.response = _cf_new
             except Exception as _fme:
                 logging.getLogger(__name__).debug("false memory claim: %s", _fme)
             # HANS_DEMAGOG_GUARD_V1 (3. 10.) — model si vymyslel „ověřené výroky“
