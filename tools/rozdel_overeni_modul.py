@@ -130,7 +130,10 @@ def main() -> int:
         for jm in funkce:
             f_s, f_n = getattr(stary, jm), getattr(novy, jm)
             telo = "\n".join(radky[strom[jm].lineno - 1:strom[jm].end_lineno]) if jm in strom else ""
-            if re.search(r"ollama|generate\(|_summarize|requests\.|urlopen", telo):
+            # „voiced“ funkce a syntéza volají model nepřímo (8. 10.: 300 volání modelu
+            # při ověřování karet osob — zastaveno ručně)
+            if re.search(r"ollama|generate\(|_summarize|requests\.|urlopen|synthes|voice", telo) \
+                    or "voiced" in jm:
                 preskoceno.append(jm + " (model/síť)")
                 continue
             if _argumenty(f_s, "x", config) is None:
