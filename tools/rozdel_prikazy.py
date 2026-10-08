@@ -109,10 +109,13 @@ def _mistni(kod) -> list:
     return out
 
 
+ALIAS = "_cc"       # jméno, pod kterým nový modul vidí původní (lze změnit --alias)
+
+
 class _BezPredpony(ast.NodeTransformer):
     def visit_Attribute(self, node):
         self.generic_visit(node)
-        if isinstance(node.value, ast.Name) and node.value.id == "_cc":
+        if isinstance(node.value, ast.Name) and node.value.id == ALIAS:
             return ast.copy_location(ast.Name(id=node.attr, ctx=node.ctx), node)
         return node
 
@@ -164,7 +167,7 @@ def priprav(zdroj_cesta: str, cil_cesta: str, jmena: list) -> dict:
         for ln, col in sorted(mista, reverse=True):
             i = ln - od
             b = blok[i].encode("utf-8")
-            blok[i] = (b[:col] + b"_cc." + b[col:]).decode("utf-8")
+            blok[i] = (b[:col] + (ALIAS + ".").encode() + b[col:]).decode("utf-8")
         novy_text = "\n".join(blok)
         # 3. zpětná zkouška
         nf = ast.parse(novy_text).body[0]
@@ -180,9 +183,9 @@ def priprav(zdroj_cesta: str, cil_cesta: str, jmena: list) -> dict:
             jm, od, f.end_lineno, f.end_lineno - od + 1, len(mista), ", ".join(sorted(glob)[:8])
             + (" …" if len(glob) > 8 else "")))
     # nový modul
-    hlava = ['"""Obsluhy příkazů přesunuté z `scripts/%s.py` (%s).' % (modul, ZNACKA), "",
-             "Text funkcí je beze změny; jména původního modulu se čtou přes `_cc.` až při",
-             "volání. Registrace příkazů (`register(...)`) zůstává v původním modulu.",
+    hlava = ['"""Funkce přesunuté z `scripts/%s.py` (%s).' % (modul, ZNACKA), "",
+             "Text funkcí je beze změny; jména původního modulu se čtou přes `%s.` až při" % ALIAS,
+             "volání. Původní modul si funkce bere zpět importem, takže dosavadní importy platí.",
              "Import původního modulu je na KONCI souboru (kruhový import oběma směry).",
              '"""', "from __future__ import annotations", ""]
     for jm in sorted(potrebne_importy):
@@ -193,7 +196,7 @@ def priprav(zdroj_cesta: str, cil_cesta: str, jmena: list) -> dict:
     # kterýkoli z obou modulů, funkce tady už existují, když si je původní modul
     # bere (8. 10.: s importem nahoře přímý import nového modulu spadl na kruh).
     pata = ["", "", "# %s — až na konci, viz hlavička" % ZNACKA,
-            "from scripts import %s as _cc  # noqa: E402" % modul, ""]
+            "from scripts import %s as %s  # noqa: E402" % (modul, ALIAS), ""]
     existuje = os.path.exists(cil_cesta)
     if existuje:
         stary_cil = open(cil_cesta, encoding="utf-8").read()
@@ -210,7 +213,7 @@ def priprav(zdroj_cesta: str, cil_cesta: str, jmena: list) -> dict:
     ntab = symtable.symtable(novy_cil, cil_cesta, "exec")
     nstrom = ast.parse(novy_cil)
     nvse, _nimp = _jmena_modulu(nstrom)
-    povolena = set(dir(builtins)) | nvse | {"_cc", "__name__", "__file__", "__doc__"}
+    povolena = set(dir(builtins)) | nvse | {ALIAS, "__name__", "__file__", "__doc__"}
     for t in _rozsahy(ntab)[1:]:
         for s in t.get_symbols():
             if s.is_global() and s.is_referenced() and s.get_name() not in povolena:
@@ -226,7 +229,12 @@ def priprav(zdroj_cesta: str, cil_cesta: str, jmena: list) -> dict:
 
 
 def main() -> int:
+    global ALIAS
     arg = [a for a in sys.argv[1:] if a != "--zapis"]
+    if "--alias" in arg:
+        i = arg.index("--alias")
+        ALIAS = arg[i + 1]
+        del arg[i:i + 2]
     if len(arg) < 3:
         print(__doc__)
         return 2
