@@ -161,6 +161,25 @@ def slozit_prompt(hodnoty: dict, varianta: str) -> str:
                    if varianta in kde)
 
 
+_A1_VYPLN = {"a", "ale", "tak", "no", "ok", "hmm", "hm", "dobre", "jo", "aha", "takze",
+             "hele", "fajn", "jasne", "pak", "i"}
+_A1_TAZACI = {"kdo", "co", "kdy", "kde", "proc", "jak", "kolik", "ktery", "ktera", "ktere",
+              "kterou", "jaky", "jaka", "jake", "jakou", "odkud", "kam", "cim", "koho",
+              "komu", "ci"}
+
+
+def _a1_otazka_bez_otazniku(veta: str) -> bool:
+    """HANS_A1_QUESTION_NO_MARK_V1 — tázací slovo na začátku věty po výplňových
+    slovech („a kdo ho postavil“, „tak proc je to v nejistote“)."""
+    import unicodedata as _ud
+    t = "".join(c for c in _ud.normalize("NFD", (veta or "").lower())
+                if _ud.category(c) != "Mn")
+    w = [x.strip(".,;:!") for x in t.split()]
+    while w and w[0] in _A1_VYPLN:
+        w = w[1:]
+    return bool(w) and w[0] in _A1_TAZACI
+
+
 # ── HANS_NO_FALSE_MEMORY_CLAIM_V1 (7. 10.) — vzory, viz `_sc_pojistky` ──────
 _FALESNA_PAMET_A = re.compile(
     r"\b([Vv]) pam[ěe]ti m[áa]m (?:\w+ ){0,2}?z[áa]znamy?\b")
@@ -5196,7 +5215,26 @@ class OpenWebUIDirectHandler:
                     or _nazor_jen_slovem):
                 try:
                     from scripts.hans_zpravy import zpravy_podklad
-                    _zpb = zpravy_podklad(ctx.user_message, self.config)
+                    # HANS_ZPRAVY_PODKLAD_F1_V1 (8. 10.) — navazující otázka („tak proč
+                    # je to v nejistotě“, „a kolik lidí je nakažených“) téma nenese;
+                    # nese ho PŘEPIS z vlákna, který už existuje pro abstinenční
+                    # brzdu. Rozhovory 8. 10.: 8 takových otázek bez podkladu →
+                    # výmysl nebo falešné „nemám záznam“, 1× cizí událost.
+                    # 📏 428 párů věta × přepis z logu: jen z přepisu 17 (všechny
+                    # správná událost), jen ze syrové věty 0, jiná událost 1
+                    # (přepis správně). Přepis má proto přednost, věta je záloha.
+                    _zp_dotaz = getattr(self, '_f1_query', None) or ctx.user_message
+                    # HANS_ZPRAVY_JMENO_JEN_BEZ_OPORY_V1 — slabší shoda podle jména
+                    # jen když otázka jinou oporu nemá
+                    _zp_jm = getattr(self, '_grounding_outcome', '') == 'factual_nofacts'
+                    _zpb = zpravy_podklad(_zp_dotaz, self.config, jmeno=_zp_jm)
+                    if not _zpb and _zp_dotaz != ctx.user_message:
+                        _zp_dotaz = ctx.user_message
+                        _zpb = zpravy_podklad(_zp_dotaz, self.config, jmeno=_zp_jm)
+                    elif _zpb and _zp_dotaz != ctx.user_message:
+                        logging.getLogger(__name__).info(
+                            'HANS_ZPRAVY_PODKLAD_F1_V1: podklad ze zpráv podle přepisu %r',
+                            str(_zp_dotaz)[:70])
                     if _zpb:
                         _stary = (ctx._grounding if isinstance(ctx._grounding, str)
                                   and ctx._grounding is not _GROUNDING_UNSET else "")
@@ -5206,7 +5244,9 @@ class OpenWebUIDirectHandler:
                         self._vysledek_groundingu('grounded', 'zpravy')
                         try:   # HANS_ZPRAVY_RETELL_V1 — titulky pro převyprávění
                             from scripts.hans_zpravy import posledni_podklad
-                            ctx._zpravy = posledni_podklad(ctx.user_message)
+                            ctx._zpravy = posledni_podklad(_zp_dotaz)
+                            if ctx._zpravy:
+                                ctx._zpravy["dotaz"] = _zp_dotaz
                         except Exception:
                             ctx._zpravy = None
                 except Exception as _zpe:
@@ -5344,8 +5384,14 @@ class OpenWebUIDirectHandler:
                 if not _skip_a1:
                     try:
                         _ar = self._agent_router()
-                        if _ar is not None and not _ar._looks_like_request(
-                                ctx._raw_message):
+                        # HANS_A1_QUESTION_NO_MARK_V1 (8. 10.) — „a kdo ho postavil“
+                        # bez otazníku je otázka: tázací slovo na začátku po výplni
+                        # („a“, „tak“, „ok“). Sdílený predikát agenta se nemění.
+                        # 📏 1 356 reálných vět: 1 nová (otázka); 1 317 vět
+                        # tazatele: 21 nových, všechny otázky; rozkazy beze změny.
+                        if (_ar is not None and not _ar._looks_like_request(
+                                ctx._raw_message)
+                                and not _a1_otazka_bez_otazniku(ctx._raw_message)):
                             _skip_a1 = True
                             logging.getLogger(__name__).info(
                                 'HANS_A1_ONLY_FOR_QUESTIONS_V1: A1 přeskočena '
@@ -5451,7 +5497,8 @@ class OpenWebUIDirectHandler:
                 from scripts.cz_names import vocative as _zr_voc
                 from scripts.hans_persona import persona_name as _zr_pn
                 _zr_text, _zr_jak = prevypravej(
-                    self.config, ctx._raw_message, ctx._zpravy["radky"],
+                    self.config, ctx._zpravy.get("dotaz") or ctx._raw_message,
+                    ctx._zpravy["radky"],
                     _zr_voc(ctx.name) if ctx.name else "", _zr_pn(self.config))
                 if ctx.on_sentence:
                     try:

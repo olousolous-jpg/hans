@@ -3262,15 +3262,47 @@ def reading_recall_answer(db_path: str, question: str = "") -> Optional[str]:
         return None
     conn = None
     try:
+        # HANS_READING_RECALL_WORD_START_V1 (8. 10.) — dřív `LIKE %prefix%` kdekoli
+        # v textu a tři NEJNOVĚJŠÍ shody: „hradu Kost“ → „na-hrad-it“ + „kost-i“
+        # v článku o veganské stravě, a model si k tomu vymyslel „Kostiště“
+        # (čtení „Hrad Kost“ v deníku je). Teď musí každé slovo tématu ZAČÍNAT
+        # slovo titulu nebo textu, shoda v titulu jde první a jednoslovné téma
+        # se bere jen z titulu (čtyřpísmenný kmen v těle textu je šum).
+        # 📏 52 reálných dotazů na znalost: 9 beze změny, 24 jiný výběr, 5 šum →
+        # nic („Merkuru“ → Sfinx, Strážci Galaxie), 7 nově nalezeno („vrak
+        # u Sicílie“, „vyšetřování ztráty třídní knihy“).
+        vzory = [re.compile(r"(?<![a-z0-9])" + re.escape(_fold(p).lower()))
+                 for p in prefixes]
         conn = _ro(db_path)
-        where = " AND ".join(
-            ["lower(coalesce(note,'')||coalesce(title,'')||coalesce(data,'')) "
-             "LIKE ?"] * len(prefixes))
-        params = ["%" + p + "%" for p in prefixes]
-        rows = conn.execute(
-            "SELECT coalesce(NULLIF(note,''), data) AS body FROM diary "
-            "WHERE event_type IN ('web_read','reading_takeaway','study_note') AND "
-            + where + " ORDER BY ts DESC LIMIT 3", params).fetchall()
+        nalez = []
+        for ts, title, body in conn.execute(
+                "SELECT ts, coalesce(title,''), coalesce(NULLIF(note,''), data, '') "
+                "FROM diary WHERE event_type IN ('web_read','reading_takeaway','study_note')"):
+            ft = _fold(title).lower()
+            v_titulu = all(v.search(ft) for v in vzory)
+            if not v_titulu:
+                if len(vzory) < 2:
+                    # téma uložené při ručním čtení jako úvodní [značka] poznámky
+                    # (HANS_READ_TOPIC_V1) platí jako titul — kvůli tomu čtení vzniklo
+                    _zn = re.match(r"\s*\[([^\]]{1,40})\]", body or "")
+                    if not (_zn and vzory[0].search(_fold(_zn.group(1)).lower())):
+                        continue
+                    nalez.append((0, -float(ts or 0), body))
+                    continue
+                fb = _fold(body).lower()
+                if not all(v.search(ft) or v.search(fb) for v in vzory):
+                    continue
+            nalez.append((0 if v_titulu else 1, -float(ts or 0), body))
+        nalez.sort(key=lambda r: r[:2])
+        rows, _videno = [], set()
+        for _a, _b, body in nalez:
+            _k = (body or "")[:80]
+            if _k in _videno:
+                continue
+            _videno.add(_k)
+            rows.append((body,))
+            if len(rows) >= 3:
+                break
         conn.close()
         conn = None
         bits = []

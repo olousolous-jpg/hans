@@ -168,6 +168,50 @@ def _kratky_prefix(q_tok: str, t_tok: str) -> bool:
     return a != b and b.startswith(a) and len(b) - len(a) >= _PREFIX_MEZERA
 
 
+# ── HANS_WIKI_LONGER_WORD_V1 (8. 10.) — SLOVO DOTAZU JE JEN ZAČÁTEK JINÉHO SLOVA ──
+# Doloženo 8. 10.: „Jana Husa“ → heslo „Jana Husáková“. Křestní jméno sedí přesně
+# (takže HANS_WIKI_EXACT_TOKEN_V1 mlčí), pokrytí 0,50 projde — a příjmení je přitom
+# jen krátký začátek úplně jiného slova. Když je některé slovo dotazu takovým
+# začátkem slova v titulu, titul se nebere (výjimka: dotaz je v titulu doslova).
+# 📏 46 dosavadních dohledání: 14 ověřených beze změny, ze zamítnutých padne
+# „Drown“ → „Drowners“; 714 entit se zdrojem z Wikipedie: 0 změn.
+def _zacatek_delsiho_slova(query: str, title: str) -> bool:
+    t = _PAREN.sub("", title or "")
+    _q = _odstran_diakritiku(query or "").strip()
+    if _q and re.search(r"(?<![a-z0-9])" + re.escape(_q) + r"(?![a-z0-9])",
+                        _odstran_diakritiku(t)):
+        return False                       # dotaz stojí v titulu celými slovy
+    tt = _title_tokens(t)
+    presne = {_odstran_diakritiku(b) for b in tt}
+    # slovo, které v titulu stojí i přesně („Krok za krokem“), se nepočítá —
+    # 28 735 skloňovaných tvarů 714 entit: bez téhle výjimky 96 falešných zamítnutí
+    # (jen dva tituly, kde je jedno slovo začátkem druhého), s ní 0.
+    return any(_kratky_prefix(a, b) for a in _title_tokens(query)
+               if _odstran_diakritiku(a) not in presne for b in tt)
+
+
+def _sklonovany_tvar(query: str, title: str) -> bool:
+    """HANS_WIKI_LONGER_WORD_V1 — záloha z našeptávače bez přesného tokenu smí
+    projít jen jako skloňovaný tvar téhož slova („Karlštejna“ × „Karlštejn“),
+    ne jako slovo se stejným začátkem („Pikové“ × „Pikodeath“)."""
+    qt = [_odstran_diakritiku(x) for x in _title_tokens(query)]
+    tt = [_odstran_diakritiku(x) for x in _title_tokens(_PAREN.sub("", title or ""))]
+    if not qt or not tt:
+        return False
+    for b in tt:
+        ok = False
+        for a in qt:
+            n = 0
+            while n < min(len(a), len(b)) and a[n] == b[n]:
+                n += 1
+            if n >= max(4, min(len(a), len(b)) - 1) and abs(len(a) - len(b)) <= 3:
+                ok = True
+                break
+        if not ok:
+            return False
+    return True
+
+
 def _title_coverage(query: str, title: str) -> float:
     """Kolik tokenů TITULU je pokryto dotazem (0.0–1.0). Opak `_title_similarity`."""
     t = _PAREN.sub("", title or "")
@@ -458,14 +502,16 @@ class WebReader:
                             (self.config.get("curiosity", {}) or {})
                             .get("wiki_title_min_coverage", 0.4))
                         and not (_pcov < 1.0
-                                 and not _ma_presny_token(query, _best))):
+                                 and not _ma_presny_token(query, _best))
+                        and not _zacatek_delsiho_slova(query, _best)):
                     # HANS_WIKI_BEST_COVERAGE_V1 (7. 10.) — našeptávač na SKLONĚNÉ
                     # slovo vrací heslo se stejným začátkem: „Anglii“ → „Angličtina“
                     # (plné pokrytí jen prefixem). Bez přesného tokenu se proto
                     # nejdřív zeptáme srsearch; prefixový nález je záloha.
                     if _ma_presny_token(query, _best):
                         return _best
-                    _pfx_zaloha = _best
+                    if _sklonovany_tvar(query, _best):   # HANS_WIKI_LONGER_WORD_V1
+                        _pfx_zaloha = _best
                 _log.debug("Wikipedia prefixsearch %r pro %r pod prahem → "
                            "zkouším srsearch", _best, query)
         except _SkipPrefix:
@@ -520,6 +566,11 @@ class WebReader:
                             "(pokrytí %.2f jen prefixové, žádný token nesedí "
                             "přesně) — raději nic než cizí článek",
                             query, best_title, _cov)
+                        return _pfx_zaloha
+                    if _zacatek_delsiho_slova(query, best_title):
+                        _log.info("HANS_WIKI_LONGER_WORD_V1: %r → %r zamítnuto (slovo "
+                                  "dotazu je jen začátek jiného slova v titulu)",
+                                  query, best_title)
                         return _pfx_zaloha
                     return best_title
                 _log.info("HANS_WIKI_COVERAGE_V1: %r → %r zamítnuto "

@@ -4074,6 +4074,16 @@ def _cmd_zdroje(handler, name, args) -> str:
     return "\n".join(out)
 
 
+_HLAVNI_ZPRAVA_PAT = re.compile(r"\bhlavn[ií]\s+zpr[aá]v(a|u|ou|[eě])\b", re.I)
+
+
+def dotaz_hlavni_zprava(veta: str) -> bool:
+    """HANS_HLAVNI_ZPRAVA_V1 — ptá se věta na HLAVNÍ ZPRÁVU (jednotné číslo)?
+    „Hlavní zprávy“ v množném čísle jsou přehled dne. Vzory /zpravy sednou dřív
+    než vlastní příkaz, proto se rozhoduje až uvnitř `_cmd_zpravy`."""
+    return bool(_HLAVNI_ZPRAVA_PAT.search(veta or ""))
+
+
 def _cmd_zpravy(handler, name, args) -> str:
     """HANS_ZPRAVY_CHAT_V1 (3. 10.) — co je ve zprávách (sběr hans_zpravy).
 
@@ -4083,6 +4093,13 @@ def _cmd_zpravy(handler, name, args) -> str:
     Dřív Hans ke zprávám přístup neměl a přehled si vymýšlel (/tazatel 3. 10.)."""
     from datetime import datetime as _dt
     from scripts.hans_zpravy import zpravy_hledej
+    if dotaz_hlavni_zprava(args):       # HANS_HLAVNI_ZPRAVA_V1 — vybraná, je-li nějaká
+        try:
+            from scripts.hans_hlavni_zprava import posledni as _hz_posledni
+            if _hz_posledni():
+                return _cmd_hlavnizprava(handler, name, args)
+        except Exception:
+            pass
     try:
         cfg = getattr(handler, "config", None)
         if cfg is None:
@@ -4383,6 +4400,35 @@ register(
     ],
     handler=_cmd_demagog,
     help_text="Ověřené výroky politiků z Demagog.cz — /demagog <jméno nebo téma>",
+)
+
+
+def _cmd_hlavnizprava(handler, name, args) -> str:
+    """HANS_HLAVNI_ZPRAVA_V1 (8. 10.) — naposledy vybraná hlavní zpráva dvou dnů
+    (text, který šel na Matrix). Veřejná data → smí i cizí."""
+    from scripts.hans_hlavni_zprava import posledni
+    import time as _t
+    try:
+        p = posledni()
+    except Exception:
+        p = None
+    if not p:
+        return ("Hlavní zprávu jsem zatím žádnou nevybral — vybírám ji jednou za dva dny "
+                "z toho, co se nejdéle drželo na špici ve více médiích.")
+    return ("Naposledy, %s, jsem jako hlavní zprávu vybral: %s\n\n%s"
+            % (_t.strftime("%d. %m.", _t.localtime(p["ts"])).replace(" 0", " ").lstrip("0"),
+               (p["titulek"] or "").rstrip("."), p["text"]))
+
+
+register(
+    "hlavnizprava",
+    slash_aliases=["hlavnizprava", "hlavni"],
+    # ZÁMĚRNĚ jen jednotné číslo: „jaké jsou hlavní zprávy“ je přehled dne (/zpravy).
+    nl_patterns=[
+        r"\bhlavn[ií]\s+zpr[aá]v(a|u|ou|[eě])\b",
+    ],
+    handler=_cmd_hlavnizprava,
+    help_text="Hlavní zpráva posledních dvou dnů, jak jsem ji vybral — /hlavnizprava",
 )
 
 

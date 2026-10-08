@@ -1823,6 +1823,28 @@ class HansRoutine:
                     _zh(self.config, self._notifier)
             except Exception as _ze:
                 _log.warning("hlídač záloh: %s", _ze)
+            # HANS_HLAVNI_ZPRAVA_V1 (8. 10.) — hlavní zpráva posledních dvou dnů
+            # sama na Matrix (výběr, text a podmínky: `hans_hlavni_zprava.tick`).
+            # Ve vlákně: psaní volá model a tick nesmí stát.
+            try:
+                import time as _hzt
+                if (_hzt.time() - getattr(self, "_hz_ts", 0.0) > 600
+                        and not getattr(self, "_hz_bezi", False)):
+                    self._hz_ts = _hzt.time()
+                    self._hz_bezi = True
+
+                    def _hz_prace():
+                        try:
+                            from scripts.hans_hlavni_zprava import tick as _hz_tick
+                            _hz_tick(self.config, self._notifier, self._diary_path)
+                        except Exception as _hze:
+                            _log.warning("hlavní zpráva: %s", _hze)
+                        finally:
+                            self._hz_bezi = False
+                    import threading as _hzth
+                    _hzth.Thread(target=_hz_prace, name="hlavni-zprava", daemon=True).start()
+            except Exception as _hze:
+                _log.warning("hlavní zpráva: %s", _hze)
             # BODY_TRACK_ROZPOR_HLIDAC_V1 (4. 10.) — snímky rozporů stopy postavy
             # a tváře (BODY_TRACK_ROZPOR_SNIMEK_V1): až jich je dost a aspoň ze
             # dvou dní, JEDNOU dát vědět na Matrix, že je čas je označit.
@@ -1855,6 +1877,14 @@ class HansRoutine:
                     self._health_wedge_strikes += 1
                     need = int((self.config.get('health', {}) or {}).get(
                         'wedge_strikes', 2))
+                    # HANS_HEALTH_EMBED_HEAL_NOW_V1 (8. 10.) — „vektory visí“ sonda
+                    # hlásí až po DVOU vlastních selháních; další dva údery tady
+                    # znamenaly opravu až po 30–40 min (8. 10. 12:23 → ručně 12:44).
+                    # Jen přes den: v noci počítá úsudkový model zčásti na CPU a vektory
+                    # pak mohou být jen pomalé (obava ze 7. 10.) — tam zůstávají dva údery.
+                    if ('vektory vis' in str((health.get('ollama', {}) or {}).get('detail', ''))
+                            and 8 <= datetime.now().hour < 22):
+                        need = 1
                     if self._health_wedge_strikes >= need:
                         # HANS_HEALTH_NIGHT_AWARE_V1 — ráno po WOL Ollama BOOTUJE
                         # (server běží, negeneruje = „WEDGED"), ale mozek nebyl

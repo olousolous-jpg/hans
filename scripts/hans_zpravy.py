@@ -1296,6 +1296,31 @@ def _zp_vyslovne_tema(dotaz: str) -> bool:
     return bool(re.search(r"(?<![.!?]\s)(?<!^)\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w]{2,}", d))
 
 
+# HANS_ZPRAVY_JMENO_V1 (8. 10.) — vlastní jméno z dotazu, které stojí v titulcích
+# události, stačí při nižší shodě (od ZPRAVY_PRAH_SLOVA). Doloženo 8. 10.:
+# „co se děje s popravou Pikeova?“ 0,56 × s háčky „Pikeové“ 0,66 — vektor je
+# citlivý na tvar jména, a dohledání pak vzalo z Wikipedie herečku téhož
+# příjmení. Jméno = slovo s velkým písmenem UVNITŘ věty (ne první slovo, ne
+# zdvořilé „Vás/Vám“); obecná slova („servisu“ → pneuservis) pravidlo nepustí.
+ZPRAVY_JMENO_PRAVIDLO = True
+_ZP_JMENO = re.compile(r"(?<![.!?…:—–-]\s)(?<![„\"'‚(])(?<!^)\b([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w]{3,})")
+# 📏 614 vět se jménem (deník, tazatel, přepisy F1): 17 změn, 9 správně (Kyjev, Ukrajina,
+# Izrael 2×, Pikeová 2×, Španělsko, Húsíové, Turecko), 8 špatně — „České/Evropě“ (počasí,
+# Havel) a názvy děl v uvozovkách. Proto: domácí přídavná jména a slovo za uvozovkou,
+# pomlčkou či dvojtečkou se nepočítají. Shoda správné od špatných neodděluje (0,56–0,64).
+_ZP_NEJMENO = ("vas", "vam", "vase", "vasi", "vami", "hans", "kolac", "cesk", "evrop", "cech")
+
+
+def _zp_jmena(dotaz: str) -> list:
+    out = []
+    for veta in re.split(r"(?<=[.!?…])\s+", dotaz or ""):
+        for m in _ZP_JMENO.finditer(veta.strip()):
+            k = _bez_diakritiky(m.group(1))
+            if not k.startswith(_ZP_NEJMENO) and not k.startswith(_ZP_NETEMA):
+                out.append(k[:5] if len(k) > 5 else k[:4])
+    return out
+
+
 def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: int = 4,
                   path: str = DB, zaloha_prehled: bool = False,
                   bez_klauzi: bool = False) -> dict:
@@ -1317,6 +1342,7 @@ def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: i
             dotaz = " ".join(_klauze[_i:_i + 2])
     slova = [w for w in re.findall(r"[a-z0-9]+", _bez_diakritiky(dotaz)) if len(w) >= 4]
     tema = [w for w in slova if not w.startswith(_ZP_NETEMA)]
+    jmena = _zp_jmena(dotaz) if ZPRAVY_JMENO_PRAVIDLO else []
     c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
     try:
         info = {r[0]: r[1] for r in c.execute(
@@ -1361,9 +1387,24 @@ def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: i
                     f = _bez_diakritiky(" ".join("%s %s" % (z.get("titulek") or "", z.get("perex") or "")
                                                  for z in casova_osa(u, path)))
                     return bool(kmeny) and all(k in f for k in kmeny)
-                kand = sorted((u for u in nej if nej[u] >= ZPRAVY_PRAH or
-                               (nej[u] >= ZPRAVY_PRAH_SLOVA and _slova_sedi(u))),
-                              key=lambda u: -nej[u])
+                def _jmeno_sedi(u):
+                    if not jmena:
+                        return False
+                    if u < 0:
+                        f = _bez_diakritiky(_zp_udalost_popis(u, path).get("titulek") or "")
+                    else:
+                        f = _bez_diakritiky(" ".join(z.get("titulek") or ""
+                                                     for z in casova_osa(u, path)))
+                    return any(re.search(r"(?<![a-z0-9])" + re.escape(j), f) for j in jmena)
+                _podle_jmena = set()
+                kand = []
+                for u in nej:
+                    if nej[u] >= ZPRAVY_PRAH or (nej[u] >= ZPRAVY_PRAH_SLOVA and _slova_sedi(u)):
+                        kand.append(u)
+                    elif nej[u] >= ZPRAVY_PRAH_SLOVA and _jmeno_sedi(u):
+                        kand.append(u)
+                        _podle_jmena.add(u)
+                kand.sort(key=lambda u: -nej[u])
                 if kand:                          # o víc než 0,12 slabší než nejlepší = šum
                     kand = [u for u in kand if nej[u] >= nej[kand[0]] - 0.15]
                 ids, vybrane = [], []
@@ -1394,6 +1435,10 @@ def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: i
             continue
         d["id"] = uid
         d["skore"] = round(float(skore.get(uid, 0)), 2)
+        try:                               # HANS_ZPRAVY_JMENO_V1
+            d["podle_jmena"] = uid in _podle_jmena
+        except NameError:
+            d["podle_jmena"] = False
         out.append(d)
         if len(out) >= limit:
             break
@@ -1445,6 +1490,35 @@ def _ollama_volna() -> bool:
         return True
 
 
+def nedavny_hovor(minut: float = 10.0, log: str = None) -> bool:
+    """HANS_ZPRAVY_PREKLAD_NE_PRI_HOVORU_V1 (8. 10.) — mluvilo se s Hansem v posledních
+    `minut` minutách? Pozná se z konce provozního logu (rozhodnutí o opoře, zpráva
+    z Matrixu, hlasový dotaz) — sběr běží v jiném procesu než Hans.
+
+    Proč: překladový model (8 GB) se na 16 GB grafické paměti nevejde vedle
+    hlavního. Při SOUBĚŽNÉM hovoru se oba střídavě vytlačovaly a požadavky na
+    vektory zůstaly viset až do restartu Ollamy (7. 10. 10:21, 8. 10. 12:23;
+    žurnál Ollamy: „predicted to exceed available memory, evicting“ po 5–20 s).
+    Překlady bez souběžného hovoru proběhly v pořádku."""
+    from datetime import datetime as _dt
+    log = log or os.path.join(ROOT, "data", "system.log")
+    try:
+        with open(log, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 400000))
+            konec = f.read().decode("utf-8", "replace").splitlines()
+    except Exception:
+        return False
+    hranice = time.time() - minut * 60.0
+    for r in reversed(konec):
+        if "GROUNDING: " in r or "matrix \u2190 " in r or "[Voice] STT" in r:
+            try:
+                return _dt.strptime(r[:19], "%Y-%m-%d %H:%M:%S").timestamp() >= hranice
+            except Exception:
+                continue
+    return False
+
+
 def _preloz_davku(texty: list, config: dict):
     import json as _json
     import requests
@@ -1489,13 +1563,18 @@ def prelozit_titulky(c, config: dict, ted: float, max_n: int = PREKLAD_MAX) -> d
     _db_preklady(c)
     if not _ollama_volna():
         return {"prelozeno": 0, "odlozeno": "GPU obsazená"}
+    _klid = float(((config or {}).get("zpravy", {}) or {}).get("preklad_klid_min", 10))
+    if _klid > 0 and nedavny_hovor(_klid):
+        _log.info("HANS_ZPRAVY_PREKLAD_NE_PRI_HOVORU_V1: v posledních %d min se mluvilo "
+                  "→ překlad titulků odkládám na příští sběr", _klid)
+        return {"prelozeno": 0, "odlozeno": "probíhá hovor"}
     mame = {r[0] for r in c.execute("SELECT otisk FROM preklady")}
     chybi = [t for t in _cizi_titulky(c, ted - 48 * 3600) if _otisk_textu(t) not in mame][:max_n]
     n = chyb = 0
     for i in range(0, len(chybi), PREKLAD_DAVKA):
         davka = chybi[i:i + PREKLAD_DAVKA]
-        if i and not _ollama_volna():          # mezitím hra / render → přestat
-            break
+        if i and (not _ollama_volna() or (_klid > 0 and nedavny_hovor(1.5))):
+            break                              # mezitím hra / render / hovor → přestat
         pr = None
         for pokus in (1, 2):                   # 3. 10.: jedna chyba ukončila celé doplnění
             try:
@@ -1603,7 +1682,7 @@ def prevypravej(config: dict, otazka: str, radky: list, osloveni: str = "",
     return zaloha, "titulky"
 
 
-def zpravy_podklad(dotaz: str, config: dict, path: str = DB):
+def zpravy_podklad(dotaz: str, config: dict, path: str = DB, jmeno: bool = True):
     """Text podkladu ze zpráv (nebo None) — titulky + perexy nejbližší události
     a začátek plného českého článku, s médiem a časem."""
     from datetime import datetime as _dt
@@ -1622,7 +1701,16 @@ def zpravy_podklad(dotaz: str, config: dict, path: str = DB):
         return None
     top = r["udalosti"][0]
     if top["skore"] < PODKLAD_PRAH:
-        return None
+        # HANS_ZPRAVY_JMENO_V1 — pod prahem jen událost, kterou nese vlastní jméno
+        # HANS_ZPRAVY_JMENO_JEN_BEZ_OPORY_V1 — volající pravidlo jména vypne, když už
+        # jinou oporu má (živě 8. 10.: „a kdo ho režíroval“ po filmu → zprávy o filmu).
+        _j = _zp_jmena(dotaz) if (ZPRAVY_JMENO_PRAVIDLO and jmeno) else []
+        _tit = _bez_diakritiky(" ".join(z.get("titulek") or "" for z in casova_osa(top["id"], path))
+                               if top["id"] > 0 else top["titulek"])
+        if not (_j and top["skore"] >= ZPRAVY_PRAH_SLOVA
+                and any(re.search(r"(?<![a-z0-9])" + re.escape(x), _tit) for x in _j)):
+            return None
+        _log.info("HANS_ZPRAVY_JMENO_V1: podklad při shodě %.2f podle jména %s", top["skore"], _j)
     uid = top["id"]
     osa = casova_osa(uid, path) if uid > 0 else []
     kmeny = [w[:5] for w in re.findall(r"[a-z]+", _bez_diakritiky(dotaz))

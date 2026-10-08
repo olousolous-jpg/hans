@@ -41,6 +41,12 @@ _CAPABILITIES = [
      "U zpráv posílám ODKAZ na článek (jen u médií, jejichž kanály sbírám — u souhrnů z Google News odkaz nemám) "
      "a na požádání i odkazy od konkrétního média",
      "/zpravy [téma]; „co píšou o …“, „co je ve zprávách“; po výpisu „pošli odkaz (na Novinky)“"),
+    # HANS_HLAVNI_ZPRAVA_V1
+    ("hlavni_zprava", "Jednou za dva dny sám vyberu HLAVNÍ ZPRÁVU — příběh, který se nejdéle držel "
+     "na špici ve více médiích — a pošlu na Matrix krátké shrnutí: co se stalo, jak se to "
+     "vyvíjelo a v čem se česká a zahraniční média liší. Nehodnotím, co je pravda, a držím se "
+     "jen titulků.",
+     "/hlavnizprava; „jaká je hlavní zpráva?“"),
     ("demagog", "Umím vyhledat OVĚŘENÉ VÝROKY českých politiků z Demagog.cz — výrok, "
      "jejich verdikt (pravda / nepravda / zavádějící / neověřitelné), krátké zdůvodnění "
      "a odkaz. Verdikt je jejich, sám politiky nehodnotím; mám jen to, co ověřili oni "
