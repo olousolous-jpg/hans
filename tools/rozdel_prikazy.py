@@ -54,10 +54,17 @@ def _jmena_modulu(strom: ast.Module) -> tuple:
         elif isinstance(n, (ast.Import, ast.ImportFrom)):
             if isinstance(n, ast.ImportFrom) and n.module == "__future__":
                 continue
+            # Import z vlastního projektu (hlavně už přesunuté obsluhy
+            # `from scripts.chat_cmd_x import …`) se v novém modulu NEOPAKUJE —
+            # bere se přes `_cc.` jako každé jiné jméno modulu. Opakování vyrobilo
+            # 8. 10. kruhový import mezi dvěma novými moduly (zachytila zkouška
+            # přímého importu, nic nenasazeno).
+            vlastni = isinstance(n, ast.ImportFrom) and (n.module or "").startswith("scripts")
             for a in n.names:
                 jm = (a.asname or a.name).split(".")[0]
                 vse.add(jm)
-                importy[jm] = n
+                if not vlastni:
+                    importy[jm] = n
         else:
             for x in ast.walk(n):
                 if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store):
