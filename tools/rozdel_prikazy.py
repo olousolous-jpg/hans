@@ -152,6 +152,24 @@ def priprav(zdroj_cesta: str, cil_cesta: str, jmena: list) -> dict:
         # importovaná jména použitá ve funkci → zopakovat import v novém modulu
         glob_imp, _ = _globalni_vsude(ftab, set(importy))
         potrebne_importy |= glob_imp
+        # Jména jen v typových poznámkách (`Optional[str]`) tabulka symbolů nevidí —
+        # s odloženými anotacemi se za běhu nevyhodnocují. Import se přesto zopakuje,
+        # ať je nový modul čistý; anotace jménem z původního modulu se odmítne.
+        for x in ast.walk(f):
+            anot = []
+            if isinstance(x, ast.arg) and x.annotation is not None:
+                anot.append(x.annotation)
+            elif isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and x.returns is not None:
+                anot.append(x.returns)
+            elif isinstance(x, ast.AnnAssign):
+                anot.append(x.annotation)
+            for a in anot:
+                for y in ast.walk(a):
+                    if isinstance(y, ast.Name):
+                        if y.id in importy:
+                            potrebne_importy.add(y.id)
+                        elif y.id in kandidati:
+                            _chyba("%s: typová poznámka používá jméno modulu %s" % (jm, y.id))
         # místa k přepsání (řádek, sloupec v bajtech)
         mista = []
         for x in ast.walk(f):
