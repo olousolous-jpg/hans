@@ -52,13 +52,52 @@ def _obnov_automount(kotva: str) -> None:
         _log.debug("hlídač záloh: obnova automountu: %s", e)
 
 
+def _stav_sluzby(c: dict) -> list:
+    """HANS_BACKUP_WATCH_SERVICE_V1 (8. 10.) — výsledek poslední zálohy Pi.
+
+    Hlídač dosud měřil jen stáří archivu na NASu, takže chybějící OFFSITE kopii
+    (služba `failed`, kód 2) neviděl: 7. 10. vypršelo přihlášení k Proton Drive
+    a hlídač zapsal, že je vše v pořádku. Když služba skončila chybou, zkusí se
+    krátce sám Proton Drive, aby zpráva řekla rovnou, co má člověk udělat.
+    """
+    import subprocess
+    unit = str(c.get("sluzba", "hans-backup.service"))
+    try:
+        out = subprocess.run(
+            ["systemctl", "--user", "show", unit, "-p", "Result", "-p", "ExecMainStatus"],
+            capture_output=True, text=True, timeout=10).stdout
+    except Exception as e:
+        _log.debug("hlídač záloh: stav služby nejde zjistit: %s", e)
+        return []
+    kv = dict(r.split("=", 1) for r in out.splitlines() if "=" in r)
+    if kv.get("Result", "success") == "success":
+        return []
+    kod = kv.get("ExecMainStatus", "?")
+    pd = os.path.expanduser(str(c.get("proton_drive_bin", "~/bin/proton-drive")))
+    if kod == "2" and os.path.exists(pd):
+        try:
+            r = subprocess.run([pd, "filesystem", "list", "/"], capture_output=True,
+                               text=True, timeout=float(c.get("proton_timeout_s", 60)))
+            if r.returncode != 0 and "login" in (r.stdout + r.stderr).lower():
+                return ["Proton Drive je odhlášený, poslední záloha nemá kopii mimo dům. "
+                        "Přihlaste se prosím na Raspberry příkazem "
+                        "~/bin/proton-drive auth login (potvrzuje se v prohlížeči)."]
+        except Exception as e:
+            _log.debug("hlídač záloh: zkouška Proton Drive: %s", e)
+    if kod == "2":
+        return ["Poslední záloha Pi proběhla jen místně, kopie mimo dům chybí "
+                "(podrobnosti: systemctl --user status %s)." % unit]
+    return ["Poslední záloha Pi skončila chybou (kód %s; systemctl --user status %s)."
+            % (kod, unit)]
+
+
 def zkontroluj(config: dict, ted: float | None = None) -> list:
     """Seznam problémů (česky, pro člověka). Prázdný = vše v pořádku."""
     c = _cfg(config)
     if not c.get("enabled", True):
         return []
     ted = ted or time.time()
-    problemy = []
+    problemy = _stav_sluzby(c)
     pi_dir = str(c.get("pi_nas_dir", "/mnt/nas-hans/Hans_backups"))
     pi_max = float(c.get("pi_max_dni", 3))
     pc_ok = str(c.get("pc_ok_file", "/mnt/nas-hans/hans_pc_restic/POSLEDNI_OK"))
@@ -83,7 +122,7 @@ def zkontroluj(config: dict, ted: float | None = None) -> list:
             if i < pokusy - 1:
                 time.sleep(cekani)
     if chyba is not None:
-        return ["NAS se na Pi nepřipojil ani po %d pokusech (%s) — zálohy Pi ani PC nejde ověřit."
+        return problemy + ["NAS se na Pi nepřipojil ani po %d pokusech (%s) — zálohy Pi ani PC nejde ověřit."
                 % (pokusy, type(chyba).__name__)]
     if i:
         _log.info("hlídač záloh: NAS připojen až na %d. pokus (probouzel se)", i + 1)
@@ -124,7 +163,7 @@ def hlidej(config: dict, notifier) -> list:
     # HANS_BACKUP_WATCH_OK_LOG_V1 (1. 10.) — úspěch dřív nelogoval nic →
     # ticho nešlo odlišit od neproběhnutého hlídače.
     if not problemy:
-        _log.info("hlídač záloh: vše OK (Pi na NASu i PC v limitu)")
+        _log.info("hlídač záloh: vše OK (služba zálohy, Pi na NASu i PC v limitu)")
     if nove:
         _log.warning("hlídač záloh: %s", " | ".join(nove))
         if notifier:
