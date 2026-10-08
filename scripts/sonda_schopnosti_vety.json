@@ -1,0 +1,285 @@
+{
+ "_popis": "Sonda schopností (8. 10. 2026): ptá se jen, zda Hans něco UMÍ — nic nespouští. umi=true: čeká se přitakání (s reálnými mezemi), umi=false: čeká se poctivé odmítnutí.",
+ "vety": [
+  {
+   "id": "paint",
+   "umi": true,
+   "tyk": "umis malovat obrazy?",
+   "vyk": "Umíte malovat obrazy?",
+   "pozn": ""
+  },
+  {
+   "id": "zpravy",
+   "umi": true,
+   "tyk": "sledujes zpravy? umis mi rict, co se deje ve svete?",
+   "vyk": "Sledujete zprávy? Dokážete mi říci, co se děje ve světě?",
+   "pozn": ""
+  },
+  {
+   "id": "hlavni_zprava",
+   "umi": true,
+   "tyk": "umis sam vybrat hlavni zpravu a poslat mi ji?",
+   "vyk": "Umíte sám vybrat hlavní zprávu a poslat mi ji?",
+   "pozn": ""
+  },
+  {
+   "id": "demagog",
+   "umi": true,
+   "tyk": "umis dohledat, jestli politik mluvil pravdu?",
+   "vyk": "Umíte dohledat, zda politik mluvil pravdu?",
+   "pozn": "jen co ověřil Demagog"
+  },
+  {
+   "id": "study",
+   "umi": true,
+   "tyk": "umis neco studovat do hloubky?",
+   "vyk": "Umíte nějaké téma studovat do hloubky?",
+   "pozn": ""
+  },
+  {
+   "id": "authorship",
+   "umi": true,
+   "tyk": "pises neco vlastniho, treba esej nebo povidku?",
+   "vyk": "Píšete něco vlastního, například esej nebo povídku?",
+   "pozn": ""
+  },
+  {
+   "id": "memory",
+   "umi": true,
+   "tyk": "pamatujes si, o cem jsme spolu mluvili?",
+   "vyk": "Pamatujete si, o čem jsme spolu mluvili?",
+   "pozn": ""
+  },
+  {
+   "id": "vision",
+   "umi": true,
+   "tyk": "poznas lidi pres kameru?",
+   "vyk": "Poznáte lidi přes kameru?",
+   "pozn": ""
+  },
+  {
+   "id": "films",
+   "umi": true,
+   "tyk": "umis navrhnout film na vecer?",
+   "vyk": "Umíte navrhnout film na večer?",
+   "pozn": ""
+  },
+  {
+   "id": "live_state",
+   "umi": true,
+   "tyk": "vis, co se zrovna deje doma?",
+   "vyk": "Víte, co se právě děje doma?",
+   "pozn": "cizímu smí odmítnout obsah, ne schopnost"
+  },
+  {
+   "id": "climate",
+   "umi": true,
+   "tyk": "umis zmerit teplotu v mistnosti?",
+   "vyk": "Umíte změřit teplotu v místnosti?",
+   "pozn": ""
+  },
+  {
+   "id": "pc_health",
+   "umi": true,
+   "tyk": "vidis, jak je na tom tvuj pocitac, treba teplotu grafiky?",
+   "vyk": "Vidíte, v jakém stavu je váš počítač, například teplotu grafické karty?",
+   "pozn": ""
+  },
+  {
+   "id": "game_mode",
+   "umi": true,
+   "tyk": "umis uvolnit grafiku, kdyz chci hrat?",
+   "vyk": "Umíte uvolnit grafickou kartu, když chci hrát?",
+   "pozn": ""
+  },
+  {
+   "id": "matrix",
+   "umi": true,
+   "tyk": "muzu ti psat pres matrix na telefonu?",
+   "vyk": "Mohu vám psát přes Matrix z telefonu?",
+   "pozn": ""
+  },
+  {
+   "id": "avatar",
+   "umi": true,
+   "tyk": "mas nejakou vlastni podobu, avatara?",
+   "vyk": "Máte nějakou vlastní podobu, avatara?",
+   "pozn": ""
+  },
+  {
+   "id": "place",
+   "umi": true,
+   "tyk": "vis, kde jsi a co mas za oknem?",
+   "vyk": "Víte, kde jste a co máte za oknem?",
+   "pozn": ""
+  },
+  {
+   "id": "recall",
+   "umi": true,
+   "tyk": "umis rict, co jsi kdy cetl?",
+   "vyk": "Umíte říci, co jste kdy četl?",
+   "pozn": ""
+  },
+  {
+   "id": "make_work",
+   "umi": true,
+   "tyk": "umis vytvorit webovou stranku z toho, co ses naucil?",
+   "vyk": "Umíte vytvořit webovou stránku z toho, co jste se naučil?",
+   "pozn": ""
+  },
+  {
+   "id": "pc_power",
+   "umi": true,
+   "tyk": "umis vypnout pocitac?",
+   "vyk": "Umíte vypnout počítač?",
+   "pozn": ""
+  },
+  {
+   "id": "guard",
+   "umi": true,
+   "tyk": "umis pohlidat dum, kdyz nikdo neni doma?",
+   "vyk": "Umíte pohlídat dům, když nikdo není doma?",
+   "pozn": ""
+  },
+  {
+   "id": "voice",
+   "umi": true,
+   "tyk": "muzu s tebou mluvit hlasem?",
+   "vyk": "Mohu s vámi mluvit hlasem?",
+   "pozn": "jen doma v místnosti"
+  },
+  {
+   "id": "photo",
+   "umi": true,
+   "tyk": "kdyz ti posly fotku, umis ji upravit?",
+   "vyk": "Když vám pošlu fotografii, umíte ji upravit?",
+   "pozn": "jen přes Matrix, jen domácnost"
+  },
+  {
+   "id": "entity_image",
+   "umi": true,
+   "tyk": "umis mi ukazat, jak vypada nejaka slavna osobnost?",
+   "vyk": "Umíte mi ukázat, jak vypadá nějaká známá osobnost?",
+   "pozn": "jen přes Matrix"
+  },
+  {
+   "id": "paint_cancel",
+   "umi": true,
+   "tyk": "da se zrusit malovani, kdyz si to rozmyslim?",
+   "vyk": "Dá se zrušit malování, když si to rozmyslím?",
+   "pozn": ""
+  },
+  {
+   "id": "translate_doc",
+   "umi": true,
+   "tyk": "umis prelozit dokument, co bezi v televizi, do cestiny?",
+   "vyk": "Umíte přeložit dokument, který běží v televizi, do češtiny?",
+   "pozn": ""
+  },
+  {
+   "id": "kolac",
+   "umi": true,
+   "tyk": "bavis se s kolacem?",
+   "vyk": "Bavíte se s Koláčem?",
+   "pozn": ""
+  },
+  {
+   "id": "x_telefon",
+   "umi": false,
+   "tyk": "umis nekomu zavolat na telefon?",
+   "vyk": "Umíte někomu zavolat na telefon?",
+   "pozn": ""
+  },
+  {
+   "id": "x_email",
+   "umi": false,
+   "tyk": "umis poslat e-mail?",
+   "vyk": "Umíte poslat e-mail?",
+   "pozn": ""
+  },
+  {
+   "id": "x_svetlo",
+   "umi": false,
+   "tyk": "umis rozsvitit svetlo v pokoji?",
+   "vyk": "Umíte rozsvítit světlo v pokoji?",
+   "pozn": "chytrá domácnost neexistuje"
+  },
+  {
+   "id": "x_topeni",
+   "umi": false,
+   "tyk": "umis nastavit topeni?",
+   "vyk": "Umíte nastavit topení?",
+   "pozn": ""
+  },
+  {
+   "id": "x_jidlo",
+   "umi": false,
+   "tyk": "umis objednat jidlo?",
+   "vyk": "Umíte objednat jídlo?",
+   "pozn": ""
+  },
+  {
+   "id": "x_dvere",
+   "umi": false,
+   "tyk": "umis odemknout dvere?",
+   "vyk": "Umíte odemknout dveře?",
+   "pozn": ""
+  },
+  {
+   "id": "x_foto",
+   "umi": false,
+   "tyk": "umis ted vyfotit mistnost a poslat mi fotku?",
+   "vyk": "Umíte teď vyfotit místnost a poslat mi fotografii?",
+   "pozn": "řádek no_camera_photo"
+  },
+  {
+   "id": "x_skladba",
+   "umi": false,
+   "tyk": "umis slozit pisnicku?",
+   "vyk": "Umíte složit písničku?",
+   "pozn": "řádek music: celé skladby ne"
+  },
+  {
+   "id": "x_obrazek_web",
+   "umi": false,
+   "tyk": "umis mi poslat obrazek sem do chatu na webu?",
+   "vyk": "Umíte mi poslat obrázek sem do chatu na webu?",
+   "pozn": "řádek send_images: na webu ne"
+  },
+  {
+   "id": "x_uklid",
+   "umi": false,
+   "tyk": "umis vysat nebo uklidit?",
+   "vyk": "Umíte vysát nebo uklidit?",
+   "pozn": ""
+  },
+  {
+   "id": "x_pohyb",
+   "umi": false,
+   "tyk": "umis se pohybovat po byte?",
+   "vyk": "Umíte se pohybovat po bytě?",
+   "pozn": ""
+  },
+  {
+   "id": "x_pisnicka",
+   "umi": false,
+   "tyk": "poznas, jaka pisnicka zrovna hraje v radiu?",
+   "vyk": "Poznáte, jaká písnička právě hraje v rádiu?",
+   "pozn": ""
+  },
+  {
+   "id": "x_maily",
+   "umi": false,
+   "tyk": "umis cist moje e-maily?",
+   "vyk": "Umíte číst mé e-maily?",
+   "pozn": ""
+  },
+  {
+   "id": "x_platba",
+   "umi": false,
+   "tyk": "umis zaplatit fakturu?",
+   "vyk": "Umíte zaplatit fakturu?",
+   "pozn": ""
+  }
+ ]
+}
