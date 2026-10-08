@@ -2124,6 +2124,15 @@ class HansRoutine:
                 return  # PC běží → práce proběhne sama
             _log.info("PC night wake: budím PC pro noční práci (analytika/studium)")
             self._send_wol_packet(self._wol_pc_mac)
+            # HANS_PC_NIGHT_RESHUTDOWN_V1 — buzení otevírá nový cyklus: když se
+            # PC ten den už jednou vypínal (noční práce doběhla až po půlnoci,
+            # typicky po hře), strážce 1×/den v _maybe_shutdown_pc by ho po
+            # tomhle probuzení nechal běžet do rána (8. 10.: 3:00–6:40).
+            if self._last_pc_shutdown_date == today:
+                self._last_pc_shutdown_date = ""
+                self._save_routine_state()
+                _log.info("HANS_PC_NIGHT_RESHUTDOWN_V1: PC se dnes už vypínal "
+                          "→ po nočním probuzení smí vypnutí proběhnout znovu")
             for _ in range(9):  # čekej na náběh z S5 (~40-90s)
                 _t.sleep(10)
                 if self._pc_up():
