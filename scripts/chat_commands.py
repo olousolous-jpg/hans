@@ -2428,35 +2428,7 @@ def thread_zpravy(message: str, turns):
     return None
 
 
-def _cmd_odkazy_zprav(handler, name, args) -> str:
-    """HANS_ZPRAVY_ODKAZY_V1 — odkazy na články ke zprávám z posledního výpisu."""
-    from scripts.hans_zpravy import (zpravy_odkazy, udalosti_podle_url,
-                                     medium_ze_zpravy, ZDROJE)
-    urls, _, msg = (args or "").partition("\x1f")
-    try:
-        ids = udalosti_podle_url(urls.split())
-    except Exception:
-        return "Do sebraných zpráv se mi teď nepodařilo nahlédnout."
-    if not ids:
-        return ("Odkaz mám jen u článků z kanálů médií (ČT24, iROZHLAS, Seznam Zprávy, "
-                "Novinky, iDNES a zahraniční); u těchhle zpráv žádný nemám.")
-    med = medium_ze_zpravy(msg)
-    nazev = {z[0]: z[1] for z in ZDROJE}.get(med, med)
-    out, chybi = [], 0
-    for uid in ids:
-        o = zpravy_odkazy(uid, medium=med, limit=2) if med else zpravy_odkazy(uid, limit=2)
-        if not o:
-            chybi += 1
-            continue
-        for x in o:
-            out.append("• %s — %s\n   %s" % (x["zdroj"], x["titulek"], x["url"]))
-    if not out:
-        return ("Od %s k těm zprávám článek nemám. Bez omezení na médium ti pošlu jiné — "
-                "stačí říct „pošli odkazy“." % nazev)
-    hlava = ("Články od %s k těm zprávám:" % nazev) if med else "Odkazy na články k těm zprávám:"
-    if med and chybi:
-        out.append("(K %d dalším zprávám od %s nic nemám.)" % (chybi, nazev))
-    return "\n".join([hlava] + out)
+from scripts.chat_cmd_zpravy import _cmd_odkazy_zprav   # ROZDELENI_PRIKAZU_V1 — přesunuto
 
 
 register(
