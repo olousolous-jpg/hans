@@ -515,7 +515,16 @@ def _uloz_strom(func, kroky, druh="chat"):
     except Exception:
         pass
     try:
-        src = inspect.getsource(inspect.getmodule(func))
+        _mod = inspect.getmodule(func)
+        src = inspect.getsource(_mod)
+        # ROZDELENI_METOD_V1 (9. 10.) — části třídy mohou ležet v jiných
+        # modulech (mixiny `handler_*`); cesty podkladu se čtou ze všech.
+        _cls = getattr(_mod, func.__qualname__.split(".")[0], None)
+        for _k in getattr(_cls, "__mro__", ())[1:]:
+            _km = inspect.getmodule(_k)
+            if _km is not None and _km is not _mod \
+                    and getattr(_km, "__name__", "").startswith("scripts."):
+                src += "\n" + inspect.getsource(_km)
         cesty = sorted(set(re.findall(r"_vysledek_groundingu\(\s*'\w+'\s*,\s*'(\w+)'", src)))
     except Exception:
         pass

@@ -79,11 +79,20 @@ def tiche_vychody_groundingu() -> int:
     """
     import re
     from pathlib import Path
-    src = Path("scripts/openwebui_direct_handler.py").read_text(encoding="utf-8")
+    src = _zdrojak_handleru()
     i = src.index("def _vysledek_groundingu(")
-    j = src.index("def _build_grounding(", i)
+    j = src.index("\n    def ", i + 10)       # konec setteru = začátek další metody
     mimo = src[:i] + src[j:]
     return len(re.findall(r"self\._grounding_outcome\s*=", mimo))
+
+
+def _zdrojak_handleru() -> str:
+    """ROZDELENI_METOD_V1 (9. 10.) — třída handleru leží ve více souborech
+    (`handler_*.py` jsou její části); strukturální kontroly čtou všechny."""
+    from pathlib import Path
+    return "\n".join(p.read_text(encoding="utf-8") for p in
+                     [Path("scripts/openwebui_direct_handler.py")]
+                     + sorted(Path("scripts").glob("handler_*.py")))
 
 
 def nezname_rutiny() -> str:
@@ -208,7 +217,7 @@ def obsazeni_az_za_prepisem() -> bool:
     blok potřebuje název filmu, který doplní až F1 rewriter. Nad ním dostával
     holou větu („kdo tam hraje?") a mlčel. Táž třída jako A1 brzda.
     """
-    src = open("scripts/openwebui_direct_handler.py", encoding="utf-8").read()
+    src = _zdrojak_handleru()
     i_prepis = src.find("_q_for_retrieval = _rw.strip()")
     i_blok = src.find("self._kodi_cast_fact(")
     if i_prepis != -1 and i_blok != -1 and i_blok > i_prepis:
