@@ -964,6 +964,140 @@ def _llm_judge(config: dict, topic: str, title: str, raw_text: str):
     return False, "ověření nebylo jednoznačné"
 
 
+# ── HANS_LOOKUP_FULL_ARTICLE_V1 (9. 10.) — dočtení CELÉHO článku po ověření ──
+# Do paměti šlo z ověřeného dohledání jen shrnutí (160–540 zn) z prvních
+# 3 000 znaků článku → na jinou otázku k témuž heslu už Hans podklad neměl.
+# Po ověření se proto článek stáhne celý, rozdělí stejně jako u studia
+# (`hans_study._article_rest_parts`) a z každé části se uloží VÝPIS FAKTŮ jako
+# běžné čtení (`web_read` se stejným titulem + RAG). Měření 9. 10. na třech
+# heslech (`data/mereni/dohledani_docitani/`): čísel z článku ve shrnutí 0–2,
+# ve studijní poznámce 0–3, ve výpisu faktů 16–18; přimyšlené číslo 0×.
+# Běží JEN v nočním ověření: studijní model vedle rozhovoru zasekl Ollamu.
+_FAKTA_SYS = (
+    "Čteš část encyklopedického článku. Vypiš 10 až 15 KONKRÉTNÍCH faktů z textu "
+    "(jména, letopočty, čísla, místa, kdo co udělal), každý jako jednu samostatnou "
+    "českou větu na vlastním řádku. Drž se VÝHRADNĚ textu, nic si nepřidávej, "
+    "nehodnoť, bez úvodu a bez číslování."
+)
+_FAKTA_CISLO = re.compile(r"(?<!\d)\d{3,4}(?!\d)")
+_FAKTA_ODRAZKA = re.compile(r"^\s*(?:\d{1,2}[.)]\s+(?=[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ\u201e])|[-*\u2022\u2013]\s+)")
+
+
+def _fakta_z_vystupu(raw: str, part: str) -> str:
+    """Očistí výpis faktů z modelu: bez číslování a odrážek, bez krátkých
+    zbytků; věta s letopočtem nebo číslem, které v části článku NENÍ, se zahodí."""
+    v_clanku = set(_FAKTA_CISLO.findall(part or ""))
+    out = []
+    for ln in (raw or "").splitlines():
+        ln = _FAKTA_ODRAZKA.sub("", ln).strip()
+        if len(ln) < 15:
+            continue
+        if any(c not in v_clanku for c in _FAKTA_CISLO.findall(ln)):
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _casti_textu(text: str, part_max: int, max_parts: int) -> list:
+    """Rozdělí text na části do `part_max` znaků na hranicích řádků."""
+    parts, cur = [], ""
+    for ln in (text or "").split("\n"):
+        while len(ln) > part_max:
+            if cur.strip():
+                parts.append(cur)
+                cur = ""
+            parts.append(ln[:part_max])
+            ln = ln[part_max:]
+        if cur and len(cur) + len(ln) + 1 > part_max:
+            parts.append(cur)
+            cur = ""
+        cur += ln + "\n"
+    if cur.strip():
+        parts.append(cur)
+    return [p.strip() for p in parts if len(p.strip()) >= 300][:max_parts]
+
+
+def zapis_fakta(config: dict, diary_path: str, knowledge, title: str, topic: str,
+                url: str, parts: list, doc_prefix: str, zdroj: str = "wikipedia",
+                popis: str = "z článku") -> tuple:
+    """Z každé části textu nechá model vypsat fakta a uloží je jako běžné čtení
+    (deník `web_read` + RAG). Vrací (zapsaných částí, vět). Sdílí ho dohledání
+    (HANS_LOOKUP_FULL_ARTICLE_V1) i studium (HANS_STUDY_FACTS_V1).
+    Zapisuje přímo do deníku (ne přes `diary_writer`), ať z každé části
+    nevzniká další reflexe čtení."""
+    c = _cfg(config)
+    from scripts import hans_study as _hs
+    from scripts.ollama_client import ollama_generate
+    hotovo = vet = 0
+    for i, part in enumerate(parts, 1):
+        try:
+            raw = ollama_generate(
+                model=_hs._model(config), system=_FAKTA_SYS, config=config,
+                prompt="Článek: %s — část %d z %d:\n%s\n\nVypiš fakta z této části."
+                       % (title, i, len(parts), part),
+                timeout=int(c.get("full_article_timeout", 300)), keep_alive=0,
+                options={"temperature": 0.2, "num_ctx": 8192, "num_predict": 900})
+        except Exception as e:
+            _log.warning("zapis_fakta: model selhal u '%s' (%d/%d): %s",
+                         title, i, len(parts), e)
+            break
+        fakta = _fakta_z_vystupu(raw or "", part)
+        if len(fakta) < 200:
+            break                          # model dole nebo prázdný výpis
+        note = "[%s] Fakta %s (část %d/%d):\n%s" % (topic, popis, i, len(parts), fakta)
+        conn = sqlite3.connect(diary_path, timeout=10.0)
+        try:
+            conn.execute(
+                "INSERT INTO diary (ts, event_type, title, note, source_url) "
+                "VALUES (?,?,?,?,?)",
+                (time.time(), "web_read", title[:120], note, url))
+            conn.commit()
+        finally:
+            conn.close()
+        if knowledge is not None and getattr(knowledge, "enabled", False):
+            try:
+                knowledge.upload(
+                    collection_key=str((config.get("curiosity", {}) or {}).get(
+                        "rag_collection", "hans_cetba")),
+                    doc_id="%s_p%d" % (doc_prefix, i),
+                    title="%s — fakta %s (%d/%d)" % (title[:100], popis, i, len(parts)),
+                    text=fakta,
+                    metadata={"téma": topic, "zdroj": zdroj, "url": url,
+                              "typ": "fakta_z_clanku"})
+            except Exception as e:
+                _log.debug("zapis_fakta RAG upload: %s", e)
+        hotovo += 1
+        vet += fakta.count("\n") + 1
+    return hotovo, vet
+
+
+def _read_full_article(config: dict, row: dict, curiosity) -> int:
+    """Z celého článku ověřeného nálezu zapíše výpisy faktů. Vrací počet
+    zapsaných částí; `full_article_parts` 0 = vypnuto."""
+    c = _cfg(config)
+    max_parts = int(c.get("full_article_parts", 4))
+    title = (row.get("resolved_title") or "").strip()
+    url = row.get("url") or ""
+    m = re.match(r"https://(\w+)\.wikipedia\.org/wiki/", url)
+    if max_parts <= 0 or not m or not title or curiosity is None:
+        return 0
+    from scripts.web_reader import WebReader
+    from scripts import hans_study as _hs
+    full = WebReader(config)._wiki_extract(title, m.group(1), intro_only=False)
+    parts, zbyva = _hs._article_rest_parts(
+        full, 0, int(c.get("full_article_part_chars", 12000)), max_parts)
+    if not parts:
+        return 0
+    hotovo, vet = zapis_fakta(
+        config, curiosity._diary_path, getattr(curiosity, "_knowledge", None),
+        title, row.get("topic") or "dotaz", url, parts,
+        "read_fakta_%s" % (row.get("id") or int(time.time())))
+    _log.info("HANS_LOOKUP_FULL_ARTICLE_V1 '%s' — fakta z %d/%d částí, %d vět "
+              "(článek %d zn, nepřečteno %d zn)", title, hotovo, len(parts), vet,
+              len(full or ""), zbyva)
+    return hotovo
+
+
 def _commit_to_memory(config: dict, row: dict, curiosity) -> bool:
     """Zápis do paměti AŽ PO ověření — přes `curiosity._store` (deník + entity
     + RAG + synthesis hook), ať je nález nerozeznatelný od běžného čtení."""
@@ -981,6 +1115,12 @@ def _commit_to_memory(config: dict, row: dict, curiosity) -> bool:
             topic=row.get("topic") or "dotaz",
             pending=False,
         )
+        # HANS_LOOKUP_FULL_ARTICLE_V1 — fakta z celého článku PŘED shrnutím,
+        # ať je shrnutí nejnovější záznam pod tím titulem. Selhání nevadí.
+        try:
+            _read_full_article(config, row, curiosity)
+        except Exception as _fe:
+            _log.warning("HANS_LOOKUP_FULL_ARTICLE_V1 selhalo: %s", _fe)
         curiosity._store(res)
         return True
     except Exception as e:

@@ -2321,6 +2321,12 @@ class StudyStore:
 
         # 3a) HANS_STUDY_SOURCES_KEEP_V1 — ulož celý materiál i odkaz
         self._save_source(prog, idx, topic, sub, _main, source_url, material)
+        # 3a2) HANS_STUDY_FACTS_V1 — výpis faktů z materiálu jako běžné čtení
+        try:
+            self._write_facts(config, prog, idx, sub, _main, source_url,
+                              material, knowledge)
+        except Exception as e:
+            _log.warning("study: výpis faktů '%s' selhal: %s", sub, e)
         # HANS_PRIRUCKA_V1 — u webového tématu si z nastudovaného vytáhni pravidla
         if _je_web_tema(sub, topic) and _cfg(config).get("prirucka_enabled", True):
             try:
@@ -2429,6 +2435,31 @@ class StudyStore:
         _log.info("study: HANS_STUDY_ARTICLE_REST_V1 '%s' — dočteno %d/%d částí "
                   "(článek %d zn, nepřečteno %d zn)", main_title, hotovo,
                   len(parts), len(full or ""), zbyva)
+        return hotovo
+
+    def _write_facts(self, config: dict, prog: dict, idx: int, sub: str,
+                     main_title, url, material, knowledge=None) -> int:
+        """HANS_STUDY_FACTS_V1 (9. 10.) — studijní poznámka je Hansův zápisek a
+        fakta skoro nenese (11 lekcí: z 84 letopočtů a čísel materiálu jich má
+        poznámka 5). Z téhož materiálu se proto navíc uloží VÝPIS FAKTŮ jako
+        běžné čtení (`web_read` + RAG), stejnou funkcí jako u dohledání
+        (`hans_findings.zapis_fakta`). `facts_parts` 0 = vypnuto."""
+        c = _cfg(config)
+        max_parts = int(c.get("facts_parts", 3))
+        if max_parts <= 0 or not (material or "").strip():
+            return 0
+        from scripts.hans_findings import zapis_fakta, _casti_textu
+        parts = _casti_textu(material, int(c.get("article_part_chars", 12000)),
+                             max_parts)
+        if not parts:
+            return 0
+        title = main_title if main_title and main_title != "__transient__" else sub
+        hotovo, vet = zapis_fakta(
+            config, self._diary_path, knowledge, str(title), sub, url or "", parts,
+            "study_fakta_%s_%s" % (prog.get("id"), idx), zdroj="studium",
+            popis="ze studijního materiálu")
+        _log.info("study: HANS_STUDY_FACTS_V1 '%s' — fakta z %d/%d částí, %d vět "
+                  "(materiál %d zn)", sub, hotovo, len(parts), vet, len(material))
         return hotovo
 
     def _save_source(self, prog: dict, idx: int, topic: str, sub: str,
