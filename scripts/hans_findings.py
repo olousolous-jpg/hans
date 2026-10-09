@@ -990,7 +990,7 @@ def _fakta_z_vystupu(raw: str, part: str) -> str:
     out = []
     for ln in (raw or "").splitlines():
         ln = _FAKTA_ODRAZKA.sub("", ln).strip()
-        if len(ln) < 15:
+        if len(ln) < 15 or ln.endswith(":"):   # i úvodní věta modelu („Zde je 15 faktů…:“)
             continue
         if any(c not in v_clanku for c in _FAKTA_CISLO.findall(ln)):
             continue
