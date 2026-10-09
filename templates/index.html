@@ -13,6 +13,29 @@
   --yellow: #f9e2af; --orange: #fab387;
   --fg:     #cdd6f4; --fg2: #a6adc8;
 }
+/* HANS_LETAKY_WEB_V1 — záložka Slevy */
+.sl-kotvy { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.sl-kotvy a { text-decoration: none; color: var(--fg); background: var(--bg2); border: 1px solid var(--bg3); padding: 4px 11px; border-radius: 999px; font-size: 0.85rem; }
+.sl-sekce { margin-top: 22px; }
+.sl-sekce h3 { font-size: 1.05rem; color: var(--accent2); margin: 0 0 10px; display: flex; gap: 10px; align-items: baseline; }
+.sl-sekce h3 small { color: var(--fg2); font-weight: 400; font-size: 0.8rem; }
+.sl-mrizka { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.sl-karta { background: var(--bg2); border: 1px solid var(--bg3); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; color: inherit; text-decoration: none; }
+.sl-karta.nej { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+.sl-foto { position: relative; aspect-ratio: 4 / 3; background: #f6f3ec; display: grid; place-items: center; }
+.sl-foto img { max-width: 92%; max-height: 92%; object-fit: contain; }
+.sl-foto .sl-neni { color: #8a8474; font-size: 0.78rem; }
+.sl-sleva { position: absolute; top: 8px; left: 8px; background: #c62828; color: #fff; font-weight: 700; font-size: 0.8rem; padding: 2px 8px; border-radius: 999px; }
+.sl-obchod { position: absolute; bottom: 8px; left: 8px; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; color: #fff; background: #555; }
+.sl-o-lidl { background: #0050aa; } .sl-o-kaufland { background: #c8102e; } .sl-o-albert { background: #00843d; }
+.sl-o-globus { background: #e35205; } .sl-o-penny { background: #a6192e; } .sl-o-billa { background: #c69200; }
+.sl-text { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.sl-nazev { font-size: 0.88rem; line-height: 1.3; color: var(--fg); }
+.sl-cena { font-size: 1.2rem; font-weight: 700; margin-top: auto; color: var(--fg); }
+.sl-pozn { color: var(--fg2); font-size: 0.76rem; }
+.sl-nejl { color: var(--green); font-size: 0.72rem; font-weight: 700; }
+.sl-info { margin-top: 22px; color: var(--fg2); font-size: 0.9rem; }
+.sl-info.chyba { color: var(--red); }
 /* WEBADMIN_V2 — glassmorphism (dle navrh.html): gradient pozadí + frosted karty */
 body { background: linear-gradient(160deg, #181825 0%, #1e1e2e 45%, #232338 100%); background-attachment: fixed; color: var(--fg); font-family: 'Segoe UI', sans-serif; min-height: 100vh; }
 :root { --glass: rgba(49,49,69,0.55); --glass-brd: rgba(255,255,255,0.07); }
@@ -169,6 +192,7 @@ button.btn:hover { opacity: 0.85; }
       <button data-tab="conversations" onclick="showTab('conversations')">💬 Konverzace</button>
       <button data-tab="works" onclick="showTab('works')">🛠️ Hansova práce</button>
       <button data-tab="zpravy" onclick="showTab('zpravy')">📰 Zprávy</button>
+      <button data-tab="slevy" onclick="showTab('slevy')">🛒 Slevy</button>
       <button data-tab="politici" onclick="showTab('politici')">🏛️ Politici</button>
       <button data-tab="questions" onclick="showTab('questions')">❓ Otázky<span id="q-nav-badge" style="background:var(--yellow);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:0.7em;margin-left:auto;display:none">0</span></button>
       <button data-tab="mysleni" onclick="showTab('mysleni')">🧠 Myšlení</button>
@@ -406,6 +430,17 @@ button.btn:hover { opacity: 0.85; }
   </div>
 </div>
 
+<!-- HANS_LETAKY_WEB_V1 (9. 10.) — týdenní výběr slev z letáků podle hlídaného seznamu -->
+<div id="tab-slevy" class="tab-content">
+  <div class="filter-bar" style="margin-bottom:14px;display:flex;gap:10px 14px;align-items:center;flex-wrap:wrap">
+    <button class="btn btn-neutral" id="sl-obnov" onclick="slObnov()">↺ Stáhnout znovu</button>
+    <span id="sl-stav" style="font-size:0.85rem;color:var(--fg2)">Načítám…</span>
+    <a href="/slevy" target="_blank" style="font-size:0.85rem;color:var(--accent);margin-left:auto">otevřít samostatně ↗</a>
+  </div>
+  <div id="sl-kotvy" class="sl-kotvy"></div>
+  <div id="sl-obsah"></div>
+</div>
+
 <div id="tab-works" class="tab-content">
   <div class="filter-bar" style="margin-bottom:14px">
     <button class="btn btn-neutral" onclick="loadWorks()">↺ Obnovit</button>
@@ -619,6 +654,7 @@ const PAGE_TITLES = {
   conversations: 'Konverzace', works: 'Hansova práce', questions: 'Otázky',
   'cfg-identity': 'Nastavení', log: 'Log', users: 'Uživatelé', mysleni: 'Jak Hans přemýšlí',
   zpravy: 'Zprávy — sběr z více zdrojů',
+  slevy: 'Slevy týdne — podle hlídaného seznamu',
   politici: 'Politici — ověřené výroky (Demagog.cz)',
 };
 function showTab(name) {
@@ -634,7 +670,7 @@ function showTab(name) {
   const loaders = {
     'diary': loadDiaryCards, 'faces': loadFaces, 'objects': loadObjects,
     'conversations': loadConversations, 'log': loadLog, 'questions': loadQuestions,
-    'works': loadWorks, 'zpravy': loadZpravy, 'politici': loadPolitici, 'users': loadPristup, 'mysleni': () => window.msOtevri && window.msOtevri(),
+    'works': loadWorks, 'zpravy': loadZpravy, 'slevy': loadSlevy, 'politici': loadPolitici, 'users': loadPristup, 'mysleni': () => window.msOtevri && window.msOtevri(),
   };
   if (loaders[name]) loaders[name]();
 }
@@ -1938,6 +1974,75 @@ loadPlace();
 setInterval(loadPlace, 60000);
 loadMusings();
 setInterval(loadMusings, 60000);
+// ── HANS_LETAKY_WEB_V1 (9. 10.) — záložka Slevy ─────────────────────────────
+// Čte poslední stažení (/api/slevy); „Stáhnout znovu“ pustí stažení na pozadí.
+const slEsc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const slKc = c => c == null ? "cena neuvedena" : c.toFixed(2).replace(".", ",") + " Kč";
+const slDen = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ""); return m ? (+m[3]) + ". " + (+m[2]) + "." : ""; };
+const slDnes = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); };
+const slFold = s => String(s).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+function slKarta(o, nej) {
+  const pozn = [];
+  if (o.jednotka) pozn.push(slEsc(o.jednotka.replace("cena za ", "za ")));
+  if (o.od && o.od > slDnes()) pozn.push("od " + slDen(o.od)); else if (o.do) pozn.push("do " + slDen(o.do));
+  const foto = o.obrazek
+    ? `<img loading="lazy" referrerpolicy="no-referrer" src="${slEsc(o.obrazek)}" alt="" onerror="this.outerHTML='<span class=sl-neni>bez obrázku</span>'">`
+    : `<span class="sl-neni">bez obrázku</span>`;
+  const tag = o.url ? "a" : "div";
+  const href = o.url ? ` href="${slEsc(o.url)}" target="_blank" rel="noopener noreferrer"` : "";
+  return `<${tag} class="sl-karta${nej ? " nej" : ""}"${href}>
+    <div class="sl-foto">${foto}${o.sleva ? `<span class="sl-sleva">−${o.sleva} %</span>` : ""}
+      <span class="sl-obchod sl-o-${slFold(o.obchod)}">${slEsc(o.obchod)}</span></div>
+    <div class="sl-text"><div class="sl-nazev">${slEsc(o.nazev)}</div>
+      ${nej ? `<div class="sl-nejl">nejnižší cena</div>` : ""}
+      <div class="sl-cena">${slKc(o.cena)}</div>
+      <div class="sl-pozn">${pozn.join(" · ")}</div></div></${tag}>`;
+}
+let slCasovac = null;
+async function loadSlevy() {
+  const stav = document.getElementById("sl-stav"), obsah = document.getElementById("sl-obsah");
+  const kotvy = document.getElementById("sl-kotvy"), tl = document.getElementById("sl-obnov");
+  let d;
+  try { d = await (await fetch("/api/slevy")).json(); }
+  catch (e) { stav.textContent = "Nepodařilo se načíst."; return; }
+  tl.disabled = !!d.bezi; tl.textContent = d.bezi ? "Stahuji… (asi 2 minuty)" : "↺ Stáhnout znovu";
+  clearTimeout(slCasovac);
+  if (d.bezi) slCasovac = setTimeout(loadSlevy, 5000);
+  kotvy.innerHTML = "";
+  if (!d.seznam.length) {
+    stav.textContent = "";
+    obsah.innerHTML = `<div class="card">V seznamu hlídaných slev zatím nic není. Přidáte ho Hansovi v chatu: <code>/sleva přidej máslo</code></div>`;
+    return;
+  }
+  if (!d.stazeno) {
+    stav.textContent = "Letáky ještě nebyly staženy.";
+    obsah.innerHTML = `<div class="card">Hlídám: ${d.seznam.map(x => slEsc(x.polozka)).join(", ")}. Stiskněte „Stáhnout znovu“, nebo počkejte na středeční přehled.</div>`;
+    return;
+  }
+  const kdy = new Date(d.stazeno * 1000);
+  stav.textContent = "Staženo " + kdy.toLocaleDateString("cs-CZ", {weekday: "long", day: "numeric", month: "numeric"})
+    + " v " + kdy.toLocaleTimeString("cs-CZ", {hour: "2-digit", minute: "2-digit"})
+    + " · v akci " + d.polozky.length + " z " + d.seznam.length + " hlídaných položek";
+  kotvy.innerHTML = d.polozky.map(p => `<a href="#sl-${slFold(p.polozka)}" onclick="document.getElementById('sl-${slFold(p.polozka)}').scrollIntoView({behavior:'smooth'});return false">${slEsc(p.polozka)}</a>`).join("");
+  let h = "";
+  for (const p of d.polozky) {
+    const nab = [...p.nabidky].sort((a, b) => (a.cena ?? 9e9) - (b.cena ?? 9e9));
+    const kg = nab.filter(o => /1 ?kg|za 1 kg/i.test(o.nazev + " " + o.jednotka));
+    const nejl = kg.length >= 2 ? kg[0] : null;
+    h += `<div class="sl-sekce" id="sl-${slFold(p.polozka)}"><h3>${slEsc(p.polozka[0].toUpperCase() + p.polozka.slice(1))}
+      <small>${nab.length} ${nab.length === 1 ? "nabídka" : nab.length < 5 ? "nabídky" : "nabídek"}</small></h3>
+      <div class="sl-mrizka">${nab.map(o => slKarta(o, o === nejl)).join("")}</div></div>`;
+  }
+  if (d.nic.length) h += `<div class="sl-info">Tento týden nejsou v akci: ${d.nic.map(slEsc).join(", ")}.</div>`;
+  if (d.chyby.length) h += `<div class="sl-info chyba">Nepodařilo se načíst: ${d.chyby.map(slEsc).join(", ")}.</div>`;
+  if (!d.polozky.length) h = `<div class="card">Tento týden není v akci nic z hlídaného seznamu.</div>` + h;
+  obsah.innerHTML = h;
+}
+async function slObnov() {
+  await fetch("/api/slevy/obnov", {method: "POST"});
+  loadSlevy();
+}
+
 // „Hansova práce" se načítá lazy při přepnutí na tab (showTab → loaders.works)
 buildDiaryCards();
 setInterval(refreshDiaryCardsLive, 15000);   // Deník karty „live" (offset 0)
@@ -2369,6 +2474,7 @@ async function savePristup() {
   };
   if (location.hash === "#mysleni") setTimeout(() => showTab("mysleni"), 0);
   if (location.hash === "#zpravy") setTimeout(() => showTab("zpravy"), 0);   // HANS_ZPRAVY_SBER_V1
+  if (location.hash === "#slevy") setTimeout(() => showTab("slevy"), 0);     // HANS_LETAKY_WEB_V1
   if (location.hash === "#politici") setTimeout(() => showTab("politici"), 0);   // HANS_DEMAGOG_V1
   if (location.hash === "#nastaveni") setTimeout(() => showTab("cfg-identity"), 0);   // WEB_SETTINGS_ESSENTIAL_V1
 })();
