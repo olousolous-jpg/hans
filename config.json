@@ -1350,7 +1350,7 @@
         "_cmd_route_note": "HANS_CMD_LLM_ROUTE_V1 - kdyz regexy (nl_patterns) minou, model rozhodne, jestli veta zada o nektery CTECI vypis (/studium, /cetl, /zdravi...). Allowlist je vycet, ne odvozeni z registru: novy prikaz se nezaradi sam a MUTUJICI prikazy (zapomen, hlidej, enroll) tam nepatri - model muze hadat a hadani nesmi neco smazat. Args se predavaji prazdne. false = jen regexy."
     },
     "face_harvest": {
-        "enabled": false,
+        "enabled": true,
         "_note": "FACE_HARVEST_V1 (8.8.): průběžný sběr obličejů přes den pro pozdější DÁVKOVÉ označení (uživatel označuje SESSION, ne jednotlivé snímky, a klidně s několikadenním zpožděním). Řeší největší změřenou ztrátu: galerie z jednoho sezení dává živě ~24 %, leave-one-out nad toutéž session 86 %. ZAPNOUT až po dokončení migrace galerií (všichni s opraveným zarovnáním), ne dřív — jinak sbírá data v provizoriu.",
         "dir": "data/harvest",
         "interval_s": 2.0,
@@ -1372,7 +1372,8 @@
         "_max_note": "HODINOVÝ strop 150 je hlavní regulátor (9.8.). Denní strop má špatný tvar — vyčerpá se dopoledne a o VEČERNÍ data přijdeme, přitom pokrytí různých denních dob je celý smysl sběru. max_per_day 3000 je jen pojistka. Úplně bez stropu to NEJDE: shlukování při čtení je O(n²) — 3000 snímků v jednom časovém bloku = 36 MB matice, 12000 = 576 MB a 8 s. Ochrany v load_sessions: jen posledních 14 dní + prořeďování bloků nad 1500 snímků (na disku zůstane vše).",
         "negative_thresh": 0.65,
         "recent_memory": 300,
-        "_multi_note": "Nastaveno pro VÍC OSOB naráz (10.8.). max_per_hour 150 → 300: strop je GLOBÁLNÍ, takže tři lidé by se o 150 dělili po padesáti. recent_memory: filtr rozmanitosti se držel jen per track, jenže track se tříští (38 ID na 222 snímků, medián 2) → 63 % snímků mělo jinde skoro dvojče. Globální paměť posledních 300 přijatých vzorků duplicity chytne i přes změnu track ID."
+        "_multi_note": "Nastaveno pro VÍC OSOB naráz (10.8.). max_per_hour 150 → 300: strop je GLOBÁLNÍ, takže tři lidé by se o 150 dělili po padesáti. recent_memory: filtr rozmanitosti se držel jen per track, jenže track se tříští (38 ID na 222 snímků, medián 2) → 63 % snímků mělo jinde skoro dvojče. Globální paměť posledních 300 přijatých vzorků duplicity chytne i přes změnu track ID.",
+        "_enabled_note": "3. 10. ZAPNUTO na sběr PODZIMNÍHO denního světla (galerie z 9.–12. 8. ho nezná: přes den jméno 4–25 % × večer 93–97 %). Po pár dnech označit ve webadminu a galerii přestavět se zastoupením obou období; pak zvážit vypnutí."
     },
     "pc_embed": {
         "enabled": true,
@@ -1732,5 +1733,31 @@
         "pc_ok_file": "/mnt/nas-hans/hans_pc_restic/POSLEDNI_OK",
         "pc_max_dni": 10,
         "_note": "HANS_BACKUP_WATCH_V1: hlídač stáří záloh (hans_zalohy.py), hlásí na Matrix jednou denně po 22:30."
+    },
+    "body_track": {
+        "enabled": true,
+        "_enabled_note": "BODY_TRACK_SHADOW_V1 (3. 10.): STÍNOVÁ stopa postavy — box postavy (yolov8s_pose na Hailu, celý záběr) nese jméno z tváře podle polohy a pohybu. Jen měří a jednou za minutu loguje (postava stín za minutu), rozhodování Hanse NEMĚNÍ. Soukromí schváleno uživatelem 3. 10.: z postavy jen obdélník a body, žádný vzhled.",
+        "interval_s": 0.33,
+        "pose_prah": 0.3,
+        "_pose_prah_note": "Změřeno 3. 10. na 69 záběrech: 0,5 → tvář přiřazena 23/37 (pololežící za křeslem chybí), 0,3 → 36/37 (falešné jen sluchátka u kamery, tvář nedostanou), 0,2 → tvář ke dvěma postavám 7×. Gesta mají vlastní práh 0,5.",
+        "kp_min": 0.3,
+        "hold_s": 120,
+        "verify_s": 20,
+        "min_votes": 2,
+        "grace_s": 1.5,
+        "iou_min": 0.2,
+        "after_cross_s": 3.0,
+        "send_width": 640,
+        "log_dir": "data/mereni/postava_stin",
+        "override_votes": 4,
+        "_override_votes_note": "Přepsat JINÉ jméno stopy chce N stejných hlasů z posledních 6 (nové jméno stačí min_votes po sobě). 3. 10. při 2 stačily dva chybné snímky a stopa přeskočila na jinou osobu.",
+        "face_margin": 0.5,
+        "_face_margin_note": "Nos se hledá v boxu tváře rozšířeném o tolik šířek tváře. Tvář a postava jsou z různých snímků (pose po ~0,33 s); 3. 10. ležel nos 0,004 vedle boxu široké 0,015.",
+        "rozpor_snapshot": false,
+        "rozpor_snapshot_interval_s": 30,
+        "rozpor_snapshot_keep": 300,
+        "_rozpor_snapshot_note": "BODY_TRACK_ROZPOR_SNIMEK_V1 (4. 10.): při rozporu stopy a tváře uloží snímek s oběma rámečky do <log_dir>/snimky (nejvýš 1 za interval, drží keep kusů) — uživatel označí, kdo se plete. Po rozhodnutí o ostrém režimu vypnout a smazat.",
+        "rozpor_snapshot_notify": 40,
+        "_rozpor_snapshot_notify_note": "BODY_TRACK_ROZPOR_HLIDAC_V1 (4. 10.): při tolika snímcích rozporu (a aspoň ze 2 dní) pošle hans_routine JEDNOU zprávu na Matrix, ať je uživatel označí. Znovu: smazat snimky/.nahlaseno. 0 = vypnuto."
     }
 }

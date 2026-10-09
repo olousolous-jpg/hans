@@ -237,6 +237,7 @@ class FramePipeline:
         # per-track weighted voting + cluster DB
         self.ctrl._active_tracks = self.ctrl._assign_track_ids(
             ctx.boxes, self.ctrl._active_tracks)
+        _bt_raw = {}   # BODY_TRACK_SHADOW_V1 — jméno ze snímku po hlasování
         for i, (box, emb, lbl, *_r) in enumerate(ctx.hailo_results):
             if lbl != LABEL_FACE:
                 continue
@@ -383,6 +384,7 @@ class FramePipeline:
                         _vote_log.info("HOLD tid=%s snimek=%s -> %s",
                                        tid, final_name or "?", track.decision)
                     self._hold_stats(final_name, _held, now)
+                _bt_raw[i] = final_name   # BODY_TRACK_SHADOW_V1
                 # Pouzij potvrzene rozhodnuti pokud existuje
                 if track.decision:
                     ctx.identities[i] = (track.decision, track.decision_conf)
@@ -442,6 +444,22 @@ class FramePipeline:
                     # Předchozí má vyšší confidence
                     # — tato → Unknown
                     ctx.identities[_di] = ("Unknown", 0.0)
+
+        # BODY_TRACK_SHADOW_V1 (3. 10.) — stínová stopa POSTAVY: dostane tváře
+        # s jménem ze snímku i se zobrazeným jménem a jednou za minutu zapíše,
+        # co by udělala (scripts/body_track.py). Nic tady nemění.
+        try:
+            _bt = getattr(self, "_body_track", None)
+            if _bt is None:
+                from scripts.body_track import BodyTrackShadow
+                _bt = self._body_track = BodyTrackShadow(self.ctrl.config)
+            if _bt.enabled:
+                _bt.feed(main_frame, [
+                    (ctx.boxes[_i], _bt_raw.get(_i),
+                     ctx.identities[_i][0] if _i < len(ctx.identities) else None)
+                    for _i in range(len(ctx.boxes))], now)
+        except Exception:
+            pass
 
         # voice_integration — sdílej identities
         self.ctrl._voice_identities = list(ctx.identities)

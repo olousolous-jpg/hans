@@ -149,6 +149,7 @@ HAND_MAGIC  = b'\xAA\xBB\xCC\xDD'  # Mode 4: hand landmarks
 # i personface server bez landmarků fungovaly beze změny.
 FACE_LM_MAGIC = b'\xFA\xCE\x1A\x0D'  # Mode 1b: detect+embed+landmarks
 GESTURE_SOCK = "/tmp/gesture.sock"   # dedicated gesture socket
+BODY_SOCK    = "/tmp/hailo_body.sock"  # BODY_TRACK_SHADOW_V1 — postavy z celého záběru
 
 # ── Config ────────────────────────────────────────────────────────────────────
 def _cio():
@@ -1097,7 +1098,7 @@ class CombinedEngine:
             _GST["otevrena"] += 1       # HANS_GESTURE_STATS_V1
         return gid, best_lm, palm_bbox
 
-    def run_pose(self, frame: np.ndarray):
+    def run_pose(self, frame: np.ndarray, prah=None):
         """HANS_GESTURE_POSE_V1 — frame RGB libovolne velikosti (letterbox 640).
         Vraci [(skore, bbox, body (17,3))], souradnice normalizovane k frame."""
         if self._pose_pipe is None:
@@ -1113,7 +1114,9 @@ class CombinedEngine:
         with self._pose_lock:
             res = self._pose_pipe.infer({name: canvas[np.newaxis]})
         out = []
-        for s, b, k in decode_pose(res, self._pose_outs, POSE_SCORE_THRESH):
+        # BODY_TRACK_SHADOW_V1 — stopa postavy chce nižší práh než gesta
+        _th = POSE_SCORE_THRESH if prah is None else float(prah)
+        for s, b, k in decode_pose(res, self._pose_outs, _th):
             b = np.asarray(b, np.float32).copy(); k = k.copy()
             b[[0, 2]] = (b[[0, 2]] - px) / nw; b[[1, 3]] = (b[[1, 3]] - py) / nh
             k[:, 0] = (k[:, 0] - px) / nw;     k[:, 1] = (k[:, 1] - py) / nh
@@ -1393,6 +1396,42 @@ def handle_client(conn, engine: CombinedEngine, lock: threading.Lock):
         log.info("Client disconnected")
 
 
+def handle_body_client(conn, engine: CombinedEngine):
+    """BODY_TRACK_SHADOW_V1 (3. 10.) — VŠECHNY postavy z celého záběru pro
+    stínovou stopu (`scripts/body_track.py`). Gesta mají vlastní socket a jen
+    jednu osobu; tady se vrací všechny s vlastním prahem (0,3 změřen 3. 10.).
+    Požadavek: >I velikost, RGB bajty, >HHf šířka, výška, práh.
+    Odpověď: >I počet, pak po osobě 56 × >f (skóre, box 4, body 17×3),
+    souřadnice normalizované k poslanému snímku."""
+    try:
+        while True:
+            hdr = recv_exact(conn, 4)
+            if not hdr:
+                break
+            size = struct.unpack(">I", hdr)[0]
+            if size > 1920 * 1080 * 3:
+                break
+            raw = recv_exact(conn, size)
+            whp = recv_exact(conn, 8) if raw else None
+            if not whp:
+                break
+            w, h, prah = struct.unpack(">HHf", whp)
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 3)
+            osoby = engine.run_pose(frame, prah=float(prah)) \
+                if engine._pose_pipe is not None else []
+            out = [struct.pack(">I", len(osoby))]
+            for s, b, k in osoby:
+                v = [float(s)] + [float(x) for x in b[:4]] + \
+                    [float(x) for x in np.asarray(k, np.float32).reshape(-1)[:51]]
+                out.append(struct.pack(">56f", *v))
+            conn.sendall(b"".join(out))
+    except Exception as e:
+        log.debug("body client: %s", e)
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
 # ── Server ────────────────────────────────────────────────────────────────────
 def run_server():
     log.info("Combined server: SCRFD + ArcFace + YOLOv8s + HandLandmark")
@@ -1443,6 +1482,28 @@ def run_server():
                 log.debug('Gesture acceptor error: %s', e)
                 break
     threading.Thread(target=_gesture_acceptor, daemon=True).start()
+    # BODY_TRACK_SHADOW_V1 — socket pro postavy z celého záběru (jen s pose)
+    if engine._pose_pipe is not None:
+        try:
+            try: Path(BODY_SOCK).unlink()
+            except FileNotFoundError: pass
+            body_srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            body_srv.bind(BODY_SOCK)
+            body_srv.listen(2)
+            os.chmod(BODY_SOCK, 0o666)
+            def _body_acceptor():
+                while True:
+                    try:
+                        c, _ = body_srv.accept()
+                        threading.Thread(target=handle_body_client,
+                                         args=(c, engine), daemon=True).start()
+                    except Exception as e:
+                        log.debug("Body acceptor error: %s", e)
+                        break
+            threading.Thread(target=_body_acceptor, daemon=True).start()
+            log.info("Body socket ready: %s", BODY_SOCK)
+        except Exception as e:
+            log.warning("Body socket se neotevřel: %s", e)
     os.chmod(SOCK_PATH, 0o666)
 
     log.info("Ready on %s", SOCK_PATH)
