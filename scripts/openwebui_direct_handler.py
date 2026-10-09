@@ -1170,6 +1170,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 self._thread_ctx = None
                 print(f"[Chat] thread error: {_te}")
             _cmd = parse_command(ctx.user_message)
+            # HANS_UNKNOWN_SLASH_V1 (9. 10.) — neznámé „/slovo“ není volný hovor
+            # (model by si odpověď vymyslel): řekni, že příkaz neznáš, a nabídni
+            # nejbližší. Dřív než vlákno a LLM router, ať z překlepu nehádají.
+            if not _cmd:
+                try:
+                    from scripts.chat_commands import neznamy_prikaz, NEZNAMY_PRIKAZ
+                    if neznamy_prikaz(ctx.user_message):
+                        _cmd = (NEZNAMY_PRIKAZ, ctx.user_message)
+                except Exception as _nse:
+                    logging.getLogger(__name__).debug('neznámý příkaz: %s', _nse)
             # HANS_FILM_OPINION_ANAFORA_V1 (23. 9.) — anafora obliby po výpisu
             # filmů („a který se ti z nich líbil nejvíc?“) nenese slovo „film“;
             # o /film rozhodne předchozí replika ve vlákně.

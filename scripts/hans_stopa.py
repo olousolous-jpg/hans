@@ -86,6 +86,7 @@ POPISKY = {
     "HANS_BOOK_RECOMMEND_V1": "doporučení knihy",
     "HANS_PERSON_CARD_BYPASS_V1": "karta osoby",
     "HANS_INSTANT_LOOKUP_V1": "okamžité dohledání",
+    "HANS_UNKNOWN_SLASH_V1": "neznámý příkaz s lomítkem",
     "HANS_REMEMBER_HONEST_V1": "„pamatuješ si?“ poctivě",
     "HANS_SOURCE_QUERY_V1": "zdroje",
     "HANS_STUDY_DEEPEN_V2": "prohloubení studia",

@@ -344,11 +344,49 @@ def _cizi_nesmi(cmd_id: str, args, name) -> str:
     return "Tohle mohu udělat jen pro svou domácnost."
 
 
+# HANS_UNKNOWN_SLASH_V1 (9. 10.) — NEZNÁMÝ PŘÍKAZ S LOMÍTKEM.
+# `parse_command` na něj vrací None a zpráva propadla do volného hovoru, kde si
+# model odpověď vymyslel. Doloženo 9. 10.: „/sleva ted“ (příkaz ještě nebyl
+# nasazen) → „…namaloval portrét… Zobrazím ho na nástěnce“. V deníku rozhovorů
+# 5 výskytů, z toho 3 překlepy (/studoum, /studiun, /napaf) → nabídnout nejbližší.
+# Cesta jako „/home/user/soubor“ příkaz není (za jménem musí být mezera nebo konec).
+NEZNAMY_PRIKAZ = "neznamy_prikaz"
+_NEZNAMY_SLASH = re.compile(r"^\s*/([^\W\d_][\w-]{1,24})(?=\s|$)")
+
+
+def neznamy_prikaz(message: str) -> Optional[str]:
+    """Odpověď na zprávu začínající neznámým `/slovem`, jinak None."""
+    m = _NEZNAMY_SLASH.match(message or "")
+    if not m:
+        return None
+    jm = m.group(1).lower()
+    hlavni = {}
+    for spec in _COMMANDS.values():
+        for a in spec["slash"]:
+            hlavni[_fold_diacritics(a)] = spec["slash"][0]
+    if _fold_diacritics(jm) in hlavni:
+        return None
+    import difflib
+    blizke = []
+    for b in difflib.get_close_matches(_fold_diacritics(jm), list(hlavni), n=3, cutoff=0.72):
+        if hlavni[b] not in blizke:
+            blizke.append(hlavni[b])
+    if blizke:
+        return ("Příkaz /%s neznám. Nejblíž je %s. Všechny příkazy ukáže /help; "
+                "jinak to stačí říct obyčejnou větou."
+                % (jm, " nebo ".join("/" + b for b in blizke[:2])))
+    return ("Příkaz /%s neznám. Co umím, ukáže /help; jinak to stačí říct obyčejnou větou."
+            % jm)
+
+
 def dispatch(command: tuple[str, str], handler, name: Optional[str]) -> str:
     """Spustí command. handler = openwebui_direct_handler instance.
     Vrátí text odpovědi pro chat."""
     cmd_id, args = command
     spec = _COMMANDS.get(cmd_id)
+    if cmd_id == NEZNAMY_PRIKAZ:                  # HANS_UNKNOWN_SLASH_V1
+        _log.info("HANS_UNKNOWN_SLASH_V1: neznámý příkaz (%.40s)", args)
+        return neznamy_prikaz(args) or ""
     if not spec:
         return f"⚠ Neznámý příkaz: {cmd_id}"
     _odmitnuti = _cizi_nesmi(cmd_id, args, name)
