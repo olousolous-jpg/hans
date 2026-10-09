@@ -49,6 +49,7 @@
   .cena { font-size: 1.25rem; font-weight: 700; margin-top: auto; }
   .pozn { color: var(--muted); font-size: .78rem; }
   .nejl { color: var(--ok); font-size: .74rem; font-weight: 700; }
+  .pozn b.pod { color: var(--ok); } .pozn b.nad { color: var(--accent); }
   .nic, .chyba, .prazdno { margin-top: 26px; color: var(--muted); font-size: .92rem; }
   .chyba { color: var(--accent); }
   .prazdno { background: var(--panel); border: 1px dashed var(--line); border-radius: 14px; padding: 22px; }
@@ -85,6 +86,7 @@ function karta(o, nej) {
     <div class="text"><div class="nazev">${esc(o.nazev)}</div>
       ${nej ? `<div class="nejl">nejnižší cena</div>` : ""}
       <div class="cena">${kc(o.cena)}</div>
+      ${o.za_kg ? `<div class="pozn">${kc(o.za_kg)}/kg${o.proti_obvykle != null ? ` · <b class="${o.proti_obvykle <= 0 ? "pod" : "nad"}">${o.proti_obvykle <= 0 ? "o " + (-o.proti_obvykle) + " % pod obvyklou" : "o " + o.proti_obvykle + " % nad obvyklou"}</b>` : ""}</div>` : ""}
       <div class="pozn">${pozn.join(" · ")}</div></div></${tag}>`;
 }
 
@@ -114,7 +116,7 @@ async function nacti() {
     const kg = nab.filter(o => /1 ?kg|za 1 kg/i.test(o.nazev + " " + o.jednotka));
     const nejl = (kg.length >= 2 ? kg : nab.length >= 2 ? [] : [])[0];
     h += `<section id="${fold(p.polozka)}"><h2>${esc(p.polozka[0].toUpperCase() + p.polozka.slice(1))}
-      <small>${nab.length} ${nab.length === 1 ? "nabídka" : nab.length < 5 ? "nabídky" : "nabídek"}</small></h2>
+      <small>${nab.length} ${nab.length === 1 ? "nabídka" : nab.length < 5 ? "nabídky" : "nabídek"}${p.obvykle ? " · obvykle " + kc(p.obvykle.za_kg) + "/kg (ČSÚ, " + esc(p.obvykle.mesic_slovy) + ")" : ""}</small></h2>
       <div class="mrizka">${nab.map(o => karta(o, o === nejl)).join("")}</div></section>`;
   }
   if (d.nic.length) h += `<div class="nic">Tento týden nejsou v akci: ${d.nic.map(esc).join(", ")}.</div>`;

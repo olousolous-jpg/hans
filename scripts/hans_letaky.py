@@ -97,6 +97,15 @@ def _db(path: str = DB) -> sqlite3.Connection:
     c.execute("CREATE TABLE IF NOT EXISTS behy (id INTEGER PRIMARY KEY AUTOINCREMENT, "
               "ts REAL, tyden TEXT, odeslano INTEGER, nalezeno INTEGER, text TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS nabidka (ts REAL, data TEXT)")
+    # HANS_LETAKY_HISTORIE_V1 — ceny HLÍDANÝCH položek, jeden řádek na den stažení
+    c.execute("CREATE TABLE IF NOT EXISTS ceny (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+              "datum TEXT, tyden TEXT, polozka TEXT, obchod TEXT, nazev TEXT, cena REAL, "
+              "puvodni REAL, puvodni_zdroj TEXT, sleva INTEGER, plati_od TEXT, plati_do TEXT, "
+              "jednotka TEXT, za_kg REAL, UNIQUE(datum, polozka, obchod, nazev, cena))")
+    # HANS_LETAKY_CSU_V1 — měsíční průměrné ceny ČSÚ (obvyklá cena pro srovnání)
+    c.execute("CREATE TABLE IF NOT EXISTS csu (mesic TEXT, druh TEXT, cena REAL, za_kg REAL, "
+              "UNIQUE(mesic, druh))")
+    c.execute("CREATE TABLE IF NOT EXISTS stav (klic TEXT PRIMARY KEY, hodnota TEXT)")
     return c
 
 
@@ -158,6 +167,15 @@ def _datum(s) -> str:
     return "%s-%02d-%02d" % (m.group(3), int(m.group(2)), int(m.group(1))) if m else ""
 
 
+def _cislo(x) -> float | None:
+    """'39,90' / 39.9 → 39.9; nula, prázdno a nesmysl → None."""
+    try:
+        v = float(str(x).replace("\u00a0", "").replace(" ", "").replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
 def _http(u) -> str:
     """Jen úplná adresa https — nic jiného se do stránky jako obrázek nepustí."""
     u = str(u or "").strip()
@@ -182,7 +200,8 @@ def kaufland_z_html(text: str) -> list:
                                 "cena": cena, "sleva": int(x.get("discount") or 0),
                                 "od": _datum(x.get("dateFrom")), "do": _datum(x.get("dateTo")),
                                 "jednotka": str(x.get("unit") or "")[:40],
-                                "obrazek": _http(x.get("listImage")), "url": ""})
+                                "obrazek": _http(x.get("listImage")), "url": "",
+                                "puvodni": _cislo(x.get("formattedOldPrice"))})
             for v in x.values():
                 projdi(v)
         elif isinstance(x, list):
@@ -236,7 +255,8 @@ def lidl_z_html(text: str) -> list:
                             "jednotka": str((p.get("basePrice") or {}).get("text") or "")[:40],
                             "obrazek": _http(o.get("image")),
                             "url": ("https://www.lidl.cz" + o["canonicalUrl"])
-                            if str(o.get("canonicalUrl") or "").startswith("/") else ""})
+                            if str(o.get("canonicalUrl") or "").startswith("/") else "",
+                            "puvodni": _cislo(p.get("oldPrice"))})
     return out
 
 
@@ -347,6 +367,205 @@ def stahni(config: dict, polozky: list) -> tuple:
     return nab, chyby
 
 
+# ── HANS_LETAKY_HISTORIE_V1 (9. 10.) — ukládání cen pro pozdější vývoj ───────
+# Ukládají se JEN ceny hlídaných položek (rozhodnutí uživatele 9. 10.: „neukládej
+# cenu všeho, ale jen vybraných“), jeden řádek na DEN stažení → časová řada
+# s datem a týdnem, ze které jde poznat sezóna. Vedle akční ceny i PŮVODNÍ cena
+# před slevou, když ji zdroj dává (Kaufland, Lidl) nebo jde dopočítat ze slevy.
+_VAHA = re.compile(r"(\d+(?:[.,]\d+)?)\s*(kg|g|l|ml)\b", re.I)
+
+
+def za_kg(nazev: str, jednotka: str, cena) -> float | None:
+    """Cena přepočtená na 1 kg nebo 1 l (kvůli srovnání různých balení); None, když
+    balení z textu nejde poznat. „cena za 1 kg“ → cena sama."""
+    if cena is None:
+        return None
+    j = _fold(jednotka)
+    if "za 1 kg" in j or "za 1 l" in j:
+        return round(float(cena), 2)
+    for zdroj in (jednotka, nazev):
+        m = _VAHA.search(str(zdroj or "").replace("\u00a0", " "))
+        if not m:
+            continue
+        mnozstvi = float(m.group(1).replace(",", "."))
+        j2 = m.group(2).lower()
+        kg = mnozstvi / 1000.0 if j2 in ("g", "ml") else mnozstvi
+        if 0.02 <= kg <= 30:
+            return round(float(cena) / kg, 2)
+    return None
+
+
+def puvodni_cena(o: dict) -> tuple:
+    """(cena před slevou, odkud je): 'obchod' = uvedl ji obchod, 'ze slevy' = dopočtena
+    z procent slevy (zaokrouhleně), (None, '') = neznámá."""
+    p = o.get("puvodni")
+    if p and o.get("cena") and p > o["cena"]:
+        return round(float(p), 2), "obchod"
+    s = int(o.get("sleva") or 0)
+    if o.get("cena") and 0 < s < 95:
+        return round(float(o["cena"]) / (1 - s / 100.0), 1), "ze slevy"
+    return None, ""
+
+
+def uloz_historii(nalezy: dict, path: str = DB, dnes: str | None = None) -> int:
+    """Zapíše dnešní ceny hlídaných položek (`najdi` → {položka: [nabídky]}).
+    Vrací počet nových řádků; opakované stažení týž den nic nezdvojí."""
+    dnes = dnes or time.strftime("%Y-%m-%d")
+    tyden = "%d-%02d" % _dt.strptime(dnes, "%Y-%m-%d").isocalendar()[:2]
+    c = _db(path)
+    nove = 0
+    try:
+        for pol, hity in (nalezy or {}).items():
+            for o in hity:
+                if not o.get("nazev") or o.get("cena") is None:
+                    continue
+                pu, zdroj = puvodni_cena(o)
+                cur = c.execute(
+                    "INSERT OR IGNORE INTO ceny (datum, tyden, polozka, obchod, nazev, cena, "
+                    "puvodni, puvodni_zdroj, sleva, plati_od, plati_do, jednotka, za_kg) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (dnes, tyden, pol, o.get("obchod") or "", o["nazev"], float(o["cena"]),
+                     pu, zdroj, int(o.get("sleva") or 0), o.get("od") or "", o.get("do") or "",
+                     o.get("jednotka") or "",
+                     za_kg(o["nazev"], o.get("jednotka") or "", o["cena"])))
+                nove += cur.rowcount
+        c.commit()
+    finally:
+        c.close()
+    return nove
+
+
+def vyvoj(polozka: str, path: str = DB) -> list:
+    """Časová řada cen hlídané položky od nejstarší: [{datum, tyden, obchod, nazev,
+    cena, puvodni, puvodni_zdroj, sleva, za_kg, plati_od, plati_do}]."""
+    klice = ("datum", "tyden", "obchod", "nazev", "cena", "puvodni", "puvodni_zdroj",
+             "sleva", "za_kg", "plati_od", "plati_do")
+    c = _db(path)
+    try:
+        rows = c.execute("SELECT %s FROM ceny WHERE polozka=? ORDER BY datum, obchod, cena"
+                         % ", ".join(klice), (polozka,)).fetchall()
+    finally:
+        c.close()
+    return [dict(zip(klice, r)) for r in rows]
+
+
+# ── HANS_LETAKY_CSU_V1 (9. 10.) — obvyklá cena podle ČSÚ ─────────────────────
+# Letáky znají jen akční ceny a e-shopy mají čtení zakázané podmínkami (Rohlík,
+# Billa — průzkum 9. 10.). ČSÚ vydává jako otevřená data MĚSÍČNÍ průměrné
+# spotřebitelské ceny ~100 druhů zboží za celé Česko (sada CEN0101N „od 2026“,
+# jeden dotaz, zpoždění ~6 týdnů). Slouží jako „obvyklá cena“: akce se proti ní
+# dá posoudit. Je to průměr přes obchody a značky, ne cena konkrétního výrobku.
+CSU_URL = "https://data.csu.gov.cz/api/dotaz/v1/data/sady/CEN0101N?format=CSV"
+_CSU_MESICE = {"leden": 1, "unor": 2, "brezen": 3, "duben": 4, "kveten": 5, "cerven": 6,
+               "cervenec": 7, "srpen": 8, "zari": 9, "rijen": 10, "listopad": 11, "prosinec": 12}
+_MESIC_2P = ["ledna", "února", "března", "dubna", "května", "června", "července", "srpna",
+             "září", "října", "listopadu", "prosince"]
+# (vzor nad položkou a jejími náhradními výrazy bez diakritiky, začátek názvu druhu u ČSÚ);
+# pořadí rozhoduje — užší před širším („kuřecí prsa“ před „kuře“).
+_CSU_DRUHY = [
+    (r"\bmaslo\b", "Máslo ["), (r"\blucin", "Lučina"), (r"\bkureci prs", "Kuřecí prsní řízky"),
+    (r"\bkureci steh", "Kuřecí stehna"), (r"\bkruti prs", "Krůtí prsní řízky"),
+    (r"\bkure\b|\bkurata\b", "Kuřata kuchaná celá"),
+    (r"hovezi.*(klizk|predni|polevk)", "Hovězí maso přední bez kosti"),
+    (r"hovezi.*svickov", "Hovězí svíčková pravá"), (r"hovezi.*zadni", "Hovězí maso zadní bez kosti"),
+    (r"veprov\w* krkovic", "Vepřová krkovice"), (r"veprov\w* kyt", "Vepřová kýta bez kosti"),
+    (r"veprov\w* plec", "Vepřová plec"), (r"veprov\w* buc|\bbucek", "Vepřový bůček"),
+    (r"veprov\w* pecen", "Vepřová pečeně ["),
+    (r"\beidam", "Eidamská cihla"), (r"\bgoud", "Gouda"), (r"\bhermelin", "Hermelín"),
+    (r"\bniva\b", "Niva"), (r"\btvaroh", "Tvaroh měkký konzumní"),
+    (r"\bvejce\b|\bvajic", "Vejce slepičí čerstvá"),
+    (r"mleko.*trvanliv.*plnotuc|mleko.*plnotuc.*trvanliv", "Mléko plnotučné trvanlivé"),
+    (r"mleko.*trvanliv", "Mléko polotučné trvanlivé"), (r"\bmleko\b", "Mléko polotučné pasterované"),
+    (r"\bbrambor", "Konzumní brambory"), (r"\bcukr.*moucka", "Cukr moučkový"),
+    (r"\bcukr\b", "Cukr krystalový"), (r"mouka.*hrub", "Pšeničná mouka hrubá"),
+    (r"\bmouka\b", "Pšeničná mouka hladká"), (r"\bryze\b", "Rýže loupaná dlouhozrnná"),
+    (r"\bbanan", "Banány žluté"), (r"\bjablk", "Jablka konzumní"), (r"\bpomeranc", "Pomeranče"),
+    (r"\bcitron", "Citrony"), (r"\brajcat|rajsk", "Rajská jablka červená kulatá"),
+    (r"\bpaprik[ay]\b", "Papriky"), (r"okurk\w* salat|salatov\w* okurk", "Okurky salátové"),
+    (r"\bcibul", "Cibule suchá"), (r"\bcesnek", "Česnek suchý"), (r"\bmrkev|\bmrkv", "Mrkev"),
+    (r"kava.*zrnk", "Káva zrnková pražená"), (r"kava.*rozpust|instantni kav", "Káva rozpustná"),
+    (r"\bolej\b", "Olej rostlinný"), (r"\bsunk[au]\b", "Šunka vepřová"),
+    (r"\bparky\b|\bparek", "Párky"), (r"\bchleb|\bchleba", "Chléb konzumní kmínový"),
+]
+
+
+def csu_druh(polozka: str, aliasy=None) -> str:
+    """Začátek názvu druhu zboží u ČSÚ pro položku seznamu, nebo '' (ČSÚ ji nesleduje)."""
+    text = " | ".join(_fold(x) for x in [polozka] + list(aliasy or []))
+    for vzor, druh in _CSU_DRUHY:
+        if re.search(vzor, text):
+            return druh
+    return ""
+
+
+def csu_z_csv(text: str) -> list:
+    """CSV sady ČSÚ → [(měsíc 'RRRR-MM', druh, cena, cena za 1 kg / 1 l nebo None)]."""
+    import csv
+    import io
+    out = []
+    for x in csv.DictReader(io.StringIO(text or "")):
+        m = re.match(r"(\S+)\s+(\d{4})", x.get("Měsíce") or "")
+        druh = (x.get("Druh zboží") or "").strip()
+        try:
+            cena = float(x.get("Hodnota") or "")
+            mes = "%s-%02d" % (m.group(2), _CSU_MESICE[_fold(m.group(1))])
+        except (AttributeError, KeyError, ValueError):
+            continue
+        j = re.search(r"\[([^\]]+)\]", druh)
+        out.append((mes, druh, cena, za_kg(j.group(1) if j else "", "", cena) if j else None))
+    return out
+
+
+def csu_obnov(path: str = DB, max_stari_dni: float = 6.0) -> int:
+    """Stáhne aktuální měsíční ceny ČSÚ, je-li poslední stažení starší. Vrací počet řádků
+    (0 = nebylo potřeba nebo se nepovedlo). Selhání nevadí — srovnání prostě chybí."""
+    c = _db(path)
+    try:
+        r = c.execute("SELECT hodnota FROM stav WHERE klic='csu_ts'").fetchone()
+    finally:
+        c.close()
+    if r and time.time() - float(r[0] or 0) < max_stari_dni * 86400.0:
+        return 0
+    try:
+        radky = csu_z_csv(_get(CSU_URL, pauza=0.0))
+    except Exception as e:
+        _log.warning("HANS_LETAKY_CSU_V1: ČSÚ se nepodařilo stáhnout: %s", e)
+        return 0
+    if not radky:
+        return 0
+    c = _db(path)
+    try:
+        c.executemany("INSERT OR REPLACE INTO csu (mesic, druh, cena, za_kg) VALUES (?,?,?,?)", radky)
+        c.execute("INSERT OR REPLACE INTO stav (klic, hodnota) VALUES ('csu_ts', ?)",
+                  (str(time.time()),))
+        c.commit()
+    finally:
+        c.close()
+    _log.info("HANS_LETAKY_CSU_V1: ceny ČSÚ obnoveny (%d řádků, poslední měsíc %s)",
+              len(radky), max(x[0] for x in radky))
+    return len(radky)
+
+
+def obvykla(polozka: str, aliasy=None, path: str = DB) -> dict | None:
+    """Poslední známá obvyklá cena podle ČSÚ: {druh, mesic, mesic_slovy, za_kg} nebo None."""
+    druh = csu_druh(polozka, aliasy)
+    if not druh:
+        return None
+    c = _db(path)
+    try:
+        r = c.execute("SELECT mesic, druh, za_kg FROM csu WHERE druh LIKE ? AND za_kg IS NOT NULL "
+                      "ORDER BY mesic DESC LIMIT 1", (druh + "%",)).fetchone()
+    finally:
+        c.close()
+    if not r:
+        return None
+    rok, mes = r[0].split("-")
+    return {"druh": r[1].split(" [")[0], "mesic": r[0], "za_kg": r[2],
+            "mesic_slovy": "%s %s" % (["leden", "únor", "březen", "duben", "květen", "červen",
+                                       "červenec", "srpen", "září", "říjen", "listopad",
+                                       "prosinec"][int(mes) - 1], rok)}
+
+
 # ── výběr a zpráva ──────────────────────────────────────────────────────────
 
 def najdi(polozky: list, nabidka: list, obchody: list | None = None,
@@ -385,7 +604,7 @@ def _den(d: str) -> str:
 
 
 def sestav_zpravu(nalezy: dict, chyby: list | None = None, dnes: str | None = None,
-                  na_obchod: int = 3) -> str:
+                  na_obchod: int = 3, obvykle: dict | None = None) -> str:
     dnes = dnes or time.strftime("%Y-%m-%d")
     radky, nic = ["🛒 Slevy z vašeho seznamu (%s)" % _den(dnes)], []
     for pol, hity in nalezy.items():
@@ -393,7 +612,10 @@ def sestav_zpravu(nalezy: dict, chyby: list | None = None, dnes: str | None = No
             nic.append(pol)
             continue
         radky.append("")
-        radky.append("%s:" % (pol[:1].upper() + pol[1:]))
+        ob_c = (obvykle or {}).get(pol)
+        radky.append("%s%s:" % (pol[:1].upper() + pol[1:],
+                                (" — obvykle %s/kg (ČSÚ, %s)" % (_kc(ob_c["za_kg"]), ob_c["mesic_slovy"]))
+                                if ob_c else ""))
         po_obchodech = {}
         for o in hity:
             po_obchodech.setdefault(o["obchod"], []).append(o)
@@ -439,6 +661,7 @@ def prehled(config: dict, path: str = DB, max_stari_h: float = 20.0) -> tuple:
         c.close()
     klic = json.dumps(polozky, ensure_ascii=False, sort_keys=True)
     nab = chyby = None
+    _stazeno = False
     if r and time.time() - r[0] < max_stari_h * 3600.0:
         try:
             d = json.loads(r[1])
@@ -448,6 +671,7 @@ def prehled(config: dict, path: str = DB, max_stari_h: float = 20.0) -> tuple:
             pass
     if nab is None:
         nab, chyby = stahni(config, polozky)
+        _stazeno = True
         c = _db(path)
         try:
             c.execute("DELETE FROM nabidka")
@@ -458,9 +682,22 @@ def prehled(config: dict, path: str = DB, max_stari_h: float = 20.0) -> tuple:
         finally:
             c.close()
     nal = najdi(polozky, nab, list(k.get("obchody") or OBCHODY))
+    if _stazeno:                               # HANS_LETAKY_HISTORIE_V1
+        try:
+            _log.info("HANS_LETAKY_HISTORIE_V1: uloženo %d cen hlídaných položek",
+                      uloz_historii(nal, path))
+        except Exception as e:
+            _log.warning("HANS_LETAKY_HISTORIE_V1: uložení cen selhalo: %s", e)
     _log.info("HANS_LETAKY_V1: nabídek %d, položek v akci %d z %d, nenačteno %s",
               len(nab), sum(1 for v in nal.values() if v), len(polozky), chyby or "nic")
-    return sestav_zpravu(nal, chyby), sum(1 for v in nal.values() if v)
+    obv = {}
+    try:                                       # HANS_LETAKY_CSU_V1
+        if _stazeno:
+            csu_obnov(path)
+        obv = {p: o for p, o in ((p, obvykla(p, a, path)) for p, a in polozky) if o}
+    except Exception as e:
+        _log.warning("HANS_LETAKY_CSU_V1: obvyklé ceny: %s", e)
+    return sestav_zpravu(nal, chyby, obvykle=obv), sum(1 for v in nal.values() if v)
 
 
 # ── HANS_LETAKY_WEB_V1 (9. 10.) — týdenní výběr pro webovou stránku /slevy ────
@@ -488,11 +725,23 @@ def web_data(config: dict, path: str = DB) -> dict:
     out["stazeno"] = r[0]
     out["chyby"] = list(dict.fromkeys(d.get("chyby") or []))
     nal = najdi(polozky, d.get("nabidka") or [], out["obchody"])
+    al = dict(polozky)
     for pol, hity in nal.items():
-        if hity:
-            out["polozky"].append({"polozka": pol, "nabidky": hity})
-        else:
+        if not hity:
             out["nic"].append(pol)
+            continue
+        try:
+            obv = obvykla(pol, al.get(pol), path)       # HANS_LETAKY_CSU_V1
+        except Exception:
+            obv = None
+        nab = []
+        for o in hity:
+            o = dict(o)
+            o["za_kg"] = za_kg(o.get("nazev") or "", o.get("jednotka") or "", o.get("cena"))
+            o["proti_obvykle"] = (round(100.0 * (o["za_kg"] / obv["za_kg"] - 1.0))
+                                  if obv and o["za_kg"] else None)
+            nab.append(o)
+        out["polozky"].append({"polozka": pol, "nabidky": nab, "obvykle": obv})
     return out
 
 

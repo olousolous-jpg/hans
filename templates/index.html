@@ -34,6 +34,7 @@
 .sl-cena { font-size: 1.2rem; font-weight: 700; margin-top: auto; color: var(--fg); }
 .sl-pozn { color: var(--fg2); font-size: 0.76rem; }
 .sl-nejl { color: var(--green); font-size: 0.72rem; font-weight: 700; }
+.sl-pozn b.sl-pod { color: var(--green); } .sl-pozn b.sl-nad { color: var(--red); }
 .sl-info { margin-top: 22px; color: var(--fg2); font-size: 0.9rem; }
 .sl-info.chyba { color: var(--red); }
 /* WEBADMIN_V2 — glassmorphism (dle navrh.html): gradient pozadí + frosted karty */
@@ -1996,6 +1997,7 @@ function slKarta(o, nej) {
     <div class="sl-text"><div class="sl-nazev">${slEsc(o.nazev)}</div>
       ${nej ? `<div class="sl-nejl">nejnižší cena</div>` : ""}
       <div class="sl-cena">${slKc(o.cena)}</div>
+      ${o.za_kg ? `<div class="sl-pozn">${slKc(o.za_kg)}/kg${o.proti_obvykle != null ? ` · <b class="${o.proti_obvykle <= 0 ? "sl-pod" : "sl-nad"}">${o.proti_obvykle <= 0 ? "o " + (-o.proti_obvykle) + " % pod obvyklou" : "o " + o.proti_obvykle + " % nad obvyklou"}</b>` : ""}</div>` : ""}
       <div class="sl-pozn">${pozn.join(" · ")}</div></div></${tag}>`;
 }
 let slCasovac = null;
@@ -2030,7 +2032,7 @@ async function loadSlevy() {
     const kg = nab.filter(o => /1 ?kg|za 1 kg/i.test(o.nazev + " " + o.jednotka));
     const nejl = kg.length >= 2 ? kg[0] : null;
     h += `<div class="sl-sekce" id="sl-${slFold(p.polozka)}"><h3>${slEsc(p.polozka[0].toUpperCase() + p.polozka.slice(1))}
-      <small>${nab.length} ${nab.length === 1 ? "nabídka" : nab.length < 5 ? "nabídky" : "nabídek"}</small></h3>
+      <small>${nab.length} ${nab.length === 1 ? "nabídka" : nab.length < 5 ? "nabídky" : "nabídek"}${p.obvykle ? " · obvykle " + slKc(p.obvykle.za_kg) + "/kg (ČSÚ, " + slEsc(p.obvykle.mesic_slovy) + ")" : ""}</small></h3>
       <div class="sl-mrizka">${nab.map(o => slKarta(o, o === nejl)).join("")}</div></div>`;
   }
   if (d.nic.length) h += `<div class="sl-info">Tento týden nejsou v akci: ${d.nic.map(slEsc).join(", ")}.</div>`;
