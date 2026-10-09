@@ -47,6 +47,12 @@ _CAPABILITIES = [
      "vyvíjelo a v čem se česká a zahraniční média liší. Nehodnotím, co je pravda, a držím se "
      "jen titulků.",
      "/hlavnizprava; „jaká je hlavní zpráva?“"),
+    # HANS_LETAKY_V1
+    ("slevy", "Hlídám SLEVY Z LETÁKŮ u zboží, které mi domácnost dá na seznam: každou středu "
+     "v 18 hodin pošlu na Matrix, co z něj je ten týden v akci a kde (Lidl, Globus, Kaufland, "
+     "Albert, Penny, Billa), s cenou a platností. Vím jen o tom, co je v letácích — běžné ceny "
+     "neznám, nic neobjednávám a seznam vedu jen podle toho, co mi kdo řekne",
+     "/sleva přidej máslo; /sleva odeber máslo; /sleva seznam; /sleva teď; „co je tento týden v akci?“"),
     ("demagog", "Umím vyhledat OVĚŘENÉ VÝROKY českých politiků z Demagog.cz — výrok, "
      "jejich verdikt (pravda / nepravda / zavádějící / neověřitelné), krátké zdůvodnění "
      "a odkaz. Verdikt je jejich, sám politiky nehodnotím; mám jen to, co ověřili oni "

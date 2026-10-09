@@ -356,6 +356,27 @@ async def harvest_page(request: Request):
     return HTMLResponse((TEMPLATES_DIR / "harvest.html").read_text(encoding="utf-8"))
 
 
+# ── HANS_LETAKY_WEB_V1 (9. 10.) — týdenní výběr slev z letáků s obrázky ──────
+# Stránka čte POSLEDNÍ stažení (`hans_letaky.web_data`), sama nic nestahuje;
+# tlačítko „Obnovit“ pustí stažení ve vlákně (~2 min). Obrázky se neukládají —
+# prohlížeč si je bere přímo z webů obchodů.
+@app.get("/slevy", response_class=HTMLResponse)
+async def slevy_page(request: Request):
+    return HTMLResponse((TEMPLATES_DIR / "slevy.html").read_text(encoding="utf-8"))
+
+
+@app.get("/api/slevy")
+async def slevy_data():
+    from scripts import hans_letaky as _hl
+    return JSONResponse(_hl.web_data(load_config()))
+
+
+@app.post("/api/slevy/obnov")
+async def slevy_obnov():
+    from scripts import hans_letaky as _hl
+    return {"spusteno": _hl.obnov_async(load_config())}
+
+
 # ── HANS_OBJ_ANNOT_V1 (7.9.) — RUČNÍ POJMENOVÁNÍ DETEKOVANÝCH OBJEKTŮ ───────
 # Nápad uživatele: použít týž postup jako u sběru tváří (/harvest) — ukázat
 # snímky pokoje s rámečky a nechat člověka říct, co v nich doopravdy je.

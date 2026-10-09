@@ -776,5 +776,61 @@ def _cmd_hledani(handler, name, args) -> str:   # HANS_WEBSHARE_CMD_V1
     return "%s\n%s%s\n\nStáhnu který? Stačí /hledani stahni <číslo>." % (
         hlava, ws.vypis(nalezy, _cc._ws_kolik(cfg)), _pozn)
 
+
+# ─── /sleva — slevy z letáků podle hlídaného seznamu (HANS_LETAKY_V1) ─────────
+_SLEVA_PRIDEJ = re.compile(r"^\s*(?:p[rř]idej|p[rř]idat|hl[ií]dej|sleduj)\b\s*(.*)$", re.I)
+_SLEVA_ODEBER = re.compile(r"^\s*(?:odeber|odebrat|sma[zž]|zru[sš]|vy[rř]a[dď])\b\s*(.*)$", re.I)
+_SLEVA_TED = re.compile(r"^\s*(?:te[dď]|nyn[ií]|hned|p[rř]ehled|aktu[aá]ln[eě])\s*$|\bv\s+akci\b|"
+                        r"\bjak[eé]\s+(?:jsou|m[aá]me)\b", re.I)
+_SLEVA_VATA = re.compile(r"\b(?:pros[ií]m|mi|n[aá]m|do\s+(?:seznamu\s+)?slev|na\s+seznam(?:\s+slev)?|"
+                         r"ze\s+(?:seznamu\s+)?slev|ze\s+seznamu|slev[uy]?\s+na|slev[uy])\b", re.I)
+
+
+def _cmd_sleva(handler, name, args) -> str:
+    """HANS_LETAKY_V1 (9. 10.) — hlídaný seznam zboží a přehled slev z letáků.
+    /sleva · /sleva seznam · /sleva přidej máslo · /sleva přidej hovězí na polévku:
+    hovězí kližka · /sleva odeber máslo · /sleva teď. Středeční přehled chodí sám."""
+    from scripts import hans_letaky as _hl
+    a = re.sub(r"^\s*/\w+\s*", "", str(args or "")).strip().rstrip("?!.")
+    m = _SLEVA_PRIDEJ.match(a)
+    if m:
+        zb, _, al = _SLEVA_VATA.sub(" ", m.group(1)).partition(":")
+        aliasy = [x for x in (y.strip() for y in al.split(",")) if x]
+        v = _hl.pridej(zb, aliasy, name or "")
+        zb = re.sub(r"\s+", " ", zb).strip(" .,;:")
+        if not v:
+            return "Nerozuměl jsem, co mám hlídat. Zkuste: /sleva přidej máslo"
+        return ("%s „%s“ %s%s. Přehled posílám ve středu v 18 hodin; hned ho ukáže /sleva teď."
+                % ("Hlídám" if v == "pridano" else "U položky", zb,
+                   "" if v == "pridano" else "jsem upravil náhradní výrazy",
+                   (" (hledám jako: %s)" % ", ".join(aliasy)) if aliasy else "")).replace("  ", " ").replace(" .", ".")
+    m = _SLEVA_ODEBER.match(a)
+    if m:
+        zb = re.sub(r"\s+", " ", _SLEVA_VATA.sub(" ", m.group(1))).strip(" .,;:")
+        return ("Položku „%s“ už nehlídám." % zb) if _hl.odeber(zb) else \
+               ("Položku „%s“ v seznamu slev nemám." % zb)
+    if a and _SLEVA_TED.search(a):
+        if not _hl.seznam():
+            return "V seznamu hlídaných slev zatím nic nemám. Přidejte položku: /sleva přidej máslo"
+        if _hl.ma_cerstvou():
+            return _hl.prehled(handler.config)[0]
+        import threading as _th
+
+        def _prace():
+            try:
+                _cc._notify_user(handler, _hl.prehled(handler.config)[0])
+            except Exception as _e:
+                _cc._log.warning("/sleva teď selhalo: %s", _e)
+        _th.Thread(target=_prace, daemon=True, name="LetakyTed").start()
+        return ("Stahuji aktuální letáky, potrvá to asi dvě minuty — přehled pošlu, "
+                "jakmile bude hotový.")
+    pol = _hl.seznam()
+    if not pol:
+        return ("V seznamu hlídaných slev zatím nic nemám. Přidejte položku: "
+                "/sleva přidej máslo")
+    return ("Hlídám slevy na: %s.\nPřehled posílám ve středu v 18 hodin; hned ho ukáže "
+            "/sleva teď, položku přidá /sleva přidej …, odebere /sleva odeber …"
+            % "; ".join(p + ((" (jako: %s)" % ", ".join(al)) if al else "") for p, al in pol))
+
 # ROZDELENI_PRIKAZU_V1 — až na konci, viz hlavička
 from scripts import chat_commands as _cc  # noqa: E402

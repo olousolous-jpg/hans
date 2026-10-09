@@ -109,6 +109,28 @@ class ZdraviMixin:
                     _hzth.Thread(target=_hz_prace, name="hlavni-zprava", daemon=True).start()
             except Exception as _hze:
                 _rt._log.warning("hlavní zpráva: %s", _hze)
+            # HANS_LETAKY_V1 (9. 10.) — středeční přehled slev z letáků podle
+            # hlídaného seznamu (kdy a co: `hans_letaky.tick`). Ve vlákně:
+            # stahování trvá ~2 minuty a tick nesmí stát. Bez modelu.
+            try:
+                import time as _ltt
+                if (_ltt.time() - getattr(self, "_letaky_ts", 0.0) > 600
+                        and not getattr(self, "_letaky_bezi", False)):
+                    self._letaky_ts = _ltt.time()
+                    self._letaky_bezi = True
+
+                    def _letaky_prace():
+                        try:
+                            from scripts.hans_letaky import tick as _lt_tick
+                            _lt_tick(self.config, self._notifier)
+                        except Exception as _lte:
+                            _rt._log.warning("letáky: %s", _lte)
+                        finally:
+                            self._letaky_bezi = False
+                    import threading as _ltth
+                    _ltth.Thread(target=_letaky_prace, name="letaky", daemon=True).start()
+            except Exception as _lte:
+                _rt._log.warning("letáky: %s", _lte)
             # BODY_TRACK_ROZPOR_HLIDAC_V1 (4. 10.) — snímky rozporů stopy postavy
             # a tváře (BODY_TRACK_ROZPOR_SNIMEK_V1): až jich je dost a aspoň ze
             # dvou dní, JEDNOU dát vědět na Matrix, že je čas je označit.

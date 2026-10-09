@@ -257,6 +257,7 @@ _JEN_ZNAMYM = frozenset({
     "severka", "hlidej", "preloz", "vypnipc", "vpnprepni", "router",
     "experiment", "stop", "pauza", "hledani", "nalez", "brief", "vytvor",
     "zrusmalbu",                                  # HANS_PAINT_CANCEL_V1
+    "sleva",                                      # HANS_LETAKY_V1 — seznam nákupů domácnosti
     # HANS_STRANGER_NO_INSPECT_V1 (24. 9.) — sebekritika vznika z rozhovoru
     # s domacnosti a nese jejich jmena (i v 7. pade, ktery privacy vzor
     # nom/acc/voc nechyti). Doloženo: LLM router ji poslal cizimu.
@@ -270,7 +271,7 @@ _JEN_ZNAMYM = frozenset({
     # prikazu otevrenych cizim: ostatni ciste.
     "vhledy", "nitky",
 })
-_JEN_ZNAMYM_CTENI = frozenset({"kritika", "misto", "vhledy", "nitky"})  # HANS_STRANGER_READ_MSG_V1
+_JEN_ZNAMYM_CTENI = frozenset({"kritika", "misto", "vhledy", "nitky", "sleva"})  # HANS_STRANGER_READ_MSG_V1
 _CTENI_BEZ_ARG = {  # příkaz → argumenty, které jsou jen výpis
     "seznam": (), "kalendar": (), "studium": ("programy",),
     "dilo": ("vse",), "napad": ("vse",), "dashboard": (),
@@ -2217,6 +2218,22 @@ register(
     ],
     handler=_cmd_hlavnizprava,
     help_text="Hlavní zpráva posledních dvou dnů, jak jsem ji vybral — /hlavnizprava",
+)
+
+
+from scripts.chat_cmd_dum import _cmd_sleva   # HANS_LETAKY_V1
+register(
+    "sleva",
+    slash_aliases=["sleva", "slevy", "letaky"],
+    nl_patterns=[
+        r"\bco\b.{0,30}\bv\s+akci\b",
+        r"\bjak[eé]\s+(?:jsou|m[aá]me)\b.{0,20}\bslevy\b",
+        r"\bslevy\s+z\s+let[aá]k",
+        r"\b(?:p[rř]idej|hl[ií]dej|sleduj|odeber|sma[zž])\b.{0,60}\bslev(?:u|y)?\b",
+        r"\bseznam\s+(?:hl[ií]dan[yý]ch\s+)?slev\b",
+    ],
+    handler=_cmd_sleva,
+    help_text="Slevy z letáků podle hlídaného seznamu — /sleva (přidej …, odeber …, teď)",
 )
 
 
