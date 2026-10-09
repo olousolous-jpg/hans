@@ -128,6 +128,8 @@ def pc_busy(config: dict) -> tuple[bool, str]:
         if not t:
             return None, None, None, "počítač neodpovídá na dotaz po stavu"
         g, w, l = t.get("gpu_busy_pct"), t.get("gpu_power_w"), t.get("load_per_core")
+        if t.get("drzet"):                       # HANS_PC_HOLD_V1
+            return None, None, None, "na počítači běží %s" % t["drzet"]
         if g is None and w is None and l is None:
             return None, None, None, "nevidím na vytížení (raději počkám)"
         return g, w, l, None

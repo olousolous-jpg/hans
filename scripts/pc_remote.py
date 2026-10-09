@@ -93,7 +93,11 @@ _TELE_CMD = (
     # (v zimě se přes práh nemusí dostat vůbec). loadavg sám taky nestačí:
     # při plné GPU práci byl 0.59 na 32 jádrech = 2 %.
     "echo '===LOAD==='; cut -d' ' -f1 /proc/loadavg; nproc; "
-    "cat /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null | head -1"
+    "cat /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null | head -1; "
+    # HANS_PC_HOLD_V1 (27. 9.) — dlouhá práce na PC (trénink…) si založí
+    # ~/.hans_nevypinat (obsah = popis) → Hans PC nevypne (noc ani /vypnipc)
+    "echo '===DRZET==='; test -e ~/.hans_nevypinat && "
+    "(echo ANO; head -c 120 ~/.hans_nevypinat)"
 )
 
 
@@ -140,6 +144,10 @@ def telemetry(config: dict):
     # None když nic neparsováno (SSH vrátil junk)
     # PC_LOAD_TELEMETRY_V1 — zátěž (přímé měřítko práce)
     _ld = (out.split("===LOAD===") + [""])[1] if "===LOAD===" in out else ""
+    _ld, _, _dr = _ld.partition("===DRZET===")          # HANS_PC_HOLD_V1
+    _dr = _dr.strip().splitlines()
+    if _dr and _dr[0].strip() == "ANO":
+        t["drzet"] = (" ".join(_dr[1:]).strip() or "dlouhá práce")
     _ls = [x.strip() for x in _ld.strip().splitlines() if x.strip()]
     for _i, _key, _cast in ((0, "load1", float), (1, "cores", int),
                             (2, "gpu_busy_pct", float)):
