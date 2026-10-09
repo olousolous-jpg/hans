@@ -1197,7 +1197,8 @@ def f1_o_tazateli(prepis: str, kdo: str) -> bool:
     """HANS_F1_NOT_ABOUT_ASKER_V2 — přehodil přepis dotazu podmět na tazatele?"""
     from scripts import openwebui_direct_handler as h
     cls = next(c for c in vars(h).values()
-               if isinstance(c, type) and hasattr(c, "_f1_o_tazateli"))
+               if isinstance(c, type) and hasattr(c, "_f1_o_tazateli")
+               and c.__module__ == h.__name__)   # ne mixin importovaný do modulu
     o = cls.__new__(cls)
     o.config = {}
     return bool(o._f1_o_tazateli(prepis, kdo))
