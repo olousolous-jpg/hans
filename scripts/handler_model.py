@@ -96,12 +96,12 @@ class ModelMixin:
             _ap = getattr(_ag, "_pending", None) if _ag is not None else None
             _p = _ap.get(name) if _ap else None
             if _p is not None and (time.time() - _p.ts) <= 180:
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     'HANS_CONFIRM_PRECEDENCE_V1: čeká agentní návrh %s '
                     '→ prohloubení ustupuje', getattr(_p.action, "id", "?"))
                 return None
         except Exception as _cpe:
-            logging.getLogger(__name__).debug('confirm precedence: %s', _cpe)
+            logging.getLogger(_h.__name__).debug('confirm precedence: %s', _cpe)
         # HANS_DEEPEN_FEEDBACK_GATE_V1 (22.8.) — KE KLASIFIKÁTORU JEN ZPĚTNÁ
         # VAZBA. Doloženo 22.8.: „rekni vice o zameckem parku u hradu Kost"
         # (běžná prosba, jen bez otazníku) prošla dosavadní pojistkou, LLM
@@ -114,12 +114,12 @@ class ModelMixin:
         try:
             from scripts.hans_study import je_reakce_na_navrh as _je_fb
             if not _je_fb(message):
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     'HANS_DEEPEN_FEEDBACK_GATE_V1: %.40s není zpětná vazba '
                     '→ návrhu se nedotýkám', (message or "").strip())
                 return None
         except Exception as _fge:
-            logging.getLogger(__name__).debug('deepen feedback gate: %s', _fge)
+            logging.getLogger(_h.__name__).debug('deepen feedback gate: %s', _fge)
         # HANS_DEEPEN_QUESTION_GUARD_V1 (19.8.) — PŘEDCHŮDCE, dnes podmnožina
         # brány výš (tázací věta bez schvalovacího slova jí neprojde). Ponechán
         # jako pojistka, kdyby brána spadla na výjimku.
@@ -144,12 +144,12 @@ class ModelMixin:
                 r"ne\b|nechci|nesouhlas\w*|zru[šs]|nech\s+to|špatn\w*|"
                 r"slab\w*|m[ěe]l\s+bys|douč|dodělej)\b", _m, _qre.I))
             if _is_q and not _fb:
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     'HANS_DEEPEN_QUESTION_GUARD_V1: %.40s je otázka, ne zpětná '
                     'vazba → návrh se nedotýkám', _m)
                 return None
         except Exception as _qge:
-            logging.getLogger(__name__).debug('deepen question guard: %s', _qge)
+            logging.getLogger(_h.__name__).debug('deepen question guard: %s', _qge)
         p0 = pend[0]
         from scripts.ollama_client import ollama_generate
         model = (self.config.get("dialog", {}) or {}).get("model") or "hans-czech:latest"

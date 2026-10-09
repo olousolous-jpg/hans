@@ -28,7 +28,7 @@ class GroundingMixin:
             _ff = self._kodi_film_fact(str(_txt or ""),
                                        _thr_ff.recent_turns(self, name, _ch_ff))
         except Exception as _fe:
-            logging.getLogger(__name__).debug("film fakt: %s", _fe)
+            logging.getLogger(_h.__name__).debug("film fakt: %s", _fe)
             _ff = ""
         if not _ff:
             return g
@@ -71,7 +71,7 @@ class GroundingMixin:
                 ctx._text = _tc[1]
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_grounding(ř. 645)",
+                logging.getLogger(_h.__name__), "_build_grounding(ř. 645)",
                 "_build_grounding: blok kontextu selhal (ř. 645): %s", _tiche)
 
         # HANS_SELFCONSISTENCY_A1_V1 — zaznamenej výsledek groundingu pro
@@ -208,7 +208,7 @@ class GroundingMixin:
                 # None = topic JE v paměti → nech normální recall/RAG cestu
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_grounding(ř. 709)",
+                logging.getLogger(_h.__name__), "_build_grounding(ř. 709)",
                 "_build_grounding: blok kontextu selhal (ř. 709): %s", _tiche)
         return _h._POKRACUJ
 
@@ -233,7 +233,7 @@ class GroundingMixin:
                     return _ra
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_grounding(ř. 729)",
+                logging.getLogger(_h.__name__), "_build_grounding(ř. 729)",
                 "_build_grounding: blok kontextu selhal (ř. 729): %s", _tiche)
         return _h._POKRACUJ
 
@@ -246,7 +246,7 @@ class GroundingMixin:
         # může být None u meta-dotazů).
         try:
             from scripts.hans_recall import is_source_query, sources_reply
-            _log_dbg = logging.getLogger(__name__)
+            _log_dbg = logging.getLogger(_h.__name__)
             if is_source_query(str(ctx._text)):
                 _dbp_s = (self.config.get("diary_db")
                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
@@ -257,7 +257,7 @@ class GroundingMixin:
                 # jinak fallback sáhne po replice dané NĚKOMU JINÉMU.
                 return sources_reply(_dbp_s, user_text=str(ctx._text), asker=ctx.name)
         except Exception as _sqe:
-            logging.getLogger(__name__).warning(
+            logging.getLogger(_h.__name__).warning(
                 'HANS_SOURCE_QUERY_V1 check selhal: %s', _sqe)
         return _h._POKRACUJ
 
@@ -274,7 +274,7 @@ class GroundingMixin:
                 return ''
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_grounding(ř. 767)",
+                logging.getLogger(_h.__name__), "_build_grounding(ř. 767)",
                 "_build_grounding: blok kontextu selhal (ř. 767): %s", _tiche)
         return _h._POKRACUJ
 
@@ -299,7 +299,7 @@ class GroundingMixin:
                             "není, přiznej „to si nevybavuji“):\n" + _blk)
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_grounding(ř. 788)",
+                logging.getLogger(_h.__name__), "_build_grounding(ř. 788)",
                 "_build_grounding: blok kontextu selhal (ř. 788): %s", _tiche)
         return _h._POKRACUJ
 
@@ -317,7 +317,7 @@ class GroundingMixin:
                 return _cr
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_grounding(ř. 802)",
+                logging.getLogger(_h.__name__), "_build_grounding(ř. 802)",
                 "_build_grounding: blok kontextu selhal (ř. 802): %s", _tiche)
         return _h._POKRACUJ
 
@@ -343,7 +343,7 @@ class GroundingMixin:
                 return _fr
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_grounding(ř. 818)",
+                logging.getLogger(_h.__name__), "_build_grounding(ř. 818)",
                 "_build_grounding: blok kontextu selhal (ř. 818): %s", _tiche)
         return _h._POKRACUJ
 
@@ -362,7 +362,7 @@ class GroundingMixin:
                 return _pu
         except Exception as _tiche:
             _h.log_once(
-                logging.getLogger(__name__), "_build_grounding(studium_puvod)",
+                logging.getLogger(_h.__name__), "_build_grounding(studium_puvod)",
                 "_build_grounding: blok původu studia selhal: %s", _tiche)
         return _h._POKRACUJ
 
@@ -374,7 +374,7 @@ class GroundingMixin:
                 return _kn
         except Exception as _tiche:
             _h.log_once(
-                logging.getLogger(__name__), "_build_grounding(knihovna)",
+                logging.getLogger(_h.__name__), "_build_grounding(knihovna)",
                 "_build_grounding: blok knihovny selhal: %s", _tiche)
         return _h._POKRACUJ
 
@@ -386,7 +386,7 @@ class GroundingMixin:
                 return _ob
         except Exception as _tiche:
             _h.log_once(
-                logging.getLogger(__name__), "_build_grounding(obraz)",
+                logging.getLogger(_h.__name__), "_build_grounding(obraz)",
                 "_build_grounding: blok obrazu selhal: %s", _tiche)
         return _h._POKRACUJ
 
@@ -418,7 +418,7 @@ class GroundingMixin:
                     return _cf
             except Exception as _tiche:
                 _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                    logging.getLogger(__name__), "_build_grounding(obsazeni)",
+                    logging.getLogger(_h.__name__), "_build_grounding(obsazeni)",
                     "_build_grounding: blok obsazení selhal: %s", _tiche)
 
             # C1: entity store — deterministické resolvování ZNÁMÉ entity
@@ -472,7 +472,7 @@ class GroundingMixin:
             if _rag_weak:
                 top = []  # zahoď slabé chunky
                 _facts_from_rag = ''
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     '#2: RAG slabý (best=%.3f > strict=%.3f) → chunky zahozeny',
                     _best_dist if _best_dist is not None else -1, _strict_max)
             else:
@@ -506,7 +506,7 @@ class GroundingMixin:
             # F1 pomáhá: rewriter rozřeší 'kdo je on' → jméno v textu.
             _card_fact = self._build_card_fact(ctx._q_for_retrieval)
             if _card_fact:
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     'G5A: karta vstříknuta z DB → priorita')
 
             # Skládání priorit: entita (autoritativní) > karta > RAG chunky.
@@ -530,13 +530,13 @@ class GroundingMixin:
                     self._vysledek_groundingu('grounded', 'zapisky_fallback')
                     return _kb
                 # RAG slabé A žádný autoritativní zdroj = jako by prázdné.
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     '#2: bez faktů (RAG slabý, žádná entita/karta) → factual_nofacts')
                 self._vysledek_groundingu('factual_nofacts', 'bez_faktu')
                 return '\n\n' + _h.ANTIKONFAB_NOFACTS
 
             _cols_used = sorted(set(c.get('collection', '?') for c in top))
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'G3B: grounding [%s] best=%.3f, %d chunků z %s, ent=%d card=%d → kontext',
                 ctx.res.intent, _best_dist if _best_dist is not None else -1,
                 len(top), '+'.join(_cols_used) if _cols_used else '-',
@@ -545,7 +545,7 @@ class GroundingMixin:
             return '\n\n' + _h.ANTIKONFAB + '\n\n' + facts
 
         except Exception as _ge:
-            logging.getLogger(__name__).warning(
+            logging.getLogger(_h.__name__).warning(
                 'G3B: grounding selhalo (%s) — odpovídám bez fakt', _ge)
             return ''
         return _h._POKRACUJ
@@ -576,7 +576,7 @@ class GroundingMixin:
                                           'shift_reason', '') or ''
                     except Exception as _tiche:
                         _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                            logging.getLogger(__name__), "_build_grounding(ř. 847)",
+                            logging.getLogger(_h.__name__), "_build_grounding(ř. 847)",
                             "_build_grounding: blok kontextu selhal (ř. 847): %s", _tiche)
                     # HANS_SELF_STATE_AWAKE_V1 — dolož skutečný provozní
                     # stav (spánek/kamera/hlídání), ať si ho model nedomýšlí.
@@ -601,7 +601,7 @@ class GroundingMixin:
                         else:
                             _rt_state["guard"] = False
                     except Exception as _rse:
-                        logging.getLogger(__name__).debug(
+                        logging.getLogger(_h.__name__).debug(
                             'self_state runtime: %s', _rse)
                     # HANS_SELF_STATE_ASKER_VISIBLE_V1 (15. 9.) — "vidite me na
                     # kamere?" od cloveka v chatu: Hans rekl "vidim vas", ackoli
@@ -634,12 +634,12 @@ class GroundingMixin:
                     _ss = self_state_facts(_dbp_ss, mood=_mo, mood_reason=_mr,
                                            runtime=_rt_state or None)
                     if _ss:
-                        logging.getLogger(__name__).info(
+                        logging.getLogger(_h.__name__).info(
                             'HANS_SELF_STATE_V1 → blok o sobě (%d zn)', len(_ss))
                         self._vysledek_groundingu('self_state', 'self_state')
                         return '\n\n' + _ss
             except Exception as _sse:
-                logging.getLogger(__name__).debug('self_state: %s', _sse)
+                logging.getLogger(_h.__name__).debug('self_state: %s', _sse)
             self._vysledek_groundingu('nonfactual', 'volny_hovor')
             return ''   # volná konverzace → osobnost, žádný retrieval
         return _h._POKRACUJ
@@ -674,18 +674,18 @@ class GroundingMixin:
                     # Hans → prazdny podklad → falesne zapreni (15. 9.,
                     # „co si uz malovai?“ → „Co <tazatel> vi o obrazech?“).
                     if self._f1_o_tazateli(_rw, ctx.name):
-                        logging.getLogger(__name__).info(
+                        logging.getLogger(_h.__name__).info(
                             'HANS_F1_NOT_ABOUT_ASKER_V1: prepis %r prehodil '
                             'podmet na tazatele — drzim original', _rw[:60])
                     else:
-                        logging.getLogger(__name__).info(
+                        logging.getLogger(_h.__name__).info(
                             'F1: rewrite %r -> %r',
                             str(ctx._text)[:60], _rw[:60])
                         ctx._q_for_retrieval = _rw.strip()
                         # HANS_A1_THREAD_TEXT_V1 — schovej pro A1 gate
                         self._f1_query = ctx._q_for_retrieval
         except Exception as _f1e:
-            logging.getLogger(__name__).debug(
+            logging.getLogger(_h.__name__).debug(
                 'F1: rewriter selhal (%s) — použit originál', _f1e)
 
     def _grr_hledani(self, ctx):
@@ -725,7 +725,7 @@ class GroundingMixin:
             _kotvy_dotazu = [_w for _i, _w in
                              _kv_fn(str(ctx._q_for_retrieval or ctx._text))]
         except Exception as _kve:
-            logging.getLogger(__name__).debug(
+            logging.getLogger(_h.__name__).debug(
                 'HANS_GROUNDING_ANCHOR_V1: kotvy nedostupné: %s', _kve)
             _kotvy_dotazu, _nk_fn = [], None
         try:
@@ -786,28 +786,28 @@ class GroundingMixin:
                                 ctx.all_chunks.append(ctx._ch)
                     except Exception as _tiche:
                         _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                            logging.getLogger(__name__), "_build_grounding(ř. 978)",
+                            logging.getLogger(_h.__name__), "_build_grounding(ř. 978)",
                             "_build_grounding: blok kontextu selhal (ř. 978): %s", _tiche)
                 if _pending:
-                    logging.getLogger(__name__).info(
+                    logging.getLogger(_h.__name__).info(
                         'G3B: %d/%d kolekcí nestihlo timeout %ss',
                         len(_pending), len(ctx.collections),
                         self._GROUNDING_TIMEOUT_S)
         except Exception as _qe:
-            logging.getLogger(__name__).warning(
+            logging.getLogger(_h.__name__).warning(
                 'G3B: multi-query selhalo: %s', _qe)
             return ''
 
         if _skipped_chatlogs:
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'HANS_CHATLOG_NOT_FACT_V1: %d kusů z chatu vyřazeno '
                 'z faktického groundingu', len(_skipped_chatlogs))
         if _skipped_own:
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'HANS_OWN_WORK_NOT_FACT_V1: %d kusů vlastní tvorby '
                 'vyřazeno z faktického groundingu', len(_skipped_own))
         if _skipped_mimo:
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'HANS_GROUNDING_ANCHOR_V1: %d kusů mimo téma (%s) '
                 'vyřazeno z faktického groundingu', len(_skipped_mimo),
                 ', '.join(_kotvy_dotazu[:3]))
@@ -852,7 +852,7 @@ class GroundingMixin:
             # C1: RAG prázdné, ale entita ve store → autoritativní fakt
             # (Sorge není v RAG, ale Hans o něm četl → deterministický fakt).
             if ctx._ent_fact:
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     'C1: RAG prázdné, entita ze store → grounded pro %r',
                     str(ctx._text)[:40])
                 # nálepka byla `chatlog_neni_fakt` — s filtrem chatlogů to
@@ -885,14 +885,14 @@ class GroundingMixin:
             try:
                 from scripts.hans_intent import is_reflective_ask as _ira2
                 if _ira2(str(ctx._text)):
-                    logging.getLogger(__name__).info(
+                    logging.getLogger(_h.__name__).info(
                         'HANS_REFLECTIVE_ASK_V2: %r je úvahová otázka → '
                         'osobnost místo abstinence', str(ctx._text)[:50])
                     self._vysledek_groundingu('nonfactual', 'uvahova_otazka')
                     return ''
             except Exception:
                 pass
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'G3B: žádná shoda pod prahem pro [%s] %r → anti-konfab bez fakt (G3C)',
                 ctx.res.intent, str(ctx._text)[:40])
             self._vysledek_groundingu('factual_nofacts', 'zapisky_fts_prazdno')

@@ -170,13 +170,13 @@ class FaktaMixin:
                 # zhruba v půlce — model i pojistka viděli jen úvod.
                 '%s\n%s' % (_label(t, s), (x or '')[:1800])
                 for _ts, s, _p, t, x in hits)
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'HANS_KNOWLEDGE_FTS_V1: %d zápisků → grounding '
                 '(RAG nic nenašel)', len(hits))
             return ('\n\n' + _h.ANTIKONFAB + '\n\nTOHLE MÁŠ VE SVÝCH ZÁPISCÍCH '
                     '(odpověz z toho; co v nich není, nedomýšlej):\n' + blk)
         except Exception as e:
-            logging.getLogger(__name__).debug('knowledge FTS: %s', e)
+            logging.getLogger(_h.__name__).debug('knowledge FTS: %s', e)
             return ''
 
     def _kniha_navazuje(self, text: str, klic: str, ted: float) -> bool:
@@ -267,7 +267,7 @@ class FaktaMixin:
             from scripts.cz_names import fix_addressee
             _t, _n = fix_addressee(text, name, self.config)
             if _n:
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     "HANS_AGENT_ADDRESSEE_V1: opraveno %d oslovení v odpovědi agenta "
                     "(partner=%s)", _n, name)
             return _t
@@ -402,7 +402,7 @@ class FaktaMixin:
                             else "mám ho dostudovaný", min(int(_r[1] or 0) + 1, _n or 1), _n))
         except Exception:
             _stav = ""
-        logging.getLogger(__name__).info(
+        logging.getLogger(_h.__name__).info(
             "HANS_STUDY_WHY_TOPIC_V1: '%.40s' → původ tématu '%s'", _holy, _tema)
         return ("\n\nPROC STUDUJES TEMA „%s“ — fakta z tveho deniku:\n- %s%s\n\n"
                 "ODPOVEZ JEN Z TECHTO FAKT, cesky, 2-3 vetami: ze tohle tema OPRAVDU "
@@ -461,7 +461,7 @@ class FaktaMixin:
             radky.append("O ději, hercích, rolích a režii mluv JEN podle tohohle. Kameru, "
                          "ocenění, hudbu ani další údaje, které tu nejsou, si NEDOMÝŠLEJ; "
                          "vlastní dojem či doporučení smíš.")
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'HANS_KODI_FILM_FACT_V1: film z knihovny %r (%d herců)', k[:40], len(herci))
             return '\n\n' + "\n".join(radky)
         return ''
@@ -560,7 +560,7 @@ class FaktaMixin:
             blok.append("(v seznamu je celkem %d jmen, tohle je prvních %d)"
                         % (len(herci), len(radky)))
         blok.append(pata)
-        logging.getLogger(__name__).info(
+        logging.getLogger(_h.__name__).info(
             'HANS_KODI_CAST_FACT_V1: obsazení z knihovny pro %r (%d jmen)',
             popis[:40], len(herci))
         return '\n\n' + _h.ANTIKONFAB + '\n\n' + "\n".join(blok)
@@ -637,12 +637,12 @@ class FaktaMixin:
                     _jm = str((_e or {}).get("name") or "").strip()
                     if (_e and _jm and not self._entita_je_tazatel(_e)
                             and _jm.lower() != str(tema or "").lower()):
-                        logging.getLogger(__name__).info(
+                        logging.getLogger(_h.__name__).info(
                             'HANS_ANCHOR_ENTITY_FIRST_V1: kotva %r → entita %r',
                             tema, _jm)
                         tema = _jm
             except Exception as _efe:
-                logging.getLogger(__name__).debug(
+                logging.getLogger(_h.__name__).debug(
                     'HANS_ANCHOR_ENTITY_FIRST_V1: %s', _efe)
             if not tema:
                 return None
@@ -650,12 +650,12 @@ class FaktaMixin:
                 "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"
             out = lookup_now(self.config, _dbp, tema, veta or "", asker=name,
                              mel_zapisky=mel_zapisky)
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 "HANS_ANCHOR_LOOKUP_V1: téma %r → %s", tema,
                 "dohledáno" if out else "nic (platí dosavadní odpověď)")
             return out
         except Exception as e:
-            logging.getLogger(__name__).warning(
+            logging.getLogger(_h.__name__).warning(
                 "HANS_ANCHOR_LOOKUP_V1 selhalo: %s", e)
             return None
 
@@ -681,7 +681,7 @@ class FaktaMixin:
             popis = capability_for(t)
             if not popis:
                 return ''
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'HANS_CAP_HOWTO_V1: dotaz míří na schopnost → %.60s', popis)
             return "Ověřený fakt o mé schopnosti: " + popis
         except Exception:
@@ -712,7 +712,7 @@ class FaktaMixin:
             except Exception:
                 pass
             if _jm in _formy:
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     "HANS_ENTITY_NOT_ASKER_V1: entita %r je jméno tazatele — "
                     "nepoužiji", (ent or {}).get("name"))
                 return True
@@ -796,7 +796,7 @@ class FaktaMixin:
             _ent = _es.resolve(self._bez_tazatele(text))   # HANS_ENTITY_STRIP_ASKER_V1
             if not _ent or self._entita_je_tazatel(_ent):   # HANS_ENTITY_NOT_ASKER_V1
                 return ''
-            logging.getLogger(__name__).info(
+            logging.getLogger(_h.__name__).info(
                 'C1: entita resolvována z dotazu → %r (ev=%s)',
                 _ent.get('name'), _ent.get('evidence_count'))
             return _es.fact_block(_ent)
@@ -830,7 +830,7 @@ class FaktaMixin:
                          else "hlídací režim je vypnutý")
         if not lines:
             return ''
-        logging.getLogger(__name__).info(
+        logging.getLogger(_h.__name__).info(
             'HANS_SELF_STATE_AWAKE_V2: dotaz na vlastní režim → %s', lines)
         return ("MŮJ SKUTEČNÝ REŽIM PRÁVĚ TEĎ (odpověz POUZE podle tohohle):\n"
                 + "\n".join("- %s" % x for x in lines)
@@ -857,7 +857,7 @@ class FaktaMixin:
             else:
                 out["guard"] = False
         except Exception as _rse:
-            logging.getLogger(__name__).debug('runtime_state: %s', _rse)
+            logging.getLogger(_h.__name__).debug('runtime_state: %s', _rse)
         return out
 
     def _person_fact(self, text: str) -> str:
@@ -884,7 +884,7 @@ class FaktaMixin:
                 "WHERE COALESCE(deactivated_at, 0) = 0").fetchall()
             db.close()
         except Exception as e:
-            logging.getLogger(__name__).debug('person_fact: %s', e)
+            logging.getLogger(_h.__name__).debug('person_fact: %s', e)
             return ''
         toks = [w for w in re.split(r"[^\w]+", self._fold(t)) if len(w) >= 3]
         hit = None
@@ -926,7 +926,7 @@ class FaktaMixin:
             pass
         if charact:
             parts.append((charact or "").strip().split(". ")[0].strip() + ".")
-        logging.getLogger(__name__).info(
+        logging.getLogger(_h.__name__).info(
             'HANS_PERSON_FACT_V1: osoba resolvována z dotazu → %r', disp or pid)
         return "ZÁZNAM O OSOBĚ (z mé evidence domácnosti):\n" + "\n".join(
             "- %s" % p for p in parts)

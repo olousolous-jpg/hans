@@ -129,7 +129,8 @@ def priprav(zdroj_cesta: str, cil_cesta: str, jmena: list) -> dict:
     modul = os.path.splitext(os.path.basename(zdroj_cesta))[0]
     cil_modul = os.path.splitext(os.path.basename(cil_cesta))[0]
     funkce = {n.name: n for n in strom.body if isinstance(n, ast.FunctionDef)}
-    kandidati = vse - set(importy)
+    # `__name__` / `__file__` ve funkci znamenají PŮVODNÍ modul (jméno loggeru, cesty)
+    kandidati = (vse - set(importy)) | {"__name__", "__file__"}
     bloky, potrebne_importy, zprava = [], set(), []
     for jm in jmena:
         f = funkce.get(jm)

@@ -64,7 +64,7 @@ class SystemMixin:
             )
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_system(ř. 2181)",
+                logging.getLogger(_h.__name__), "_build_system(ř. 2181)",
                 "_build_system: blok kontextu selhal (ř. 2181): %s", _tiche)
         # endregion
         return ctx.system_msg
@@ -169,7 +169,7 @@ class SystemMixin:
                             if not _u.combining(c))
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                logging.getLogger(__name__), "_build_system(ř. 1477)",
+                logging.getLogger(_h.__name__), "_build_system(ř. 1477)",
                 "_build_system: blok kontextu selhal (ř. 1477): %s", _tiche)
         import re as _rre
         ctx._is_knowledge_q = bool(_rre.search(
@@ -478,7 +478,7 @@ class SystemMixin:
                     ctx.surr_ctx = f"\n\n{surr}"
             except Exception as _tiche:
                 _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                    logging.getLogger(__name__), "_build_system(ř. 1742)",
+                    logging.getLogger(_h.__name__), "_build_system(ř. 1742)",
                     "_build_system: blok kontextu selhal (ř. 1742): %s", _tiche)
 
     def _sy_pamet(self, ctx):
@@ -771,7 +771,7 @@ class SystemMixin:
                                                 bez_citace=ctx._asker_cizi)
                               if _l not in _les]   # ..._PRIVACY_V1
             except Exception as _lfte:
-                logging.getLogger(__name__).debug(
+                logging.getLogger(_h.__name__).debug(
                     "lessons_for_topic (chat): %s", _lfte)
             if _les and not ctx.for_greeting:  # GREETING_LEAD_PRIORITY_V1 — lekce do pozdravu nepatří
                 ctx.lessons_ctx = ("\n\nNedávno jsi byl opraven / mýlil ses v těchto "
@@ -805,7 +805,7 @@ class SystemMixin:
                                     "\n- " + "\n- ".join(_scr))
             except Exception as _tiche:
                 _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                    logging.getLogger(__name__), "_build_system(ř. 2012)",
+                    logging.getLogger(_h.__name__), "_build_system(ř. 2012)",
                     "_build_system: blok kontextu selhal (ř. 2012): %s", _tiche)
 
     def _sy_hodnoty(self, ctx):
@@ -887,7 +887,7 @@ class SystemMixin:
                 )
             except Exception as _tiche:
                 _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                    logging.getLogger(__name__), "_build_system(ř. 2081)",
+                    logging.getLogger(_h.__name__), "_build_system(ř. 2081)",
                     "_build_system: blok kontextu selhal (ř. 2081): %s", _tiche)
             # PROMPT_AUDIT_B_BREVITY_V1 — zastřešující steer proti
             # rozvláčnosti (jen chat; greeting má vlastní brevitu).
@@ -961,7 +961,7 @@ class SystemMixin:
                         ctx.system_msg += "\n\n" + _prov.STEER
                 except Exception as _tiche:
                     _h.log_once(  # HANS_NO_SILENT_CTX_V1
-                        logging.getLogger(__name__), "_build_system(ř. 2153)",
+                        logging.getLogger(_h.__name__), "_build_system(ř. 2153)",
                         "_build_system: blok kontextu selhal (ř. 2153): %s", _tiche)
                 # HANS_ART_HONESTY_V1 — neslibuj malování, které nespustíš.
                 # Obraz vznikne JEN příkazem „namaluj …" (ten se zpracuje mimo

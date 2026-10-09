@@ -80,7 +80,8 @@ def priprav(zdroj_cesta, trida_jm, cil_cesta, mixin, jmena, alias) -> dict:
         _chyba("nenašel jsem tabulku symbolů třídy %s" % trida_jm)
     ctab = ctab[0]
     met = _metody(trida)
-    kandidati = vse - set(importy)
+    # `__name__` / `__file__` v metodě znamenají PŮVODNÍ modul (jméno loggeru, cesty)
+    kandidati = (vse - set(importy)) | {"__name__", "__file__"}
     bloky, potrebne_importy, zprava = [], set(), []
     for jm in jmena:
         f = met.get(jm)

@@ -46,7 +46,7 @@ class PametMixin:
             _tp = [str(x).strip().lower()
                    for x in (self.config.get("test_persons") or [])]
             if (name or "").strip().lower() in _tp:
-                logging.getLogger(__name__).info(
+                logging.getLogger(_h.__name__).info(
                     "HANS_TEST_PERSON_V1: %r je testovací identita — "
                     "do deníku ani RAG se nezapisuje", name)
                 return True
@@ -109,7 +109,7 @@ class PametMixin:
             if bypass_kind:
                 self._write_bypass_note(bypass_kind, response)
         except Exception as _e:
-            logging.getLogger(__name__).debug(
+            logging.getLogger(_h.__name__).debug(
                 "human_chat diary write (early-return): %s", _e)
 
     def _write_bypass_note(self, kind: str, response: str) -> None:
@@ -152,7 +152,7 @@ class PametMixin:
                  "Bypass odpověď (%s)" % _kind_label, _note, _data, 7))
             _c.commit(); _c.close()
         except Exception as _bne:
-            logging.getLogger(__name__).debug(
+            logging.getLogger(_h.__name__).debug(
                 'bypass_note write: %s', _bne)
 
     def _upload_chat_memory(self, name: str, question: str, answer: str):
