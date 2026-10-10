@@ -53,6 +53,11 @@ _CAPABILITIES = [
      "Albert, Penny, Billa), s cenou a platností. Vím jen o tom, co je v letácích — běžné ceny "
      "neznám, nic neobjednávám a seznam vedu jen podle toho, co mi kdo řekne",
      "/sleva přidej máslo; /sleva odeber máslo; /sleva seznam; /sleva teď; „co je tento týden v akci?“"),
+    # HANS_KODI_MENU_V1
+    ("kodi_menu", "V TELEVIZI (Kodi) mám v hlavní nabídce vlastní položku Hans: jsou v ní slevy "
+     "z letáků s obchodem a cenou, zprávy, které sbírám, a obrazy, které jsem namaloval. Je to jen "
+     "k prohlížení — seznam slev se dál upravuje příkazem /sleva a nic z toho se v televizi neovládá",
+     "v Kodi položka Hans v hlavní nabídce (Slevy, Zprávy, Obrazy)"),
     ("demagog", "Umím vyhledat OVĚŘENÉ VÝROKY českých politiků z Demagog.cz — výrok, "
      "jejich verdikt (pravda / nepravda / zavádějící / neověřitelné), krátké zdůvodnění "
      "a odkaz. Verdikt je jejich, sám politiky nehodnotím; mám jen to, co ověřili oni "
