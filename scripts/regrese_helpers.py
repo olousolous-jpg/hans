@@ -697,6 +697,42 @@ def film_nazor_soukromi(cesta: str, tazatel: str) -> str:
     return "se_jmenem" if jm.lower() in r.lower() else "bez_jmena"
 
 
+# ── HANS_FILM_FACTS_BLOCK_V1 (11. 10.) ───────────────────────────────────────
+def film_fakta_clanku(varianta: str) -> str:
+    """Dočasná DB s filmem a (podle varianty) výpisem faktů z článku.
+    varianta: 'film' (výpis mluví o filmu) | 'kniha' (stejné téma, výpis o
+    knize) | 'nic' (žádný výpis). Vrátí 'fakta' / 'bez_faktu' / 'nic'."""
+    import os, sqlite3, tempfile, time as _t
+    from scripts import hans_recall
+    d = tempfile.mkdtemp(); db = os.path.join(d, "t.db")
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE diary (id INTEGER PRIMARY KEY, ts REAL, event_type TEXT,"
+              " title TEXT, data TEXT, note TEXT, importance INTEGER,"
+              " provenance TEXT, source_url TEXT)")
+    tit = "Regresni Zkusebni Snimek"
+    c.execute("INSERT INTO diary (ts,event_type,title,data) VALUES (?,?,?,?)",
+              (_t.time(), "movie_opinion", tit,
+               "Kamera pracuje se svetlem velmi citlive a pribeh ma dobre tempo."))
+    vypis = {"film": "Film natočil režisér Jan Zkušební v roce 1999.\n"
+                     "Hlavní roli hraje Karel Vzorový.",
+             "kniha": "Román vydalo nakladatelství Vzor v roce 1950.\n"
+                      "Autorem románu je Karel Vzorový."}.get(varianta)
+    if vypis:
+        c.execute("INSERT INTO diary (ts,event_type,title,note) VALUES (?,?,?,?)",
+                  (_t.time(), "web_read", tit,
+                   "[%s] Fakta z článku (část 1/1):\n%s" % (tit, vypis)))
+    c.commit(); c.close()
+    try:
+        r = hans_recall.film_knowledge_answer(
+            db, "Kdo hraje hlavní roli ve filmu Regresni Zkusebni Snimek?") or ""
+    finally:
+        try: os.remove(db); os.rmdir(d)
+        except Exception: pass
+    if not r:
+        return "nic"
+    return "fakta" if "Karel Vzorový" in r else "bez_faktu"
+
+
 # ── HANS_FILM_ASKER_PREFIX_V1 (23. 9.) ───────────────────────────────────────
 def film_prefix_kolize(veta: str) -> str:
     """Docasna DB s filmem „Zkouska“ (jako v produkci). Vrati titul, ktery

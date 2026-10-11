@@ -616,6 +616,9 @@ def _jmenuje_domacnost(text: str) -> bool:
         return False
 
 
+_FAKTA_CLANKU_MAX = 30   # HANS_FILM_FACTS_BLOCK_V1 — strop řádků faktů v podkladu
+
+
 def film_knowledge_answer(db_path: str, question: str = "",
                           asker: str = "") -> Optional[str]:
     """HANS_FILM_RECALL_V1 — když dotaz zmiňuje FILM podle názvu, dohledej v
@@ -710,6 +713,29 @@ def film_knowledge_answer(db_path: str, question: str = "",
                 pass
         if not notes and not (seen and seen[0]):
             return None  # titul se objevil, ale nic konkrétního → nech projít dál
+        # HANS_FILM_FACTS_BLOCK_V1 (11. 10.) — výpis faktů z článku o filmu
+        # (`hans_findings.zapis_fakta`, čtení s poznámkou „[titul] Fakta z…“)
+        # do podkladu. Změřeno párově 11. 10. (5 otázek × 3 běhy, táž otázka,
+        # produkční cesta): klíčový údaj správně 2/15 bez faktů × 12/15 s nimi
+        # — bez nich model údaj vymýšlel, ač ho měl v deníku. Jen když výpis
+        # o filmu mluví (téma dohledání se může jmenovat stejně jako film,
+        # ale být o knize nebo hře).
+        clanek = []
+        try:
+            _pfx = "[%s] Fakta z" % best
+            for (_n,) in conn.execute(
+                    "SELECT note FROM diary WHERE event_type='web_read' "
+                    "AND substr(note, 1, ?) = ? ORDER BY id",
+                    (len(_pfx), _pfx)).fetchall():
+                for _r in str(_n or "").splitlines()[1:]:
+                    _r = _r.strip()
+                    if _r and _r not in clanek:
+                        clanek.append(_r)
+            if not re.search(r"\bfilm|\bsn[ií]m", " ".join(clanek), re.I):
+                clanek = []
+            clanek = clanek[:_FAKTA_CLANKU_MAX]
+        except Exception:
+            clanek = []
         parts = [f"SKUTEČNÝ ZÁZNAM o „{best}“ z TVÉHO deníku (odpověz JEN z něj, "
                  f"nic si nedomýšlej; na co tu není, přiznej „to si nevybavuji“):"]
         if notes:
@@ -717,6 +743,9 @@ def film_knowledge_answer(db_path: str, question: str = "",
             parts.extend(f"- {n}" for n in notes)
         if fakta:   # HANS_FILM_KODI_FACTS_V1
             parts.append("Údaje přehrávače o tom, co jsi viděl: " + "; ".join(fakta))
+        if clanek:   # HANS_FILM_FACTS_BLOCK_V1
+            parts.append("Fakta z článku na Wikipedii, který jsi o tom filmu četl:")
+            parts.extend("- " + _r for _r in clanek)
         if seen and seen[0]:
             kdy = _hr._cz_when(seen[1], slovy=True) if seen[1] else "dříve"
             krat = "jednou" if seen[0] == 1 else f"{seen[0]}×"
