@@ -1082,8 +1082,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         self._sc_ulozeni(ctx)
         return ctx.response
 
+    def _sc_read_volba(self, ctx):
+        """Volba kroku (nic neprovádí): je to příkaz /read?"""
+        return ctx.stripped.lower().startswith("/read ")
+
     def _sc_read(self, ctx):
-        if ctx.stripped.lower().startswith("/read "):
+        if self._sc_read_volba(ctx):
             url = ctx.stripped[6:].strip()
             if url.startswith("http"):
                 _hi = getattr(self, '_hans_idle', None)
@@ -1094,8 +1098,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             return "\u26a0 Zadej platnou URL začínající http"
         return _POKRACUJ
 
+    def _sc_note_volba(self, ctx):
+        """Volba kroku (nic neprovádí): je to příkaz /note?"""
+        return ctx.stripped.lower().startswith("/note ")
+
     def _sc_note(self, ctx):
-        if ctx.stripped.lower().startswith("/note "):
+        if self._sc_note_volba(ctx):
             note_text = ctx.stripped[6:].strip()
             if note_text:
                 self._save_note(ctx.name, note_text)
@@ -1109,6 +1117,20 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         # „zjisti víc o X, tu je odkaz https://…" → Hans stránku přečte, uloží do
         # čtenářské paměti (RAG) a zapamatuje si TÉMA (ne jen 'url'/URL). Bez
         # intentu (URL jen tak zmíněná) se nechytá → normální chat.
+        _url = self._sc_url_volba(ctx)
+        if _url:
+            _topic = self._extract_read_topic(ctx.stripped, _url)
+            _hi = getattr(self, '_hans_idle', None)
+            _hi._curiosity.trigger_url(_url, topic=_topic)
+            from scripts.hans_persona import persona_name as _pn
+            lbl = ("téma „%s\"" % _topic) if _topic != "url" else "stránku"
+            return ("Přečtu si %s a zapamatuji si, co tam najdu, %s."
+                    % (lbl, ctx.name or "pane"))
+        return _POKRACUJ
+
+    def _sc_url_volba(self, ctx):
+        """Volba kroku (nic neprovádí): odkaz v běžné větě s úmyslem čtení
+        → vrátí ten odkaz, jinak None."""
         if not ctx.stripped.startswith("/"):
             import re as _re_u
             _um = _re_u.search(r"https?://\S+", ctx.stripped)
@@ -1117,16 +1139,10 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 "podivej", "mrkni", "koukni", "stáhni", "stahni", "odkaz",
                 "stránk", "stranka", "nastuduj", "prostuduj"))
             if _um and _intent:
-                _url = _um.group(0).rstrip('.,);:!?\'"')
-                _topic = self._extract_read_topic(ctx.stripped, _url)
                 _hi = getattr(self, '_hans_idle', None)
                 if _hi and hasattr(_hi, '_curiosity'):
-                    _hi._curiosity.trigger_url(_url, topic=_topic)
-                    from scripts.hans_persona import persona_name as _pn
-                    lbl = ("téma „%s\"" % _topic) if _topic != "url" else "stránku"
-                    return ("Přečtu si %s a zapamatuji si, co tam najdu, %s."
-                            % (lbl, ctx.name or "pane"))
-        return _POKRACUJ
+                    return _um.group(0).rstrip('.,);:!?\'"')
+        return None
 
     def _sc_vypadek(self, ctx):
         # ── HANS_DOWNTIME_V1 — uzavření smyčky výpadku ───────────────────
@@ -1151,208 +1167,9 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         # ── Chat commands (slash + natural language) ─────────────────────
         # CHAT_COMMANDS_DISPATCH_PATCH
         try:
-            from scripts.chat_commands import parse_command, dispatch
-            # HANS_THREAD_V1 (6.8.) — rozhodovací vrstva byla BEZSTAVOVÁ:
-            # parse_command i detektory v _build_grounding dostávaly holou
-            # větu, zatímco LLM historii měl. Doloženo 5.8. 19:17-19:23 —
-            # korekce „myslel jsem rozhovor s Kolacem" neměla žádný účinek.
-            # Tady se z předchozí repliky doplní předmět; ORIGINÁL zůstává
-            # pro generaci (persona dál slyší, co uživatel napsal).
-            _t_turns = []      # musí existovat i když blok níž selže
-            try:
-                from scripts import hans_thread as _thr
-                _t_turns = _thr.recent_turns(self, ctx.name, ctx.channel)
-                _t_res, _t_subj = _thr.resolve_reference(ctx.user_message, _t_turns)
-                self._thread_ctx = (ctx.user_message, _t_res, _t_subj)
-                if _t_subj:
-                    print(f"[Chat] thread: odkaz rozřešen → {_t_subj}")
-            except Exception as _te:
-                self._thread_ctx = None
-                print(f"[Chat] thread error: {_te}")
-            _cmd = parse_command(ctx.user_message)
-            # HANS_UNKNOWN_SLASH_V1 (9. 10.) — neznámé „/slovo“ není volný hovor
-            # (model by si odpověď vymyslel): řekni, že příkaz neznáš, a nabídni
-            # nejbližší. Dřív než vlákno a LLM router, ať z překlepu nehádají.
-            if not _cmd:
-                try:
-                    from scripts.chat_commands import neznamy_prikaz, NEZNAMY_PRIKAZ
-                    if neznamy_prikaz(ctx.user_message):
-                        _cmd = (NEZNAMY_PRIKAZ, ctx.user_message)
-                except Exception as _nse:
-                    logging.getLogger(__name__).debug('neznámý příkaz: %s', _nse)
-            # HANS_FILM_OPINION_ANAFORA_V1 (23. 9.) — anafora obliby po výpisu
-            # filmů („a který se ti z nich líbil nejvíc?“) nenese slovo „film“;
-            # o /film rozhodne předchozí replika ve vlákně.
-            if not _cmd:
-                try:
-                    from scripts.chat_commands import thread_film_opinion
-                    if thread_film_opinion(ctx.user_message, _t_turns):
-                        _cmd = ("film", ctx.user_message)
-                        logging.getLogger(__name__).info(
-                            'HANS_FILM_OPINION_ANAFORA_V1: vlákno → /film')
-                except Exception as _fae:
-                    logging.getLogger(__name__).debug('anafora film: %s', _fae)
-            # HANS_DEMAGOG_FOLLOWUP_V1 (3. 10.) — pokračování po výpisu z Demagogu
-            # („a co ostatní výroky?“) nenese slovo Demagog; rozhodne vlákno.
-            if not _cmd:
-                try:
-                    from scripts.chat_commands import thread_demagog
-                    _dma = thread_demagog(ctx.user_message, _t_turns)
-                    if _dma:
-                        _cmd = ("demagog", _dma)
-                        logging.getLogger(__name__).info(
-                            'HANS_DEMAGOG_FOLLOWUP_V1: vlákno → /demagog (%.60s)', _dma)
-                except Exception as _dme:
-                    logging.getLogger(__name__).debug('demagog vlákno: %s', _dme)
-            # HANS_ZPRAVY_ODKAZY_V1 (4. 10.) — „pošli odkaz…“ po výpisu zpráv;
-            # předbíhá i /zdroje (ten by vypsal zdroje Hansovy četby, ne zpráv)
-            if not _cmd or _cmd[0] == "zdroje":
-                try:
-                    from scripts.chat_commands import thread_zpravy
-                    _zpo = thread_zpravy(ctx.user_message, _t_turns)
-                    if _zpo:
-                        _cmd = ("odkazy_zprav", _zpo)
-                        logging.getLogger(__name__).info(
-                            'HANS_ZPRAVY_ODKAZY_V1: vlákno → /odkazy_zprav')
-                except Exception as _zpe:
-                    logging.getLogger(__name__).debug('zpravy vlákno: %s', _zpe)
-            # HANS_CONFIRM_PRECEDENCE_V2 (20.8.) — ČEKÁ-LI AGENT NA POTVRZENÍ,
-            # LLM ROUTER SE NEPTÁ. Princip už platí od 7.8. pro větev
-            # prohloubení (`HANS_CONFIRM_PRECEDENCE_V1`), jen se nikdy
-            # nevztáhl na příkazy — a tudy to teklo.
-            # Doloženo 20.8.: Hans nabídl zapsat poznámku, uživatel odpověděl
-            # „ano" → `HANS_THREAD_LLMROUTE_V1` větu rozvinul na „ano (k tématu:
-            # zápis o tom, že jsem si vymyslel divadlo)", router v tom uviděl
-            # psaní a poslal ji na /dilo („Právě nepíšu, pane…"). Potvrzení se
-            # k agentovi NEDOSTALO a poznámka se nezapsala — přitom Hans o pár
-            # vteřin dřív řekl, že si ji zapisuje.
-            # ⚠️ Vypíná se JEN dohadovací vrstva (LLM router). Regexy a slash
-            # příkazy běží dál: `parse_command('ano'/'ne'/'jo')` vrací None
-            # (ověřeno), takže o nic přijít nemůžou, a explicitní „/studium"
-            # zůstane explicitním příkazem.
-            _confirm_waits = False
-            try:
-                _agc = self._agent_router()
-                _apc = getattr(_agc, "_pending", None) if _agc is not None else None
-                _ppc = _apc.get(ctx.name) if _apc else None
-                if _ppc is not None and (time.time() - _ppc.ts) <= 180:
-                    _confirm_waits = True
-            except Exception as _cpe2:
-                logging.getLogger(__name__).debug('confirm precedence v2: %s', _cpe2)
-            if not _cmd and _confirm_waits:
-                logging.getLogger(__name__).info(
-                    'HANS_CONFIRM_PRECEDENCE_V2: čeká potvrzení návrhu → '
-                    'LLM routing přeskočen: %.40s', ctx.user_message)
-            elif not _cmd:
-                # HANS_CMD_LLM_ROUTE_V1 (5.8.) — regexy minuly; zeptej se
-                # modelu, jestli věta nežádá o některý ČTECÍ výpis. Řeší
-                # „ptám se jinak, než je ve vzorech" (nález uživatele 4.8.).
-                # Fail-safe: None → pokračuje běžná cesta beze změny.
-                try:
-                    from scripts.chat_commands import resolve_command_llm
-                    # HANS_THREAD_LLMROUTE_V1 — router posuzuje větu
-                    # ROZŘEŠENOU (s předmětem z předchozí repliky), jinak
-                    # navazující dotaz hodnotí izolovaně stejně jako regexy.
-                    _rt = ctx.user_message
-                    try:
-                        _tc = getattr(self, '_thread_ctx', None)
-                        if _tc and _tc[0] == ctx.user_message and _tc[1]:
-                            _rt = _tc[1]
-                    except Exception:
-                        pass
-                    # HANS_CMD_LLM_ROUTE_V4 — vlákno i pro deterministické
-                    # brzdy routeru (kdo je „třetí strana" ví jen kontext).
-                    _cmd = resolve_command_llm(_rt, self.config,
-                                               turns=_t_turns)
-                except Exception as _re:
-                    print(f"[Chat] cmd route error: {_re}")
-            # HANS_STUDY_CONTENT_RECALL_V1 (14.8.) — „studium" chytá jak regex
-            # (`parse_command`, nl_pattern „co ses naučil") tak router, proto
-            # guard patří SEM, za obě cesty. Obsahová otázka „co sis odnesl ZE
-            # STUDIA X" / „co ses naučil O X" má KONKRÉTNÍ TÉMA → je to dotaz na
-            # OBSAH, ne na stav programu → zruš routing na /studium, ať spadne na
-            # běžnou cestu (knowledge_check dohledá zápisky). „jak jde studium?"
-            # (stav, bez tématu) se do knowledge_check nechytí → výpis zůstane.
-            if _cmd and _cmd[0] == "studium":
-                try:
-                    from scripts.hans_recall import is_knowledge_check_query
-                    if is_knowledge_check_query(ctx.user_message):
-                        print("[Chat] studium+téma → recall "
-                              "(HANS_STUDY_CONTENT_RECALL_V1)")
-                        _cmd = None
-                except Exception:
-                    pass
-            # HANS_PROVENANCE_NOT_LIST_V1 (19.8.) — „odkud to máš?" / „máš to
-            # ze svých zápisků?" po Hansově tvrzení je KONFRONTACE, ne žádost
-            # o výpis. Doloženo 19.8. 2× v jednom hovoru: první šla regexem na
-            # /zdroje (výpis odkazů ze studia), druhá routerem na /rozhovory
-            # (shrnutí 52 výměn) — obě místo odpovědi na položenou otázku.
-            # ⚠️ Vzor „odkud to máš" má /zdroje ZÁMĚRNĚ (archiv 2026-07, ř. 358),
-            # takže se NERUŠÍ plošně: jen tehdy, když je ve vlákně čerstvé
-            # Hansovo tvrzení, které se dá konfrontovat. „Odkud jsi čerpal ke
-            # studiu?" bez takového tvrzení dál vypíše odkazy.
-            # Proč zrušit routing a nic nedosazovat: dotaz tím propadne na
-            # faktickou cestu → když tvrzení nemá oporu, A1 abstinuje a TEPRVE
-            # TÍM se spustí CLAIM_RETRACT_V1, který na tyhle formulace vzor
-            # (`_SOURCE_Q`) má, ale dosud se k nim nedostal — žije jen uvnitř
-            # abstinenční větve. Hotová mašinerie, žádná nová.
-            if _cmd and _cmd[0] in ("zdroje", "rozhovory", "cetl"):
-                try:
-                    from scripts.claim_retract import _SOURCE_Q, find_claim
-                    if _SOURCE_Q.search(ctx.user_message or ""):
-                        _hist_p = []
-                        try:
-                            _hist_p = self.conv_store.get_history(ctx.name) or []
-                        except Exception:
-                            pass
-                        if find_claim(ctx.user_message, _hist_p):
-                            print("[Chat] provenience → běžná cesta "
-                                  "(HANS_PROVENANCE_NOT_LIST_V1)")
-                            logging.getLogger(__name__).info(
-                                'HANS_PROVENANCE_NOT_LIST_V1: /%s zrušen — '
-                                'věta konfrontuje čerstvé tvrzení: %.50s',
-                                _cmd[0], ctx.user_message)
-                            _cmd = None
-                except Exception as _pne:
-                    logging.getLogger(__name__).debug(
-                        'HANS_PROVENANCE_NOT_LIST_V1: %s', _pne)
-            if _cmd:
-                # HANS_THREAD_V1 — uživatel právě OPRAVIL tutéž cestu, která
-                # odpovídala minule → nepouštět ji znovu (vracela by totéž;
-                # doloženo 19:19 vs 19:23, kde se lišil jen počet výměn).
-                # ÚZKÉ SCHVÁLNĚ: jen při korekci, NE při doslovném opakování
-                # („namaluj kočku" 5× za sebou je legitimní záměr).
-                try:
-                    from scripts import hans_thread as _thr
-                    if _thr.should_suppress(ctx.name, ctx.channel, _cmd[0],
-                                            ctx.user_message):
-                        print(f"[Chat] thread: '{_cmd[0]}' potlačen "
-                              f"(korekce) → odpoví model")
-                        _cmd = None
-                except Exception:
-                    pass
-            # HANS_CLAIM_HOLD_V1 (23.8.) — uživatel tvrdí opak toho, co Hans
-            # před chvílí přečetl z deníku („před chvílí jsi říkal 12:15,
-            # která odpověď platí?") → model ustoupil a MOU nepravdu vydával
-            # za údaj z vlastního deníku. Řešení bez nové vrstvy: poslat dotaz
-            # na TÝŽ deterministický příkaz, který odpověď vyrobil poprvé.
-            # Musí to být AŽ ZA `should_suppress` — ta by to sejmula jako
-            # „uživatel opravil tutéž cestu, nepouštěj ji znovu", což je přesně
-            # opačné rozhodnutí, než tady potřebujeme.
-            _hold_claim = None
-            if not _cmd:
-                try:
-                    from scripts.claim_hold import disputed_last_seen
-                    _hold_claim = disputed_last_seen(
-                        ctx.user_message, self.conv_store.get_history(ctx.name) or [])
-                    if _hold_claim:
-                        _cmd = ("videl", _hold_claim)   # jméno nese tvrzení
-                        logging.getLogger(__name__).info(
-                            "HANS_CLAIM_HOLD_V1: spor o čerstvé tvrzení "
-                            "→ znovu z deníku (%.60s)", _hold_claim)
-                except Exception as _che:
-                    logging.getLogger(__name__).debug(
-                        "HANS_CLAIM_HOLD_V1: %s", _che)
+            from scripts.chat_commands import dispatch
+            # volba příkazu je oddělená od provedení (ROZHODNUTI_VSTUP_V1)
+            _cmd, _hold_claim = self._sc_prikazy_volba(ctx)
             _reply = None
             if _cmd:
                 # CHAT_COMMANDS_LOG_FIX
@@ -1392,6 +1209,215 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             print(f"[Chat] command dispatch error: {_ce}")
         return _POKRACUJ
 
+    def _sc_prikazy_volba(self, ctx):
+        """Volba kroku (nic neprovádí): kterou obsluhu příkazu věta
+        dostane. Vrací (příkaz nebo None, sporné tvrzení nebo None);
+        příkaz je dvojice (jméno, argument). Smí se zeptat routeru
+        příkazů s modelem."""
+        from scripts.chat_commands import parse_command
+        # HANS_THREAD_V1 (6.8.) — rozhodovací vrstva byla BEZSTAVOVÁ:
+        # parse_command i detektory v _build_grounding dostávaly holou
+        # větu, zatímco LLM historii měl. Doloženo 5.8. 19:17-19:23 —
+        # korekce „myslel jsem rozhovor s Kolacem" neměla žádný účinek.
+        # Tady se z předchozí repliky doplní předmět; ORIGINÁL zůstává
+        # pro generaci (persona dál slyší, co uživatel napsal).
+        _t_turns = []      # musí existovat i když blok níž selže
+        try:
+            from scripts import hans_thread as _thr
+            _t_turns = _thr.recent_turns(self, ctx.name, ctx.channel)
+            _t_res, _t_subj = _thr.resolve_reference(ctx.user_message, _t_turns)
+            self._thread_ctx = (ctx.user_message, _t_res, _t_subj)
+            if _t_subj:
+                print(f"[Chat] thread: odkaz rozřešen → {_t_subj}")
+        except Exception as _te:
+            self._thread_ctx = None
+            print(f"[Chat] thread error: {_te}")
+        _cmd = parse_command(ctx.user_message)
+        # HANS_UNKNOWN_SLASH_V1 (9. 10.) — neznámé „/slovo“ není volný hovor
+        # (model by si odpověď vymyslel): řekni, že příkaz neznáš, a nabídni
+        # nejbližší. Dřív než vlákno a LLM router, ať z překlepu nehádají.
+        if not _cmd:
+            try:
+                from scripts.chat_commands import neznamy_prikaz, NEZNAMY_PRIKAZ
+                if neznamy_prikaz(ctx.user_message):
+                    _cmd = (NEZNAMY_PRIKAZ, ctx.user_message)
+            except Exception as _nse:
+                logging.getLogger(__name__).debug('neznámý příkaz: %s', _nse)
+        # HANS_FILM_OPINION_ANAFORA_V1 (23. 9.) — anafora obliby po výpisu
+        # filmů („a který se ti z nich líbil nejvíc?“) nenese slovo „film“;
+        # o /film rozhodne předchozí replika ve vlákně.
+        if not _cmd:
+            try:
+                from scripts.chat_commands import thread_film_opinion
+                if thread_film_opinion(ctx.user_message, _t_turns):
+                    _cmd = ("film", ctx.user_message)
+                    logging.getLogger(__name__).info(
+                        'HANS_FILM_OPINION_ANAFORA_V1: vlákno → /film')
+            except Exception as _fae:
+                logging.getLogger(__name__).debug('anafora film: %s', _fae)
+        # HANS_DEMAGOG_FOLLOWUP_V1 (3. 10.) — pokračování po výpisu z Demagogu
+        # („a co ostatní výroky?“) nenese slovo Demagog; rozhodne vlákno.
+        if not _cmd:
+            try:
+                from scripts.chat_commands import thread_demagog
+                _dma = thread_demagog(ctx.user_message, _t_turns)
+                if _dma:
+                    _cmd = ("demagog", _dma)
+                    logging.getLogger(__name__).info(
+                        'HANS_DEMAGOG_FOLLOWUP_V1: vlákno → /demagog (%.60s)', _dma)
+            except Exception as _dme:
+                logging.getLogger(__name__).debug('demagog vlákno: %s', _dme)
+        # HANS_ZPRAVY_ODKAZY_V1 (4. 10.) — „pošli odkaz…“ po výpisu zpráv;
+        # předbíhá i /zdroje (ten by vypsal zdroje Hansovy četby, ne zpráv)
+        if not _cmd or _cmd[0] == "zdroje":
+            try:
+                from scripts.chat_commands import thread_zpravy
+                _zpo = thread_zpravy(ctx.user_message, _t_turns)
+                if _zpo:
+                    _cmd = ("odkazy_zprav", _zpo)
+                    logging.getLogger(__name__).info(
+                        'HANS_ZPRAVY_ODKAZY_V1: vlákno → /odkazy_zprav')
+            except Exception as _zpe:
+                logging.getLogger(__name__).debug('zpravy vlákno: %s', _zpe)
+        # HANS_CONFIRM_PRECEDENCE_V2 (20.8.) — ČEKÁ-LI AGENT NA POTVRZENÍ,
+        # LLM ROUTER SE NEPTÁ. Princip už platí od 7.8. pro větev
+        # prohloubení (`HANS_CONFIRM_PRECEDENCE_V1`), jen se nikdy
+        # nevztáhl na příkazy — a tudy to teklo.
+        # Doloženo 20.8.: Hans nabídl zapsat poznámku, uživatel odpověděl
+        # „ano" → `HANS_THREAD_LLMROUTE_V1` větu rozvinul na „ano (k tématu:
+        # zápis o tom, že jsem si vymyslel divadlo)", router v tom uviděl
+        # psaní a poslal ji na /dilo („Právě nepíšu, pane…"). Potvrzení se
+        # k agentovi NEDOSTALO a poznámka se nezapsala — přitom Hans o pár
+        # vteřin dřív řekl, že si ji zapisuje.
+        # ⚠️ Vypíná se JEN dohadovací vrstva (LLM router). Regexy a slash
+        # příkazy běží dál: `parse_command('ano'/'ne'/'jo')` vrací None
+        # (ověřeno), takže o nic přijít nemůžou, a explicitní „/studium"
+        # zůstane explicitním příkazem.
+        _confirm_waits = False
+        try:
+            _agc = self._agent_router()
+            _apc = getattr(_agc, "_pending", None) if _agc is not None else None
+            _ppc = _apc.get(ctx.name) if _apc else None
+            if _ppc is not None and (time.time() - _ppc.ts) <= 180:
+                _confirm_waits = True
+        except Exception as _cpe2:
+            logging.getLogger(__name__).debug('confirm precedence v2: %s', _cpe2)
+        if not _cmd and _confirm_waits:
+            logging.getLogger(__name__).info(
+                'HANS_CONFIRM_PRECEDENCE_V2: čeká potvrzení návrhu → '
+                'LLM routing přeskočen: %.40s', ctx.user_message)
+        elif not _cmd:
+            # HANS_CMD_LLM_ROUTE_V1 (5.8.) — regexy minuly; zeptej se
+            # modelu, jestli věta nežádá o některý ČTECÍ výpis. Řeší
+            # „ptám se jinak, než je ve vzorech" (nález uživatele 4.8.).
+            # Fail-safe: None → pokračuje běžná cesta beze změny.
+            try:
+                from scripts.chat_commands import resolve_command_llm
+                # HANS_THREAD_LLMROUTE_V1 — router posuzuje větu
+                # ROZŘEŠENOU (s předmětem z předchozí repliky), jinak
+                # navazující dotaz hodnotí izolovaně stejně jako regexy.
+                _rt = ctx.user_message
+                try:
+                    _tc = getattr(self, '_thread_ctx', None)
+                    if _tc and _tc[0] == ctx.user_message and _tc[1]:
+                        _rt = _tc[1]
+                except Exception:
+                    pass
+                # HANS_CMD_LLM_ROUTE_V4 — vlákno i pro deterministické
+                # brzdy routeru (kdo je „třetí strana" ví jen kontext).
+                _cmd = resolve_command_llm(_rt, self.config,
+                                           turns=_t_turns)
+            except Exception as _re:
+                print(f"[Chat] cmd route error: {_re}")
+        # HANS_STUDY_CONTENT_RECALL_V1 (14.8.) — „studium" chytá jak regex
+        # (`parse_command`, nl_pattern „co ses naučil") tak router, proto
+        # guard patří SEM, za obě cesty. Obsahová otázka „co sis odnesl ZE
+        # STUDIA X" / „co ses naučil O X" má KONKRÉTNÍ TÉMA → je to dotaz na
+        # OBSAH, ne na stav programu → zruš routing na /studium, ať spadne na
+        # běžnou cestu (knowledge_check dohledá zápisky). „jak jde studium?"
+        # (stav, bez tématu) se do knowledge_check nechytí → výpis zůstane.
+        if _cmd and _cmd[0] == "studium":
+            try:
+                from scripts.hans_recall import is_knowledge_check_query
+                if is_knowledge_check_query(ctx.user_message):
+                    print("[Chat] studium+téma → recall "
+                          "(HANS_STUDY_CONTENT_RECALL_V1)")
+                    _cmd = None
+            except Exception:
+                pass
+        # HANS_PROVENANCE_NOT_LIST_V1 (19.8.) — „odkud to máš?" / „máš to
+        # ze svých zápisků?" po Hansově tvrzení je KONFRONTACE, ne žádost
+        # o výpis. Doloženo 19.8. 2× v jednom hovoru: první šla regexem na
+        # /zdroje (výpis odkazů ze studia), druhá routerem na /rozhovory
+        # (shrnutí 52 výměn) — obě místo odpovědi na položenou otázku.
+        # ⚠️ Vzor „odkud to máš" má /zdroje ZÁMĚRNĚ (archiv 2026-07, ř. 358),
+        # takže se NERUŠÍ plošně: jen tehdy, když je ve vlákně čerstvé
+        # Hansovo tvrzení, které se dá konfrontovat. „Odkud jsi čerpal ke
+        # studiu?" bez takového tvrzení dál vypíše odkazy.
+        # Proč zrušit routing a nic nedosazovat: dotaz tím propadne na
+        # faktickou cestu → když tvrzení nemá oporu, A1 abstinuje a TEPRVE
+        # TÍM se spustí CLAIM_RETRACT_V1, který na tyhle formulace vzor
+        # (`_SOURCE_Q`) má, ale dosud se k nim nedostal — žije jen uvnitř
+        # abstinenční větve. Hotová mašinerie, žádná nová.
+        if _cmd and _cmd[0] in ("zdroje", "rozhovory", "cetl"):
+            try:
+                from scripts.claim_retract import _SOURCE_Q, find_claim
+                if _SOURCE_Q.search(ctx.user_message or ""):
+                    _hist_p = []
+                    try:
+                        _hist_p = self.conv_store.get_history(ctx.name) or []
+                    except Exception:
+                        pass
+                    if find_claim(ctx.user_message, _hist_p):
+                        print("[Chat] provenience → běžná cesta "
+                              "(HANS_PROVENANCE_NOT_LIST_V1)")
+                        logging.getLogger(__name__).info(
+                            'HANS_PROVENANCE_NOT_LIST_V1: /%s zrušen — '
+                            'věta konfrontuje čerstvé tvrzení: %.50s',
+                            _cmd[0], ctx.user_message)
+                        _cmd = None
+            except Exception as _pne:
+                logging.getLogger(__name__).debug(
+                    'HANS_PROVENANCE_NOT_LIST_V1: %s', _pne)
+        if _cmd:
+            # HANS_THREAD_V1 — uživatel právě OPRAVIL tutéž cestu, která
+            # odpovídala minule → nepouštět ji znovu (vracela by totéž;
+            # doloženo 19:19 vs 19:23, kde se lišil jen počet výměn).
+            # ÚZKÉ SCHVÁLNĚ: jen při korekci, NE při doslovném opakování
+            # („namaluj kočku" 5× za sebou je legitimní záměr).
+            try:
+                from scripts import hans_thread as _thr
+                if _thr.should_suppress(ctx.name, ctx.channel, _cmd[0],
+                                        ctx.user_message):
+                    print(f"[Chat] thread: '{_cmd[0]}' potlačen "
+                          f"(korekce) → odpoví model")
+                    _cmd = None
+            except Exception:
+                pass
+        # HANS_CLAIM_HOLD_V1 (23.8.) — uživatel tvrdí opak toho, co Hans
+        # před chvílí přečetl z deníku („před chvílí jsi říkal 12:15,
+        # která odpověď platí?") → model ustoupil a MOU nepravdu vydával
+        # za údaj z vlastního deníku. Řešení bez nové vrstvy: poslat dotaz
+        # na TÝŽ deterministický příkaz, který odpověď vyrobil poprvé.
+        # Musí to být AŽ ZA `should_suppress` — ta by to sejmula jako
+        # „uživatel opravil tutéž cestu, nepouštěj ji znovu", což je přesně
+        # opačné rozhodnutí, než tady potřebujeme.
+        _hold_claim = None
+        if not _cmd:
+            try:
+                from scripts.claim_hold import disputed_last_seen
+                _hold_claim = disputed_last_seen(
+                    ctx.user_message, self.conv_store.get_history(ctx.name) or [])
+                if _hold_claim:
+                    _cmd = ("videl", _hold_claim)   # jméno nese tvrzení
+                    logging.getLogger(__name__).info(
+                        "HANS_CLAIM_HOLD_V1: spor o čerstvé tvrzení "
+                        "→ znovu z deníku (%.60s)", _hold_claim)
+            except Exception as _che:
+                logging.getLogger(__name__).debug(
+                    "HANS_CLAIM_HOLD_V1: %s", _che)
+        return _cmd, _hold_claim
+
     def _sc_malovani_brana(self, ctx):
         # ── HANS_PAINT_GATE_AFTER_BYPASS_V1 (5.9.) — BRÁNA SE PŘESUNULA NÍŽ ──
         # Stála tady, hned za příkazy, s odůvodněním „příkazy jsou
@@ -1414,8 +1440,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         # HANS_DATETIME_ANSWER_V1 — datum/čas ze systémových hodin, deterministicky
         # a PŘED modelem (jinak si datum rozepíše špatně a A1 pak abstinuje).
         try:
-            from scripts.hans_recall import datetime_answer as _dta
-            _dtans = _dta(ctx.user_message)
+            _dtans = self._sc_malovani_brana_volba(ctx)
             if _dtans:
                 print("[Chat] HANS_DATETIME_ANSWER_V1 → deterministická odpověď")
                 try:
@@ -1430,14 +1455,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             print(f"[Chat] datetime answer error: {_dte}")
         return _POKRACUJ
 
+    def _sc_malovani_brana_volba(self, ctx):
+        """Volba kroku (nic neprovádí): odpověď na datum a čas z hodin, nebo
+        nic."""
+        from scripts.hans_recall import datetime_answer as _dta
+        return _dta(ctx.user_message)
+
     def _sc_stav_tazatele(self, ctx):
         # HANS_ASKER_STATE_V1 — „vidíte mě?" / „kdo jsem já?" ze živých dat.
         try:
-            from scripts.hans_recall import asker_state_answer
-            _hi_as = getattr(self, "_hans_idle", None)
-            _as = asker_state_answer(
-                ctx.user_message, ctx.name,
-                getattr(_hi_as, "_present_names", None) or [], self.config)
+            _as = self._sc_stav_tazatele_volba(ctx)
             if _as:
                 print("[Chat] HANS_ASKER_STATE_V1 → odpověď ze živého stavu")
                 try:
@@ -1452,67 +1479,47 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             print(f"[Chat] asker state error: {_ase}")
         return _POKRACUJ
 
+    def _sc_stav_tazatele_volba(self, ctx):
+        """Volba kroku (nic neprovádí): odpověď na „vidíte mě / kdo jsem“ ze
+        živého stavu, nebo nic."""
+        from scripts.hans_recall import asker_state_answer
+        _hi_as = getattr(self, "_hans_idle", None)
+        return asker_state_answer(
+            ctx.user_message, ctx.name,
+            getattr(_hi_as, "_present_names", None) or [], self.config)
+
     def _sc_kniha(self, ctx):
         # HANS_BOOK_RECOMMEND_V1 — doporučení z VLASTNÍ četby, ne z fantazie.
         try:
-            from scripts.hans_recall import (asks_book_recommendation,
-                                             book_recommendation)
-            if asks_book_recommendation(ctx.user_message):
-                _br = book_recommendation(
-                    (self.config.get("diary_db")
-                     or "data/hans_diary.db"), self.config)
-                if _br:
-                    print("[Chat] HANS_BOOK_RECOMMEND_V1 → z dočtených knih")
-                    try:
-                        self.conv_store.add_exchange(ctx.name, ctx.user_message, _br,
-                                                     channel=ctx.channel)
-                    except Exception:
-                        pass
-                    self._log_human_chat_to_diary(ctx.name, ctx.user_message, _br,
-                                                  bypass_kind="book_recommend")
-                    return _br
+            _br = self._sc_kniha_volba(ctx)
+            if _br:
+                print("[Chat] HANS_BOOK_RECOMMEND_V1 → z dočtených knih")
+                try:
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _br,
+                                                 channel=ctx.channel)
+                except Exception:
+                    pass
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _br,
+                                              bypass_kind="book_recommend")
+                return _br
         except Exception as _bre:
             print(f"[Chat] book recommend error: {_bre}")
         return _POKRACUJ
 
+    def _sc_kniha_volba(self, ctx):
+        """Volba kroku (nic neprovádí): doporučení knihy z vlastní četby, nebo
+        nic."""
+        from scripts.hans_recall import (asks_book_recommendation,
+                                         book_recommendation)
+        if asks_book_recommendation(ctx.user_message):
+            return book_recommendation(
+                (self.config.get("diary_db")
+                 or "data/hans_diary.db"), self.config)
+        return None
+
     def _sc_znalosti(self, ctx):
         try:
-            from scripts.hans_recall import knowledge_check_bypass, person_card
-            _dbp_kb = (self.config.get("diary_db")
-                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
-                       or "data/hans_diary.db")
-            # HANS_PERSON_CARD_BYPASS_V1 (18.8.) — OSOBA MÁ PŘEDNOST PŘED
-            # DOHLEDÁVÁNÍM. Doloženo živě 18.8.: „a co víš o Janě?" → Hans
-            # popsal vesnici Henčov u Jihlavy, protože v paměti nic nenašel a
-            # spustil `lookup_now`. Fakt o paní domu přitom leží v
-            # `relationships`. Agentní akce `report_person` to nezachytí —
-            # „co víš o X?" se odbočí SEM a agenta vůbec nepotká.
-            # ⚠️ Nestačilo vložit to do `_build_grounding`: ta skládá jen
-            # PODKLAD PRO MODEL, kdežto tenhle bypass odpovídá uživateli přímo
-            # a model už nespustí (na to jsem při stavbě naletěl).
-            # Neosobní dotaz („co víš o hradech?") vrátí prázdno → beze změny.
-            # ⚠️ BRÁNA (nález z živého testu 18.8.): bez ní se karta vysypala i na
-            # KONVERZAČNÍ větu, která jméno jen zmiňuje — „myslíš, že by Jana
-            # měla radost z kávovaru?" dostalo místo odpovědi výpis karty.
-            # `person_card` sám o sobě říká jen „ta věta jmenuje známou osobu",
-            # ne „ptá se, KDO to je“. Kartu proto pustíme jen u znalostního
-            # dotazu (tvar „co víš o X“); tvar „kdo je X“ řeší agentní akce
-            # `report_person` dřív a sem nedojde.
-            _pcard = ""
-            try:
-                from scripts.hans_recall import (is_knowledge_check_query as _ikc,
-                                                 asks_about_person as _aap)
-                # HANS_PERSON_ASK_PAT_V1 — sama `is_knowledge_check_query` je
-                # moc úzká: „na Janu jsi zapomněl, ne? co o ní víš" jí NEPROJDE
-                # (doloženo živě 18.8.) a LLM router to pak poslal na výpis zájmů.
-                if _ikc(ctx.user_message) or _aap(ctx.user_message, self.config):
-                    # HANS_PERSON_CARD_VOICE_V1 — kartu vyslov, nevysypej
-                    from scripts.hans_recall import person_card_voiced
-                    _pcard = person_card_voiced(_dbp_kb, ctx.user_message,
-                                                self.config, asker=ctx.name)
-            except Exception:
-                _pcard = ""
-            _kb = _pcard or knowledge_check_bypass(_dbp_kb, ctx.user_message, asker=ctx.name)
+            _kb, _pcard, _dbp_kb = self._sc_znalosti_volba(ctx)
             if _kb:
                 # HANS_INSTANT_LOOKUP_V1 (4.8.) — „nemám záznam" už není konec:
                 # zkus téma DOHLEDAT HNED a odpovědět PROVIZORNĚ. Do paměti se
@@ -1570,6 +1577,48 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             print(f"[Chat] knowledge check bypass error: {_kce}")
         return _POKRACUJ
 
+    def _sc_znalosti_volba(self, ctx):
+        """Volba kroku (nic neprovádí): karta osoby nebo poctivé „o tom
+        nemám záznam“. Vrací (odpověď nebo prázdno, karta osoby, cesta
+        k deníku); dohledání na webu sem nepatří."""
+        from scripts.hans_recall import knowledge_check_bypass, person_card
+        _dbp_kb = (self.config.get("diary_db")
+                   or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                   or "data/hans_diary.db")
+        # HANS_PERSON_CARD_BYPASS_V1 (18.8.) — OSOBA MÁ PŘEDNOST PŘED
+        # DOHLEDÁVÁNÍM. Doloženo živě 18.8.: „a co víš o Janě?" → Hans
+        # popsal vesnici Henčov u Jihlavy, protože v paměti nic nenašel a
+        # spustil `lookup_now`. Fakt o paní domu přitom leží v
+        # `relationships`. Agentní akce `report_person` to nezachytí —
+        # „co víš o X?" se odbočí SEM a agenta vůbec nepotká.
+        # ⚠️ Nestačilo vložit to do `_build_grounding`: ta skládá jen
+        # PODKLAD PRO MODEL, kdežto tenhle bypass odpovídá uživateli přímo
+        # a model už nespustí (na to jsem při stavbě naletěl).
+        # Neosobní dotaz („co víš o hradech?") vrátí prázdno → beze změny.
+        # ⚠️ BRÁNA (nález z živého testu 18.8.): bez ní se karta vysypala i na
+        # KONVERZAČNÍ větu, která jméno jen zmiňuje — „myslíš, že by Jana
+        # měla radost z kávovaru?" dostalo místo odpovědi výpis karty.
+        # `person_card` sám o sobě říká jen „ta věta jmenuje známou osobu",
+        # ne „ptá se, KDO to je“. Kartu proto pustíme jen u znalostního
+        # dotazu (tvar „co víš o X“); tvar „kdo je X“ řeší agentní akce
+        # `report_person` dřív a sem nedojde.
+        _pcard = ""
+        try:
+            from scripts.hans_recall import (is_knowledge_check_query as _ikc,
+                                             asks_about_person as _aap)
+            # HANS_PERSON_ASK_PAT_V1 — sama `is_knowledge_check_query` je
+            # moc úzká: „na Janu jsi zapomněl, ne? co o ní víš" jí NEPROJDE
+            # (doloženo živě 18.8.) a LLM router to pak poslal na výpis zájmů.
+            if _ikc(ctx.user_message) or _aap(ctx.user_message, self.config):
+                # HANS_PERSON_CARD_VOICE_V1 — kartu vyslov, nevysypej
+                from scripts.hans_recall import person_card_voiced
+                _pcard = person_card_voiced(_dbp_kb, ctx.user_message,
+                                            self.config, asker=ctx.name)
+        except Exception:
+            _pcard = ""
+        _kb = _pcard or knowledge_check_bypass(_dbp_kb, ctx.user_message, asker=ctx.name)
+        return _kb, _pcard, _dbp_kb
+
     def _sc_pamatujes(self, ctx):
         # HANS_REMEMBER_HONEST_V1 (5.9.) — NEROB NAROK NA PAMET, KTERY NEPLATI.
         # Doloheno: „pamatuj si ze me bavi priroda" -> „Ano, pamatuji si, ze
@@ -1592,10 +1641,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         # VYPIS zajmu — to je neuzitecne, ale NENI to falesny narok na pamet,
         # takze se tim tahle oprava nemine.
         try:
-            from scripts.hans_intent import (je_fakt_o_mluvcim,
-                                             zada_o_zapamatovani)
-            if (zada_o_zapamatovani(ctx.user_message)
-                    and je_fakt_o_mluvcim(ctx.user_message)):
+            if self._sc_pamatujes_volba(ctx):
                 from scripts.cz_names import address as _adr
                 _os = _adr(ctx.name, self.config) if ctx.name else "pane"
                 _rh = ("Zapíšu si to k Vašim zájmům, %s. Ještě to v paměti "
@@ -1613,34 +1659,48 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 'HANS_REMEMBER_HONEST_V1 preskocen: %s', _rhe)
         return _POKRACUJ
 
+    def _sc_pamatujes_volba(self, ctx):
+        """Volba kroku (nic neprovádí): žádá věta o zapamatování faktu
+        o mluvčím?"""
+        from scripts.hans_intent import (je_fakt_o_mluvcim,
+                                         zada_o_zapamatovani)
+        return bool(zada_o_zapamatovani(ctx.user_message)
+                    and je_fakt_o_mluvcim(ctx.user_message))
+
     def _sc_zdroje(self, ctx):
         # HANS_SOURCE_QUERY_V1 — bypass LLM (17.7.). hans-czech persona
         # odmítá sdílet URL i s explicitním groundingem — persona finetune
         # silnější než system prompt. Vzor `commitments_answer` /
         # `film_knowledge_answer`: deterministická odpověď mimo LLM.
         try:
-            from scripts.hans_recall import is_source_query, sources_answer
-            if is_source_query(ctx.user_message):
-                _dbp_sa = (self.config.get("diary_db")
-                           or (self.config.get("hans_idle", {}) or {}).get("diary_db")
-                           or "data/hans_diary.db")
-                _sa = sources_answer(_dbp_sa, ctx.user_message, asker=ctx.name)
-                if _sa:
-                    print("[Chat] HANS_SOURCE_QUERY_V1 → deterministic bypass")
-                    try:
-                        self.conv_store.add_exchange(ctx.name, ctx.user_message, _sa, channel=ctx.channel)
-                    except Exception:
-                        pass
-                    # HANS_BYPASS_TRACE_V1 (19.7.) — sdílený bypass_note přes
-                    # _log_human_chat_to_diary(bypass_kind=…). Dřív inline
-                    # (HANS_SOURCE_QUERY_BYPASS_NOTE_V1 18.7.), teď 1 cesta
-                    # pro všechny bypass kinds.
-                    self._log_human_chat_to_diary(ctx.name, ctx.user_message, _sa,
-                                                  bypass_kind="sources")
-                    return _sa
+            _sa = self._sc_zdroje_volba(ctx)
+            if _sa:
+                print("[Chat] HANS_SOURCE_QUERY_V1 → deterministic bypass")
+                try:
+                    self.conv_store.add_exchange(ctx.name, ctx.user_message, _sa, channel=ctx.channel)
+                except Exception:
+                    pass
+                # HANS_BYPASS_TRACE_V1 (19.7.) — sdílený bypass_note přes
+                # _log_human_chat_to_diary(bypass_kind=…). Dřív inline
+                # (HANS_SOURCE_QUERY_BYPASS_NOTE_V1 18.7.), teď 1 cesta
+                # pro všechny bypass kinds.
+                self._log_human_chat_to_diary(ctx.name, ctx.user_message, _sa,
+                                              bypass_kind="sources")
+                return _sa
         except Exception as _sae:
             print(f"[Chat] source query answer error: {_sae}")
         return _POKRACUJ
+
+    def _sc_zdroje_volba(self, ctx):
+        """Volba kroku (nic neprovádí): výpis zdrojů k dotazu na zdroj, nebo
+        nic."""
+        from scripts.hans_recall import is_source_query, sources_answer
+        if is_source_query(ctx.user_message):
+            _dbp_sa = (self.config.get("diary_db")
+                       or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                       or "data/hans_diary.db")
+            return sources_answer(_dbp_sa, ctx.user_message, asker=ctx.name)
+        return None
 
     def _sc_prohloubeni(self, ctx):
         # HANS_STUDY_DEEPEN_V2 — kritika/rozhodnutí ČISTÝM TEXTEM (ne jen

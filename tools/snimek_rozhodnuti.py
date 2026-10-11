@@ -413,7 +413,9 @@ def _pracuj():
     h._stream_message = _model
     h._send_message = _model
 
-    for jm in [x for x in dir(h) if x.startswith("_sc_")]:
+    # podmetody `_sc_x_volba` jen volí (nevracejí odpověď) → neobalovat
+    for jm in [x for x in dir(h) if x.startswith("_sc_")
+               and not x.endswith("_volba")]:
         puv = getattr(h, jm)
 
         def obal(ctx, _p=puv, _j=jm):
@@ -467,11 +469,28 @@ def _pracuj():
         krok = max(1, len(vety) // n)
         vety = vety[::krok][:n]
     ven = open("snimek.jsonl", "w", encoding="utf-8", buffering=1)
+    try:
+        from scripts import hans_rozhodnuti as RZ
+    except Exception:
+        RZ = None
     print("START vět=%d známý=<první z configu> cizí=%s" % (len(vety), CIZI), flush=True)
     t_start = time.time()
     for i, veta in enumerate(vety):
         for druh, jm in (("z", znamy), ("c", CIZI)):
             _cisto(jm)
+            # křížová kontrola: co předpoví jeden vstup `rozhodni()` nasucho,
+            # než věta projde skutečnou cestou (do klíče porovnání nepatří)
+            rz = None
+            if RZ is not None:
+                signal.alarm(90)
+                try:
+                    _r = RZ.rozhodni(h, jm, veta, channel="web")
+                    rz = {"krok": _r["krok"], "prikaz": _r["prikaz"],
+                          "nedosel": _r["nedosel"], "chyba": _r["chyba"]}
+                except BaseException as e:
+                    rz = {"vyjimka": "%s: %s" % (type(e).__name__, str(e)[:120])}
+                finally:
+                    signal.alarm(0)
             _ZAZNAM.clear()
             _ZAZNAM.update(blok=[], ollama=[], prikaz=[], gr=[], akce=[], krok=None,
                            cmd_llm=False, agent_llm=False, model=0)
@@ -496,6 +515,7 @@ def _pracuj():
                                    else b for b in z["blok"])),
                 "odp": " ".join(str(odp or "").split())[:160],
                 "vyjimka": vyj, "ms": int((time.time() - t0) * 1000),
+                "rz": rz,
             }, ensure_ascii=False) + "\n")
         if i % 100 == 0:
             print("  %d/%d  %.0f s" % (i, len(vety), time.time() - t_start), flush=True)
@@ -548,6 +568,55 @@ def porovnej(a: str, b: str, ukaz: int = 25) -> int:
     return len(ruzne)
 
 
+def shoda(a: str, ukaz: int = 25) -> int:
+    """Předpověď `rozhodni()` proti tomu, co věta skutečně udělala."""
+    R = _nacti(a)
+    import collections
+    stav = collections.Counter()
+    spatne = []
+    for k, d in sorted(R.items()):
+        rz = d.get("rz")
+        if not rz:
+            stav["bez předpovědi"] += 1
+            continue
+        if rz.get("vyjimka") or rz.get("chyba"):
+            stav["výjimka v rozhodni"] += 1
+            spatne.append((d, rz))
+            continue
+        skut = d["krok"]
+        if rz["krok"]:
+            pr = (d["prikaz"] or [[None]])[0][0]
+            if rz["krok"] == skut and (rz["krok"] != "_sc_prikazy"
+                                       or pr == rz["prikaz"][0]):
+                stav["shoda: krok se přihlásil"] += 1
+            elif (rz["krok"] == "_sc_prikazy" and pr == rz["prikaz"][0]):
+                # obsluha vrátila prázdno → věta šla dál (to nasucho vidět nejde)
+                stav["příkaz zvolen shodně, obsluha vrátila prázdno"] += 1
+            else:
+                stav["NESHODA"] += 1
+                spatne.append((d, rz))
+        else:
+            hotove = {x for x in ZNAME_VOLBY}
+            if skut in hotove:
+                stav["NESHODA"] += 1
+                spatne.append((d, rz))
+            else:
+                stav["shoda: nikdo z kroků s volbou (dál %s)" % rz["nedosel"]] += 1
+    print("záznamů %d" % len(R))
+    for s, n in stav.most_common():
+        print("   %-58s %5d" % (s, n))
+    for d, rz in spatne[:ukaz]:
+        print("─ [%s] %s\n    skutečně: %s %s\n    rozhodni: %s"
+              % (d["kdo"], d["veta"][:90], d["krok"], d["prikaz"], rz))
+    return len(spatne)
+
+
+# kroky, které mají volbu oddělenou (ROZHODNUTI_VSTUP_V1)
+ZNAME_VOLBY = ("_sc_read", "_sc_note", "_sc_url", "_sc_prikazy",
+               "_sc_malovani_brana", "_sc_stav_tazatele", "_sc_kniha",
+               "_sc_znalosti", "_sc_pamatujes", "_sc_zdroje")
+
+
 def souhrn(a: str):
     import collections
     A = _nacti(a)
@@ -588,6 +657,8 @@ if __name__ == "__main__":
         _pracuj()
     elif a[0] == "porovnej":
         sys.exit(1 if porovnej(a[1], a[2]) else 0)
+    elif a[0] == "shoda":
+        sys.exit(1 if shoda(a[1], int(a[2]) if len(a) > 2 else 25) else 0)
     elif a[0] == "souhrn":
         souhrn(a[1])
     else:

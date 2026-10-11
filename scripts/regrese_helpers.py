@@ -1265,3 +1265,34 @@ def zdroje_vsechna_slova(tema: str) -> str:
     slova = [_fold(w).lower()[:4] for w in tema.split() if len(w) >= 4]
     return "titul" if all(w in _fold(r[0][1] or "").lower() for w in slova) else "jen_text"
 
+
+
+# ── ROZHODNUTI_VSTUP_V1 (11. 10.) ────────────────────────────────────────────
+def rozhodni_krok(veta: str) -> str:
+    """Kdo větu vezme podle jednoho vstupu `rozhodni()` (bez provedení).
+    Jen věty s lomítkem — ty nedojdou k routeru s modelem."""
+    from scripts.hans_rozhodnuti import rozhodni
+    r = rozhodni(_handler_bez_initu(), "Marek", veta, channel="web")
+    if r["chyba"]:
+        return "chyba: %s" % r["chyba"]
+    return (r["krok"] or "nikdo") + (":" + r["prikaz"][0] if r["prikaz"] else "")
+
+
+def rozhodni_stavba() -> str:
+    """Pořadí kroků se čte ze zdrojáku `send_chat_message`; každá podmetoda
+    volby patří ke kroku, který smí ukončit, a volby tvoří souvislý začátek."""
+    from scripts.hans_rozhodnuti import poradi
+    h = _handler_bez_initu()
+    p = poradi(h)
+    konci = [k for k, smi in p if smi]
+    if not konci or konci[0] != "_sc_read" or "_sc_agent" not in konci:
+        return "pořadí nesedí: %s" % konci
+    volby = {x[:-len("_volba")] for x in dir(h)
+             if x.startswith("_sc_") and x.endswith("_volba")}
+    if volby - set(konci):
+        return "volba bez kroku: %s" % sorted(volby - set(konci))
+    ma = [k in volby for k in konci]
+    n = ma.index(False) if False in ma else len(ma)
+    if any(ma[n:]):
+        return "volby netvoří souvislý začátek: %s" % konci
+    return "ok" if n >= 10 else "voleb jen %d" % n
