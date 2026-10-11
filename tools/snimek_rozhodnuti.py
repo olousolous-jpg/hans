@@ -18,7 +18,8 @@ Izolace (proč je to bezpečné pustit vedle běžícího Hanse):
 
 Použití:
   python3 tools/snimek_rozhodnuti.py priprav            # čerstvá kopie (jednou)
-  python3 tools/snimek_rozhodnuti.py beh <jmeno> [--vet N]
+  python3 tools/snimek_rozhodnuti.py beh <jmeno> [--vet N] [--bez-nahravky]
+  python3 tools/snimek_rozhodnuti.py nahraj             # volby routerů s MODELEM (~3 h)
   python3 tools/snimek_rozhodnuti.py porovnej <a> <b>
 Výstupy: data/mereni/snimek_rozhodnuti/<jmeno>.jsonl
 """
@@ -37,6 +38,7 @@ DIR = os.path.join(ROOT, "data", "mereni", "snimek_rozhodnuti")
 VZOR = os.path.join(DIR, "sandbox_vzor")
 BEH = os.path.join(DIR, "sandbox_beh")
 CIZI = "Navsteva"
+NAHRAVKA = os.path.join(DIR, "routery.jsonl")
 
 VYNECHAT = [
     ".git", "__pycache__", "archive", "installer", "docs", "tests",
@@ -102,14 +104,21 @@ def priprav():
     print("kopie hotová: %s (%s), vět %d" % (VZOR, vel, len(vety)))
 
 
-def beh(jmeno: str, n_vet: int = 0):
+def beh(jmeno: str, n_vet: int = 0, bez_nahravky: bool = False):
     if not os.path.isdir(VZOR):
         sys.exit("chybí kopie — nejdřív `priprav`")
     if os.path.exists(BEH):
         shutil.rmtree(BEH)
     subprocess.run(["cp", "-a", VZOR, BEH], check=True)
+    # DATA zůstávají zmrazená z `priprav` (jinak by se snímky lišily daty),
+    # KÓD se bere vždy aktuální z pracovního stromu — ten se měří.
+    subprocess.run(["rsync", "-a", "--delete", "--exclude=__pycache__", "--exclude=*.pyc",
+                    os.path.join(ROOT, "scripts") + "/", os.path.join(BEH, "scripts") + "/"],
+                   check=True)
     shutil.copy2(os.path.abspath(__file__), os.path.join(BEH, "tools", "snimek_rozhodnuti.py"))
     shutil.copy2(os.path.join(DIR, "vety.json"), os.path.join(BEH, "vety.json"))
+    if os.path.exists(NAHRAVKA) and not bez_nahravky:
+        shutil.copy2(NAHRAVKA, os.path.join(BEH, "routery.jsonl"))
     env = dict(os.environ, HOME=os.path.join(BEH, "home"), PYTHONDONTWRITEBYTECODE="1",
                SNIMEK_VET=str(n_vet))
     t0 = time.time()
@@ -123,6 +132,115 @@ def beh(jmeno: str, n_vet: int = 0):
     n = sum(1 for _ in open(os.path.join(DIR, jmeno + ".jsonl"), encoding="utf-8")) \
         if os.path.exists(os.path.join(DIR, jmeno + ".jsonl")) else 0
     print("běh %s: návrat %d, řádků %d, %.0f s" % (jmeno, r.returncode, n, time.time() - t0))
+
+
+# ── nahrávka voleb routerů s modelem ─────────────────────────────────────────
+def _otisk(s: str) -> str:
+    import hashlib
+    return hashlib.sha1((s or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _katalog(AG) -> str:
+    return _otisk("\n".join("%s|%s|%s" % (a.id, a.desc, a.args) for a in AG.ACTIONS.values()))
+
+
+def _nacti_nahravku(cesta: str):
+    if not os.path.exists(cesta):
+        return None
+    n = {"klas": {}, "prepis": {}, "agent": {}, "katalog": "", "hotovo": set()}
+    for l in open(cesta, encoding="utf-8"):
+        try:
+            d = json.loads(l)
+        except Exception:
+            continue      # nedopsaný poslední řádek po přerušení
+        if d["t"] == "klas":
+            n["klas"][d["k"]] = d["v"]
+        elif d["t"] == "prepis":
+            n["prepis"][d["k"]] = d["v"]
+        elif d["t"] == "agent":
+            n["agent"][d["k"]] = d["v"]
+        elif d["t"] == "katalog":
+            n["katalog"] = d["v"]
+        elif d["t"] == "hotovo":
+            n["hotovo"].add(d["k"])
+    return n
+
+
+def nahraj(snimek: str = "zaklad_a"):
+    """Jednou zavolat SKUTEČNÉ routery (jen rozhodnutí, nic se neprovádí) pro
+    věty, které na ně ve snímku došly, a uložit, co model odpověděl. Snímek
+    to pak přehrává místo „nic“. Jde přerušit a pustit znovu — pokračuje.
+    Čeká při herním módu, frontě těžkých úloh a v okně sběru zpráv."""
+    sys.path.insert(0, ROOT)
+    os.chdir(ROOT)
+    from scripts import config_io, chat_commands as CC, hans_agent as AG
+    from scripts import hans_intent as HI, hans_rewriter as RW
+    from scripts.test_rozhovor import postav_handler
+    cfg = config_io.load()
+    znamy = next(iter(cfg.get("known_persons") or {}))
+    h = postav_handler(cfg)
+    ag = AG.AgentRouter(cfg)
+    stare = _nacti_nahravku(NAHRAVKA) or {"hotovo": set(), "katalog": ""}
+    kat = _katalog(AG)
+    if stare["katalog"] and stare["katalog"] != kat:
+        sys.exit("katalog akcí se od rozdělané nahrávky liší — smaž %s" % NAHRAVKA)
+    ven = open(NAHRAVKA, "a", encoding="utf-8", buffering=1)
+
+    def pis(t, k, v):
+        ven.write(json.dumps({"t": t, "k": k, "v": v}, ensure_ascii=False) + "\n")
+    if not stare["katalog"]:
+        pis("katalog", "", kat)
+    _klas, _prep = HI._ask_classifier, RW.rewrite_for_retrieval
+
+    def klas(config, system, message, *a, **k):
+        r = _klas(config, system, message, *a, **k)
+        pis("klas", _otisk(system) + "|" + str(message), r)
+        return r
+    HI._ask_classifier = klas
+
+    def prep(config, text, history=None, name=None, **k):
+        r = _prep(config, text, history=history, name=name, **k)
+        if not history:
+            pis("prepis", text, r)
+        return r
+    RW.rewrite_for_retrieval = prep
+
+    def smim():
+        if 12 <= time.localtime().tm_min <= 27:
+            return "okno sběru zpráv"
+        if os.path.exists(os.path.join(ROOT, "data/.ollama_paused")):
+            return "herní mód"
+        c = sqlite3.connect("file:%s?mode=ro" % os.path.join(ROOT, "data/hans_diary.db"), uri=True)
+        n = c.execute("SELECT count(*) FROM heavy_jobs WHERE status IN "
+                      "('pending','running')").fetchone()[0]
+        c.close()
+        return "fronta těžkých úloh" if n else ""
+
+    S = [json.loads(l) for l in open(os.path.join(DIR, snimek + ".jsonl"), encoding="utf-8")]
+    S = [d for d in S if d["kdo"] == "z"]
+    ukoly = [("c", d["veta"]) for d in S if d["cmd_llm"]] + \
+            [("a", d["veta"]) for d in S if d["agent_llm"]]
+    zbyva = [u for u in ukoly if u[0] + "|" + u[1] not in stare["hotovo"]]
+    print("úkolů %d, zbývá %d" % (len(ukoly), len(zbyva)), flush=True)
+    t0 = time.time()
+    for i, (druh, veta) in enumerate(zbyva):
+        while smim():
+            print("  %s čekám (%s)" % (time.strftime("%H:%M"), smim()), flush=True)
+            time.sleep(120)
+        try:
+            if druh == "c":
+                CC._llm_route_cache.clear()
+                CC.resolve_command_llm(veta, cfg, None)
+            else:
+                pis("agent", veta, ag._route(h, znamy, veta))
+        except Exception as e:
+            print("  !! %s: %s · %s" % (type(e).__name__, e, veta[:50]), flush=True)
+            continue      # bez značky hotovo → příště znovu
+        pis("hotovo", druh + "|" + veta, 1)
+        if i % 50 == 0:
+            print("  %s %d/%d  %.0f s" % (time.strftime("%H:%M"), i, len(zbyva),
+                                          time.time() - t0), flush=True)
+    print("HOTOVO %.0f s" % (time.time() - t0), flush=True)
 
 
 # ── pracovní proces (běží UVNITŘ kopie) ──────────────────────────────────────
@@ -230,17 +348,60 @@ def _pracuj():
         return _dispatch(command, handler, name=name, **k)
     CC.dispatch = dispatch
 
-    def resolve_command_llm(message, config, turns=None):
-        _ZAZNAM["cmd_llm"] = True
-        return None
-    CC.resolve_command_llm = resolve_command_llm
-
     from scripts import hans_agent as AG
+    nahr = _nacti_nahravku("routery.jsonl")
+    if nahr is None:
+        def resolve_command_llm(message, config, turns=None):
+            _ZAZNAM["cmd_llm"] = True
+            return None
+        CC.resolve_command_llm = resolve_command_llm
 
-    def _route(self, handler, name, message):
-        _ZAZNAM["agent_llm"] = True
-        return None
-    AG.AgentRouter._route = _route
+        def _route(self, handler, name, message):
+            _ZAZNAM["agent_llm"] = True
+            return None
+        AG.AgentRouter._route = _route
+    else:
+        # PŘEHRÁVÁNÍ: router příkazů běží celý (i jeho pravidlové brzdy), jen
+        # odpověď modelu se bere z nahrávky; agentní router vrací nahranou
+        # volbu a pravidla za ním běží naostro (v kopii, bez následků).
+        import copy
+        kat = _katalog(AG)
+        if nahr["katalog"] and nahr["katalog"] != kat:
+            print("⚠️ KATALOG AKCÍ SE OD NAHRÁVKY LIŠÍ — volby agentního routeru "
+                  "už neplatí, nahrát znovu", flush=True)
+        from scripts import hans_intent as HI, hans_rewriter as RW
+        _klas, _prep, _cmd = HI._ask_classifier, RW.rewrite_for_retrieval, CC.resolve_command_llm
+
+        def klas(config, system, message, *a, **k):
+            kl = _otisk(system) + "|" + str(message)
+            return nahr["klas"][kl] if kl in nahr["klas"] else _klas(config, system, message, *a, **k)
+        HI._ask_classifier = klas
+
+        def prep(config, text, history=None, name=None, **k):
+            if not history and text in nahr["prepis"]:
+                return nahr["prepis"][text]
+            return _prep(config, text, history=history, name=name, **k)
+        RW.rewrite_for_retrieval = prep
+
+        def resolve_command_llm(message, config, turns=None):
+            _ZAZNAM["cmd_llm"] = True
+            return _cmd(message, config, turns)
+        CC.resolve_command_llm = resolve_command_llm
+
+        def _route(self, handler, name, message):
+            _ZAZNAM["agent_llm"] = True
+            return copy.deepcopy(nahr["agent"].get(message))
+        AG.AgentRouter._route = _route
+        _prav = AG.AgentRouter._uplatni_pravidla
+
+        def pravidla(self, aid, message, decision, handler):
+            r = _prav(self, aid, message, decision, handler)
+            _ZAZNAM["akce"].append([str(aid), str(r)])
+            return r
+        AG.AgentRouter._uplatni_pravidla = pravidla
+        print("přehrávám nahrávku: klasifikací %d, přepisů %d, voleb agenta %d"
+              % (len(nahr["klas"]), len(nahr["prepis"]),
+                 sum(1 for v in nahr["agent"].values() if v)), flush=True)
 
     from scripts.test_rozhovor import postav_handler
     from scripts import openwebui_direct_handler as OH
@@ -287,8 +448,12 @@ def _pracuj():
             pass
         try:
             ag = h._agent_router()
-            if ag is not None and getattr(ag, "_pending", None):
-                ag._pending.clear()
+            if ag is not None:
+                # odstup mezi stejnými akcemi a paměť odmítnutí jdou podle
+                # hodin → bez úklidu by rozhodnutí záviselo na časování běhu
+                for _st in ("_pending", "_last_fire", "_rejected"):
+                    if getattr(ag, _st, None):
+                        getattr(ag, _st).clear()
         except Exception:
             pass
 
@@ -308,7 +473,7 @@ def _pracuj():
         for druh, jm in (("z", znamy), ("c", CIZI)):
             _cisto(jm)
             _ZAZNAM.clear()
-            _ZAZNAM.update(blok=[], ollama=[], prikaz=[], gr=[], krok=None,
+            _ZAZNAM.update(blok=[], ollama=[], prikaz=[], gr=[], akce=[], krok=None,
                            cmd_llm=False, agent_llm=False, model=0)
             t0 = time.time()
             vyj = ""
@@ -324,7 +489,7 @@ def _pracuj():
             ven.write(json.dumps({
                 "i": i, "kdo": druh, "veta": veta,
                 "krok": z["krok"] or ("model" if z["model"] else "nic"),
-                "prikaz": z["prikaz"], "gr": z["gr"],
+                "prikaz": z["prikaz"], "gr": z["gr"], "akce": z["akce"],
                 "cmd_llm": z["cmd_llm"], "agent_llm": z["agent_llm"],
                 "model": z["model"], "ollama": sorted(set(z["ollama"])),
                 "blok": sorted(set(re.sub(r":.*", "", b) if b.startswith(("zápis", "db", "zásah"))
@@ -346,7 +511,8 @@ _BEZ_NAVRATU = ("_sc_vypadek", "_sc_podklad", "_sc_nazor", "_sc_a1",
 # ── porovnání ────────────────────────────────────────────────────────────────
 def _klic(d: dict) -> tuple:
     return (d["krok"], json.dumps(d["prikaz"], ensure_ascii=False),
-            "|".join(d["gr"]), d["cmd_llm"], d["agent_llm"], bool(d["model"]),
+            "|".join(d["gr"]), json.dumps(d.get("akce") or []),
+            d["cmd_llm"], d["agent_llm"], bool(d["model"]),
             d["vyjimka"].split(":")[0])
     # `blok` (zachycené pokusy o síť a procesy) do klíče NEPATŘÍ: vlákna na
     # pozadí (ping, ssh, opakované spojení) se připíšou větě, která zrovna
@@ -376,9 +542,9 @@ def porovnej(a: str, b: str, ukaz: int = 25) -> int:
     for k in ruzne[:ukaz]:
         x, y = A[k], B[k]
         print("─ [%s] %s" % (k[1], k[0][:90]))
-        for pole in ("krok", "prikaz", "gr", "cmd_llm", "agent_llm", "model", "blok", "vyjimka"):
-            if x[pole] != y[pole]:
-                print("    %s: %s  →  %s" % (pole, x[pole], y[pole]))
+        for pole in ("krok", "prikaz", "gr", "akce", "cmd_llm", "agent_llm", "model", "vyjimka"):
+            if x.get(pole) != y.get(pole):
+                print("    %s: %s  →  %s" % (pole, x.get(pole), y.get(pole)))
     return len(ruzne)
 
 
@@ -414,7 +580,10 @@ if __name__ == "__main__":
     if a[0] == "priprav":
         priprav()
     elif a[0] == "beh":
-        beh(a[1], int(a[a.index("--vet") + 1]) if "--vet" in a else 0)
+        beh(a[1], int(a[a.index("--vet") + 1]) if "--vet" in a else 0,
+            "--bez-nahravky" in a)
+    elif a[0] == "nahraj":
+        nahraj(a[1] if len(a) > 1 else "zaklad_a")
     elif a[0] == "_pracuj":
         _pracuj()
     elif a[0] == "porovnej":
