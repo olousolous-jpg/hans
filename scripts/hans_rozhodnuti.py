@@ -12,8 +12,13 @@ Nic neprovádí a nic neukládá: nespustí obsluhu příkazu, nezapíše do his
 ani do deníku. Smí se ale zeptat routeru příkazů s modelem (stejně jako krok
 příkazů; jeho odpověď zůstane ve vyrovnávací paměti routeru).
 
-Kroky, které volbu oddělenou ještě nemají, `rozhodni()` nehádá — skončí
-u prvního z nich a vrátí ho v poli `nedosel`.
+Co nasucho zjistit nejde, `rozhodni()` nehádá:
+  - volba vrátí "mozna" (čeká návrh prohloubení studia nebo potvrzení
+    agentního návrhu — jestli je věta reakcí na něj, pozná až provedení)
+    → krok se zapíše do pole `mozna` a hledá se dál;
+  - zvolený příkaz nebo akce mohou při provedení skončit naprázdno (obsluha
+    nic nenašla, argument akce neprošel ověřením) a věta pak jde dál k modelu;
+  - krok bez oddělené volby → konec, jméno kroku v poli `nedosel`.
 """
 from __future__ import annotations
 
@@ -49,6 +54,8 @@ def rozhodni(handler, name: str, veta: str, channel: str = None) -> dict:
     """Kdo větu vezme, kdyby teď přišla. Vrací slovník:
       krok     — jméno kroku, který se přihlásil, nebo None
       prikaz   — [jméno, argument] u kroku příkazů, jinak None
+      akce     — id akce u agentního kroku ("" = jen odmítavá věta), jinak None
+      mozna    — kroky, které větu vezmou jen možná (viz výš)
       nedosel  — první krok bez oddělené volby (dál rozhoduje starý kód),
                  nebo None, když prošly všechny
       prosel   — kroky, které se nepřihlásily
@@ -58,8 +65,8 @@ def rozhodni(handler, name: str, veta: str, channel: str = None) -> dict:
     ctx = types.SimpleNamespace(name=name, user_message=veta, on_sentence=None,
                                 channel=channel)
     ctx.stripped = (veta or "").strip()
-    ven = {"krok": None, "prikaz": None, "nedosel": None, "prosel": [],
-           "chyba": {}}
+    ven = {"krok": None, "prikaz": None, "akce": None, "mozna": [],
+           "nedosel": None, "prosel": [], "chyba": {}}
     for krok, konci in poradi(handler):
         if not konci:
             continue            # krok bez návratu o větě nerozhoduje
@@ -72,10 +79,15 @@ def rozhodni(handler, name: str, veta: str, channel: str = None) -> dict:
         except Exception as e:
             ven["chyba"][krok] = "%s: %s" % (type(e).__name__, e)
             v = None
+        if isinstance(v, str) and v == "mozna":
+            ven["mozna"].append(krok)
+            continue
         if _BERE.get(krok, bool)(v):
             ven["krok"] = krok
             if krok == "_sc_prikazy":
                 ven["prikaz"] = [str(v[0][0]), str(v[0][1] or "")]
+            elif krok == "_sc_agent":
+                ven["akce"] = str(v[-1]) if v[0] == "akce" else ""
             return ven
         ven["prosel"].append(krok)
     return ven

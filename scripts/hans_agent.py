@@ -2033,6 +2033,36 @@ class AgentRouter:
 
     def propose(self, handler, name: str, message: str) -> Optional[str]:
         """Vrátí propose_text (Hansův návrh + [ano/ne]) nebo None (běžný chat)."""
+        # volba akce je oddělená od provedení (ROZHODNUTI_VSTUP_V1, 11. 10.)
+        return self.proved(handler, name, message,
+                           self.zvol(handler, name, message))
+
+    def ceka_potvrzeni(self, name: str, message: str) -> bool:
+        """Jen čtení: může na tuhle větu odpovědět `check_confirmation`?
+        (čeká čerstvý návrh pro osobu, nebo věta ruší odložené vypnutí)"""
+        try:
+            from scripts.pc_deferred_shutdown import CANCEL_RE, pending
+            if CANCEL_RE.search(message or "") and pending():
+                return True
+        except Exception:
+            pass
+        pend = self._pending.get(name)
+        return bool(pend and time.time() - pend.ts <= 180)
+
+    def zvol(self, handler, name: str, message: str):
+        """Volba akce bez provedení: směrování, pravidla, práh jistoty,
+        oprávnění, ozvěna a odstup. Vrací None (běžný hovor),
+        ("text", věta) když se má jen odmítnout, nebo
+        ("akce", akce, argumenty, otisk, rozhodnutí routeru, jistota, id).
+        Argumenty ještě nejsou ověřené proti skutečnosti — to dělá
+        `proved`."""
+        try:
+            return self._zvol(handler, name, message)
+        except Exception as e:
+            log.warning("agent.propose selhalo: %s", e)
+            return None
+
+    def _zvol(self, handler, name: str, message: str):
         # HANS_PERSON_CARD_ACTION_V1 (18.8.) — `report_person` potřebuje CELOU
         # větu, ne jen jméno vytažené routerem: „co víš o Janě?“ nese pád,
         # který config zná, kdežto router by mohl vrátit tvar jiný.
@@ -2048,95 +2078,106 @@ class AgentRouter:
         self._raw_name = name or ""
         if not self.enabled:
             return None
+        if not self._actionable(message):
+            return None
+        decision = self._route(handler, name, message)
+        if not decision:
+            return None
+        aid = decision.get("action")
+        # HANS_AGENT_RULES_TABLE_V1 (20.8.) — devět sémantických pravidel
+        # (veto / přesměrování akce) bývalo devíti `if`y v těle `propose`.
+        # Pořadí se dalo zjistit jen čtením 100 řádků a každé nové pravidlo
+        # znamenalo další větev. Teď jsou to DATA (`_PRAVIDLA`) a tenhle
+        # jeden průchod — pořadí je vidět, pravidlo jde otestovat zvlášť
+        # a přidání je řádek. Chování se NEMĚNÍ: podmínky i pořadí jsou
+        # převzaté doslova (ověřeno rovnocenností proti staré cestě).
+        aid = self._uplatni_pravidla(aid, message, decision, handler)
+        if aid is None:
+            return None
+        action = ACTIONS.get(aid)
+        if not action:
+            return None
+        conf = float(decision.get("confidence", 0) or 0)
+        if conf < self.threshold:
+            return None
+        # HANS_STRANGER_NO_MUTATE_V1 (24. 9.) — cizí nesmí nic měnit:
+        # projdou mu jen dotazy na stav (`report_*`). Odpověď místo ticha,
+        # aby persona akci nepotvrdila (HANS_AGENT_SPEAK_REJECT_V1).
+        # HANS_STRANGER_HOUSEHOLD_V1 (30. 9.) — i dotaz na STAV domu je
+        # chod domácnosti: teploty po místnostech, co běží na TV, technika,
+        # složení domácnosti. Doloženo auditem 30. 9. (klima i TV cizímu).
+        # Počasí venku a Koláč zůstávají otevřené.
+        if aid in ("report_climate", "report_now_playing", "report_pc_health",
+                   "report_home_status", "report_household"):
+            try:
+                from scripts.cz_names import is_known_person as _ikp_h
+                _zn_h = bool(name) and _ikp_h(name)
+            except Exception:
+                _zn_h = False
+            if not _zn_h:
+                # HANS_STRANGER_CLIMATE_CUE_V1 (4. 10.) — /tazatel 3. 10.: cizí
+                # „jak vám toto počasí vyhovuje ke studiu?“ (po tahu, kde mu
+                # Hans počasí venku řekl) router vzal jako report_climate
+                # a dostal „O tom mluvím jen se svou domácností“. Bez zmínky
+                # o místnosti/teplotě to není dotaz na čidla → běžný hovor.
+                if aid == "report_climate" and not re.search(
+                        r"m[íi]stnost|pokoj|uvnit[řr]|doma\b|tady|\btu\b|teplot|"
+                        r"vlhk|stup[ňn]|zima|horko|dusno|chladn|teplo\b",
+                        message or "", re.IGNORECASE):
+                    log.info("HANS_STRANGER_CLIMATE_CUE_V1: report_climate bez "
+                             "zmínky o místnosti od neznámého → běžný hovor")
+                    return None
+                log.info("HANS_STRANGER_HOUSEHOLD_V1: agent %s od neznámého "
+                         "(%s) odmítnuto", aid, name)
+                return ("text", "O tom mluvím jen se svou domácností.")
+        if not aid.startswith("report_"):
+            try:
+                from scripts.cz_names import is_known_person as _ikp
+                _znamy = bool(name) and _ikp(name)
+            except Exception:
+                _znamy = False
+            if not _znamy:
+                log.info("HANS_STRANGER_NO_MUTATE_V1: agent %s od neznámého "
+                         "(%s) odmítnuto", aid, name)
+                # HANS_STRANGER_GOODNIGHT_V1 (28. 9.) — „přeji vám dobrou
+                # noc“ od cizího router čte jako hans_sleep; odmítnutí
+                # „Tohle mohu udělat jen pro svou domácnost“ je pak absurdní.
+                # Uspat Hanse cizí stejně nesmí → žádná akce, běžná odpověď.
+                if aid == "hans_sleep":
+                    return None
+                return ("text", "Tohle mohu udělat jen pro svou domácnost.")
+            # HANS_PRAVA_V1 (27. 9.) — známý bez oprávnění k akcím.
+            try:
+                from scripts.hans_prava import muze as _pm
+                _smi = _pm(getattr(handler, "config", None) or self.config,
+                           name, "akce")
+            except Exception:
+                _smi = True
+            if not _smi:
+                return ("text", "K tomu ode mne nemáte svolení. Snad mi to prominete.")
+        args = {k: (decision.get("args", {}) or {}).get(k)
+                for k in action.args}
+        h = _args_hash(aid, args)
+        # anti-echo: nedávno odmítnuto touž osobou?
+        rk = f"{name}|{h}"
+        if time.time() - self._rejected.get(rk, 0) < self.reject_cooldown:
+            return None
+        # cooldown per (akce, args)
+        cd = action.cooldown_s or self.cooldown_default
+        if time.time() - self._last_fire.get(h, 0) < cd:
+            return None
+        return ("akce", action, args, h, decision, conf, aid)
+
+    def proved(self, handler, name: str, message: str, volba) -> Optional[str]:
+        """Provedení volby ze `zvol`: ověří argumenty, okamžitou akci
+        provede a vrátí její výsledek, u ostatních uloží návrh a vrátí
+        otázku. None = běžný hovor."""
+        if volba is None:
+            return None
+        if volba[0] == "text":
+            return volba[1]
+        _, action, args, h, decision, conf, aid = volba
         try:
-            if not self._actionable(message):
-                return None
-            decision = self._route(handler, name, message)
-            if not decision:
-                return None
-            aid = decision.get("action")
-            # HANS_AGENT_RULES_TABLE_V1 (20.8.) — devět sémantických pravidel
-            # (veto / přesměrování akce) bývalo devíti `if`y v těle `propose`.
-            # Pořadí se dalo zjistit jen čtením 100 řádků a každé nové pravidlo
-            # znamenalo další větev. Teď jsou to DATA (`_PRAVIDLA`) a tenhle
-            # jeden průchod — pořadí je vidět, pravidlo jde otestovat zvlášť
-            # a přidání je řádek. Chování se NEMĚNÍ: podmínky i pořadí jsou
-            # převzaté doslova (ověřeno rovnocenností proti staré cestě).
-            aid = self._uplatni_pravidla(aid, message, decision, handler)
-            if aid is None:
-                return None
-            action = ACTIONS.get(aid)
-            if not action:
-                return None
-            conf = float(decision.get("confidence", 0) or 0)
-            if conf < self.threshold:
-                return None
-            # HANS_STRANGER_NO_MUTATE_V1 (24. 9.) — cizí nesmí nic měnit:
-            # projdou mu jen dotazy na stav (`report_*`). Odpověď místo ticha,
-            # aby persona akci nepotvrdila (HANS_AGENT_SPEAK_REJECT_V1).
-            # HANS_STRANGER_HOUSEHOLD_V1 (30. 9.) — i dotaz na STAV domu je
-            # chod domácnosti: teploty po místnostech, co běží na TV, technika,
-            # složení domácnosti. Doloženo auditem 30. 9. (klima i TV cizímu).
-            # Počasí venku a Koláč zůstávají otevřené.
-            if aid in ("report_climate", "report_now_playing", "report_pc_health",
-                       "report_home_status", "report_household"):
-                try:
-                    from scripts.cz_names import is_known_person as _ikp_h
-                    _zn_h = bool(name) and _ikp_h(name)
-                except Exception:
-                    _zn_h = False
-                if not _zn_h:
-                    # HANS_STRANGER_CLIMATE_CUE_V1 (4. 10.) — /tazatel 3. 10.: cizí
-                    # „jak vám toto počasí vyhovuje ke studiu?“ (po tahu, kde mu
-                    # Hans počasí venku řekl) router vzal jako report_climate
-                    # a dostal „O tom mluvím jen se svou domácností“. Bez zmínky
-                    # o místnosti/teplotě to není dotaz na čidla → běžný hovor.
-                    if aid == "report_climate" and not re.search(
-                            r"m[íi]stnost|pokoj|uvnit[řr]|doma\b|tady|\btu\b|teplot|"
-                            r"vlhk|stup[ňn]|zima|horko|dusno|chladn|teplo\b",
-                            message or "", re.IGNORECASE):
-                        log.info("HANS_STRANGER_CLIMATE_CUE_V1: report_climate bez "
-                                 "zmínky o místnosti od neznámého → běžný hovor")
-                        return None
-                    log.info("HANS_STRANGER_HOUSEHOLD_V1: agent %s od neznámého "
-                             "(%s) odmítnuto", aid, name)
-                    return "O tom mluvím jen se svou domácností."
-            if not aid.startswith("report_"):
-                try:
-                    from scripts.cz_names import is_known_person as _ikp
-                    _znamy = bool(name) and _ikp(name)
-                except Exception:
-                    _znamy = False
-                if not _znamy:
-                    log.info("HANS_STRANGER_NO_MUTATE_V1: agent %s od neznámého "
-                             "(%s) odmítnuto", aid, name)
-                    # HANS_STRANGER_GOODNIGHT_V1 (28. 9.) — „přeji vám dobrou
-                    # noc“ od cizího router čte jako hans_sleep; odmítnutí
-                    # „Tohle mohu udělat jen pro svou domácnost“ je pak absurdní.
-                    # Uspat Hanse cizí stejně nesmí → žádná akce, běžná odpověď.
-                    if aid == "hans_sleep":
-                        return None
-                    return "Tohle mohu udělat jen pro svou domácnost."
-                # HANS_PRAVA_V1 (27. 9.) — známý bez oprávnění k akcím.
-                try:
-                    from scripts.hans_prava import muze as _pm
-                    _smi = _pm(getattr(handler, "config", None) or self.config,
-                               name, "akce")
-                except Exception:
-                    _smi = True
-                if not _smi:
-                    return "K tomu ode mne nemáte svolení. Snad mi to prominete."
-            args = {k: (decision.get("args", {}) or {}).get(k)
-                    for k in action.args}
-            h = _args_hash(aid, args)
-            # anti-echo: nedávno odmítnuto touž osobou?
-            rk = f"{name}|{h}"
-            if time.time() - self._rejected.get(rk, 0) < self.reject_cooldown:
-                return None
-            # cooldown per (akce, args)
-            cd = action.cooldown_s or self.cooldown_default
-            if time.time() - self._last_fire.get(h, 0) < cd:
-                return None
             # grounding argumentů
             if action.grounding:
                 ok, args, gmsg = action.grounding(handler, args)

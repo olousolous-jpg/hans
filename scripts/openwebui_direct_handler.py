@@ -1707,7 +1707,8 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         # /prohloubit). Gated: jen když čeká návrh prohloubení. Klasifikuje
         # reakci uživatele a rovnou ji aplikuje.
         try:
-            _dr = self._maybe_deepen_response(ctx.name, ctx.user_message)
+            _dr = (self._maybe_deepen_response(ctx.name, ctx.user_message)
+                   if self._sc_prohloubeni_volba(ctx) else None)
             if _dr:
                 try:
                     self.conv_store.add_exchange(ctx.name, ctx.user_message, _dr, channel=ctx.channel)
@@ -1718,6 +1719,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         except Exception as _de:
             print(f"[Chat] deepen response error: {_de}")
         return _POKRACUJ
+
+    def _sc_prohloubeni_volba(self, ctx):
+        """Volba kroku (nic neprovádí): čeká návrh prohloubení studia? Pak
+        "mozna" — jestli je věta reakcí na něj, posoudí až provedení
+        (třídí modelem a rovnou zapisuje)."""
+        from scripts.hans_study import StudyStore
+        dbp = (self.config.get("diary_db")
+               or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+               or "data/hans_diary.db")
+        return "mozna" if StudyStore(self.config, dbp).get_pending_deepen() else None
 
     def _sc_ceka_malba(self, ctx):
         # ── HANS_CHAT_WAIT_FOR_PAINT_V1 (5.8.) — maluju, ozvu se potom ──────
@@ -1731,8 +1742,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         # a příkazy leží sedm deterministických bypassů, které mozek
         # nepotřebují, a nahoře je brána brala s sebou.
         try:
-            from scripts.avatar_render import render_in_progress
-            if render_in_progress():
+            if self._sc_ceka_malba_volba(ctx):
                 from scripts.hans_persona import persona_name as _pn
                 # HANS_CMD_ADDRESSEE_V1 — i tahle hláška oslovovala ženu
                 # „pane"; je to jediná natvrdo psaná v celé `send_chat_message`
@@ -1755,6 +1765,11 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             print(f"[Chat] paint-wait gate error: {_pe}")
         return _POKRACUJ
 
+    def _sc_ceka_malba_volba(self, ctx):
+        """Volba kroku (nic neprovádí): běží právě malování obrazu?"""
+        from scripts.avatar_render import render_in_progress
+        return bool(render_in_progress())
+
     def _sc_agent(self, ctx):
         # ── HANS_AGENT_V1 — agentní vrstva (kontextové akce z konverzace) ──
         # PO parse_command (příkazy mají přednost), PŘED běžným chatem.
@@ -1773,7 +1788,9 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         pass
                     self._log_human_chat_to_diary(ctx.name, ctx.user_message, _conf)
                     return _conf
-                _prop = _agent.propose(self, ctx.name, ctx.user_message)
+                _prop = _agent.proved(
+                    self, ctx.name, ctx.user_message,
+                    self._sc_agent_volba(ctx, po_potvrzeni=True))
                 if _prop:
                     _prop = self._agent_oslov(_prop, ctx.name)   # HANS_AGENT_ADDRESSEE_V1
                     try:
@@ -1790,6 +1807,18 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         except Exception as _ae:
             print(f"[Chat] agent layer error: {_ae}")
         return _POKRACUJ
+
+    def _sc_agent_volba(self, ctx, po_potvrzeni=False):
+        """Volba kroku (nic neprovádí): co zvolí agentní vrstva — viz
+        `AgentRouter.zvol`. Smí se zeptat agentního routeru s modelem.
+        Když může odpovědět čekající potvrzení (to umí jen provést), vrátí
+        "mozna"; krok sám se ptá až po potvrzení (`po_potvrzeni`)."""
+        _agent = self._agent_router()
+        if _agent is None:
+            return None
+        if not po_potvrzeni and _agent.ceka_potvrzeni(ctx.name, ctx.user_message):
+            return "mozna"
+        return _agent.zvol(self, ctx.name, ctx.user_message)
 
     def _sc_podklad(self, ctx):
         ctx.system   = self._build_system(ctx.name, user_msg=ctx.user_message)

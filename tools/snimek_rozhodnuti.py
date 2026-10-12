@@ -486,6 +486,7 @@ def _pracuj():
                 try:
                     _r = RZ.rozhodni(h, jm, veta, channel="web")
                     rz = {"krok": _r["krok"], "prikaz": _r["prikaz"],
+                          "akce": _r.get("akce"), "mozna": _r.get("mozna"),
                           "nedosel": _r["nedosel"], "chyba": _r["chyba"]}
                 except BaseException as e:
                     rz = {"vyjimka": "%s: %s" % (type(e).__name__, str(e)[:120])}
@@ -584,7 +585,21 @@ def shoda(a: str, ukaz: int = 25) -> int:
             spatne.append((d, rz))
             continue
         skut = d["krok"]
-        if rz["krok"]:
+        if rz["krok"] == "_sc_agent":
+            # akce zvolená nasucho = poslední akce, kterou pustila pravidla;
+            # při provedení smí skončit naprázdno (věta pak jde k modelu)
+            ak = (d.get("akce") or [[None, None]])[-1][1]
+            if rz.get("akce") and rz["akce"] != ak:
+                stav["NESHODA"] += 1
+                spatne.append((d, rz))
+            elif skut == "_sc_agent":
+                stav["shoda: agent (%s)" % ("akce" if rz.get("akce") else "odmítavá věta")] += 1
+            elif rz.get("akce") and skut in ("model", "nic"):
+                stav["akce zvolena shodně, provedení skončilo naprázdno"] += 1
+            else:
+                stav["NESHODA"] += 1
+                spatne.append((d, rz))
+        elif rz["krok"]:
             pr = (d["prikaz"] or [[None]])[0][0]
             if rz["krok"] == skut and (rz["krok"] != "_sc_prikazy"
                                        or pr == rz["prikaz"][0]):
@@ -601,7 +616,9 @@ def shoda(a: str, ukaz: int = 25) -> int:
                 stav["NESHODA"] += 1
                 spatne.append((d, rz))
             else:
-                stav["shoda: nikdo z kroků s volbou (dál %s)" % rz["nedosel"]] += 1
+                stav["shoda: nikdo z kroků s volbou (dál %s%s)" % (
+                    rz["nedosel"] or "model",
+                    ", možná " + ",".join(rz["mozna"]) if rz.get("mozna") else "")] += 1
     print("záznamů %d" % len(R))
     for s, n in stav.most_common():
         print("   %-58s %5d" % (s, n))
@@ -614,7 +631,8 @@ def shoda(a: str, ukaz: int = 25) -> int:
 # kroky, které mají volbu oddělenou (ROZHODNUTI_VSTUP_V1)
 ZNAME_VOLBY = ("_sc_read", "_sc_note", "_sc_url", "_sc_prikazy",
                "_sc_malovani_brana", "_sc_stav_tazatele", "_sc_kniha",
-               "_sc_znalosti", "_sc_pamatujes", "_sc_zdroje")
+               "_sc_znalosti", "_sc_pamatujes", "_sc_zdroje",
+               "_sc_prohloubeni", "_sc_ceka_malba", "_sc_agent")
 
 
 def souhrn(a: str):
