@@ -136,6 +136,7 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
         c.close()
     random.shuffle(progs)
     pridano = 0
+    dole = False
     for p in progs:
         if pridano >= kolik:
             break
@@ -149,7 +150,8 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
             system=_SYS, config=config, timeout=120, keep_alive=0,
             options={"temperature": 0.6, "num_ctx": 4096, "num_predict": 300})
         if not raw:
-            break                         # model dole → příští noc
+            dole = True                   # model dole → při další příležitosti
+            break
         m = re.search(r"\{.*\}", raw, re.S)
         try:
             navrhy = json.loads(m.group(0)).get("navrhy", []) if m else []
@@ -172,8 +174,52 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
             finally:
                 c.close()
             pridano += stav == "novy"
-    _log.info("KOLAC_PODNETY_V1: zásoba podnětů +%d (nových %d)", pridano, zasoba(db))
-    return pridano
+    _log.info("KOLAC_PODNETY_V1: zásoba podnětů +%d (nových %d)%s", pridano,
+              zasoba(db), " — model neodpověděl, zkusím znovu" if dole else "")
+    return None if dole else pridano
+
+
+# KOLAC_ZASOBY_RETRY_V1 (12. 10., pokyn uživatele) — když model není dostupný,
+# doplnění se nesmí odložit o celý den: i další noc může být model pryč.
+# Noční úloha se proto neoznačí za hotovou, dokud doplnění neproběhlo, a přes
+# den si dialog malou dávku doplní sám, jakmile zásoba skoro dojde.
+_posledni_nouze = 0.0
+
+
+def dopln_zasoby(config: dict, db: str, nouze: bool = False):
+    """Doplň obě zásoby (otázky ke zkoušce, podněty). `nouze` = denní malá
+    dávka jen při skoro prázdné zásobě. Vrací True (hotovo nebo nebylo
+    potřeba), None když model není dostupný (zkusit znovu)."""
+    from scripts import kolac_fakta as kf
+    kc = _cfg(config)
+    potreba_f = ("fakta" in (kc.get("zdroje") or [])
+                 and kf.zasoba(db) < (5 if nouze else int(kc.get("zasoba_min", 40))))
+    potreba_p = zasoba(db) < (3 if nouze else int(kc.get("podnety_min", 15)))
+    if not (potreba_f or potreba_p):
+        return True
+    try:
+        from scripts.ollama_client import brain_available
+        if not brain_available(config):
+            return None
+    except Exception:
+        return None
+    if potreba_f and kf.pripravit(
+            config, db, 5 if nouze else int(kc.get("zasoba_davka", 30))) is None:
+        return None
+    if potreba_p and pripravit(
+            config, db, 5 if nouze else int(kc.get("podnety_davka", 20))) is None:
+        return None
+    return True
+
+
+def dopln_v_nouzi(config: dict, db: str, odstup_s: float = 1800.0):
+    """Voláno z dialogu přes den: nejvýš jednou za `odstup_s` zkus malou dávku,
+    když zásoba skoro došla."""
+    global _posledni_nouze
+    if time.time() - _posledni_nouze < odstup_s:
+        return None
+    _posledni_nouze = time.time()
+    return dopln_zasoby(config, db, nouze=True)
 
 
 def souvisi_s_tematem(tema: str, text: str) -> bool:

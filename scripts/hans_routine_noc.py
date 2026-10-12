@@ -415,21 +415,22 @@ class NocMixin:
         # KOLAC_EXAM_FAKTA_V1 — jednou za noc doplň zásobu otázek z výpisů
         # faktů (přes den se jen berou, ať se studijní model nestřídá s chatem)
         try:
-            from scripts import kolac_exam as _ke, kolac_fakta as _kf
+            from scripts import kolac_exam as _ke
             _kc = (self.config.get("kolac_exam") or {})
             if (not _ke.zapnuto(self.config)
-                    or "fakta" not in (_kc.get("zdroje") or [])
                     or getattr(self, "_kolac_otazky_den", "") == ctx.today
-                    or not self._chat_quiet_ok()):
+                    or not self._chat_quiet_ok()
+                    or self._night_throttled("kolac_otazky", 1800)):
                 return
-            if _kf.zasoba(self._diary_path) < int(_kc.get("zasoba_min", 40)):
-                _kf.pripravit(self.config, self._diary_path,
-                              int(_kc.get("zasoba_davka", 30)))
             from scripts import kolac_podnety as _kp   # KOLAC_PODNETY_V1
-            if _kp.zasoba(self._diary_path) < int(_kc.get("podnety_min", 15)):
-                _kp.pripravit(self.config, self._diary_path,
-                              int(_kc.get("podnety_davka", 20)))
-            self._kolac_otazky_den = ctx.today
+            # KOLAC_ZASOBY_RETRY_V1 — hotovo se označí, až doplnění opravdu
+            # proběhlo; model dole → další pokus za půl hodiny (i přes den
+            # si dialog doplní malou dávku sám, viz `dopln_v_nouzi`)
+            if _kp.dopln_zasoby(self.config, self._diary_path):
+                self._kolac_otazky_den = ctx.today
+            else:
+                _rt._log.info("noční příprava otázek a podnětů: model není "
+                              "dostupný → zkusím znovu")
         except Exception as _ke_e:
             _rt._log.warning("noční příprava otázek selhala: %s", _ke_e)
 

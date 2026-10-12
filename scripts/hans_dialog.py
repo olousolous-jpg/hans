@@ -877,6 +877,11 @@ class HansDialog:
                 # platí starý rozestup `je_na_rade`.
                 if (self.config.get("kolac_exam") or {}).get("pomery"):
                     from scripts import kolac_podnety as _kp
+                    try:   # KOLAC_ZASOBY_RETRY_V1 — skoro prázdná zásoba → malá dávka
+                        if _ke.zapnuto(self.config):
+                            _kp.dopln_v_nouzi(self.config, self._diary_path)
+                    except Exception as _dze:
+                        _log.warning("doplnění zásob selhalo: %s", _dze)
                     _rez = _kp.rezim(self.config, self._dialog_count)
                     if _rez == "zkouska" and _ke.zapnuto(self.config):
                         if self._run_zkouska():

@@ -129,7 +129,8 @@ def zasoba(db: str) -> int:
 
 
 def pripravit(config: dict, db: str, kolik: int = 20) -> int:
-    """Doplň zásobu otázek (noční úloha). Vrací počet přidaných."""
+    """Doplň zásobu otázek. Vrací počet přidaných, nebo None, když model
+    neodpověděl (KOLAC_ZASOBY_RETRY_V1 — volající to má zkusit znovu)."""
     from scripts.ollama_client import ollama_generate
     model = ((config.get("study", {}) or {}).get("model")
              or (config.get("evening_reflection", {}) or {}).get("model")
@@ -143,6 +144,7 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
     finally:
         c.close()
     pridano = 0
+    dole = False
     for r in rows:
         if pridano >= kolik:
             break
@@ -158,7 +160,8 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
             system=_SYS, config=config, timeout=120, keep_alive=0,
             options={"temperature": 0.3, "num_ctx": 4096, "num_predict": 150})
         if not raw:
-            break                       # model dole → zkusit příští noc
+            dole = True                 # model dole → zkusit při další příležitosti
+            break
         uz.add(veta)
         mm = re.search(r"\{.*\}", raw, re.S)
         try:
@@ -179,9 +182,9 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
         finally:
             c.close()
         pridano += 1
-    _log.info("KOLAC_EXAM_FAKTA_V1: zásoba otázek +%d (nepoložených %d)",
-              pridano, zasoba(db))
-    return pridano
+    _log.info("KOLAC_EXAM_FAKTA_V1: zásoba otázek +%d (nepoložených %d)%s",
+              pridano, zasoba(db), " — model neodpověděl, zkusím znovu" if dole else "")
+    return None if dole else pridano
 
 
 def vyber(config: dict, db: str):
