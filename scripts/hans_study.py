@@ -1317,6 +1317,22 @@ class StudyStore:
         except Exception as e:
             _log.warning("synthesize_progress selhal: %s", e)
 
+    def _posledni_zadani_dila(self, topic: str) -> str:
+        """HANS_STUDY_DEEPEN_SEES_WORK_V1 — text posledního zadání díla k tématu
+        (`work_briefs`), prázdný řetězec když žádné není."""
+        try:
+            conn = self._connect()
+            try:
+                r = conn.execute(
+                    "SELECT brief FROM work_briefs WHERE topic=? "
+                    "ORDER BY id DESC LIMIT 1", (topic,)).fetchone()
+            finally:
+                conn.close()
+            return (r[0] or "").strip() if r else ""
+        except Exception as e:
+            _log.debug("_posledni_zadani_dila: %s", e)
+            return ""
+
     # ── HANS_STUDY_DEEPEN_V2 — ask-first prohloubení (kritika → schválení) ────
     def _generate_deepening(self, config: dict, topic: str, studied: list,
                             work_gap: str, max_new: int):
@@ -1352,11 +1368,23 @@ class StudyStore:
                 "(česky)." % max_new)
             studied_txt = "\n".join("- %s" % s for s in studied)
             gap = ("\n\nSměr kritiky (řiď se jím): %s" % work_gap) if work_gap else ""
+            dotaz = ("Téma: %s\n\nUŽ NASTUDOVÁNO (NEOPAKUJ):\n%s%s\n\nJSON:"
+                     % (topic, studied_txt, gap))
+            ctx_okno = 4096
+            # HANS_STUDY_DEEPEN_SEES_WORK_V1 — kritika má dílo VIDĚT: poslední
+            # zadání díla k tématu. Bez něj, nebo když kritiku zadal uživatel
+            # (`work_gap`), zůstává dosavadní zadání.
+            brief = "" if work_gap else self._posledni_zadani_dila(topic)
+            if brief:
+                from scripts.hans_study_kurikulum import _deepen_zadani_s_dilem
+                sysp, dotaz = _deepen_zadani_s_dilem(topic, studied, brief,
+                                                     max_new)
+                ctx_okno = 8192
             raw = ollama_generate(
-                model, "Téma: %s\n\nUŽ NASTUDOVÁNO (NEOPAKUJ):\n%s%s\n\nJSON:"
-                % (topic, studied_txt, gap),
-                system=sysp, config=config, timeout=150, keep_alive=0,
-                options={"temperature": 0.4, "num_ctx": 4096, "num_predict": 450})
+                model, dotaz,
+                system=sysp, config=config, timeout=200, keep_alive=0,
+                options={"temperature": 0.4, "num_ctx": ctx_okno,
+                         "num_predict": 450})
             if not raw:
                 return None
             m = re.search(r"\{.*\}", raw, re.S)

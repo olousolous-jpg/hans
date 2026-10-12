@@ -185,6 +185,37 @@ def _findable(config: dict, w, sub: str, topic: str) -> bool:
     return True if (not hit and w.last_transient) else hit
 
 
+def _deepen_zadani_s_dilem(topic: str, studied: list, brief: str,
+                           max_new: int) -> tuple:
+    """HANS_STUDY_DEEPEN_SEES_WORK_V1 — zadání kritiky, která dílo VIDÍ.
+
+    Dřív dostal model jen název tématu a seznam pod-témat a měl říct, co
+    „dílu chybí“ — hádal, a 15 z 16 kritik znělo „Dílo postrádá hlubší
+    zkoumání … sociálního a kulturního kontextu“. Se zadáním díla před sebou
+    jmenuje konkrétní mezeru (párově 12. 10.: šablona 12 z 12 → 0 z 12).
+    Vrací (systém, dotaz).
+    """
+    sysp = (
+        "Jsi kurátor studia. Autor nastudoval pod-témata níže a napsal z nich "
+        "ZADÁNÍ DÍLA, které máš před sebou. Přečti zadání a porovnej ho "
+        "s nastudovaným. V 1 větě řekni KONKRÉTNĚ, co je v zadání mělké nebo co "
+        "z tématu chybí — jmenuj věc, kterou zadání zmiňuje nebo vynechává, ne "
+        "obecnou oblast. Potom navrhni %d NOVÝCH pod-témat, která právě TUHLE "
+        "mezeru zaplní, STAVÍ na nastudovaném a ŽÁDNÉ z nastudovaných "
+        "NEOPAKUJÍ.\n\n"
+        "PRAVIDLA PRO NÁZVY POD-TÉMAT (jinak Wikipedia nenajde článek):\n"
+        "  1. MAX 5 slov (kratší lepší)\n"
+        "  2. ŽÁDNÉ dvojtečky, středníky, závorky s vysvětlením\n"
+        "  3. Skutečně existující pojem, jaký má vlastní heslo v encyklopedii — "
+        "žádné nově složené názvy\n\n"
+        "Vrať POUZE JSON: {\"critique\":\"…\",\"subtopics\":[\"…\"]} "
+        "(česky)." % max_new)
+    dotaz = ("Téma: %s\n\nUŽ NASTUDOVÁNO (NEOPAKUJ):\n%s\n\nZADÁNÍ DÍLA:\n%s"
+             "\n\nJSON:" % (topic, "\n".join("- %s" % s for s in studied),
+                            (brief or "")[:4000]))
+    return sysp, dotaz
+
+
 def _validate_curriculum(config: dict, subs: list, topic: str) -> list:
     """HANS_STUDY_CURRICULUM_VALIDATE_V1 (4.8.) — ověř pod-témata UŽ PŘI
     GENEROVÁNÍ, ne až třemi nocemi stání na každém.
