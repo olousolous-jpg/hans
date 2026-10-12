@@ -28,8 +28,11 @@ class GroundingMixin:
             _turns_ff = _thr_ff.recent_turns(self, name, _ch_ff)
             # HANS_LOOKUP_FOLLOWUP_V1 — „víc o něm?“ hned po dohledání: článek
             # z čekárny místo odpovědi z hlavy (jen když vnitřní cesta oporu nenašla)
+            # `self_state` taky: klasifikátor „víc o něm nemáš?“ někdy čte jako
+            # otázku na mě a dal by blok o mém dni místo článku
             if getattr(self, '_grounding_outcome', '') in ('nonfactual',
-                                                            'factual_nofacts'):
+                                                            'factual_nofacts',
+                                                            'self_state'):
                 _dn = self._dohledani_navazuje(str(_txt or ""), _turns_ff)
                 if _dn:
                     self._vysledek_groundingu('grounded', 'dohledani_navazuje')

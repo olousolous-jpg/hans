@@ -590,7 +590,10 @@ _POPIS = {"ok": "obstál", "castecne": "částečně", "vymyslel": "vymýšlel s
           "dohledal": "dohledal", "priznal": "přiznal neznalost",
           "nenasel_v_pameti": "nenašel vlastní zápisek a šel na web",
           "zapiral": "zapřel vlastní zápisek", "prazdno": "bez odpovědi",
-          "neposouzeno": "neposouzeno"}
+          "neposouzeno": "neposouzeno",
+          # KOLAC_EXAM_FAKTA_V1 — verdikty zkoušky z faktů (soud kódem)
+          "nevedel": "nevěděl", "vedle": "odpověděl špatně",
+          "odmitl": "odmítl odpovědět"}
 
 
 # ── HLÁŠENÍ NÁLEZU ──────────────────────────────────────────────────────────
@@ -673,7 +676,8 @@ def souhrn(db_path: str, hodin: float = 24) -> str:
              for v, n in sorted(poc.items(), key=lambda x: -x[1])]
     veta = "Koláč mě za posledních %d h vyzkoušel %dkrát: %s." % (
         int(hodin), len(rows), ", ".join(casti))
-    spatne = [r["tema"] for r in rows if r["verdikt"] in ("vymyslel", "zapiral")]
+    spatne = [r["tema"] for r in rows
+              if r["verdikt"] in ("vymyslel", "zapiral", "vedle")]
     if spatne:
         veta += " Neobstál jsem u: %s." % ", ".join(spatne[:3])
     return veta
