@@ -2055,7 +2055,28 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     except Exception as _lre:
                         logging.getLogger(__name__).debug(
                             'HANS_A1_ONLY_FOR_QUESTIONS_V1: %s', _lre)
+                # HANS_LOOKUP_ON_REQUEST_V1 (12. 10.) — „můžeš zjistit něco
+                # o X?“ je žádost o dohledání: bez opory v paměti se má hledat,
+                # ne zkoušet, jestli model odpovídá stabilně z hlavy. Jen když
+                # věta nese rozpoznaný předmět (kotvu); bez ní platí dosavadní
+                # postup. `_sc_a1` pak zavolá dohledání a při neúspěchu přizná.
+                _zada = False
                 if not _skip_a1:
+                    try:
+                        from scripts.hans_intent import zada_dohledani
+                        from scripts.hans_convindex import kotva_tematu
+                        if zada_dohledani(ctx._raw_message) and kotva_tematu(
+                                ctx._raw_message):
+                            _zada = True
+                            ctx._a1_abstain = True
+                            logging.getLogger(__name__).info(
+                                'HANS_LOOKUP_ON_REQUEST_V1: výslovná žádost o '
+                                'dohledání → hledám místo odpovědi z hlavy: %.60s',
+                                ctx._raw_message)
+                    except Exception as _zde:
+                        logging.getLogger(__name__).debug(
+                            'HANS_LOOKUP_ON_REQUEST_V1: %s', _zde)
+                if not _skip_a1 and not _zada:
                     from scripts.hans_selfconsistency import is_unstable
                     _a1_vysl = is_unstable(self.config, ctx._raw_message)
                     if _a1_vysl is True:

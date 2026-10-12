@@ -458,6 +458,63 @@ class FaktaMixin:
                 "tu neni, si NEVYMYSLEJ."
                 % (_tema, _puvod, ("\n- " + _stav) if _stav else ""))
 
+    _HESLO_DOHLEDANI = re.compile(r"Wikipedie — heslo „([^\"“\n]{2,90})[\"“]")
+    _NAVAZUJE_DOHLEDANI = re.compile(
+        r"\b(?:v[íi]c\w*|d[áa]l\w*|je[šs]t[ěe]|podrobn\w*|n[ěe]m|n[íi]|n[ěe]j|"
+        r"tom|ho|ji|to|ten|ta)\b", re.I)
+
+    def _dohledani_navazuje(self, raw: str, turns) -> str:
+        """HANS_LOOKUP_FOLLOWUP_V1 (12. 10.) — navazující otázka hned po
+        provizorním dohledání („víc o něm nemáš?“) dostane text článku, který
+        Hans před chvílí stáhl (noční čekárna), místo odpovědi z hlavy.
+        Doloženo 12. 10.: po dohledání fyzika model na „víc“ vymyslel místo
+        narození i univerzitu a uvedl to slovy „z Wikipedie“. Vrací blok
+        podkladu, nebo '' (věta jmenuje něco jiného, článek v čekárně není —
+        např. u zkušební identity, která do čekárny nezapisuje)."""
+        try:
+            posl = ""
+            for role, txt in reversed(list(turns or [])):
+                if role == "assistant":
+                    posl = str(txt or "")
+                    break
+            m = self._HESLO_DOHLEDANI.search(posl)
+            if not m or not raw or len(raw.split()) > 14:
+                return ''
+            heslo = m.group(1).strip()
+            from scripts.hans_intent import jiny_predmet
+            if not self._NAVAZUJE_DOHLEDANI.search(raw) or jiny_predmet(raw, heslo):
+                return ''
+            import sqlite3 as _sq
+            import time as _tm
+            _dbp = (self.config.get("diary_db")
+                    or (self.config.get("hans_idle", {}) or {}).get("diary_db")
+                    or "data/hans_diary.db")
+            _c = _sq.connect("file:%s?mode=ro" % _dbp, uri=True, timeout=4)
+            try:
+                r = _c.execute(
+                    "SELECT raw_text, url FROM unverified_findings WHERE "
+                    "resolved_title=? AND ts>? AND COALESCE(raw_text,'')<>'' "
+                    "ORDER BY id DESC LIMIT 1",
+                    (heslo, _tm.time() - 86400)).fetchone()
+            finally:
+                _c.close()
+            if not r:
+                return ''
+            logging.getLogger(_h.__name__).info(
+                'HANS_LOOKUP_FOLLOWUP_V1: navazující otázka po dohledání → '
+                'text článku %r (%d zn)', heslo[:40], len(r[0]))
+            return ("\n\nČLÁNEK, KTERÝ JSEM PŘED CHVÍLÍ DOHLEDAL — Wikipedie, heslo "
+                    "„%s“ (zatím neověřeno a nezapsáno do paměti):\n%s\n"
+                    "Odpovídej JEN z tohoto textu a řekni, že je to z dohledaného "
+                    "článku, ne z paměti. Co v něm není, přiznej, že v článku "
+                    "není — nic si nedomýšlej. Do paměti si článek i s "
+                    "podrobnostmi zapíšu sám po nočním ověření; nenabízej, že "
+                    "si ho zapamatuješ na požádání, a neříkej, že jsi hledal "
+                    "znovu." % (heslo, str(r[0])[:3000]))
+        except Exception as _dne:
+            logging.getLogger(_h.__name__).debug('lookup followup: %s', _dne)
+            return ''
+
     def _kodi_film_fact(self, raw: str, turns) -> str:
         """HANS_KODI_FILM_FACT_V1 (4. 10.) — film Z KNIHOVNY, o kterém je řeč:
         rok, žánr, režie, děj a herci s rolemi z Kodi. /tazatel 3. 10.: Hans
@@ -484,6 +541,12 @@ class FaktaMixin:
         navaz = bool(re.search(r"\b(?:to|ten|ta|ho|ji|n[ěe]m|n[ěe]j|n[íi]|film\w*|tom|tam|"
                                r"hraje|hraj[íi]|obsazen\w*)\b", raw, re.I)) \
             and len(raw.split()) <= 25
+        # HANS_KODI_FILM_FACT_SUBJECT_V1 — předchozí věta tazatele (ne tahle)
+        _pred = ""
+        for role, txt in reversed(list(turns or [])):
+            if role == "user" and str(txt or "").strip() != raw.strip():
+                _pred = str(txt or "")
+                break
         for k in kand:
             nk = norm(k)
             if len(nk) < 3:
@@ -491,6 +554,21 @@ class FaktaMixin:
             ve_zprave = (" %s " % nk) in nr
             if not (ve_zprave or (navaz and k in posl)):
                 continue
+            if not ve_zprave:
+                try:
+                    from scripts.hans_intent import mluvi_o_filmu, jiny_predmet
+                    from scripts.hans_persona import persona_name as _pn_ff
+                    _vyn = (str(_pn_ff(self.config) or ""),) + tuple(
+                        (self.config.get("known_persons", {}) or {}).keys())
+                    if not mluvi_o_filmu(raw) and (
+                            jiny_predmet(raw, k, _vyn)
+                            or jiny_predmet(_pred, k, _vyn)):
+                        logging.getLogger(_h.__name__).info(
+                            'HANS_KODI_FILM_FACT_SUBJECT_V1: navazující věta '
+                            'není o filmu %r → fakta z knihovny nepřidávám', k[:40])
+                        continue
+                except Exception as _fse:
+                    logging.getLogger(_h.__name__).debug('film subject: %s', _fse)
             mv = kodi.find_movie(k)
             if not mv or nk not in (norm(mv.get("title")), norm(mv.get("originaltitle"))):
                 continue

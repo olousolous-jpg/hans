@@ -25,8 +25,16 @@ class GroundingMixin:
                 _ch_ff = _h.get_current_channel()
             except Exception:
                 _ch_ff = None
-            _ff = self._kodi_film_fact(str(_txt or ""),
-                                       _thr_ff.recent_turns(self, name, _ch_ff))
+            _turns_ff = _thr_ff.recent_turns(self, name, _ch_ff)
+            # HANS_LOOKUP_FOLLOWUP_V1 — „víc o něm?“ hned po dohledání: článek
+            # z čekárny místo odpovědi z hlavy (jen když vnitřní cesta oporu nenašla)
+            if getattr(self, '_grounding_outcome', '') in ('nonfactual',
+                                                            'factual_nofacts'):
+                _dn = self._dohledani_navazuje(str(_txt or ""), _turns_ff)
+                if _dn:
+                    self._vysledek_groundingu('grounded', 'dohledani_navazuje')
+                    return _dn
+            _ff = self._kodi_film_fact(str(_txt or ""), _turns_ff)
         except Exception as _fe:
             logging.getLogger(_h.__name__).debug("film fakt: %s", _fe)
             _ff = ""
@@ -560,7 +568,13 @@ class GroundingMixin:
             # Nálada + její důvod už v promptu jsou (mood_ctx), tohle
             # dodává CO dnes reálně dělal. Detektor sdílený s agentem.
             try:
-                from scripts.hans_intent import is_about_self
+                from scripts.hans_intent import is_about_self, jen_prikyvnuti
+                # HANS_ACK_NOT_SELF_V1 — „supr.“, „děkuji“ není otázka na mě
+                if jen_prikyvnuti(str(ctx._text)):
+                    logging.getLogger(_h.__name__).info(
+                        'HANS_ACK_NOT_SELF_V1: přikývnutí → bez bloku o sobě')
+                    self._vysledek_groundingu('nonfactual', 'volny_hovor')
+                    return ''
                 if is_about_self(str(ctx._text), self.config):
                     from scripts.hans_recall import self_state_facts
                     _dbp_ss = (self.config.get("diary_db")

@@ -982,3 +982,65 @@ def dotaz_na_pojem(veta: str) -> str:
     if not slova or len(slova) > 3:
         return ""
     return " ".join(slova).strip(" ,.?!\"„“")
+
+
+# ── 12. 10. — tři predikáty z rozboru chatu o fyzikovi (backlog CHAT_THORNE_12_10) ──
+# HANS_LOOKUP_ON_REQUEST_V1 — člověk výslovně žádá DOHLEDAT („můžeš zjistit
+# něco o X?“, „zjisti prosím, kdo byl X“). Dřív o dohledání rozhodla jen
+# stabilita odpovědi modelu, takže žádost dostala odpověď z hlavy.
+# Minulý čas („co jsi zjistil?“, „zjistil jsem“) žádost není.
+# 📏 1 716 reálných vět z deníku: 22 žádostí, 13 z nich s rozpoznaným předmětem.
+_ZADA_DOHLEDANI = re.compile(
+    r"\b(?:zjisti|zjist[ěe]te|dohledej\w*|vyhledej\w*|najdi|najd[ěe]te)\b|"
+    r"\b(?:m[ůu][žz]e[šs]|m[ůu][žz]ete|mohl[ai]?\s+by(?:s|ste)?|dok[áa][žz]e[šs]|"
+    r"dok[áa][žz]ete|dok[áa]zal[ai]?\s+by(?:s|ste)?|zkus(?:te)?)\b.{0,40}?"
+    r"\b(?:zjistit|dohledat|vyhledat|naj[íi]t)\b|"
+    r"\b(?:pod[íi]vej(?:te)?\s+se|mrkni(?:\s+se)?)\s+na\s+(?:web|internet|wiki\w*)",
+    re.IGNORECASE)
+
+
+def zada_dohledani(text: str) -> bool:
+    return bool(_ZADA_DOHLEDANI.search(text or ""))
+
+
+# HANS_ACK_NOT_SELF_V1 — prosté přikývnutí nebo poděkování („supr.“, „děkuji“)
+# NENÍ otázka na Hanse. Klasifikátor ho řadil mezi dotazy „o asistentovi“, do
+# zadání šel blok o Hansově dni a model z něj složil nesouvisející větu
+# (12. 10.: „…při příležitosti mého dalšího namalování“).
+# 📏 1 716 reálných vět: 29 takových (22× „dekuji“).
+_PRIKYVNUTI = re.compile(
+    r"^(?:[^\W\d_]+ se ptá: )?\s*(?:supr|super|d[íi]ky|d[íi]k|d[ěe]kuj[iu]\w*|"
+    r"ok|okej|jasn[ěe]|dob[řr]e|v[ýy]born[ěe]|par[áa]da|fajn|skv[ěe]l[éeáý]|"
+    r"bezva|ch[áa]pu|rozum[íi]m|aha|jo|jj)"
+    r"(?:[\s,]+(?:supr|super|d[íi]ky|d[íi]k|d[ěe]kuj[iu]\w*|ok|jasn[ěe]|dob[řr]e|"
+    r"moc|ti|v[áa]m|pane|\w{2,12}i))?\s*[.!]*$", re.IGNORECASE)
+
+
+def jen_prikyvnuti(text: str) -> bool:
+    return bool(_PRIKYVNUTI.match((text or "").strip()))
+
+
+# HANS_KODI_FILM_FACT_SUBJECT_V1 — navazující otázka po zmínce filmu nemusí
+# být o filmu. Fakta o filmu z knihovny se u navazující věty nepřidají, když
+# věta sama film nezmiňuje a ona nebo předchozí věta tazatele jmenuje někoho
+# či něco jiného (12. 10.: „víc o něm nemáš?“ po otázce na fyzika → podklad
+# o filmu; z 19 zásahů od 4. 10. takhle minulo 6).
+_FILM_SLOVO = re.compile(
+    r"\b(?:film\w*|vid[ěe]l\w*|hraj\w*|hr[áa]l\w*|obsazen\w*|re[žz]\w+|"
+    r"herc\w*|here[čc]\w*|d[ěe]j\w*|sn[íi]mk\w*|o\s+[čc]em)\b", re.IGNORECASE)
+_VLASTNI_JMENO = re.compile(r"(?<![.!?…]\s)(?<!^)\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]"
+                            r"[a-záčďéěíňóřšťúůýž]{2,}")
+
+
+def mluvi_o_filmu(text: str) -> bool:
+    return bool(_FILM_SLOVO.search(text or ""))
+
+
+def jiny_predmet(text: str, titul: str, vynech=()) -> bool:
+    """Jmenuje věta (mimo první slovo) něco, co není v titulu filmu ani mezi
+    jmény k vynechání (persona, domácnost)?"""
+    t = re.sub(r"^[^\W\d_]+ se ptá:\s*", "", (text or "").strip())
+    mimo = {w.lower()[:5] for w in re.findall(r"[^\W\d_]+", titul or "")}
+    mimo |= {str(v).lower()[:5] for v in vynech if v}
+    return any(m.group(0).lower()[:5] not in mimo
+               for m in _VLASTNI_JMENO.finditer(t))
