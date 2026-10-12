@@ -64,7 +64,10 @@ _CAPABILITIES = [
      "(od ledna 2025), a jen Českou republiku",
      "/demagog <jméno nebo téma>; „co ověřil Demagog o …“"),
     ("study", "Umím STUDOVAT téma do hloubky přes týdny (Wikipedie, akademický "
-     "výzkum, primární texty, knihy) a psát si poznámky", "/studium"),
+     "výzkum, primární texty, knihy) a psát si poznámky; když mi dojde "
+     "fronta témat, navrhnu další podle svého směru a zeptám se",
+     "/studium; /studium schválit nebo "
+     "/studium ne na můj návrh tématu"),
     ("nastroj", "Po dostudování tématu si umím v knihovně modelů najít NÁSTROJ pro "
      "závěrečné dílo a navrhnout ho ke schválení — sám nic nestahuji, a když "
      "vhodný nástroj už mám nebo pro téma žádný neznám, nenavrhuji nic",

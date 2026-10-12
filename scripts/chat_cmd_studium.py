@@ -302,6 +302,22 @@ def _cmd_studium(handler, name, args) -> str:
                 "Chvíli to potrvá (čtení + zápis poznámky), výsledek pak "
                 "uvidíte v /studium a v deníku. Kdyby se nedařilo, ozvu se.")
 
+    # HANS_STUDY_DIRECTION_TOPIC_V1 — odpověď na návrh tématu ze směru
+    _ano = sub in {"schválit", "schvalit", "schval", "schvaluji", "ano"}
+    if _ano or sub in {"ne", "zamítnout", "zamitnout", "zamítni", "zamitni"}:
+        from scripts import hans_study_smer as _sm
+        _r = _sm.rozhodni(db, _ano)
+        if _r["status"] == "nic":
+            return "Žádný návrh tématu teď nečeká, pane."
+        if _r["status"] == "zamitnuto":
+            return ("Dobře, pane, téma „%s“ nechám být. Další program si "
+                    "vyberu z trvalého koníčku." % _r["topic"])
+        if _r["status"] == "pokryto":
+            return ("Téma „%s“ už ve studiu mám, pane — znovu ho nezakládám."
+                    % _r["topic"])
+        return ("Děkuji, pane. Téma „%s“ jsem zařadil do fronty — sestavím "
+                "kurikulum a pustím se do něj." % _r["topic"])
+
     if sub in _cc._STUDY_SKIP:
         # HANS_STUDY_NUDGE_V1 — ruční přeskočení zaseklého pod-tématu. Automatika
         # ho přeskočí až po `max_subtopic_failures` nocích; tohle je zkratka,
@@ -349,6 +365,15 @@ def _cmd_studium(handler, name, args) -> str:
 
     ap = store.get_active_program()
     if not ap:
+        try:   # HANS_STUDY_DIRECTION_TOPIC_V1 — čeká můj návrh tématu?
+            from scripts import hans_study_smer as _sm
+            _nav = _sm.cekajici(db)
+        except Exception:
+            _nav = None
+        if _nav:
+            return ("Právě nestuduji, pane. Podle svého směru jsem navrhl další "
+                    "téma „%s“ a čekám na Vaše slovo. (/studium schválit, "
+                    "/studium ne)" % _nav["topic"])
         progs = store.all_programs()
         if progs:
             # HANS_STUDIUM_LAST_DONE_V1 (30. 9.) — „naposledy“ = naposledy

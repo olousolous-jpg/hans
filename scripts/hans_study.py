@@ -784,6 +784,15 @@ class StudyStore:
                 _log.warning("aktivace pending tématu selhala: %s", e)
                 return None
 
+        # HANS_STUDY_DIRECTION_TOPIC_V1 — fronta došla: než sáhnu po koníčcích,
+        # navrhnu téma podle svého směru a počkám na odpověď (viz hans_study_smer)
+        try:
+            from scripts.hans_study_smer import krok_smeru
+            if krok_smeru(config, self._diary_path) == "cekam":
+                return None
+        except Exception as _se:
+            _log.warning("study: krok směru selhal: %s", _se)
+
         c = _cfg(config)
         min_ev = int(c.get("min_evidence", 8))
         min_age = int(c.get("min_age_days", 21))

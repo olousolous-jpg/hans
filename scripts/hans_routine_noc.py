@@ -414,6 +414,12 @@ class NocMixin:
         # HANS_DIRECTION_V1 — týdenní úvaha o vlastním SMĚRU (intencionální
         # vrstva). Reasoning tier (qwen3, num_gpu:0 = CPU → nesoupeří o VRAM,
         # žádný handoff). Deferral-safe. Samostatná kadence, ask-first.
+        # HANS_DIRECTION_NIGHT_OFF_V1 (12. 10., rozhodnutí uživatele) — noční
+        # návrhy směru jsou VYPNUTÉ (`direction.night_proposals`, výchozí
+        # False): směr se jen dodatečně přepisoval podle právě dostudovaného
+        # a nic neřídil. Směr určuje uživatel přes /smer <text>.
+        if not (self.config.get("direction") or {}).get("night_proposals", False):
+            return
         if (self._direction_due(ctx.today) and self._chat_quiet_ok()
                 and not self._night_throttled("direction", 1800)):
             try:
@@ -529,6 +535,12 @@ class NocMixin:
                         knowledge=self._knowledge)
                 finally:
                     self._study_lock.release()
+                try:   # HANS_STUDY_DIRECTION_TOPIC_V1 — návrh tématu doručit
+                    from scripts.hans_study_smer import oznam_cekajici
+                    oznam_cekajici(self.config, self._diary_path,
+                                   self._notifier)
+                except Exception as _oe:
+                    _rt._log.warning("oznámení návrhu tématu selhalo: %s", _oe)
                 if not is_transient(_scode):   # HANS_STUDY_UNIFY_V1
                     self._last_study_date = ctx.today
                     self._save_routine_state()
