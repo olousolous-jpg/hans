@@ -1325,3 +1325,31 @@ def zapisky_k_veci(veta: str, tituly: list, vypinac: bool = True) -> bool:
         return "podklad"
     h._knowledge_fts_grounding = _nalez
     return bool(h._zapisky_k_veci(veta))
+
+
+# ── HANS_ENTITY_SUBJECT_SUPPORT_V1 (12. 10.) ─────────────────────────────────
+def entita_je_predmet(jmeno: str, veta: str) -> bool:
+    """Počítá se (už nalezená) entita daného jména jako opora pro větu?"""
+    return bool(_handler_bez_initu()._entita_je_predmet({"name": jmeno}, veta))
+
+
+# ── HANS_ENTITY_ENDS_PERSON_ONLY_V1 (12. 10.) ────────────────────────────────
+def entita_prvni_posledni(etype: str, klic: str, veta: str) -> bool:
+    """Najde `resolve` entitu daného druhu a jména ve větě? Dočasná DB."""
+    import os, sqlite3, tempfile, time as _t
+    from scripts.hans_entities import EntityStore
+    es = EntityStore(_cfg())
+    with es._conn(ro=True) as c:
+        schema = c.execute("SELECT sql FROM sqlite_master WHERE name='entities'").fetchone()[0]
+    d = tempfile.mkdtemp(); db = os.path.join(d, "t.db")
+    c = sqlite3.connect(db); c.execute(schema)
+    c.execute("INSERT INTO entities (name, name_norm, etype, gloss, aliases, lang, "
+              "first_ts, last_ts, evidence_count) VALUES (?,?,?,?,?,?,?,?,?)",
+              (klic, klic.lower(), etype, "zkušební glosa", "[]", "cs", _t.time(), _t.time(), 5))
+    c.commit(); c.close()
+    try:
+        es2 = EntityStore(_cfg(), db)
+        return bool(es2.resolve(veta))
+    finally:
+        try: os.remove(db); os.rmdir(d)
+        except Exception: pass

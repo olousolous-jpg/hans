@@ -832,6 +832,47 @@ class FaktaMixin:
         except Exception:
             return ''
 
+    def _entita_je_predmet(self, ent: dict, text: str) -> bool:
+        """HANS_ENTITY_SUBJECT_SUPPORT_V1 (12. 10.) — JEDNOSLOVNÁ entita je
+        oporou jen ve větě, která se točí kolem ní.
+
+        Jedno obecné slovo se v dlouhé větě trefí náhodou: „byla nějaká
+        událost, kterou bys chtěl zdůraznit?“ → pořad „Události“, „hmotný
+        objekt ve vesmíru ohýbá světlo…“ → „Objektiv“. Glosa se pak stala
+        oporou a vypnula abstinenci. Víceslovná jména (osoby, hrady, díla)
+        takhle náhodou nesednou, těch se pravidlo netýká.
+        Platí jen když jméno ve větě není doslova (jen skloněné nebo
+        příbuzné slovo) a věta má víc než 3 jiná významová slova; „co víš
+        o secesi?“, „Bauhaus? co to je?“ zůstávají. Čísla z korpusu jsou
+        v backlogu (`FAZE5_ENTITY_12_10`). ⚠️ Odmítne i skloněné jednoslovné
+        jméno v dlouhé větě („…něco o Gotice, zajímá mě kvůli…“) — pak
+        rozhodnou zápisky. Vypínač `grounding.entity_subject_only`."""
+        try:
+            if not ((self.config.get("grounding") or {})
+                    .get("entity_subject_only", True)):
+                return True
+            from scripts import hans_convindex as _ci
+            jm = [_ci._fold(w) for w in _ci._WORD.findall(str(ent.get("name") or ""))]
+            if len(jm) != 1:
+                return True      # i „F. L. Věk“ nebo „LED TV“ je víceslovné jméno
+            q = [_ci._fold(w) for w in _ci._WORD.findall(str(text or ""))]
+            if jm[0] in q:
+                return True      # jméno ve větě doslova (Ivanhoe, design)
+            q = [w for w in q if len(w) >= 3 and w not in _ci._STOP]
+            jine = [w for w in q if not any(
+                w == j or (len(w) >= 4 and len(j) >= 4 and w[:4] == j[:4])
+                for j in jm)]
+            if len(jine) <= 3:
+                return True
+            logging.getLogger(_h.__name__).info(
+                "HANS_ENTITY_SUBJECT_SUPPORT_V1: jednoslovná entita %r ve větě "
+                "s %d dalšími slovy → nepočítám jako oporu (%r)",
+                ent.get("name"), len(jine), str(text)[:50])
+            return False
+        except Exception as _e:
+            logging.getLogger(_h.__name__).debug("entity subject: %s", _e)
+            return True
+
     def _entity_fact(self, text: str) -> str:
         """HANS_ENTITY_STORE_C1_V1 — deterministicky resolvuj entitu z dotazu
         proti store známých entit (z Hansova čtení). Vrátí autoritativní fakt
@@ -843,6 +884,8 @@ class FaktaMixin:
                 return ''
             _ent = _es.resolve(self._bez_tazatele(text))   # HANS_ENTITY_STRIP_ASKER_V1
             if not _ent or self._entita_je_tazatel(_ent):   # HANS_ENTITY_NOT_ASKER_V1
+                return ''
+            if not self._entita_je_predmet(_ent, self._bez_tazatele(text)):
                 return ''
             logging.getLogger(_h.__name__).info(
                 'C1: entita resolvována z dotazu → %r (ev=%s)',

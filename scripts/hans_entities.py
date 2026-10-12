@@ -631,6 +631,17 @@ class EntityStore:
                 # ŠPENÁT" (spen|cer ↔ spen|at) → obraz Jiřího Sováka a Vladimíra
                 # Menšíka místo herce. Proto: surname jen pro osoby/postavy.
                 _et = (self.get(_id) or {}).get("etype")
+                # HANS_ENTITY_ENDS_PERSON_ONLY_V1 (12. 10.) — „stačí první
+                # a poslední slovo jména“ je pravidlo pro PROSTŘEDNÍ JMÉNA
+                # osob. U ostatních entit vynechané slovo bývá právě to
+                # rozlišující: „mistrovství světa v hokeji 2026“ sedlo na
+                # „Mistrovství světa ve fotbale 2026“ (první + poslední
+                # slovo), glosa o fotbale se stala oporou a odpověď o hokejovém
+                # trenérovi byla výmysl s odkazem. Týž princip jako
+                # HANS_ENTITY_SURNAME_PERSON_ONLY_V1.
+                if (ends and not full and _et not in ("osoba", "postava")
+                        and self.cfg.get("ends_person_only", True)):
+                    ends = False
                 surname = (loose and len(kt) >= 2 and kt[-1] in matched
                            and q_all_matched and _et in ("osoba", "postava"))
                 # etype filtr (HANS_ART_PULID_V1): omez na daný druh (např.
