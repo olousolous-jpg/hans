@@ -618,6 +618,123 @@ def _jmenuje_domacnost(text: str) -> bool:
 
 _FAKTA_CLANKU_MAX = 30   # HANS_FILM_FACTS_BLOCK_V1 — strop řádků faktů v podkladu
 
+# ── HANS_FILM_SERIE_V1 (12. 10.) — věta jmenuje SÉRII, ne jeden díl ──────────
+# „už se dodívala na Strážce Galaxie?“, „viděl jsi Matrix?“, „co říkáš na
+# Indiana Jonese?“ — titul v deníku je vždy celý díl („Indiana Jones a Chrám
+# zkázy“), takže shoda na celý titul nenašla nic a jinde se vybral jeden díl
+# náhodně. Pokyn uživatele 12. 10.: počítat se všemi díly série.
+# Série = jméno ze dvou a více slov (nebo jedno slovo, které je samo titulem),
+# kterým v deníku ZAČÍNAJÍ aspoň dva různé díly. Slova se porovnávají kmenem
+# (strážce ~ strážci, Jonese ~ Jones).
+_SERIE_NAPOVED = re.compile(
+    r"\b(d[ií]val\w*|dod[ií]val\w*|kouk\w*|sledov\w*|zhl[eé]d\w*|vid[eě]l\w*|"
+    r"d[ií]l\w*|s[eé]ri[eií]\w*|pust\w*|pou[sš]t\w*)\b", re.IGNORECASE)
+_SERIE_MAX_DILU = 8
+
+
+def _serie_slova(s: str) -> list:
+    return re.findall(r"[a-z0-9]+", _hr._fold(s or "").lower())
+
+
+def _serie_sedi(a: str, b: str, presne: bool = False) -> bool:
+    """Totéž slovo v jiném pádu. `presne` (jednoslovné jméno): kratší tvar
+    musí být začátkem delšího a lišit se nejvýš o 2 znaky."""
+    if a == b:
+        return True
+    kr, dl = (a, b) if len(a) <= len(b) else (b, a)
+    if presne:
+        return len(kr) >= 5 and dl.startswith(kr) and len(dl) - len(kr) <= 2
+    if len(kr) < 4 or len(dl) - len(kr) > 3:
+        return False
+    n = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        n += 1
+    return n >= max(4, len(kr) - 2)
+
+
+def serie_v_dotazu(question: str, tituly: list):
+    """(jméno série, {díl: [tituly z deníku]}) nebo None. Díl = titul od
+    posledního výskytu jména série („Sbírka: Série: Díl“ → „Série: Díl“)."""
+    q = _serie_slova(question)
+    prip = []
+    for t in tituly:
+        useky = [u for u in (_serie_slova(x) for x in
+                             re.split(r":\s+|\s+[\u2013-]\s+", t)) if u]
+        prip.append((t, useky))
+    for n in (4, 3, 2, 1):
+        for i in range(0, len(q) - n + 1):
+            fr = q[i:i + n]
+            if any(len(w) < 3 for w in fr) or not any(len(w) >= 5 for w in fr):
+                continue
+            if n == 1 and len(fr[0]) < 6:
+                continue
+            dily, sam, jmeno = {}, False, ""
+            for t, useky in prip:
+                for u in useky:
+                    if len(u) >= n and all(_serie_sedi(fr[k], u[k], presne=(n == 1))
+                                           for k in range(n)):
+                        if len(u) == n:
+                            sam = True
+                        ft = _hr._fold(t).lower()
+                        zac = ft.rfind(" ".join(u[:n]))
+                        kan = t[zac:].strip() if zac >= 0 else t
+                        kan = re.sub(r"\s*[\(\[].*$", "", kan).strip() or kan
+                        klic = _hr._fold(kan).lower()
+                        dily.setdefault(klic, [kan, []])[1].append(t)
+                        jmeno = jmeno or " ".join(kan.split()[:n]).rstrip(":,")
+                        break
+            # jedno slovo jen když je samo titulem (Matrix), jinak by sérií
+            # bylo každé časté první slovo titulu
+            if len(dily) >= 2 and (n >= 2 or sam):
+                return jmeno, {v[0]: v[1] for v in dily.values()}
+    return None
+
+
+def _serie_blok(conn, jmeno: str, dily: dict, asker: str = "") -> Optional[str]:
+    """Podklad o sérii: ke každému dílu kolikrát a kdy viděn, rok, první věta
+    vlastního názoru."""
+    cizi = False
+    if asker:
+        try:
+            from scripts.cz_names import is_known_person as _ikp
+            cizi = not _ikp(asker)
+        except Exception:
+            cizi = False
+    radky = []
+    for dil in sorted(dily)[:_SERIE_MAX_DILU]:
+        tit = dily[dil]
+        ot = ",".join("?" * len(tit))
+        seen = conn.execute(
+            "SELECT COUNT(*), MAX(ts) FROM diary WHERE event_type='kodi_playing' "
+            "AND title IN (%s)" % ot, tit).fetchone()
+        op = conn.execute(
+            "SELECT COALESCE(NULLIF(data,''), note) FROM diary "
+            "WHERE event_type='movie_opinion' AND title IN (%s) "
+            "AND COALESCE(NULLIF(data,''), note) IS NOT NULL "
+            "ORDER BY ts DESC LIMIT 1" % ot, tit).fetchone()
+        r = "- \u201e%s\u201c" % dil
+        if seen and seen[0]:
+            r += " \u2014 vid\u011bl jsi %s, naposledy %s" % (
+                "jednou" if seen[0] == 1 else "%d\u00d7" % seen[0],
+                _hr._cz_when(seen[1]) if seen[1] else "d\u0159\u00edve")
+        else:
+            r += " \u2014 v z\u00e1znamu p\u0159ehr\u00e1v\u00e1n\u00ed ho nem\u00e1\u0161"
+        veta = _nazor_prvni_veta(str(op[0])) if op and op[0] else None
+        if veta and not (cizi and _hr._jmenuje_domacnost(veta)):
+            r += ". Tv\u00e1 pozn\u00e1mka: " + veta
+        radky.append(r)
+    if len(radky) < 2:
+        return None
+    hl = ("SKUTE\u010cN\u00dd Z\u00c1ZNAM o s\u00e9rii \u201e%s\u201c z TV\u00c9HO den\u00edku. "
+          "M\u00e1\u0161 v n\u011bm tyto d\u00edly (odpov\u011bz JEN z n\u011bj, nic si nedom\u00fd\u0161lej; "
+          "kdy\u017e ot\u00e1zka nem\u00edn\u00ed jeden ur\u010dit\u00fd d\u00edl, mluv o s\u00e9rii jako celku "
+          "a d\u00edly jmenuj; jin\u00e9 d\u00edly, ne\u017e jsou tady, v den\u00edku nem\u00e1\u0161):" % jmeno)
+    if len(dily) > _SERIE_MAX_DILU:
+        radky.append("(a dal\u0161\u00edch %d d\u00edl\u016f)" % (len(dily) - _SERIE_MAX_DILU))
+    return "\n\n" + hl + "\n" + "\n".join(radky)
+
 
 def film_knowledge_answer(db_path: str, question: str = "",
                           asker: str = "") -> Optional[str]:
@@ -625,7 +742,12 @@ def film_knowledge_answer(db_path: str, question: str = "",
     deníku Hansovy VLASTNÍ záznamy o tom filmu (movie_opinion = názor/děj,
     kodi_playing = kdy viděl) a vrať GROUNDED blok. None = žádný známý titul
     v dotazu → normální tok. Deterministické, žádný LLM."""
-    if not question or not _hr._looks_like_film_query(question):
+    if not question:
+        return None
+    _film_dotaz = _hr._looks_like_film_query(question)
+    # HANS_FILM_SERIE_V1 — jméno série je samo nápovědou, když věta mluví
+    # o dívání nebo o dílech
+    if not _film_dotaz and not _SERIE_NAPOVED.search(question):
         return None
     conn = None
     try:
@@ -655,7 +777,18 @@ def film_knowledge_answer(db_path: str, question: str = "",
             if re.search(r"\b" + re.escape(tf) + r"\b", q_fold):
                 if best is None or len(tf) > len(_hr._fold(best).lower()):
                     best = title
-        if not best:
+        # HANS_FILM_SERIE_V1 — žádný celý titul, nebo jen titul shodný se
+        # jménem série („Strážci Galaxie“ je první díl I jméno série)
+        # věta o KNIZE téhož jména („co víš o knize Sherlock Holmes?“) k filmům nepatří
+        _ser = (None if re.search(r"\bkni[hz]\w*|\brom[aá]n\w*|\b[cč]etl\w*|\b[cč]te[sš]\b",
+                                  question, re.IGNORECASE)
+                else serie_v_dotazu(question, [r[0] for r in rows]))
+        if _ser and (not best or _hr._fold(best).lower().strip()
+                     == _hr._fold(_ser[0]).lower().strip()):
+            _sb = _serie_blok(conn, _ser[0], _ser[1], asker=asker)
+            if _sb:
+                return _sb
+        if not best or not _film_dotaz:
             return None
         # Hansovy vlastní názory/poznámky (obsah bývá v `data`, fallback `note`)
         ops = conn.execute(
