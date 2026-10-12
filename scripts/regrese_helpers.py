@@ -1296,3 +1296,32 @@ def rozhodni_stavba() -> str:
     if any(ma[n:]):
         return "volby netvoří souvislý začátek: %s" % konci
     return "ok" if n >= 10 else "voleb jen %d" % n
+
+
+# ── HANS_FILM_SERIE_V1 (12. 10.) ─────────────────────────────────────────────
+def film_serie(veta: str) -> str:
+    """Pozná věta jméno série mezi zkušebními tituly? Vrátí „jméno:počet dílů“
+    nebo ''. Tituly jsou pevné (ne z deníku), ať případ nezávisí na datech."""
+    from scripts.hans_recall_filmy import serie_v_dotazu
+    tituly = ["Regresni Hlidka", "Regresni Hlidka: Volume 3",
+              "Sbirka (kolekce): Regresni Hlidka: Volume 2",
+              "Zkusebni Pilot a Chram", "Zkusebni Pilot a Archa",
+              "Signal", "Signal Reloaded", "Prostreno!", "Proslule atentaty",
+              "Cesko - Francie", "Cesko, Hokej"]
+    s = serie_v_dotazu(veta, tituly)
+    return "%s:%d" % (s[0], len(s[1])) if s else ""
+
+
+# ── HANS_NOTES_TITLE_SUPPORT_V1 (12. 10.) ────────────────────────────────────
+def zapisky_k_veci(veta: str, tituly: list, vypinac: bool = True) -> bool:
+    """Počítají se nalezené zápisky (dané tituly) jako opora pro větu?"""
+    h = _handler_bez_initu()
+    h.config = dict(h.config)
+    h.config["grounding"] = dict(h.config.get("grounding") or {},
+                                 notes_need_title=vypinac)
+
+    def _nalez(text, _t=tituly):
+        h._kfts_tituly = list(_t)
+        return "podklad"
+    h._knowledge_fts_grounding = _nalez
+    return bool(h._zapisky_k_veci(veta))

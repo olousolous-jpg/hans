@@ -833,7 +833,7 @@ class GroundingMixin:
             # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
             # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
             # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
-            _kb = self._knowledge_fts_grounding(
+            _kb = self._zapisky_k_veci(
                 str(ctx._q_for_retrieval or ctx._text))
             if _kb:
                 # HANS_ENTITY_FACTS_ALSO_WITH_NOTES_V1 (26.8.) — zápisky
@@ -866,7 +866,7 @@ class GroundingMixin:
             # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
             # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
             # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
-            _kb = self._knowledge_fts_grounding(
+            _kb = self._zapisky_k_veci(
                 str(ctx._q_for_retrieval or ctx._text))
             if _kb:
                 self._vysledek_groundingu('grounded', 'zapisky_fts')

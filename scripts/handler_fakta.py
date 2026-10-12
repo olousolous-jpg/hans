@@ -9,6 +9,10 @@ from __future__ import annotations
 import logging
 import re
 
+# HANS_NOTES_TITLE_SUPPORT_V1 — slova, která do titulu zápisku přidává Hans
+# sám (druh zápisku), ne jeho předmět
+_ZAPISKY_TITUL_OBAL = {"studium", "mistrovska", "reflexe", "zpravy", "kap"}
+
 
 class FaktaMixin:
     """Část třídy `OpenWebUIDirectHandler` — viz hlavička modulu."""
@@ -79,6 +83,49 @@ class FaktaMixin:
                 return "Fakta o osobě " + _c.display_name + ": " + ", ".join(_parts) + "."
         return ''
 
+    def _zapisky_k_veci(self, text: str) -> str:
+        """HANS_NOTES_TITLE_SUPPORT_V1 (12. 10.) — zápisky jako OPORA jen tehdy,
+        když aspoň jedno hledané slovo sedí kmenem v TITULU nalezeného zápisku.
+
+        Hledání v zápiscích vyžaduje všechna slova dotazu KDEKOLI v textu;
+        u hovorové věty se sejdou náhodou v dlouhém zápisku o něčem jiném
+        („jak ses dnes měl?“ → článek o Senegalu, „kdo trénuje Slovensko na MS
+        v hokeji“ → zápisek o designu). Podklad se pak označil jako opora,
+        takže se nespustila abstinence a model odpovídal z cizího textu.
+        Změřeno na korpusu (199 vět na téhle cestě): 110 nemá v titulu žádné
+        slovo dotazu a jsou mimo věc; 89 zůstává. V provozu od 22. 9. cesta
+        sepnula 131× (5× u člena domácnosti: 1 výmysl s falešným zdrojem,
+        2 odpovědi mimo). Vrací podklad, nebo '' (věta pak pokračuje stejně,
+        jako kdyby zápisky nic nenašly). Vypínač `grounding.notes_need_title`.
+        """
+        kb = self._knowledge_fts_grounding(text)
+        if not kb:
+            return kb
+        try:
+            if not ((self.config.get("grounding") or {})
+                    .get("notes_need_title", True)):
+                return kb
+            from scripts import hans_convindex as _ci
+            q = [_ci._fold(w) for w in _ci._WORD.findall(str(text or ""))]
+            q = [w for w in q if len(w) >= 3 and w not in _ci._STOP]
+            for tit in (getattr(self, "_kfts_tituly", None) or []):
+                for b in (_ci._fold(w) for w in _ci._WORD.findall(tit)):
+                    if b in _ZAPISKY_TITUL_OBAL:
+                        continue
+                    for a in q:
+                        if a == b or (len(a) >= 4 and len(b) >= 4
+                                      and a[:4] == b[:4]):
+                            return kb
+            logging.getLogger(_h.__name__).info(
+                "HANS_NOTES_TITLE_SUPPORT_V1: zápisky %r nemají v titulu žádné "
+                "slovo dotazu %r → nepočítám jako oporu",
+                [x[:40] for x in (getattr(self, "_kfts_tituly", None) or [])][:3],
+                str(text)[:50])
+            return ''
+        except Exception as _e:
+            logging.getLogger(_h.__name__).debug("notes title support: %s", _e)
+            return kb
+
     def _knowledge_fts_grounding(self, text: str) -> str:
         """HANS_KNOWLEDGE_FTS_V1 (6.8.) — poslední šance před abstinencí.
 
@@ -99,6 +146,7 @@ class FaktaMixin:
         try:
             from scripts.hans_convindex import search as _kfts
             hits = _kfts(str(text), limit=3, kind='knowledge')
+            self._kfts_tituly = [str(_x[3] or '') for _x in (hits or [])]
             if not hits:
                 return ''
             # HANS_KODI_GLOSS_LABEL_V1 (13. 9.) — GLOSA K PORADU NENI CETBA.
