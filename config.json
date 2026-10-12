@@ -1444,13 +1444,13 @@
     ],
     "_test_persons_note": "HANS_TEST_PERSON_V1: jména, pod kterými se Hans testuje. Rozhovor s nimi se NEZAPISUJE do deníku (human_chat) ani do RAG — jinak vlastní testovací repliky skončí v paměti jako by to byly znalosti. Chat i historie vlákna fungují normálně.",
     "kolac_exam": {
-        "enabled": false,
+        "enabled": true,
         "_note": "KOLAC_EXAM_V1 — Koláč se místo debaty občas zeptá a odpověď se porovná s klíčem.",
-        "kazdy_naty": 8,
+        "kazdy_naty": 5,
         "_note_kazdy_naty": "Každý N-tý dialog je zkouška — jen ROZESTUP; strop drží max_denne.",
-        "max_denne": 2,
+        "max_denne": 0,
         "_note_max_denne": "KOLAC_EXAM_DENNI_STROP_V1 — nejvýš tolik zkoušek za den (0 = bez stropu).",
-        "hlasit": true,
+        "hlasit": false,
         "_note_hlasit": "KOLAC_EXAM_NOTIFY_V1 — nález, u kterého Hans neobstál, se ohlásí sám (Matrix, tiché okno respektuje).",
         "hlasit_verdikty": [
             "vymyslel",
@@ -1460,17 +1460,29 @@
         "identita": "zkouška",
         "_note_identita": "Jméno, pod kterým Hans odpovídá. MUSÍ být v test_persons, jinak se zkoušení zapíše do deníku i RAG.",
         "zdroje": [
-            "pamet",
-            "wiki",
-            "soubor"
+            "fakta"
         ],
-        "_note_zdroje": "pamet = má o tom zápisek | wiki = náhodné heslo (nemá) | soubor = data/kolac_otazky.txt",
+        "_note_zdroje": "fakta = otazka z vypisu faktu po studiu (KOLAC_EXAM_FAKTA_V1) | pamet = ma o tom zapisek | wiki = nahodne heslo | soubor = data/kolac_otazky.txt",
         "soubor": "data/kolac_otazky.txt",
         "wiki_lang": "cs",
         "pamet_dnu": 60,
         "cti_nahlas": false,
         "_note_cti_nahlas": "Zkouška se nečte nahlas — je to sebetest, ne hovor pro místnost.",
-        "_enabled_note": "VYPNUTO 9. 9. rozhodnutim uzivatele. Duvod: vytezek nestal za falesne poplachy. Zmereno na 36 zkouskach za 18 dni (28 posouzitelnych): dnesni logikou by se ohlasily 4 nalezy, a uzivatel z hlasek, ktere mu realne prisly, oznacil za skutecne spatne jen dve — a druhou jen proto, ze odpoved byla delsi nez jedna veta, ne ze byla nepravdiva. Doloženy falesny poplach: 9. 9. hrad Trosky, verdikt 'vymyslel' na vecne zcela spravne odpovedi (viz ZKOUSKA_TROSKY_09_09 v backlogu). Pricina je strukturalni: mira je POMER prekryvu vuci dvouvetemu klici, takze pravdiva znalost NAD ramec klice se pocita jako vymysl a rozpor (jiny letopocet, jine jmeno) se naopak nepozna vubec — zmereno, ze pridani cisel do _stems s tim nehne (0 zmen z 238 vet). ZAPNOUT ZPET: enabled=true. Mekci varianta je nechat enabled=true a dat hlasit=false — zkousky se pak porad zapisuji do kolac_exam a jsou videt v /zdravi, jen neotravuji. Vypnutim navic ubyl jeden nocni konzument LLM (souvisi se STAMPEDE_09_09)."
+        "_enabled_note": "ZAPNUTO 12. 10. rozhodnutim uzivatele v nove podobe: dialog Hans x Kolac ma tri podoby podle 'pomery' — volny hovor, nove (KOLAC_PODNETY_V1, scripts/kolac_podnety.py) a zkouska z vypisu faktu (KOLAC_EXAM_FAKTA_V1, scripts/kolac_fakta.py; jeden spravny udaj, shodu soudi kod). Hlaseni na Matrix vypnuto (hlasit=false). Puvodni podoba zkouseni (zdroje pamet/wiki/soubor, soud podle vet bez opory) byla 9. 9. vypnuta kvuli falesnym nalezum — viz ZKOUSKA_TROSKY_09_09 v backlogu; nevracet bez mereni.",
+        "opakovat_po_dnech": 2,
+        "zasoba_min": 40,
+        "zasoba_davka": 30,
+        "_note_fakta": "opakovat_po_dnech: nezodpovezena/spatna otazka se vraci po tolika dnech. zasoba_min/zasoba_davka: v noci se doplni davka, kdyz nepolozenych otazek je min nez zasoba_min.",
+        "pomery": {
+            "volny": 30,
+            "nove": 50,
+            "zkouska": 20
+        },
+        "_note_pomery": "KOLAC_PODNETY_V1 (12. 10., pokyn uzivatele): podil tri podob dialogu Hans x Kolac v cyklu 10 dialogu — volny hovor : nove (Kolac prinese vec, kterou Hans nezna, Hans si ji dohleda a po nocnim overeni zapise) : zkouska z faktu. Kdyz 'nove' ani 'zkouska' nevyjde (prazdna zasoba, plna cekarna, heslo se nenaslo), vede se volny hovor. S timto klicem se kazdy_naty a max_denne nepouzivaji.",
+        "nove_max_cekajicich": 10,
+        "_note_nove": "nove_max_cekajicich: kdyz v nocni cekarne lezi tolik Kolacovych nalezu, nove podnety se ten den uz nekladou (noc overuje instant_lookup.verify_batch nalezu). podnety_min/podnety_davka: nocni doplneni zasoby podnetu.",
+        "podnety_min": 15,
+        "podnety_davka": 20
     },
     "subtitles": {
         "enabled": true,

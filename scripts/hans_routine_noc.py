@@ -62,6 +62,7 @@ class NocMixin:
             ('art', self._nt_art),
             ('severka', self._nt_severka),
             ('direction', self._nt_direction),
+            ('kolac_otazky', self._nt_kolac_otazky),   # KOLAC_EXAM_FAKTA_V1
             ('narrative', self._nt_narrative),
             ('drain_setup', self._nt_drain_setup),
             ('study', self._nt_study),
@@ -409,6 +410,28 @@ class NocMixin:
                 render_pending(self.config, self._diary_path)
             except Exception as _re:
                 _rt._log.warning("avatar render pending selhal (Severka OK): %s", _re)
+
+    def _nt_kolac_otazky(self, ctx):
+        # KOLAC_EXAM_FAKTA_V1 — jednou za noc doplň zásobu otázek z výpisů
+        # faktů (přes den se jen berou, ať se studijní model nestřídá s chatem)
+        try:
+            from scripts import kolac_exam as _ke, kolac_fakta as _kf
+            _kc = (self.config.get("kolac_exam") or {})
+            if (not _ke.zapnuto(self.config)
+                    or "fakta" not in (_kc.get("zdroje") or [])
+                    or getattr(self, "_kolac_otazky_den", "") == ctx.today
+                    or not self._chat_quiet_ok()):
+                return
+            if _kf.zasoba(self._diary_path) < int(_kc.get("zasoba_min", 40)):
+                _kf.pripravit(self.config, self._diary_path,
+                              int(_kc.get("zasoba_davka", 30)))
+            from scripts import kolac_podnety as _kp   # KOLAC_PODNETY_V1
+            if _kp.zasoba(self._diary_path) < int(_kc.get("podnety_min", 15)):
+                _kp.pripravit(self.config, self._diary_path,
+                              int(_kc.get("podnety_davka", 20)))
+            self._kolac_otazky_den = ctx.today
+        except Exception as _ke_e:
+            _rt._log.warning("noční příprava otázek selhala: %s", _ke_e)
 
     def _nt_direction(self, ctx):
         # HANS_DIRECTION_V1 — týdenní úvaha o vlastním SMĚRU (intencionální

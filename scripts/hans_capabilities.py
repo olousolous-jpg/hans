@@ -76,7 +76,10 @@ _CAPABILITIES = [
     ("authorship", "Píšu VLASTNÍ dílo na pokračování (esej/povídku)", "/dilo"),
     ("synthesis", "Propojuji naučené z různých oborů do vlastních POSTŘEHŮ", "/napad"),
     ("selfcritique", "Kriticky se ohlížím za svým projevem a beru si PONAUČENÍ", "/kritika"),
-    ("kolac", "Vedu DIALOG s Koláčem (mám vlastní i jeho mysl)", "probíhá sám"),
+    ("kolac", "Vedu DIALOG s Koláčem (mám vlastní i jeho mysl); zhruba v polovině "
+     "rozhovorů mi Koláč přinese věc, kterou neznám, a já si ji dohledám a "
+     "po nočním ověření zapíšu do paměti, v pětině mě ZKOUŠÍ otázkou z toho, "
+     "co jsem nastudoval, zbytek je volný hovor", "probíhá sám"),
     ("memory", "PAMATUJI si — deník, dlouhodobá paměť (RAG), vztahové karty k "
      "lidem, vlastní postoje a jejich vývoj", "/denik, /nitky, /zajmy"),
     ("vision", "Vidím a poznávám LIDI přes kameru a reaguji na to, kdo je "

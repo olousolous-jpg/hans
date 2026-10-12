@@ -872,8 +872,25 @@ class HansDialog:
                 from scripts import kolac_exam as _ke
                 # KOLAC_EXAM_DENNI_STROP_V1 — DB se předává schválně:
                 # bez ní strop neplatí (viz `je_na_rade`).
-                if _ke.je_na_rade(self.config, self._dialog_count,
-                                  self._diary_path):
+                # KOLAC_PODNETY_V1 (12. 10.) — tři podoby dialogu podle
+                # `kolac_exam.pomery` (volný : nové : zkouška). Bez `pomery`
+                # platí starý rozestup `je_na_rade`.
+                if (self.config.get("kolac_exam") or {}).get("pomery"):
+                    from scripts import kolac_podnety as _kp
+                    _rez = _kp.rezim(self.config, self._dialog_count)
+                    if _rez == "zkouska" and _ke.zapnuto(self.config):
+                        if self._run_zkouska():
+                            # bez tohohle by hned následoval další dialog:
+                            # odstup se dřív nastavoval jen po volném hovoru
+                            self._last_dialog = time.time()
+                            return
+                        _log.info("KOLAC_EXAM_V1: zkouška nevyšla → běžný rozhovor")
+                    elif _rez == "nove" and _ke.zapnuto(self.config):
+                        if self._run_podnet():
+                            self._last_dialog = time.time()
+                            return
+                elif _ke.je_na_rade(self.config, self._dialog_count,
+                                    self._diary_path):
                     if self._run_zkouska():
                         return
                     _log.info("KOLAC_EXAM_V1: zkouška nevyšla → běžný rozhovor")
@@ -1154,6 +1171,44 @@ class HansDialog:
             self._dialog_lock.release()
 
 
+    def _run_podnet(self) -> bool:
+        """KOLAC_PODNETY_V1 — Koláč se zeptá na věc, kterou Hans nezná, a Hans
+        si ji dohledá (provizorní odpověď + noční čekárna). True = proběhlo."""
+        from scripts import kolac_podnety as kp
+        from scripts.hans_persona import persona_name
+        if not self._diary_path or not self._brain_up_cached():
+            return False
+        kname = kolac_name(self.config)
+        try:
+            v = kp.poloz(self.config, self._diary_path, kname)
+        except Exception as e:
+            _log.warning("KOLAC_PODNETY_V1 selhalo: %s", e)
+            return False
+        if not v:
+            return False
+        prepis = "%s: %s %s\n%s: %s" % (kname, kp.uvod(), v["otazka"],
+                                        persona_name(self.config),
+                                        v["odpoved"].strip())
+        # vlastní typ jako u zkoušky: provizorní odpověď není vzpomínka a nesmí
+        # se vracet do kontextu dialogů ani do koníčků; do paměti jde až
+        # ověřený článek z noční čekárny
+        try:
+            import sqlite3 as _sql
+            with _sql.connect(self._diary_path) as _db:
+                _db.execute(
+                    "INSERT INTO diary (ts, event_type, title, note, data) "
+                    "VALUES (?,?,?,?,?)",
+                    (time.time(), "kolac_podnet",
+                     "Podnět: %s" % v["nazev"][:80], prepis,
+                     __import__("json").dumps(
+                         {"tema": v["tema"], "heslo": v["heslo"]},
+                         ensure_ascii=False)))
+                _db.commit()
+        except Exception as e:
+            _log.warning("KOLAC_PODNETY_V1: zápis do deníku selhal: %s", e)
+        self._recent_replies.append("%s: %s" % (kname, v["otazka"]))
+        return True
+
     def _run_zkouska(self) -> bool:
         """KOLAC_EXAM_WIRE_V1 — Koláč se ptá, Hans odpovídá BĚŽNOU CHATOVOU
         CESTOU. True = zkouška proběhla (běžný rozhovor se přeskočí).
@@ -1200,6 +1255,13 @@ class HansDialog:
             return False
         hodnoceni = ke.ohodnot(polozka["zdroj"], odpoved, polozka.get("klic", ""))
         _exam_id = ke.zapis(self._diary_path, polozka, odpoved, hodnoceni)
+        if polozka.get("otazka_id"):       # KOLAC_EXAM_FAKTA_V1 — stav v zásobě
+            try:
+                from scripts import kolac_fakta as _kf
+                _kf.zapis_vysledek(self._diary_path, polozka["otazka_id"],
+                                   hodnoceni["verdikt"])
+            except Exception as _kfe:
+                _log.warning("KOLAC_EXAM_FAKTA_V1: stav otázky: %s", _kfe)
         # KOLAC_EXAM_NOTIFY_V1 — nález si najde uživatele sám. Notifier visí
         # na chatovém handleru (`telegram` = historický název), takže tu není
         # nové drátování. `send_proactive` respektuje tiché okno.

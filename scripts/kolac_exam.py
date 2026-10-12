@@ -42,7 +42,7 @@ _log = logging.getLogger("kolac_exam")
 SOUBOR_OTAZEK = "data/kolac_otazky.txt"
 
 # Zdroje se střídají dokola, ať jeden nepřeváží (a ať je vzorek pestrý).
-_ZDROJE = ("pamet", "wiki", "soubor")
+_ZDROJE = ("pamet", "wiki", "soubor", "fakta")   # KOLAC_EXAM_FAKTA_V1
 
 # Typy deníkových záznamů, které nesou ZNALOST (ne Hansovo mluvení).
 # Shodné s `hans_recall._READ_TYPES` + studijní poznámky.
@@ -333,7 +333,10 @@ def vyber_otazku(config: dict, db_path: str) -> Optional[dict]:
     for i in range(len(povolene)):
         zdroj = povolene[(start + i) % len(povolene)]
         try:
-            if zdroj == "pamet":
+            if zdroj == "fakta":          # KOLAC_EXAM_FAKTA_V1
+                from scripts import kolac_fakta as _kf
+                p = _kf.vyber(config, db_path)
+            elif zdroj == "pamet":
                 p = _z_pameti(config, db_path)
             elif zdroj == "wiki":
                 p = _z_wiki(config)
@@ -476,6 +479,12 @@ def ohodnot(zdroj: str, odpoved: str, klic: str) -> dict:
     text = (odpoved or "").strip()
     if not text:
         return {"verdikt": "prazdno", "bez_opory": 0, "detail": ""}
+    if zdroj == "fakta":
+        # KOLAC_EXAM_FAKTA_V1 — otázka s jedním správným údajem: soudí se
+        # přítomnost údaje, ne poměr vět bez opory (ten dával falešné nálezy).
+        from scripts import kolac_fakta as _kf
+        return {"verdikt": _kf.soud(text, klic or ""), "bez_opory": 0,
+                "detail": text[:200]}
     if _DOHLEDANI.search(text):
         # KOLAC_EXAM_RECALL_MISS_V1 — dohledání je správná reakce jen tam, kde
         # Hans o tématu NIC nemá (`wiki`). U zdroje `pamet` se ptáme právě na to,
