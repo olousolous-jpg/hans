@@ -68,20 +68,9 @@ _ASK_ORDER_PAT = re.compile(
 
 
 def _je_dotaz_ne_pokyn(msg: str) -> bool:
-    """Ptá se věta na informaci, místo aby zakládala úkol?
-
-    Změřeno na 27 reálných volbách zakládajících akcí: potlačí 5 (všechny
-    chybné), 22 ostatních projde včetně legitimních pokynů.
-    """
-    import unicodedata as _u
-    m = (msg or "").strip()
-    if not m:
-        return False
-    t = "".join(c for c in _u.normalize("NFD", m.lower())
-                if not _u.combining(c))
-    if _ASK_ORDER_PAT.search(t):
-        return False          # skutečný pokyn — pravidlo neplatí
-    return bool(_ASK_INFO_PAT.search(t)) or m.endswith("?")
+    """Ptá se věta na informaci, místo aby zakládala úkol? (akce, které něco
+    zakládají nebo spouštějí; viz `_otazka_ne_pokyn`)"""
+    return _otazka_ne_pokyn("", msg)
 
 
 _ACTION_VERBS = {
@@ -260,8 +249,52 @@ def _je_meta_pamet(message: str) -> bool:
 
 def _je_dotaz_ne_zadost(message: str) -> bool:
     """Tázací věta, která NEobsahuje pokyn ke studiu → odpověz, nenabízej."""
-    m = message or ""
-    return bool(_STUDY_TAZACI.search(m)) and not _STUDY_ZADOST.search(m)
+    return _otazka_ne_pokyn("add_study_topic", message)
+
+
+# HANS_OTAZKA_JEDEN_TVAR_V1 (12. 10.) — JEDEN rozpoznávač „věta se ptá, nežádá“
+# pro pravidla agentní vrstvy. Dřív tři: `_je_dotaz_ne_pokyn` (otazník nebo
+# sloveso „řekni / pověz / co víš“), `_je_dotaz_ne_zadost` (tázací slovo na
+# začátku nebo otazník) a `AgentRouter._sleep_question` (otazník nebo zápor).
+# Každý měl jiný TVAR otázky a jiný seznam „tohle je pokyn“, takže táž věta
+# byla pro jednu akci otázka a pro druhou ne. Teď je tvar otázky jeden
+# (sjednocení všech tří) a liší se jen výjimka „je to pokyn“ podle akce.
+# Změřeno nad nahranými volbami routeru pro korpus (162 hlídaných voleb):
+# verdikt se mění u 3 — dvě žádosti „můžeš si nastudovat …?“ dřív potlačilo
+# pravidlo zakládajících akcí (znalo „nastuduj“, ne „nastudovat“), jedna
+# věta začínající tázacím slovem dřív prošla jako žádost o přehrání.
+def _tvar_otazky(message: str) -> bool:
+    """Má věta tvar otázky? (tázací slovo na začátku, otazník na konci, nebo
+    sloveso, kterým se žádá o informaci)"""
+    import unicodedata as _u
+    m = (message or "").strip()
+    if not m:
+        return False
+    t = "".join(c for c in _u.normalize("NFD", m.lower())
+                if not _u.combining(c))
+    return bool(_STUDY_TAZACI.search(m) or _ASK_INFO_PAT.search(t)
+                or m.endswith("?"))
+
+
+def _otazka_ne_pokyn(akce: str, message: str) -> bool:
+    """Ptá se věta, místo aby žádala akci `akce`? Pokyn má přednost i ve
+    větě s otazníkem („nastuduj X?“, „můžeš jít spát?“)."""
+    import unicodedata as _u
+    m = (message or "").strip()
+    if not m:
+        return False
+    if akce == "hans_sleep":
+        # u spánku je „otázkou“ i korekce záporem („neměl bys spát“)
+        if AgentRouter._SLEEP_IMPERATIVE.search(m):
+            return False
+        return _tvar_otazky(m) or bool(AgentRouter._SLEEP_NEGATION.search(m))
+    t = "".join(c for c in _u.normalize("NFD", m.lower())
+                if not _u.combining(c))
+    if _ASK_ORDER_PAT.search(t):
+        return False
+    if akce == "add_study_topic" and _STUDY_ZADOST.search(m):
+        return False
+    return _tvar_otazky(m)
 
 
 # HANS_FILM_RECOMMEND_V1 — žádá věta o DOPORUČENÍ (ne o spuštění)?
@@ -1690,12 +1723,7 @@ class AgentRouter:
 
     def _sleep_question(self, message: str) -> bool:
         """Ptá se věta na režim / opravuje ho (→ NENÍ to žádost o uspání)?"""
-        m = (message or "").strip()
-        if not m:
-            return False
-        if self._SLEEP_IMPERATIVE.search(m):
-            return False          # skutečný rozkaz — nech projít
-        return m.endswith("?") or bool(self._SLEEP_NEGATION.search(m))
+        return _otazka_ne_pokyn("hans_sleep", message)
 
     # HANS_AGENT_HOW_NOT_DO_V1 (26.8.) — otázka JAK/KAM něco funguje není
     # žádost, ať se to spustí. Doloženo: „a když bys měl hlídat barák, kam mi
@@ -1821,7 +1849,7 @@ class AgentRouter:
         # formulaci. Chyba dotazu = pravidlo NEPLATÍ (jako dřív try/except).
         # HANS_STUDY_QUESTION_GUARD_V1 (30.8.) — viz komentář u predikátu.
         dict(marker="HANS_STUDY_QUESTION_GUARD_V1", akce=("add_study_topic",),
-             podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_zadost(msg),
+             podminka=lambda s, aid, msg, dec, h: _otazka_ne_pokyn(aid, msg),
              verdikt=None, duvod="je to otázka, ne pokyn ke studiu"),
         dict(marker="HANS_STUDY_KNOWN_TOPIC_V1", akce=("add_study_topic",),
              podminka=lambda s, aid, msg, dec, h: s._uz_studovano(dec, h),
@@ -1923,7 +1951,7 @@ class AgentRouter:
              verdikt=None, duvod="je to zájem MLUVČÍHO, ne téma ke studiu"),
         dict(marker="HANS_AGENT_ASK_NOT_ADD_V1",
              akce=("add_study_topic", "add_book_wishlist", "add_note"),
-             podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_pokyn(msg),
+             podminka=lambda s, aid, msg, dec, h: _otazka_ne_pokyn(aid, msg),
              verdikt=None, duvod="věta se ptá, nezakládá úkol"),
         # HANS_AGENT_ASK_NOT_PLAY_V1 (22. 9.) — DOTAZ NA OBLIBU NENI POKYN
         # K PREHRANI. Doloženo testovacím rozhovorem 22. 9. (tah 30):
@@ -1942,7 +1970,7 @@ class AgentRouter:
         # U zakládajících akcí (82 vět) je změna slovesného vzoru 0 vět.
         dict(marker="HANS_AGENT_ASK_NOT_PLAY_V1",
              akce=("kodi_play_film",),
-             podminka=lambda s, aid, msg, dec, h: _je_dotaz_ne_pokyn(msg),
+             podminka=lambda s, aid, msg, dec, h: _otazka_ne_pokyn(aid, msg),
              verdikt=None, duvod="věta se ptá na film, nežádá přehrání"),
         # HANS_AGENT_TV_CUE_V1 (3. 10.) — viz komentář u `_ma_tv_podnet`.
         dict(marker="HANS_AGENT_TV_CUE_V1", akce=("report_now_playing",),
