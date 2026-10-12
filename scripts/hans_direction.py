@@ -230,6 +230,26 @@ class DirectionStore:
             return False
 
 
+def _vyber_kritiky(radky, limit: int = 3) -> list:
+    """HANS_DIRECTION_CRITIQUE_APPROVED_V1 — kritiky děl do podkladu směru.
+
+    `radky` = (téma, stav, kritika) od nejnovější. Bere jen kritiky, které
+    uživatel SCHVÁLIL, a nejvýš jednu na téma. Dřív šly poslední tři bez ohledu
+    na stav a dedup byl podle prvních 40 znaků textu: 12. 10. byly dvě ze tří
+    zamítnuté a dvě z jednoho programu, a návrh směru je opsal.
+    """
+    out, vid = [], set()
+    for tema, stav, kritika in radky:
+        tema, kritika = (tema or "").strip(), (kritika or "").strip()
+        if stav != "approved" or not kritika or tema.lower() in vid:
+            continue
+        vid.add(tema.lower())
+        out.append("%s: %s" % (tema, kritika[:220]))
+        if len(out) >= limit:
+            break
+    return out
+
+
 # ── HansDirection ───────────────────────────────────────────────────────────
 class HansDirection:
     def __init__(self, config: dict, diary_db_path: str):
@@ -263,9 +283,14 @@ class HansDirection:
             out["studies_done"] = [r[0] for r in c.execute(
                 "SELECT topic FROM study_program WHERE status='completed'"
                 " ORDER BY id").fetchall()]
-            out["studies_active"] = [r[0] for r in c.execute(
-                "SELECT topic FROM study_program WHERE status='active'"
-                " ORDER BY id").fetchall()]
+            # HANS_DIRECTION_CRITIQUE_APPROVED_V1 — s postupem, ať je vidět,
+            # jak daleko rozpracované studium je (holý název se v zadání ztrácel)
+            out["studies_active"] = [
+                "%s (hotovo %d z %d pod-témat)" % (r[0], r[1] or 0, r[2] or 0)
+                for r in c.execute(
+                    "SELECT topic, current_index, json_array_length(curriculum)"
+                    " FROM study_program WHERE status='active'"
+                    " ORDER BY id").fetchall()]
             # díla: témata briefů + názvy work_created (dedup, zachovej pořadí)
             seen = set()
             for (t,) in c.execute("SELECT DISTINCT topic FROM work_briefs"):
@@ -284,17 +309,9 @@ class HansDirection:
             # jeho VLASTNÍ deepen-kritiky postrádají = růstové hrany, kam by
             # směr mohl mířit (varianta se sebehodnocením).
             try:
-                seen_c = set()
-                for (cr,) in c.execute(
-                        "SELECT critique FROM deepen_proposals WHERE critique<>'' "
-                        "ORDER BY id DESC LIMIT 8"):
-                    cr = (cr or "").strip()
-                    key = cr[:40].lower()
-                    if cr and key not in seen_c:
-                        seen_c.add(key)
-                        out["competence"].append(cr[:220])
-                    if len(out["competence"]) >= 3:
-                        break
+                out["competence"] = _vyber_kritiky(c.execute(
+                    "SELECT topic, status, critique FROM deepen_proposals "
+                    "WHERE critique<>'' ORDER BY id DESC").fetchall())
             except Exception:
                 pass
             c.close()
@@ -499,8 +516,9 @@ class HansDirection:
         ]
         if sig.get("competence"):
             parts.append(
-                "CO MÝM DÍLŮM DOSUD CHYBĚLO (má vlastní kritika — růstové "
-                "hrany, kam bych se mohl posunout):\n%s"
+                # HANS_DIRECTION_CRITIQUE_APPROVED_V1 — nadpis bez návodu
+                # „kam bych se mohl posunout“ (směr pak kritiky opisoval)
+                "POZNÁMKY KE STARŠÍM DÍLŮM (vlastní kritika po dokončení):\n%s"
                 % _lst(sig["competence"]))
         # insighty jsou často provozní anomálie (šum pro směr) → do promptu
         # jen když vypadají jako růstové/tematické postřehy, ne o datech/logu.
