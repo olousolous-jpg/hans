@@ -65,6 +65,11 @@ _CAPABILITIES = [
      "/demagog <jméno nebo téma>; „co ověřil Demagog o …“"),
     ("study", "Umím STUDOVAT téma do hloubky přes týdny (Wikipedie, akademický "
      "výzkum, primární texty, knihy) a psát si poznámky", "/studium"),
+    ("nastroj", "Po dostudování tématu si umím v knihovně modelů najít NÁSTROJ pro "
+     "závěrečné dílo a navrhnout ho ke schválení — sám nic nestahuji, a když "
+     "vhodný nástroj už mám nebo pro téma žádný neznám, nenavrhuji nic",
+     "/nastroj (výpis); /nastroj schválit N; /nastroj zamítnout [N …] — bez "
+     "čísla všechny čekající"),
     ("authorship", "Píšu VLASTNÍ dílo na pokračování (esej/povídku)", "/dilo"),
     ("synthesis", "Propojuji naučené z různých oborů do vlastních POSTŘEHŮ", "/napad"),
     ("selfcritique", "Kriticky se ohlížím za svým projevem a beru si PONAUČENÍ", "/kritika"),

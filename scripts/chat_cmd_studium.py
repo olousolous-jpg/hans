@@ -587,16 +587,51 @@ def _cmd_nastroj(handler, name, args) -> str:  # HANS_TOOLSCOUT_V1
         return "\n".join(out)
 
     # schválit / zamítnout
-    m = re.match(r"(schv[áa]l\w*|zam[íi]t\w*|odm[íi]t\w*)\s+(\d+)", low)
+    # HANS_NASTROJ_BEZ_CISLA_V1 — sloveso bez čísla dřív propadlo do hledání
+    # a „zamítnout“ se prozkoumalo jako TÉMA. Teď: zamítnout bez čísla = všechny
+    # čekající, víc čísel naráz; schválit chce právě jedno číslo (stahuje se).
+    m = re.match(r"(schv[áa]l\w*|zam[íi]t\w*|odm[íi]t\w*)(?:\s+(.*))?$", low)
     if m:
-        pid = int(m.group(2))
         store = ts.ToolStore(db)
-        p = store.get(pid)
-        if not p:
-            return "Návrh č. %d neznám, pane." % pid
+        zbytek = m.group(2) or ""
+        cisla = [int(x) for x in re.findall(r"\d+", zbytek)]
+        jine = [w for w in re.findall(r"[^\W\d_]+", zbytek)
+                if w not in ("a", "i", "č", "c", "vše", "vse", "všechny",
+                             "vsechny", "všechno", "vsechno")]
+        pend = store.list("pending")
+        if jine:
+            return ("Tomu nerozumím, pane. Napište /nastroj zamítnout (všechny "
+                    "čekající), /nastroj zamítnout N nebo /nastroj schválit N.")
         if m.group(1).startswith(("zam", "odm")):
-            store.set_status(pid, "rejected")
-            return "Zamítnuto, pane. %s nebudu stahovat." % p["tool_name"]
+            if not cisla:
+                if not pend:
+                    return "Nemám žádný čekající návrh, pane, není co zamítnout."
+                cisla = [p["id"] for p in pend]
+            hotovo, nejde = [], []
+            for pid in sorted(set(cisla)):
+                p = store.get(pid)
+                if (not p or not p.get("tool_name")
+                        or p["status"] not in ("pending", "approved")):
+                    nejde.append("č. %d" % pid)
+                    continue
+                store.set_status(pid, "rejected")
+                hotovo.append("#%d %s" % (pid, p["tool_name"]))
+            out = []
+            if hotovo:
+                out.append("Zamítnuto, pane. Nebudu stahovat: %s."
+                           % ", ".join(hotovo))
+            if nejde:
+                out.append("Mezi čekajícími návrhy není: %s." % ", ".join(nejde))
+            return " ".join(out)
+        if len(cisla) != 1:
+            if not pend:
+                return "Nemám žádný čekající návrh, pane, není co schválit."
+            return ("Který návrh mám schválit, pane? Stahuji vždy jen jeden — "
+                    "napište /nastroj schválit N.\n" + _fmt(pend))
+        pid = cisla[0]
+        p = store.get(pid)
+        if not p or not p.get("tool_name"):
+            return "Návrh č. %d neznám, pane." % pid
         # schválit → pull na PC. HANS_TOOLSCOUT_PULL_TAG_V1: stáhni s KONKRÉTNÍ
         # velikostí (tool_name:size_tag), jinak `ollama pull qwen2.5-coder` vezme
         # default (7b) místo navržených 14b.
@@ -622,7 +657,7 @@ def _cmd_nastroj(handler, name, args) -> str:  # HANS_TOOLSCOUT_V1
         if pend:
             return "Mé návrhy nástrojů, pane:\n" + _fmt(pend) + \
                 "\n\n(/nastroj schválit N nebo zamítnout N)"
-        allp = store.list()
+        allp = [p for p in store.list() if p["status"] != "omyl"]
         if allp:
             return "Aktuálně nemám čekající návrh. Poslední:\n" + _fmt(allp[:3])
         return ("Zatím jsem žádný nástroj nenavrhl, pane. Napiš /nastroj <téma> "

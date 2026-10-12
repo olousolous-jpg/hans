@@ -1084,7 +1084,7 @@ def zaregistruj(_cc):
             r"jak[ýy]\s+(model|n[áa]stroj|llm).{0,20}(pro|na)\s+",
         ],
         handler=_cc._cmd_nastroj,
-        help_text="Najdi LLM nástroj pro dílo: /nastroj <téma>; schválit/zamítnout N",
+        help_text="Najdi LLM nástroj pro dílo: /nastroj <téma>; schválit N; zamítnout [N …] (bez čísla všechny čekající)",
     )
 
     _cc.register(

@@ -238,9 +238,10 @@ _KEYWORD_HINTS = {
 
 
 # HANS_TOOLSCOUT_RELEVANCE_V1 — slova, ktera musi kandidat mit ve jmenu nebo popisu,
-# aby se pro dany klic pocital za relevantni. Klic, ktery tu NENI (napr. kdyz
-# se hleda rovnou nazev tematu), se ZAMERNE nefiltruje — fail-safe, at se
-# nezahodi vsechno kvuli chybejici rubrice.
+# aby se pro dany klic pocital za relevantni. Klic, ktery tu NENI, se v
+# `_je_relevantni` nefiltruje — od 12. 10. se ale k hledani vubec nedostane
+# (HANS_TOOLSCOUT_KEY_RUBRIC_V1, `_klic_rubriky`): klice mimo rubriky
+# (sports, music, designer) davaly jen nejstahovanejsi obecne modely.
 _RELEVANCE = {
     "audio":  ("audio", "music", "sound", "speech", "midi", "voice", "song",
                "acoustic"),
@@ -264,6 +265,30 @@ def _je_relevantni(cand: dict, keyword: str) -> bool:
         return True
     hay = ((cand.get("name") or "") + " " + (cand.get("desc") or "")).lower()
     return any(s in hay for s in slova)
+
+
+def _klic_rubriky(kw: str, topic: str) -> str:
+    """HANS_TOOLSCOUT_KEY_RUBRIC_V1 — klíč, pod kterým se smí hledat.
+
+    Klíč od modelu platí jen tehdy, je-li to známá rubrika (`_RELEVANCE`);
+    jinak rozhodne deterministická mapa témat. Prázdný výsledek = pro téma
+    neznám druh nástroje → poctivé „nenavrhuji“, ne nejpopulárnější model.
+    """
+    k = (kw or "").strip().lower()
+    if k in _RELEVANCE:
+        return k
+    k = _keyword_hint(topic)
+    return k if k in _RELEVANCE else ""
+
+
+def _uz_mam_rubriku(kw: str, nainstalovane) -> list:
+    """HANS_TOOLSCOUT_KEY_RUBRIC_V1 — nainstalované modely, které podle jména
+    patří do rubriky klíče (např. kodér pro `coder`). Když nějaký je, další se
+    nenavrhuje: bez toho by mapa u webu nabízela slabší kodéry, než jaký už
+    dílo staví (změřeno 12. 10.)."""
+    slova = _RELEVANCE.get((kw or "").strip().lower()) or ()
+    return sorted(n for n in (nainstalovane or ())
+                  if any(s in n.lower() for s in slova))
 
 
 def _keyword_hint(topic: str) -> str:
@@ -331,7 +356,12 @@ def _rationale(config: dict, topic: str, cand: dict) -> str:
             system=sys, config=config, timeout=30, keep_alive=-1,
             options={"temperature": 0.4, "num_predict": 90})
         if raw and raw.strip():
-            return raw.strip()
+            raw = raw.strip()
+            if raw[-1] not in ".!?…":      # strop tokenů usekl větu → po šev
+                _sev = max(raw.rfind(". "), raw.rfind("! "), raw.rfind("? "))
+                if _sev > 40:
+                    raw = raw[:_sev + 1]
+            return raw
     except Exception as e:
         _log.debug("toolscout rationale: %s", e)
     return ("Navrhuji %s (%s, ~%s GB, %s stažení, %s). %s.%s" % (
@@ -486,7 +516,17 @@ def propose_tool(config: dict, db_path: str, topic: str,
     store = ToolStore(db_path)
     if store.has_for_topic(topic):
         return {"status": "idle", "reason": "návrh pro téma už existuje"}
-    kw = _derive_keyword(config, topic)
+    _kw_model = _derive_keyword(config, topic)
+    kw = _klic_rubriky(_kw_model, topic)
+    if kw != _kw_model:
+        _log.info("HANS_TOOLSCOUT_KEY_RUBRIC_V1: klíč '%s' není rubrika → '%s' "
+                  "(téma '%s')", _kw_model, kw or "nic", topic)
+    if not kw:
+        store.mark_none(topic, _kw_model, note=(
+            "Pro tohle téma neznám druh nástroje, který by dílo vytvořil lépe "
+            "než modely, které už mám. Nástroj nenavrhuji."))
+        return {"status": "none",
+                "reason": "pro téma neznám druh nástroje (klíč „%s“)" % _kw_model}
     scouted = scout_tools_for_topic(config, topic, kw)
     cands = scouted["candidates"]
     if not cands:
@@ -512,6 +552,13 @@ def propose_tool(config: dict, db_path: str, topic: str,
     # tedy DOWNGRADE. `on_demand` je přitom běžný režim (chat se dočasně
     # odloží jako při herním módu), není důvod se mu vyhýbat za cenu kvality.
     _mam = installed_models(config)
+    _uz = _uz_mam_rubriku(kw, _mam)
+    if _uz:
+        store.mark_none(topic, kw, note=(
+            "Nástroj pro tuhle doménu už na počítači mám (%s), další "
+            "nenavrhuji." % ", ".join(_uz)))
+        return {"status": "none",
+                "reason": "nástroj rubriky „%s“ už mám: %s" % (kw, ", ".join(_uz))}
     if _mam:
         # Nenavrhuj, co už na PC je — jinak hrozí „vezmi si menší verzi toho,
         # co máš". Prázdná množina = PC dole → radši nefiltrovat než zahodit
