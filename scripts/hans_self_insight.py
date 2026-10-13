@@ -210,13 +210,17 @@ def format_evidence_for_prompt_en(evidence: dict, max_items: int = 30) -> str:
         # experiment    = YOU yourself ran a self-experiment (turned yourself
         #                 offline briefly, with auto-resume; your own initiative)
         src_label = {
-            "brain_down_up": "brain_down/up (server unreachable)",
+            "brain_down_up": "language-model PC unreachable (usually "
+                             "switched off or asleep)",
             "game_mode_pair": "game_mode ON→OFF (toggled)",
             "experiment": "experiment (you ran this yourself, on purpose)",
         }.get(src, src)
         lines.append(f"  • {s} → {e}  ({h:.1f}h)  [source: {src_label}]")
     lines.append("")
-    lines.append("(2) GAME_MODE EVENTS — when you turned game mode ON/OFF:")
+    lines.append("(2) GAME_MODE EVENTS — when game mode was switched ON/OFF "
+                 "(someone in the household plays a game on the PC and your "
+                 "language model is paused meanwhile; you are not the one "
+                 "playing):")
     gs = evidence.get("game_mode_events", [])[:max_items]
     if not gs:
         lines.append("  (none)")
@@ -225,12 +229,12 @@ def format_evidence_for_prompt_en(evidence: dict, max_items: int = 30) -> str:
         state = {"on": "ON", "off": "OFF"}.get(g.get("state"), "?")
         lines.append(f"  • {t}  {state}")
     lines.append("")
-    lines.append("(3) TIME OVERLAPS — when a brain_down_up window and a "
+    lines.append("(3) TIME OVERLAPS — when a PC-unreachable window and a "
                  "game_mode ON→OFF interval actually intersected (factual "
                  "co-occurrence, no interpretation):")
     overlaps = evidence.get("overlaps", [])[:max_items]
     if not overlaps:
-        lines.append("  (none — no brain_down_up window intersected any "
+        lines.append("  (none — no PC-unreachable window intersected any "
                      "game_mode interval in this data)")
     for o in overlaps:
         gs2 = _dt.datetime.fromtimestamp(o["game_start"]).strftime("%m-%d %H:%M")
@@ -429,14 +433,21 @@ def _format_evidence_social_en(evidence: dict, max_items: int = 20) -> str:
                  "Mr. for male):"
                  % evidence.get("window_days", 30))
     lines.append("")
+    # HANS_SELF_INSIGHT_LABELS_V1 — „camera ticks“ model vyložil jako
+    # fotografování a počet jako míru aktivity člověka
     lines.append("(1) PEOPLE YOU SAW — how many distinct days each person was "
-                 "in your view, and how many total camera ticks:")
+                 "in your view, and how many times YOUR camera recognized "
+                 "their face (automatic recognitions by you; nobody took "
+                 "photos). The count depends on where the person sits and "
+                 "how reliably you recognize that face, so it does NOT "
+                 "measure how active or present the person is — do not "
+                 "compare people by it:")
     ppl = evidence.get("person_days", [])[:max_items]
     if not ppl:
         lines.append("  (none)")
     for p in ppl:
         lines.append(f"  • {_person_label(p['name'])}: {p['days_seen']} days, "
-                     f"{p['ticks']} ticks")
+                     f"{p['ticks']} recognitions")
     lines.append("")
     lines.append("(2) CHATS — direct chat exchanges per person "
                  "(human_chat entries in diary):")
@@ -447,8 +458,8 @@ def _format_evidence_social_en(evidence: dict, max_items: int = 20) -> str:
         lines.append(f"  • {_person_label(c['person'])}: {c['chats']} chats")
     lines.append("")
     ut = evidence.get("unknown_ticks", 0)
-    lines.append("(3) UNKNOWN FACE TICKS — camera saw a face you couldn't "
-                 f"identify: {ut} ticks")
+    lines.append("(3) UNKNOWN FACES — times your camera saw a face you "
+                 f"couldn't identify: {ut}")
     lines.append("")
     lines.append("(4) YOUR RECENT NOTES ABOUT PEOPLE "
                  "(characterization_update snippets):")
@@ -754,7 +765,10 @@ def _collect_evidence_physical(diary_db_path: str, days: int = 30) -> dict:
                 _open = r["ts"]
             elif r["event_type"] == "sleep_end" and _open is not None:
                 dur = r["ts"] - _open
-                if dur > 0:
+                # kratší okno není spánek, ale zbytek noci po restartu služby
+                # (změřeno 13. 10.: s popiskem „přerušeno restartem“ z toho
+                # model udělal „spánek přerušovaný většinu nocí“)
+                if dur >= 3600:
                     out["sleep_windows"].append({
                         "start_ts": _open, "end_ts": r["ts"],
                         "dur_h": dur / 3600})
@@ -795,17 +809,20 @@ def _format_evidence_physical_en(evidence: dict, max_items: int = 15) -> str:
         t = _dt.datetime.fromtimestamp(b["ts"]).strftime("%m-%d %H:%M")
         lines.append(f"  • [{t}] {b['title']}: {b['snippet']}")
     lines.append("")
-    lines.append("(2) BRAIN AVAILABILITY — how many times your remote brain "
-                 "(the LLM server) went down / stayed down / came back:")
-    lines.append(f"  • brain_down (initial detection): "
+    lines.append("(2) LANGUAGE-MODEL AVAILABILITY — your language model runs "
+                 "on a separate PC that is routinely switched off at night. "
+                 "Diary notes about it:")
+    lines.append(f"  • times the PC became unreachable: "
                  f"{evidence.get('brain_down_count', 0)}")
-    lines.append(f"  • brain_still_down (~5-min repeat while down): "
+    lines.append(f"  • 'still unreachable' reminder notes (one every ~5 min "
+                 f"while it is off, so this number is large by design): "
                  f"{evidence.get('brain_still_down_count', 0)}")
-    lines.append(f"  • brain_up (came back online): "
+    lines.append(f"  • times it came back: "
                  f"{evidence.get('brain_up_count', 0)}")
     lines.append("")
     lines.append("(3) SLEEP WINDOWS — how long you slept "
-                 "(sleep_start → sleep_end pairs):")
+                 "(sleep_start → sleep_end pairs; nights when your service "
+                 "was restarted are not listed, so gaps mean nothing):")
     sw = evidence.get("sleep_windows", [])[:max_items]
     if not sw:
         lines.append("  (none)")
@@ -864,7 +881,12 @@ _VOICE_TASK_CS = (
     "vlastních datech). Přelož ho do češtiny SVÝM hlasem — klidně, věcně, "
     "první osoba, žádné teatrální gesto, žádný pathos. Zachovaj VŠECHNA "
     "fakta a nuance z originálu, jen je vyslov česky, tak jak bys je vyslovil "
-    "sám. Bez emoji, bez seznamů, prostě text 4-8 vět."
+    "sám. Bez emoji, bez seznamů, prostě text 4-8 vět.\n"
+    # HANS_SELF_INSIGHT_LABELS_V1 (13. 10.) — audit 24 vhledů: 7 mělo zkomolený
+    # údaj, skoro vždy číslo přepsané slovy (70–72 jako „sedmdesáti až
+    # sedmnácti“, rok 2026 jako „tisíce pětadvacátého“, azbuka v čísle).
+    "Čísla, data a časy piš ČÍSLICEMI přesně jako v originále (72, 14. 9., "
+    "03:15, 289) — nikdy je nepřepisuj slovy a neměň je."
 )
 
 
@@ -948,6 +970,7 @@ def _voice_cs(config: dict, insight_en: str) -> Optional[str]:
 # HANS_SELF_INSIGHT_UNSTICK_V1 - (lens, hash) uz zalogovane na INFO v tomhle
 # procesu; dalsi vyskyty jdou na DEBUG.
 _SKIP_LOGGED = set()
+_DEFER_LOGGED = set()      # pohledy, u nichž už odklad zazněl na INFO
 
 
 def _evidence_hash(ev: dict, lens_id: str = "offline_game") -> str:
@@ -1060,12 +1083,18 @@ def run_analysis(diary_db_path: str, config: dict,
         _log.warning("self_insight: DB init: %s", e)
 
     evidence_en = format_fn(ev)
-    _log.info("self_insight[%s]: reasoning krok (deepseek-r1)…", lens_id)
+    # za noc se spícím PC to dřív dalo 179 dvojic řádků (pokus každou minutu)
+    _ticho = lens_id in _DEFER_LOGGED
+    _log.log(logging.DEBUG if _ticho else logging.INFO,
+             "self_insight[%s]: reasoning krok…", lens_id)
     insight_en = _reason_en(config, evidence_en)
     if not insight_en:
-        _log.info("self_insight[%s]: reasoning LLM offline / prázdný → deferred",
-                  lens_id)
+        _log.log(logging.DEBUG if _ticho else logging.INFO,
+                 "self_insight[%s]: reasoning LLM offline / prázdný → deferred "
+                 "(další pokusy už jen na DEBUG)", lens_id)
+        _DEFER_LOGGED.add(lens_id)
         return None
+    _DEFER_LOGGED.discard(lens_id)
     _log.info("self_insight[%s]: voice krok (hans-czech)…", lens_id)
     insight_cs = _voice_cs(config, insight_en)
     if not insight_cs:

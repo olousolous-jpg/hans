@@ -107,6 +107,16 @@ def cisty_nazev(nazev: str) -> str:
     return re.sub(r"\s+", " ", n).strip(" .\"„“'")[:80]
 
 
+# KOLAC_PODNETY_DALSI_V1 (13. 10.) — první noc: z 10 pokusů o podnět vyšly 4
+# a každý neúspěch znamenal volný hovor (podíl nového ~14 % místo 50 %).
+# Dvě páky: neúspěšný podnět hned střídá další (`podnety_pokusu`) a dlouhé
+# složené názvy se do zásoby neberou — heslo encyklopedie bývá krátké, kdežto
+# vymyšlené názvy studií mají 5 a víc slov (2 ze 2 se nedohledaly).
+def prilis_slozeny(nazev: str, max_slov: int = 4) -> bool:
+    slova = re.findall(r"[^\W_]+", nazev or "")
+    return len(slova) > max_slov
+
+
 def zasoba(db: str) -> int:
     try:
         c = _conn(db)
@@ -161,6 +171,8 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
             nazev = cisty_nazev(nv.get("nazev", "")) if isinstance(nv, dict) else ""
             typ = str(nv.get("typ", "pojem")).strip().lower() if isinstance(nv, dict) else "pojem"
             if len(nazev) < 3 or nazev.lower() in uz:
+                continue
+            if prilis_slozeny(nazev, int(_cfg(config).get("podnety_max_slov", 4))):
                 continue
             uz.add(nazev.lower())
             stav = "v_pameti" if v_pameti(db, nazev) else "novy"
@@ -291,21 +303,37 @@ def poloz(config: dict, db: str, asker: str):
         _log.info("KOLAC_PODNETY_V1: v čekárně je %d+ nálezů → dnes už nic nového",
                   strop)
         return None
-    for _ in range(3):                    # pár pokusů, kdyby věc mezitím znal
+    pokusu = max(1, int(_cfg(config).get("podnety_pokusu", 3)))
+    max_slov = int(_cfg(config).get("podnety_max_slov", 4))
+    hledano = 0
+    for _ in range(pokusu + 6):           # strop i pro věci vyřazené bez hledání
+        if hledano >= pokusu:
+            break
         p = vyber(db)
         if not p:
             return None
         if v_pameti(db, p["nazev"]):
             _oznac(db, p["id"], "v_pameti")
             continue
+        if prilis_slozeny(p["nazev"], max_slov):
+            _oznac(db, p["id"], "nenalezeno")
+            continue
+        hledano += 1
         ot = otazka(p)
         odp = hf.lookup_now(config, db, p["nazev"], ot, asker=asker)
         if not odp:
-            # mozek dole se pozná jinde; tady heslo neexistuje nebo se nestáhlo
+            # výpadek modelu (i herní mód) není vina podnětu: nic neoznačovat,
+            # jinak by tři pokusy po sobě vyjedly zásobu
+            try:
+                from scripts.ollama_client import brain_available
+                if not brain_available(config):
+                    return None
+            except Exception:
+                return None
             _oznac(db, p["id"], "nenalezeno")
-            _log.info("KOLAC_PODNETY_V1: '%s' se nedohledalo → volný hovor",
+            _log.info("KOLAC_PODNETY_V1: '%s' se nedohledalo → zkusím další",
                       p["nazev"])
-            return None
+            continue
         nal = hf.recent_pending_for_topic(db, p["nazev"]) or {}
         heslo = nal.get("resolved_title") or ""
         if heslo and not hf._titles_align(p["nazev"], heslo):
@@ -317,7 +345,7 @@ def poloz(config: dict, db: str, asker: str):
             _oznac(db, p["id"], "nenalezeno", heslo)
             _log.info("KOLAC_PODNETY_V1: '%s' → heslo '%s' nesedí, zahozeno",
                       p["nazev"], heslo)
-            return None
+            continue
         # jen u osob: jmenovci jsou past u jmen; u míst a pojmů kontrola
         # zahazovala i správná hesla (Flossenbürg k Norimberskému procesu)
         if p.get("typ") == "osoba" and not souvisi_s_tematem(
@@ -328,10 +356,11 @@ def poloz(config: dict, db: str, asker: str):
             _oznac(db, p["id"], "nenalezeno", heslo)
             _log.info("KOLAC_PODNETY_V1: '%s' → heslo '%s' nesouvisí s tématem "
                       "'%s', zahozeno", p["nazev"], heslo, p.get("tema") or "")
-            return None
+            continue
         _oznac(db, p["id"], "polozeno", heslo)
         _log.info("KOLAC_PODNETY_V1: podnět '%s' (%s) → heslo '%s', čeká na "
                   "noční ověření", p["nazev"], p.get("tema") or "", heslo)
         return {"otazka": ot, "odpoved": odp, "heslo": heslo,
                 "nazev": p["nazev"], "tema": p.get("tema") or ""}
+    _log.info("KOLAC_PODNETY_V1: %d podnětů po sobě nevyšlo → volný hovor", hledano)
     return None
