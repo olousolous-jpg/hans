@@ -49,7 +49,7 @@ def _cesta_db(cfg: dict) -> str:
             or "data/hans_diary.db")
 
 
-def postav_handler(cfg: dict):
+def postav_handler(cfg: dict, pozadi: bool = False):
     """Napojení jako v provozu. Co se nepovede, hlásí se nahlas — tichý
     výpadek RAG by z testu udělal měření něčeho jiného."""
     from scripts.openwebui_direct_handler import OpenWebUIDirectHandler
@@ -57,7 +57,24 @@ def postav_handler(cfg: dict):
     from scripts.hans_idle import HansIdle
 
     h = OpenWebUIDirectHandler(cfg)
-    h._hans_idle = HansIdle(cfg, KodiClient(cfg), h)
+    # TEST_BEZ_POZADI_V1 (13. 10.) — `HansIdle` při vzniku spouští vlákna
+    # provozu (noční úlohy, hlídač spánku a zdraví, buzení PC, fronta těžkých
+    # úloh, háčky syntézy). Zkušební proces tak byl DRUHÝ Hans nad ostrou
+    # databází: 13. 10. se v něm při čtyřminutovém měření rozjela destilace
+    # a běžící Hans hlásil „database is locked“. Rozhovor ta vlákna nepotřebuje,
+    # proto se po dobu stavby nespustí žádné.
+    if pozadi:
+        h._hans_idle = HansIdle(cfg, KodiClient(cfg), h)
+    else:
+        import threading
+        _start, _preskoceno = threading.Thread.start, []
+        threading.Thread.start = lambda self: _preskoceno.append(self.name)
+        try:
+            h._hans_idle = HansIdle(cfg, KodiClient(cfg), h)
+        finally:
+            threading.Thread.start = _start
+        print("ℹ️  zkušební proces bez vláken provozu (%d nespuštěno)"
+              % len(_preskoceno))
     try:
         from scripts.hans_knowledge import HansKnowledge
         h.set_knowledge(HansKnowledge(cfg))
@@ -160,7 +177,10 @@ def main() -> int:
 
     # ČERSTVÉ jméno: historie předchozího běhu mění chování routeru.
     jmeno = a.jmeno or ("Test%s" % time.strftime("%H%M%S"))
-    cfg = json.loads(Path("config.json").read_text(encoding="utf-8"))
+    # holý config.json je od rozdělení configu VEŘEJNÁ půlka bez adres → model
+    # se hledal na localhostu a test mlčky vracel „(nic)“
+    from scripts import config_io
+    cfg = config_io.load()
     db = _cesta_db(cfg)
     znacka = sqlite3.connect(db).execute(
         "SELECT MAX(id) FROM diary").fetchone()[0] or 0

@@ -462,5 +462,83 @@ def knowledge_check_bypass(db_path: str, user_text: str,
             "Kdybyste chtěl, mohu si to zařadit do studia — stačí říct "
             "'nastuduj %s'." % (topic, oslov, topic))
 
+# HANS_FACTS_BY_TITLE_V1 (13. 10.) — výpis faktů z článku podle TITULU ve větě.
+# Měřeno na 58 zkouškových otázkách (název článku v otázce): hledaný údaj byl
+# v podkladu jen u 33 — cesty `entita_c1`, `zapisky_pred_entitou` a „bez opory“
+# výpis faktů nepřikládaly, ač uložený je. S blokem podle titulu 56 z 58; na
+# 1 089 reálných větách dostalo blok 13 vět, všechny se správným titulem.
+_FAKTA_TITUL_STOP = {"film", "clanek", "ktery", "ktera", "ktere", "podle",
+                     "tematu", "uvadi", "jake", "jaky", "jaka", "kolik",
+                     "byla", "bylo", "byl"}
+_fakta_titul_cache = {"ts": 0.0, "db": "", "vypisy": {}, "tituly": {}}
+
+
+def _ft_kmeny(s: str, mn: int = 3) -> set:
+    return {w[:5] for w in re.findall(r"[^\W_]+", _hr._fold(s or ""))
+            if len(w) >= mn and w not in _FAKTA_TITUL_STOP}
+
+
+def _ft_nacti(db_path: str) -> tuple:
+    c = _fakta_titul_cache
+    if c["db"] == db_path and time.time() - c["ts"] < 600:
+        return c["vypisy"], c["tituly"]
+    vypisy: dict = {}
+    conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3)
+    try:
+        for title, note in conn.execute(
+                "SELECT title, note FROM diary WHERE event_type='web_read' "
+                "AND note LIKE '[%] Fakta z%' ORDER BY id"):
+            radky = vypisy.setdefault(title or "", [])
+            for r in str(note or "").splitlines()[1:]:
+                r = r.strip()
+                if r and r not in radky:
+                    radky.append(r)
+    finally:
+        conn.close()
+    tituly = {t: _ft_kmeny(t) for t in vypisy if t}
+    c.update(ts=time.time(), db=db_path, vypisy=vypisy, tituly=tituly)
+    return vypisy, tituly
+
+
+def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
+    """Tituly článků s výpisem faktů, které věta jmenuje: všechna slova titulu
+    jsou ve větě (kmenem); jednoslovný titul musí ve větě začínat slovo; delší
+    titul má přednost před svým kratším dvojníkem."""
+    try:
+        _vypisy, tituly = _ft_nacti(db_path)
+    except Exception:
+        return []
+    kv = _ft_kmeny(veta, mn=2)
+    fv = _hr._fold(veta or "")
+    out = []
+    for t, kt in tituly.items():
+        if not kt or not kt <= kv:
+            continue
+        ft = _hr._fold(t)
+        if len(kt) == 1 and not re.search(
+                r"(?<!\w)%s" % re.escape(ft[:max(4, len(ft) - 2)]), fv):
+            continue
+        out.append(t)
+    return [t for t in out
+            if not any(t != u and tituly[t] < tituly[u] for u in out)]
+
+
+def fakta_podle_titulu(db_path: str, veta: str, strop: int = 12) -> tuple:
+    """(tituly, blok). Řádky výpisu řazené podle shody slov s otázkou, nejvýš
+    `strop`. Prázdné, když věta žádný titul nejmenuje."""
+    ts = fakta_tituly_ve_vete(db_path, veta)
+    if not ts:
+        return [], ""
+    vypisy, _t = _ft_nacti(db_path)
+    kv = _ft_kmeny(veta)
+    radky = []
+    for t in ts:
+        for i, r in enumerate(vypisy.get(t, [])):
+            radky.append((-len(_ft_kmeny(r) & kv), i, r))
+    radky.sort()
+    blok = "\n".join("- " + r for _s, _i, r in radky[:strop])
+    return ts, blok
+
+
 # ROZDELENI_PRIKAZU_V1 — až na konci, viz hlavička
 from scripts import hans_recall as _hr  # noqa: E402

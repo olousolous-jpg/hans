@@ -895,6 +895,27 @@ class FaktaMixin:
     def _bez_tazatele(self, text) -> str:
         return self._ASKER_PFX.sub("", str(text or ""))
 
+    def _fakta_podle_titulu(self, text: str) -> str:
+        """HANS_FACTS_BY_TITLE_V1 — blok faktů z článku, jehož titul věta
+        jmenuje; prázdné, když žádný. Vypínač `grounding.facts_by_title`."""
+        try:
+            if not bool((self.config.get("grounding", {}) or {})
+                        .get("facts_by_title", True)):
+                return ''
+            from scripts.hans_recall import fakta_podle_titulu
+            db = (self.config.get("hans_idle", {}) or {}).get(
+                "diary_db", "data/hans_diary.db")
+            tituly, blok = fakta_podle_titulu(db, self._bez_tazatele(text))
+            if not blok:
+                return ''
+            logging.getLogger(_h.__name__).info(
+                'HANS_FACTS_BY_TITLE_V1: %s → %d řádků faktů pro %r',
+                ', '.join(tituly)[:80], blok.count('\n') + 1, str(text)[:50])
+            return ('Fakta z článku, který jsi o tom četl („%s“):\n%s'
+                    % (', '.join(tituly), blok))
+        except Exception:
+            return ''
+
     def _entity_facts_line(self, text: str) -> str:
         """HANS_ENTITY_FACTS_ALSO_WITH_NOTES_V1 — jen řádek strukturovaných
         faktů k entitě z dotazu (bez glosy). Prázdné, když entita není nebo

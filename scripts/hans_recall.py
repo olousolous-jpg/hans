@@ -823,6 +823,7 @@ from scripts.hans_recall_znalost import _hlavni_slovo_v_pameti   # ROZDELENI_PRI
 
 
 from scripts.hans_recall_znalost import knowledge_check_bypass   # ROZDELENI_PRIKAZU_V1 — přesunuto
+from scripts.hans_recall_znalost import fakta_podle_titulu, fakta_tituly_ve_vete   # HANS_FACTS_BY_TITLE_V1
 
 
 from scripts.hans_recall_osebe import _popis_dila   # ROZDELENI_PRIKAZU_V1 — přesunuto

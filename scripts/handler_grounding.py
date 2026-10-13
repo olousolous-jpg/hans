@@ -864,6 +864,10 @@ class GroundingMixin:
                 _fl = self._entity_facts_line(ctx._q_for_retrieval)
                 if _fl:
                     _kb = _kb + '\n' + _fl
+                _ft = self._fakta_podle_titulu(   # HANS_FACTS_BY_TITLE_V1
+                    str(ctx._q_for_retrieval or ctx._text))
+                if _ft:
+                    _kb = _kb + '\n\n' + _ft
                 self._vysledek_groundingu('grounded', 'zapisky_pred_entitou')
                 return _kb
             # C1: RAG prázdné, ale entita ve store → autoritativní fakt
@@ -875,7 +879,10 @@ class GroundingMixin:
                 # nálepka byla `chatlog_neni_fakt` — s filtrem chatlogů to
                 # nemá nic společného a 20.8. to svedlo diagnózu na RAG.
                 self._vysledek_groundingu('grounded', 'entita_c1')
-                return '\n\n' + _h.ANTIKONFAB + '\n\n' + ctx._ent_fact
+                _ft = self._fakta_podle_titulu(   # HANS_FACTS_BY_TITLE_V1
+                    str(ctx._q_for_retrieval or ctx._text))
+                return ('\n\n' + _h.ANTIKONFAB + '\n\n' + ctx._ent_fact
+                        + (('\n\n' + _ft) if _ft else ''))
             # HANS_KNOWLEDGE_FTS_V1 — tudy vede REÁLNÁ cesta k abstinenci
             # (ověřeno v logu 6.8.: „žádná shoda pod prahem → G3C").
             # Původní patch mířil jen na druhé místo níž a NIC neopravil.
@@ -888,6 +895,13 @@ class GroundingMixin:
             if _kb:
                 self._vysledek_groundingu('grounded', 'zapisky_fts')
                 return _kb
+            # HANS_FACTS_BY_TITLE_V1 — zápisky ani entita nic, ale věta jmenuje
+            # článek, ke kterému je uložený výpis faktů → odpověz z něj
+            _ft = self._fakta_podle_titulu(
+                str(ctx._q_for_retrieval or ctx._text))
+            if _ft:
+                self._vysledek_groundingu('grounded', 'fakta_titul')
+                return '\n\n' + _h.ANTIKONFAB + '\n\n' + _ft
             # HANS_REFLECTIVE_ASK_V2 (3.9.) — ÚVAHOVÁ otázka se sem nesmí
             # propadnout. `ANTIKONFAB_NOFACTS` říká modelu „nemáš fakta,
             # přiznej to", jenže dotaz na vlastní názor žádná fakta
