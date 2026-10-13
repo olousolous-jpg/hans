@@ -2045,9 +2045,15 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         # („a“, „tak“, „ok“). Sdílený predikát agenta se nemění.
                         # 📏 1 356 reálných vět: 1 nová (otázka); 1 317 vět
                         # tazatele: 21 nových, všechny otázky; rozkazy beze změny.
+                        # HANS_LOOKUP_REQUEST_REWRITE_V1 (13. 10.) — výslovná žádost
+                        # o dohledání uprostřed delší zdvořilé věty („…chtěla bych
+                        # se zeptat – mohl byste mi zjistit něco o X?“) se brala
+                        # jako věta, která se na nic neptá, a k dohledání nedošlo
+                        from scripts.hans_intent import zada_dohledani as _zd0
                         if (_ar is not None and not _ar._looks_like_request(
                                 ctx._raw_message)
-                                and not _a1_otazka_bez_otazniku(ctx._raw_message)):
+                                and not _a1_otazka_bez_otazniku(ctx._raw_message)
+                                and not _zd0(ctx._raw_message)):
                             _skip_a1 = True
                             logging.getLogger(__name__).info(
                                 'HANS_A1_ONLY_FOR_QUESTIONS_V1: A1 přeskočena '
@@ -2065,8 +2071,14 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     try:
                         from scripts.hans_intent import zada_dohledani
                         from scripts.hans_convindex import kotva_tematu
-                        if zada_dohledani(ctx._raw_message) and kotva_tematu(
-                                ctx._raw_message):
+                        # HANS_LOOKUP_REQUEST_REWRITE_V1 (13. 10.) — předmět
+                        # hledej i v přepsané větě: jméno psané malým
+                        # kotva v původní větě nepozná, přepis ho má velkým
+                        # („muzes mi zjistit neco o <jméno malým>“ → z hlavy)
+                        _f1q = getattr(self, '_f1_query', None) or ''
+                        if zada_dohledani(ctx._raw_message) and (
+                                kotva_tematu(ctx._raw_message)
+                                or (_f1q and kotva_tematu(_f1q))):
                             _zada = True
                             ctx._a1_abstain = True
                             logging.getLogger(__name__).info(

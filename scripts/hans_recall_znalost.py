@@ -473,8 +473,23 @@ _FAKTA_TITUL_STOP = {"film", "clanek", "ktery", "ktera", "ktere", "podle",
 _fakta_titul_cache = {"ts": 0.0, "db": "", "vypisy": {}, "tituly": {}}
 
 
+# HANS_FACTS_TITLE_NORM_V1 (13. 10., z rozhovoru tazatele) — titul „X (výtvarná
+# škola)“ chtěl ve větě i slova ze závorky a zkratka s tečkami se rozpadla na
+# písmena, takže dva tituly s uloženými fakty blok nedostaly a odpověď si údaje
+# domyslela. Závorka je rozlišovací dovětek encyklopedie, ne součást jména.
+_FT_ZAVORKA = re.compile(r"\s*\([^)]*\)")
+_FT_ZKRATKA = re.compile(r"(?<!\w)((?:\w\.){2,}\w?)(?!\w)")
+
+
+def _ft_norm(s: str) -> str:
+    s = _FT_ZAVORKA.sub("", s or "")
+    return _FT_ZKRATKA.sub(lambda m: m.group(1).replace(".", ""), s)
+
+
 def _ft_kmeny(s: str, mn: int = 3) -> set:
-    return {w[:5] for w in re.findall(r"[^\W_]+", _hr._fold(s or ""))
+    # `_hr._fold` jen odstraňuje háčky — bez `lower()` seděl titul jen při
+    # shodné velikosti písmen („bauhaus“ × „Bauhaus“)
+    return {w[:5] for w in re.findall(r"[^\W_]+", _hr._fold(_ft_norm(s)).lower())
             if len(w) >= mn and w not in _FAKTA_TITUL_STOP}
 
 
@@ -509,15 +524,19 @@ def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
     except Exception:
         return []
     kv = _ft_kmeny(veta, mn=2)
-    fv = _hr._fold(veta or "")
+    fv = _hr._fold(_ft_norm(veta)).lower()
     out = []
     for t, kt in tituly.items():
         if not kt or not kt <= kv:
             continue
-        ft = _hr._fold(t)
-        if len(kt) == 1 and not re.search(
-                r"(?<!\w)%s" % re.escape(ft[:max(4, len(ft) - 2)]), fv):
-            continue
+        ft = _hr._fold(_ft_norm(t)).lower().strip()
+        if len(kt) == 1:
+            # jednoslovný titul: krátký jen jako celé slovo („rem“ není
+            # „řemeslo“), delší smí mít pádovou koncovku
+            vz = (r"(?<!\w)%s(?!\w)" % re.escape(ft) if len(ft) <= 4 else
+                  r"(?<!\w)%s" % re.escape(ft[:max(4, len(ft) - 2)]))
+            if not re.search(vz, fv):
+                continue
         out.append(t)
     return [t for t in out
             if not any(t != u and tituly[t] < tituly[u] for u in out)]
