@@ -2210,6 +2210,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     (ctx.system, ctx.user_message), name=ctx.name,
                     on_sentence=ctx.on_sentence, grounding=ctx._grounding)
         else:
+            try:   # MERENI_PODKLAD_V1 — jen s příznakem a jen u zkušební identity
+                from scripts.hans_mereni import nahraj_podklad as _np
+                _np(self.config, ctx.name, ctx._raw_message,
+                    getattr(self, '_f1_query', None) or '', ctx._grounding)
+            except Exception:
+                pass
             ctx.response = self._stream_message(
                 (ctx.system, ctx.user_message), name=ctx.name,
                 on_sentence=ctx.on_sentence, grounding=ctx._grounding)  # CHAT_ON_SENTENCE_V1

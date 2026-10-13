@@ -40,6 +40,13 @@ import sys
 import time
 from pathlib import Path
 
+# ZKUSEBNI_LOG_V1 (13. 10.) — zkušební běh nepíše do provozního logu: řádky
+# pravidel z testů se pletly do odečtů (`grep` nad data/system.log) a druhý
+# proces sdílel rotovaný soubor s běžícím Hansem. `scripts/logger.py` čte
+# HANS_LOG_FILE při importu, proto se nastavuje PŘED importem čehokoli ze scripts.
+import os
+os.environ.setdefault("HANS_LOG_FILE", "data/mereni/zkusebni.log")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
