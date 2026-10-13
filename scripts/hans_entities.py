@@ -512,6 +512,17 @@ class EntityStore:
         except Exception:
             return []
 
+    def _etypes(self) -> dict:
+        """HANS_ENTITY_RESOLVE_ONE_QUERY_V1 (13. 10.) — druh všech entit jedním
+        dotazem. `resolve` se na druh ptal přes `get()` u KAŽDÉHO klíče každé
+        entity: ~800 spojení do databáze a ~1,6 s na jednu větu (změřeno
+        profilem: 2 418 volání `get` na 3 věty)."""
+        try:
+            with self._conn(ro=True) as c:
+                return dict(c.execute("SELECT id, etype FROM entities").fetchall())
+        except Exception:
+            return {}
+
     def get(self, entity_id: int):
         try:
             with self._conn(ro=True) as c:
@@ -578,6 +589,7 @@ class EntityStore:
             return (_prefix_len(key_tok, q_tok)
                     >= _ratio * max(len(key_tok), len(q_tok)))
         best_id, best_score = None, 0
+        _etypy = self._etypes()   # HANS_ENTITY_RESOLVE_ONE_QUERY_V1
         for _id, keys in self._all_keys():
             for k in keys:
                 # HANS_ENTITY_SHORT_TOKEN_KEY_V1 (11. 9.) — VICESLOVNY KLIC
@@ -630,7 +642,7 @@ class EntityStore:
                 # Doloženo 4.8.: „namaluj Bud Spencer" → „Což takhle dát si
                 # ŠPENÁT" (spen|cer ↔ spen|at) → obraz Jiřího Sováka a Vladimíra
                 # Menšíka místo herce. Proto: surname jen pro osoby/postavy.
-                _et = (self.get(_id) or {}).get("etype")
+                _et = _etypy.get(_id)
                 # HANS_ENTITY_ENDS_PERSON_ONLY_V1 (12. 10.) — „stačí první
                 # a poslední slovo jména“ je pravidlo pro PROSTŘEDNÍ JMÉNA
                 # osob. U ostatních entit vynechané slovo bývá právě to
@@ -647,7 +659,7 @@ class EntityStore:
                 # etype filtr (HANS_ART_PULID_V1): omez na daný druh (např.
                 # 'osoba' → v „osoba + objekt" najdi osobu, ne přebíjející objekt)
                 _ok_etype = (etype is None
-                             or (self.get(_id) or {}).get("etype") == etype)
+                             or _etypy.get(_id) == etype)
                 # HANS_ENTITY_ADJ_MISMATCH_V1 (8. 9.) — JEDNOSLOVNÁ entita,
                 # která sama NENÍ přídavné jméno, se nesmí trefit na
                 # PŘÍDAVNÉ JMÉNO v dotazu. Doloženo 8. 9. rozhovorem:
