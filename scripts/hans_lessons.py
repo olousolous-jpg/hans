@@ -71,7 +71,13 @@ _JUDGE_SYS = (
     "Dostaneš úryvek rozhovoru člověka s postavou {persona_name}. Rozhodni, jestli "
     "v něm ČLOVĚK postavu {persona_name} OPRAVIL — tedy řekl nebo naznačil, že "
     "{persona_name} tvrdil něco nepravdivého, spletl se nebo si něco vymyslel. "
-    "Běžná otázka, pokyn, pochvala ani souhlas NENÍ oprava. Omluva nebo souhlas "
+    "Běžná otázka, pokyn, pochvala ani souhlas NENÍ oprava. "
+    # HANS_LESSON_JUDGE_MORE_V1 (13. 10.) — „víc jsi o něm nezjistil?“ soudce
+    # vzal jako opravu a uložila se lekce potlačující pravdivý údaj. Měřeno na
+    # 11 uložených lekcích + 2 žádostech o víc: 2 falešné pryč, skutečné beze změny.
+    "Žádost o další nebo podrobnější informace (například „víc o tom nemáš?“, "
+    "„nic dalšího jsi nezjistil?“) NENÍ oprava, ani když {persona_name} potom "
+    "odpoví obšírněji nebo jinak. Omluva nebo souhlas "
     "postavy {persona_name} sám o sobě NEDOKAZUJE, že ji člověk opravil. "
     "Odpověz jediným slovem: ANO nebo NE."
 )

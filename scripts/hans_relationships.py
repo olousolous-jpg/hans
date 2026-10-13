@@ -352,11 +352,15 @@ _log_refl = logging.getLogger("hans_relationship_reflection")
 # Hansovy VLASTNÍ texty, ve kterých se může zmínit o osobě.
 # DŮLEŽITÉ: žádný z těchto eventů není konverzace S osobou — všechny jsou
 # Hansovy vnitřní úvahy (s fiktivním Koláčem nebo nad případem).
+# HANS_CARD_EVIDENCE_ONLY_V1 (13. 10.) — audit dat: 3 ze 3 karet nesly
+# nepodložený závěr (počet záchytů kamery jako „neúnavná činnost“, členka
+# domácnosti jako „host“ s „možným alibi“ z detektivní hry) a karta jde do
+# chatového promptu té osoby. Párově 3 osoby × 2 běhy: staré zadání 5 ze 6 s vadou,
+# nové s předchozí poznámkou 4 ze 6 (staré domněnky se opisují), nové bez ní
+# 0 ze 6. Proto: hry s medvědem a případy do karty nejdou, počet záchytů se
+# neuvádí a předchozí poznámka se nepřikládá (`relationships.
+# reflection_previous_note`, výchozí False).
 _MENTION_EVENT_TYPES = (
-    "teddy_dialog",
-    "dialog_reflection",
-    "case_thought",
-    "case_resolution",
     "film_suggestion_accepted",  # KODI_FILM_SUGGEST_V1
 )
 
@@ -381,6 +385,10 @@ class RelationshipReflection:
                                           self._interval_days * 2))
         self._min_sightings = int(cfg.get("reflection_min_sightings", 3))
         self._rag_collection = cfg.get("rag_collection", "hans_identita")
+        self._previous_note = bool(cfg.get("reflection_previous_note", False))
+        self._genders = {str(k).lower(): (v or {}).get("gender", "")
+                         for k, v in (config.get("known_persons") or {}).items()
+                         if isinstance(v, dict)}
 
         self._diary_path = diary_path
         self._synthesis = synthesis
@@ -544,79 +552,65 @@ class RelationshipReflection:
             _log_refl.error("Sběr observations selhal pro %s: %s", person_id, e)
         return out
 
-    def _build_prompt_input(self, card, observations: dict) -> str:
-        """Sestaví textový vstup pro LLM."""
-        lines = []
+    def _vazba(self, pid) -> str:
+        """Jméno s rodem v závorce — bez něj model přehazoval „paní“ a „pana“."""
+        c = self._rels.get(str(pid))
+        jm = c.display_name if c and c.display_name else str(pid)
+        g = self._genders.get(str(pid).lower(), "")
+        return "%s (%s)" % (jm, g) if g else jm
 
-        # 1. Základní info
-        lines.append("[ZÁKLADNÍ INFO]")
-        lines.append(f"Jméno: {card.display_name}")
+    def _build_prompt_input(self, card, observations: dict) -> str:
+        """Sestaví textový vstup pro LLM (HANS_CARD_EVIDENCE_ONLY_V1)."""
+        lines = ["[ZÁKLADNÍ INFO]", f"Jméno: {card.display_name}"]
         if card.role:
-            lines.append(f"Role: {card.role}")
+            lines.append(f"Role: {card.role} (bydlí v tomto domě)")
         if card.family_links:
-            links_str = ", ".join(
-                f"{k}={v}" for k, v in card.family_links.items()
-            )
-            lines.append(f"Rodinné vazby: {links_str}")
+            parts = []
+            for k, v in card.family_links.items():
+                vs = v if isinstance(v, (list, tuple)) else [v]
+                parts.append("%s = %s" % (k, ", ".join(self._vazba(x) for x in vs)))
+            lines.append("Rodinné vazby: " + "; ".join(parts))
         lines.append("")
 
-        # 2. Předchozí poznámka
         lines.append("[PŘEDCHOZÍ POZNÁMKA]")
-        if card.characterization:
+        if self._previous_note and card.characterization:
             lines.append(card.characterization)
         else:
-            lines.append("(zatím prázdné — píšeš poprvé)")
+            lines.append("(žádná — píšeš jen z dnešních podkladů)")
         lines.append("")
 
-        # 3. Pozorování
-        lines.append("[POZOROVÁNÍ — co o osobě vím ze sledování kamerou]")
-        lines.append(f"(za posledních {self._lookback_days} dní)")
-
-        # Sightings — agregát + 5 příkladů s časem
+        lines.append("[POZOROVÁNÍ — kdy mě osoba míjela před kamerou]")
         sightings = observations.get("person_seen", [])
         if sightings:
-            lines.append(f"Setkání: {len(sightings)}× za období.")
-            # Rozložení po hodinách dne
+            dny = len({datetime.fromtimestamp(s[0]).date() for s in sightings})
             hours = [datetime.fromtimestamp(s[0]).hour for s in sightings]
-            morning = sum(1 for h in hours if 5 <= h < 12)
-            afternoon = sum(1 for h in hours if 12 <= h < 17)
-            evening = sum(1 for h in hours if 17 <= h < 22)
-            night = sum(1 for h in hours if h >= 22 or h < 5)
-            parts = []
-            if morning: parts.append(f"ráno {morning}×")
-            if afternoon: parts.append(f"odpoledne {afternoon}×")
-            if evening: parts.append(f"večer {evening}×")
-            if night: parts.append(f"v noci {night}×")
-            if parts:
-                lines.append("Doba: " + ", ".join(parts) + ".")
+            doby = {
+                "ráno": sum(1 for h in hours if 5 <= h < 12),
+                "odpoledne": sum(1 for h in hours if 12 <= h < 17),
+                "večer": sum(1 for h in hours if 17 <= h < 22),
+                "v noci": sum(1 for h in hours if h >= 22 or h < 5),
+            }
+            lines.append("Za posledních %d dní ve %d dnech; nejčastěji %s."
+                         % (self._lookback_days, dny, max(doby, key=doby.get)))
+            lines.append("(Kolikrát ji kamera zachytila, neuvádím — o tom, co "
+                         "dělá, to nic neříká.)")
+        else:
+            lines.append("(žádné)")
 
-        # MOJE VNITŘNÍ ÚVAHY — zařadíme JEN POKUD má osoba dost reálných dat
-        # (chat NEBO 5+ setkání). Bez kotvy reality si LLM tyto úvahy
-        # promítne na osobu jako její vlastnosti (problém ranné verze).
-        n_chats = len(observations.get(_HUMAN_CHAT_EVENT, []))
-        n_sightings = len(observations.get("person_seen", []))
-        include_inner = (n_chats >= 1
-                         or n_sightings >= MIN_SIGHTINGS_FOR_INNER_THOUGHTS)
+        mention_lines = []
+        for evt, hits in observations.items():
+            if evt == "person_seen" or evt == _HUMAN_CHAT_EVENT:
+                continue
+            for ts, title, note in hits[-6:]:
+                snippet = (note or title)[:200].strip().replace("\n", " ")
+                if snippet:
+                    mention_lines.append(f"  • {snippet}")
+        if mention_lines:
+            lines.append("")
+            lines.append("[DALŠÍ ZÁZNAMY — moje vlastní poznámky, ne její slova]")
+            lines.extend(mention_lines)
 
-        if include_inner:
-            mention_lines = []
-            for evt, hits in observations.items():
-                if evt == "person_seen" or evt == _HUMAN_CHAT_EVENT:
-                    continue
-                for ts, title, note in hits[-6:]:
-                    snippet = (note or title)[:200].strip().replace("\n", " ")
-                    if snippet:
-                        mention_lines.append(f"  • {snippet}")
-
-            if mention_lines:
-                lines.append("")
-                lines.append("[MOJE VNITŘNÍ ÚVAHY — moje vlastní myšlenky o této osobě,")
-                lines.append(" ne věci, které řekla nebo udělala]")
-                lines.extend(mention_lines)
-
-        # NAŠE ROZHOVORY — skutečné chat/voice exchanges s touto osobou.
-        # Plný text obou stran, max 8 nejnovějších, kvůli kontextu delší
-        # snippet než u vnitřních úvah.
+        # NAŠE ROZHOVORY — skutečné výměny s touto osobou, max 8 nejnovějších.
         chat_hits = observations.get(_HUMAN_CHAT_EVENT, [])
         if chat_hits:
             lines.append("")

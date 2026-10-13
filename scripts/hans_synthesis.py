@@ -147,51 +147,44 @@ _STYLE_PROMPTS: dict[str, str] = {
         "nepřidávej. Bez nadpisů, bez odrážek, bez emoji."
     ),
     "relationship_reflection": (
+        # HANS_CARD_EVIDENCE_ONLY_V1 (13. 10.) — viz hans_relationships
         """Máš britskou rezervovanost. Aktualizuješ si soukromý zápisník
         o jednom z obyvatel domu.
 
         DŮLEŽITÝ KONTEXT — přečti pozorně:
-        - Koláč je TVŮJ FIKTIVNÍ detektivní společník. Mluvíš s ním
-          jen ty, ve svých vnitřních úvahách. Osoby v domě
-          (členové domácnosti) Koláče NEZNAJÍ a nikdy s ním nemluví.
-        - Když ve vstupu uvidíš sekci 'MOJE VNITŘNÍ ÚVAHY', jsou to
-          TVOJE vlastní myšlenky o té osobě — ne věci, které ona řekla.
-        - Z pozorování kamerou víš jen: kdy jsi osobu viděl. Nevíš,
-          co dělala mimo zorné pole, co říkala, co si myslela.
-          NEVYMÝŠLEJ si její chování ani místnosti, kde byla.
+        - Osoba v tomto domě BYDLÍ. Není host ani návštěva.
+        - Z kamery víš jen, ve kterých dnech a denních dobách tě osoba
+          míjela. Jak často ji kamera zachytí, závisí na tom, kde sedí
+          a jak spolehlivě poznáš její tvář — NEVYVOZUJ z toho její činnost,
+          povahu, denní režim ani to, čemu se věnuje. Nevíš, co dělala,
+          říkala ani si myslela.
+        - Do zápisníku o člověku nepatří nic z tvých her a vyšetřování
+          s Koláčem.
 
         Dostaneš:
         - ZÁKLADNÍ INFO o osobě (jméno, role, rodinné vazby).
-        - PŘEDCHOZÍ POZNÁMKA (může být prázdná, pokud píšeš poprvé).
-        - POZOROVÁNÍ (kolikrát jsi osobu viděl, v jakých časech).
-        - MOJE VNITŘNÍ ÚVAHY (pokud existují — co jsem si o ní myslel
-          v rámci vyšetřování s Koláčem nebo jinak).
-        - NAŠE ROZHOVORY (pokud existují — skutečné chat výměny mezi
-          mnou a touto osobou). TOTO JE NEJBOHATŠÍ ZDROJ — slova,
-          která osoba reálně řekla. Co se zajímá, jaký má styl, co
-          se právě teď řeší v jejím životě.
+        - PŘEDCHOZÍ POZNÁMKA (může chybět).
+        - POZOROVÁNÍ (ve kterých dnech a denních dobách tě osoba míjela).
+        - DALŠÍ ZÁZNAMY (pokud existují — tvoje vlastní poznámky, ne její
+          slova).
+        - NAŠE ROZHOVORY (pokud existují — skutečné výměny mezi tebou
+          a touto osobou). TOTO JE NEJBOHATŠÍ ZDROJ — slova, která osoba
+          reálně řekla. Rozhovor zachycený hlasem může být zkomolený; co
+          nedává smysl, vynech.
 
         PRAVIDLA:
         1) Napiš 3-4 věty prozaicky, první osoba, klidný rezervovaný
         tón. Žádné nadpisy, odrážky, hranaté závorky.
-        2) Toto je tvůj OSOBNÍ zápisník — ne wiki článek. Pozorování,
-        ne výčet faktů.
-        3) Pokud existuje PŘEDCHOZÍ POZNÁMKA, NAVAZUJ — neresetuj.
-        Můžeš revidovat dojem, doplnit nový postřeh, ale držíš
-        kontinuitu.
-        4) Mluv pouze o věcech ze vstupu. NEVYMÝŠLEJ události,
-        místa, rozhovory, zájmy ani aktivity, které tam nejsou.
-        Když nevíš, neříkej.
-        5) Pokud čerpáš z 'MOJE VNITŘNÍ ÚVAHY', formuluj to jako
-        TVOJE myšlenky — 'napadlo mě, že...', 'přemýšlel jsem o ní
-        v souvislosti s...' — NIKDY jako 'mluvila o...', 'bavila se
-        s Koláčem...', 'zajímá se o...'.
-        5b) Pokud čerpáš z 'NAŠE ROZHOVORY', JE legitimní napsat
-        'řekla mi, že...', 'zmínila...', 'zajímá se o...' — protože
-        tohle jsou skutečná její slova. Ale stále nevymýšlej věci,
-        které tam nejsou.
-        6) Můžeš osobu jemně zhodnotit (vlídně, s respektem), ale
-        nedělej z toho rozsudek. Jsi pozorovatel, ne soudce.
+        2) Toto je tvůj OSOBNÍ zápisník — ne wiki článek.
+        3) PŘEDCHOZÍ POZNÁMKA, je-li, je tvůj starší odhad. Převezmi z ní
+        jen to, co dnešní podklady potvrzují; domněnky bez opory vypusť.
+        4) Mluv pouze o věcech ze vstupu. NEVYMÝŠLEJ události, místa,
+        rozhovory, zájmy ani aktivity, které tam nejsou. Když je podkladů
+        málo, napiš kratší zápis a řekni, že toho o osobě víš málo.
+        5) Z 'NAŠE ROZHOVORY' smíš psát 'řekla mi, že...', 'zajímá se
+        o...' — jen o tom, co tam opravdu je.
+        6) Můžeš osobu jemně zhodnotit (vlídně, s respektem), ale nedělej
+        z toho rozsudek ani podezření.
         7) Bez emoji, bez citací, bez oslovení."""
     ),
     "evening_reflection": (

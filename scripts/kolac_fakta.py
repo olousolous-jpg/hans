@@ -99,11 +99,34 @@ def vhodne_vety(note: str) -> list:
     return out
 
 
+# KOLAC_EXAM_KLIC_SEZNAM_V1 (13. 10.) — audit 30 otázek: klíčem bývalo JEDNO
+# jméno z výčtu („vedlejší role hrají A, B a C“ → klíč C), takže správná odpověď
+# A dostala verdikt „vedle“. Klíč smí být celý výčet, ne jeho jedna položka.
+_VYCET = re.compile(r"[^,.;:()]+(?:,\s*[^,.;:()]+)+\s+a\s+[^,.;:()]+")
+
+
+def klic_ze_seznamu(klic: str, veta: str) -> bool:
+    k = _fold(klic).strip()
+    if not k or "," in k or " a " in " %s " % k:
+        return False
+    for m in _VYCET.finditer(veta or ""):
+        polozky = [p.strip() for p in re.split(r",|\s+a\s+", _fold(m.group(0)))
+                   if p.strip()]
+        if len(polozky) >= 3 and any(k in p or p in k for p in polozky[1:]):
+            return True
+        # první položka nese i začátek věty → stačí, že klíčem končí
+        if len(polozky) >= 3 and polozky[0].endswith(k):
+            return True
+    return False
+
+
 def otazka_plati(otazka: str, klic: str, veta: str) -> bool:
-    """Klíč musí být doslova ve větě a nesmí být prozrazen v otázce."""
+    """Klíč musí být doslova ve větě, nesmí být prozrazen v otázce a nesmí
+    být jednou položkou výčtu."""
     o, k = (otazka or "").strip(), (klic or "").strip()
     return bool(len(o) >= 12 and k and _fold(k) in _fold(veta)
-                and _fold(k) not in _fold(o))
+                and _fold(k) not in _fold(o)
+                and not klic_ze_seznamu(k, veta))
 
 
 def s_nazvem(otazka: str, clanek: str) -> str:
