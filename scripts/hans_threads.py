@@ -508,6 +508,66 @@ def _je_o_hansovi(context: str, notes: list) -> bool:
     return kdo == "hans" and nej >= 0.80
 
 
+# HANS_THREAD_PERSON_SENTENCE_V1 (13. 10.) — audit dat: ~10 z 20 nejnovějších nitek
+# byla otázka na člověka o JEHO vlastním dotazu nebo povelu („Ještě k tématu
+# „/studium“. jak pokračuje to studium?“, „jak vypadá ten obraz?“ u obrazu,
+# který maloval sám), na vlastní četbu nebo na zprávy — a chodila mu proaktivně
+# až třikrát. Zadání extrakce tohle zakazuje už od THREAD_SELF_ORIENT_V1, model
+# ho nedrží, proto kontrola kódem: kontext nitky musí jít dohledat ve VĚTĚ OSOBY
+# a ta věta nesmí být povel ani otázka. Simulace na 73 uložených nitkách: zůstane
+# 11 (výlet, procházka, sázka, seriál, který člověk sleduje…), z 62 zahozených
+# žádná o životě osoby.
+_POVEL_PAT = re.compile(
+    r"^(/|(tak |jo,? |ted |prosim |muzes |mohl bys |zkus )*(namaluj|nakresli|pust|"
+    r"spust|najdi|hledej|nastuduj|zjisti|dohledej|stahni|rekni|povez|ukaz|"
+    r"preloz|vypni|zapni|napis|vyber|zkus|pripomen|precti|zastav)\w*\b)")
+_DOTAZ_PAT = re.compile(
+    r"^(a |tak |no |hele,? )*(co|jak|jaky|jaka|jake|kdo|kdy|kde|proc|kolik|"
+    r"ktery|ktera|ktere|muzes|umis|vis|znas|mas|je|jsou|byl|bude|cim|cetl|"
+    r"videl|studoval)\b")
+
+
+def _bez_hacku(s: str) -> str:
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFD", (s or "").lower())
+                   if unicodedata.category(ch) != "Mn")
+
+
+def povel_nebo_dotaz(veta: str) -> bool:
+    """Věta člověka je povel nebo otázka — není to zmínka o jeho vlastní věci."""
+    f = _bez_hacku(veta).strip()
+    return bool(f) and bool(_POVEL_PAT.search(f) or f.endswith("?")
+                            or _DOTAZ_PAT.search(f))
+
+
+def nitka_z_vety_osoby(context: str, notes: list):
+    """(platí, důvod). Platí jen nitka, jejíž kontext nejlíp sedí na větu
+    OSOBY (podíl kmenů ≥ 0,5) a ta věta není povel ani otázka."""
+    try:
+        from scripts.grounding_guard import _stems
+    except Exception:
+        return True, "bez meritka"          # bez měřítka radši pustit
+    S = _stems(context or "")
+    if len(S) < 2:
+        return False, "nedohledano"
+    kdo, veta, nej = None, "", 0.0
+    for note in (notes or []):
+        for mluvci, txt in _repliky_dne(note):
+            T = _stems(txt)
+            if not T:
+                continue
+            sc = len(S & T) / len(S)
+            if sc > nej:
+                kdo, veta, nej = mluvci, txt, sc
+    if kdo is None or nej < 0.5:
+        return False, "nedohledano"
+    if kdo == "hans":
+        return False, "veta persony"
+    if povel_nebo_dotaz(veta):
+        return False, "povel nebo dotaz"
+    return True, "veta osoby"
+
+
 def extract_threads(config: dict, diary_db_path: str,
                     window_hours: float = 26.0) -> dict:
     """Noční krok: z denních human_chat vytáhne otevřené nitky per osoba +
@@ -605,6 +665,10 @@ def extract_threads(config: dict, diary_db_path: str,
                 # NameError uvnitr nocniho behu.
                 _log.info("threads: %r zahozeno — kontext je vlastni replika "
                           "o sobe (%.60s)", topic, _ctx)
+                continue
+            _ok, _proc = nitka_z_vety_osoby(_ctx, notes)   # HANS_THREAD_PERSON_SENTENCE_V1
+            if not _ok:
+                _log.info("threads: %r zahozeno — %s (%.60s)", topic, _proc, _ctx)
                 continue
             if store.add_thread(person, topic,
                                 context=(it.get("context") or "").strip(),
