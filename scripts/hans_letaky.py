@@ -42,7 +42,10 @@ _NE = re.compile(r"pro kocky|pro psy|prichut|zmrzlin")
 # HANS_LETAKY_PAROVANI_V2 (14. 10., první samostatné odeslání) — grilované kuře je
 # hotové jídlo, ne syrové maso. „pečené“ ZÁMĚRNĚ ne: bez háčků je to totéž co
 # „pečeně“, a „vepřová pečeně“ je syrový kus masa.
-_HOTOVE = re.compile(r"grilovan")
+# 14. 10. doplněno po náhradních výrazech „kuře chlazené“ (celé kuře i díly): uzená
+# stehna, křídla BBQ, obalovaná z teplého pultu a „Vodňanské kuře Játrové knedlíčky“
+# jsou výrobky, ne maso.
+_HOTOVE = re.compile(r"grilovan|uzen[aeyáéý]|\bbbq\b|knedlick|obalovan|tepleho pultu")
 
 
 def _cfg(config: dict) -> dict:
@@ -750,13 +753,18 @@ def web_data(config: dict, path: str = DB) -> dict:
     nal = najdi(polozky, d.get("nabidka") or [], out["obchody"])
     al = dict(polozky)
     for pol, hity in nal.items():
-        if not hity:
-            out["nic"].append(pol)
-            continue
         try:
             obv = obvykla(pol, al.get(pol), path)       # HANS_LETAKY_CSU_V1
         except Exception:
             obv = None
+        # HANS_LETAKY_ZOBRAZENI_V1 (14. 10., uživatel: „ať je to všude stejné“) —
+        # stránka /slevy i doplněk v Kodi (oba čtou /api/slevy) vynechají totéž co
+        # zpráva na Matrixu: nabídku bez slevy dražší než obvyklá cena ČSÚ.
+        if obv:
+            hity = [o for o in hity if not drazsi_bez_slevy(o, obv.get("za_kg"))]
+        if not hity:
+            out["nic"].append(pol)
+            continue
         nab = []
         for o in hity:
             o = dict(o)
