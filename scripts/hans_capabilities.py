@@ -63,6 +63,15 @@ _CAPABILITIES = [
      "a odkaz. Verdikt je jejich, sám politiky nehodnotím; mám jen to, co ověřili oni "
      "(od ledna 2025), a jen Českou republiku",
      "/demagog <jméno nebo téma>; „co ověřil Demagog o …“"),
+    # HANS_CAP_LOOKUP_V1 (14. 10.) — dohledání v hovoru tu chybělo, a Hans ho proto
+    # zapíral („nemám přístup k internetu“, tazatel 14. 10.).
+    ("lookup", "Když na otázku o skutečném světě (osoba, místo, dílo, událost, pojem) "
+     "nemám nic v paměti, nebo mě o to požádáte, umím si to HNED DOHLEDAT na Wikipedii "
+     "(česky, a když české heslo není, anglicky) a odpovědět z nalezeného článku. "
+     "Nehledám po celém internetu, jen na Wikipedii; dohledaný údaj je provizorní — "
+     "do paměti si ho zapíšu až po nočním ověření. Pošlete-li mi ODKAZ se slovy "
+     "„přečti si…“, stránku si přečtu a zapamatuji si ji",
+     "„dohledej si …“, „podívej se, kdo byl …“; „přečti si tohle: <odkaz>“; /read <odkaz>"),
     ("study", "Umím STUDOVAT téma do hloubky přes týdny (Wikipedie, akademický "
      "výzkum, primární texty, knihy) a psát si poznámky; když mi dojde "
      "fronta témat, navrhnu další podle svého směru a zeptám se",
