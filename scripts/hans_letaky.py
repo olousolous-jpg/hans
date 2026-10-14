@@ -39,6 +39,10 @@ _UA = {"User-Agent": "Mozilla/5.0 (X11; Linux aarch64) domaci-asistent/1.0 "
 _BALAST = {"na", "do", "se", "bez", "pro", "chlazene", "chlazena", "chlazeny",
            "cerstve", "cerstva", "cerstvy"}
 _NE = re.compile(r"pro kocky|pro psy|prichut|zmrzlin")
+# HANS_LETAKY_PAROVANI_V2 (14. 10., první samostatné odeslání) — grilované kuře je
+# hotové jídlo, ne syrové maso. „pečené“ ZÁMĚRNĚ ne: bez háčků je to totéž co
+# „pečeně“, a „vepřová pečeně“ je syrový kus masa.
+_HOTOVE = re.compile(r"grilovan")
 
 
 def _cfg(config: dict) -> dict:
@@ -59,7 +63,7 @@ def _kmen(w: str) -> str:
 def sedi(vzor: str, nazev: str) -> bool:
     """Odpovídá název z letáku hledanému výrazu? Čistá funkce (regresní sada)."""
     T = _fold(nazev)
-    if _NE.search(T):
+    if _NE.search(T) or _HOTOVE.search(T):
         return False
     slova = [w for w in re.findall(r"[a-z0-9]+", _fold(vzor))
              if w not in _BALAST and len(w) >= 3]
@@ -68,15 +72,18 @@ def sedi(vzor: str, nazev: str) -> bool:
     tok = re.findall(r"[a-z0-9]+", T)
     for w in slova:
         k = _kmen(w)
+        # HANS_LETAKY_PAROVANI_V2 — krátké slovo (do 4 písmen) chce aspoň celou
+        # svou délku: kmen „kur“ z „kuře“ jinak sedl na „Gliss Kur“ i „hov/kur“.
+        _celé = (lambda t, w=w: len(w) > 4 or len(t) >= len(w))
         if len(slova) == 1:
             # podstatné jméno: tvar slova, ne přídavné jméno ani 7. pád; a ne
             # hotové jídlo nebo směs („kuře s rýží“, „kuře s kaší a zeleninou“)
-            if not any(t.startswith(k) and len(t) <= len(w) + 1
+            if not any(t.startswith(k) and _celé(t) and len(t) <= len(w) + 1
                        and not re.search(r"ov(y|a|e|ym|ou|eho)$|em$", t)
                        and not (i + 1 < len(tok) and tok[i + 1] in ("s", "se"))
                        for i, t in enumerate(tok)):
                 return False
-        elif not any(t.startswith(k) for t in tok):
+        elif not any(t.startswith(k) and _celé(t) for t in tok):
             return False
     return True
 
@@ -603,16 +610,32 @@ def _den(d: str) -> str:
         return ""
 
 
+def drazsi_bez_slevy(o: dict, obvykle_za_kg) -> bool:
+    """HANS_LETAKY_PAROVANI_V2 — nabídka bez slevy, která je za kilogram dražší než
+    obvyklá cena podle ČSÚ, do přehledu slev nepatří (14. 10.: kuřecí kostky
+    189,90 Kč/kg proti obvyklým 137). Bez ČSÚ nebo bez ceny za kg se nechá."""
+    if o.get("sleva") or not obvykle_za_kg:
+        return False
+    if puvodni_cena(o)[0]:
+        return False
+    zk = o.get("za_kg")
+    if zk is None:
+        zk = za_kg(o.get("nazev") or "", o.get("jednotka") or "", o.get("cena"))
+    return bool(zk) and zk > obvykle_za_kg
+
+
 def sestav_zpravu(nalezy: dict, chyby: list | None = None, dnes: str | None = None,
                   na_obchod: int = 3, obvykle: dict | None = None) -> str:
     dnes = dnes or time.strftime("%Y-%m-%d")
     radky, nic = ["🛒 Slevy z vašeho seznamu (%s)" % _den(dnes)], []
     for pol, hity in nalezy.items():
+        ob_c = (obvykle or {}).get(pol)
+        if ob_c:                               # HANS_LETAKY_PAROVANI_V2
+            hity = [o for o in hity if not drazsi_bez_slevy(o, ob_c.get("za_kg"))]
         if not hity:
             nic.append(pol)
             continue
         radky.append("")
-        ob_c = (obvykle or {}).get(pol)
         radky.append("%s%s:" % (pol[:1].upper() + pol[1:],
                                 (" — obvykle %s/kg (ČSÚ, %s)" % (_kc(ob_c["za_kg"]), ob_c["mesic_slovy"]))
                                 if ob_c else ""))
