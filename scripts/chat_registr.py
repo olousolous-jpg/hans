@@ -320,7 +320,13 @@ def zaregistruj(_cc):
             # HANS_COUNT_ANSWER_V1 (13. 9.) — „kolik obrazu mas?“ nema sloveso
             # v minulem case, takze na vzor s `(jsi|jste)` + minuly tvar nesedlo
             # a propadlo do volneho hovoru → falesna abstinence (12. 9.).
-            r"\bkolik\b[^?.!]{0,20}\b(obraz\w*|d[ěe]l)\b",
+            # HANS_COUNT_OWN_ONLY_V1 (15. 10.) — jen VLASTNÍ obrazy: druhá osoba
+            # v téže větě (jsi/jste/si) nebo „máš/máte“ hned za obrazy. /tazatel
+            # 15. 10.: „kolik obrazů Leonardo da Vinci namaloval?“ → „Zatím jsem
+            # namaloval 419 obrazů“. 📏 3 019 vět: 11 zásahů, 10 o Hansovi
+            # zůstává, ven jen Leonardo (strom myšlení: krok Příkazy, `obrazy`).
+            r"(?=[^?.!]*\b(?:jsi|jste|sis|si)\b)[^?.!]*\bkolik\b[^?.!]{0,20}\b(obraz\w*|d[ěe]l)\b",
+            r"\bkolik\b[^?.!]{0,20}\b(obraz\w*|d[ěe]l)\w*\s+(?:u[žz]\s+)?m[áa](?:[šs]|te)\b",
             r"jak[ýy]\s+obraz\s+jsi",
             r"kreslil\s+(jsi|si)\b",
             # HANS_ARTWORK_SHOW_V1 (30.8.) — „ukaž mi ten obraz" je dotaz, ne pokyn
