@@ -356,6 +356,33 @@ def _vynech(h, name) -> tuple:
     return tuple(x for x in out if x)
 
 
+STIN_SOUBOR = "data/mereni/podklad_stin.jsonl"
+
+
+def _zapis_jsonl(h, ctx, veta, prepis, druh, nazev, odkud, vb, vysl, cesta,
+                 kusy, td, tn) -> None:
+    """Celý záznam stínu pro odečet (řádek v logu má větu zkrácenou a nemá
+    přepis F1). Soubor je v `data/` → mimo git (věty domácnosti)."""
+    try:
+        import json
+        import time
+        kdo = str(getattr(ctx, "name", "") or "")
+        testy = {str(x).lower() for x in (h.config.get("test_persons") or [])}
+        kp = {str(k).lower() for k in (h.config.get("known_persons") or {})}
+        trida = ("test" if kdo.lower() in testy
+                 else "domacnost" if kdo.lower() in kp else "jiny")
+        z = dict(t=time.strftime("%Y-%m-%d %H:%M:%S"), trida=trida, veta=veta,
+                 prepis=prepis, druh=druh, nazev=nazev, odkud=odkud, vyber=vb,
+                 dnes="%s<%s" % (vysl, cesta),
+                 entita_dnes=kusy.get("entita_dnes") or None,
+                 kusy={k: bool(v) for k, v in kusy.items() if k != "entita_dnes"},
+                 tema_dnes=td, tema_nove=tn)
+        with open(STIN_SOUBOR, "a", encoding="utf-8") as f:
+            f.write(json.dumps(z, ensure_ascii=False) + "\n")
+    except Exception as e:
+        _log.debug("PODKLAD_STIN_V1 jsonl: %s", e)
+
+
 def stin(h, ctx) -> None:
     """PODKLAD_STIN_V1 — zapiš, co by společný krok vybral; NIC NEMĚNÍ."""
     try:
@@ -384,6 +411,8 @@ def stin(h, ctx) -> None:
             _TICHO.on = False
             h._kfts_tituly = _kft
         tn = nazev if druh else None
+        _zapis_jsonl(h, ctx, veta, prepis, druh, nazev, odkud, vb, vysl, cesta,
+                     kusy, td, tn)
         _log.info(
             "PODKLAD_STIN_V1: předmět %s %r (%s) · výběr %s · dnes %s ← %s%s · "
             "téma dohledání %r → %r%s · věta %r",
