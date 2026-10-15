@@ -1012,7 +1012,7 @@ def zada_dohledani(text: str) -> bool:
 _PTA_SE_NA_UDAJ = re.compile(
     r"\b(kdy|v jak\w+ (roce|letech|dobe|stoleti|meste|zemi)|jak\w* (presne )?rok"
     r"|ktereho roku|ve kter\w+ (roce|meste|obci|stoleti|zemi)|na kter\w+ ostrove"
-    r"|kde (se )?(narodil\w*|zemrel\w*|umrel\w*|nachazi|lezi|stoji|zil\w*|je pohrben\w*)"
+    r"|kde (se |byl\w? |je )?(narodil\w*|zemrel\w*|umrel\w*|nachazi|lezi|stoji|zil\w*|pohrben\w*)"
     r"|kdo (ji |ho |to |je )?(postavil|napsal|zalozil|vynalezl|navrhl|namaloval|objevil"
     r"|nechal|reziroval|slozil|zavrazdil)|kolik|jak (dlouho|vysok\w*|velk\w*|star\w*))\b")
 

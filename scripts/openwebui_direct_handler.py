@@ -192,6 +192,38 @@ _VLASTNI_DILO_TVRZENI = re.compile(
 _NABIDKA_POSLAT = re.compile(r"\b(?:poslat|po[šs]lu|uk[áa]zat|uk[áa][žz]u)\b", re.I)
 
 
+# ── HANS_FAKE_LOOKUP_CLAIM_V1 (15. 10.) — PŘEDSTÍRANÉ DOHLEDÁNÍ ─────────────
+# Skutečné dohledání jde mimo model (šablona `hans_findings._PROVISIONAL_TMPL`),
+# takže věta „tak jsem se právě podíval… podle toho, co jsem teď našel
+# (Wikipedie — heslo X)“ v odpovědi MODELU je vždy nepravda. /tazatel 15. 10.:
+# 7× za den (do té doby 0× v 60 šablonách), jednou s vymyšleným heslem
+# („Leif Erikson“), jednou „Z Wikipedie jsem si to dohledal a ověřím si to
+# v noci“. Model to opisoval z historie plné skutečných dohledání. Citace
+# „podle Wikipedie…“ zůstává (odkazuje na dřívější skutečné dohledání).
+_PREDSTIRANE_DOHLEDANI = (
+    re.compile(r"(?:V pam[ěe]ti jsem o tom (?:nic )?nem[ěe]l|Ve sv[ýy]ch z[áa]pisc[íi]ch jsem k tomu "
+               r"nem[ěe]l dost)[^.]*?tak jsem se (?:pr[áa]v[ěe] )?pod[íi]val\.\s*"),
+    re.compile(r"Podle toho, co jsem (?:te[ďd]|pr[áa]v[ěe]) na[šs]el\s*(?:\(.*?\))?\s*:\s*"),
+    re.compile(r"\s*Berte to (?:zat[íi]m )?s rezervou\s*[—-][^.]*\.(?:\s*Ud[ěe]l[áa]m to v noci[^.]*\.)?"),
+)
+_DOHLEDANI_VETA = re.compile(
+    r"jsem (?:si to |se )?(?:pr[áa]v[ěe] |te[ďd] )?dohledal|dohledal jsem|"
+    r"ov[ěe][řr][íi]m (?:si )?(?:to )?v noci|pod[íi]val jsem se na Wikipedi", re.I)
+
+
+def vyskrtni_predstirane_dohledani(text: str) -> str:
+    """HANS_FAKE_LOOKUP_CLAIM_V1 — z odpovědi MODELU vyškrtni tvrzení, že
+    Hans právě dohledával; obsah nech. Prázdný výsledek → původní text."""
+    t = str(text or "")
+    for _p in _PREDSTIRANE_DOHLEDANI:
+        t = _p.sub("", t)
+    _vety = re.split(r"(?<=[.!?])\s+", t)
+    _zbyt = [v for v in _vety if not _DOHLEDANI_VETA.search(v)]
+    t = " ".join(_zbyt) if len(_zbyt) != len(_vety) else t
+    t = t.strip()
+    return t if t else str(text or "")
+
+
 def _falesna_pamet_nahrada(m):
     return ("Z" if m.group(1) == "V" else "z") + " obecných znalostí vím"
 
@@ -2229,6 +2261,19 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 on_sentence=ctx.on_sentence, grounding=ctx._grounding)  # CHAT_ON_SENTENCE_V1
 
     def _sc_pojistky(self, ctx):
+        # HANS_FAKE_LOOKUP_CLAIM_V1 (15. 10.) — model nesmí tvrdit, že právě
+        # dohledával (skutečné dohledání tu nastaví `_dohledano` a odpověď je
+        # šablona mimo model; pozdější dohledání v pojistkách odpověď nahradí celou)
+        if ctx.response and not getattr(ctx, "_dohledano", False):
+            try:
+                _pd = vyskrtni_predstirane_dohledani(ctx.response)
+                if _pd != ctx.response:
+                    logging.getLogger(__name__).info(
+                        "HANS_FAKE_LOOKUP_CLAIM_V1: vyškrtnuto předstírané dohledání "
+                        "(%d → %d zn): %.60s", len(ctx.response), len(_pd), ctx._raw_message or "")
+                    ctx.response = _pd
+            except Exception as _pde:
+                logging.getLogger(__name__).debug("HANS_FAKE_LOOKUP_CLAIM_V1: %s", _pde)
         # G4D_DEDUP_ADDRESS_V1 — očisti opakované oslovení PŘED
         # rozdvojením do conv_store i diary→RAG (oba cíle čisté).
         if ctx.response:

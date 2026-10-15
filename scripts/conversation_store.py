@@ -99,6 +99,28 @@ def dedup_address_g4d(text: str, name: str = None, config: dict = None) -> str:
     return out  # G4D_PUNCT_FIX_V1
 
 
+# HANS_CONV_LOOKUP_ECHO_V1 (15. 10.) — rámec šablony dohledání v historii pro
+# model. Historie je few-shot (HANS_CONV_GREETING_ECHO_V1): po několika
+# skutečných dohledáních za sebou model začal rámec opisovat i tam, kde nic
+# nedohledal — 7× za den na /tazatel 15. 10., s vymyšleným heslem. Obsah
+# zůstává, pryč jde jen úvod „…tak jsem se právě podíval. Podle toho, co jsem
+# teď našel (…):“ a závěr „Berte to s rezervou…“. ⚠️ Mění JEN pohled do
+# promptu, v úložišti zůstává vše. Pojistka na výstupu: HANS_FAKE_LOOKUP_CLAIM_V1.
+_RAMEC_DOHLEDANI_ZAC = _re_g4d.compile(
+    r"^\s*(?:V pam[ěe]ti jsem o tom (?:nic )?nem[ěe]l|Ve sv[ýy]ch z[áa]pisc[íi]ch jsem k tomu nem[ěe]l dost)"
+    r"[^.]*?tak jsem se pr[áa]v[ěe] pod[íi]val\.\s*Podle toho, co jsem te[ďd] na[šs]el \(.*?\):\s*", _re_g4d.S)
+_RAMEC_DOHLEDANI_KON = _re_g4d.compile(r"\s*Berte to (?:zat[íi]m )?s rezervou\s*[—-].*$", _re_g4d.S)
+
+
+def orez_ramce_dohledani(text):
+    """HANS_CONV_LOOKUP_ECHO_V1 — odpověď z dohledání bez rámce šablony."""
+    t = str(text or "")
+    if not _RAMEC_DOHLEDANI_ZAC.search(t):
+        return text
+    o = _RAMEC_DOHLEDANI_KON.sub("", _RAMEC_DOHLEDANI_ZAC.sub("", t)).strip()
+    return o or text
+
+
 class ConversationStore:
 
     def __init__(self, config: dict):
@@ -159,6 +181,8 @@ class ConversationStore:
         msgs = self._orez_pozdravy(msgs)  # HANS_CONV_GREETING_DIALOG_V1
         msgs = self._orez_pane(name, msgs)  # HANS_CONV_PANE_ECHO_V1
         msgs = self._orez_odmitnuti(msgs)   # HANS_CONV_REFUSAL_ECHO_V1
+        msgs = [dict(m, content=orez_ramce_dohledani(m["content"]))   # HANS_CONV_LOOKUP_ECHO_V1
+                if m.get("role") == "assistant" else m for m in msgs]
         return [{"role": m["role"],
                  "content": (dedup_address_g4d(m["content"], name, self.config)
                              if m["role"] == "assistant" else m["content"])}
