@@ -1907,6 +1907,14 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             ctx._zpravy = None
                 except Exception as _zpe:
                     logging.getLogger(__name__).debug('zprávy podklad: %s', _zpe)
+            # PODKLAD_STIN_V1 (15. 10.) — společný krok podkladu jen ve stínu:
+            # do logu zapíše, co by vybral (předmět, zdroje, téma dohledání);
+            # odpověď NEMĚNÍ. Backlog PODKLAD_PROTOTYP_15_10.
+            try:
+                from scripts import hans_podklad as _pdk
+                _pdk.stin(self, ctx)
+            except Exception as _pde:
+                logging.getLogger(__name__).debug('PODKLAD_STIN_V1: %s', _pde)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
                 # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
                 # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale
