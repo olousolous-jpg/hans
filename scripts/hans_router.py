@@ -171,12 +171,83 @@ def _net24(ip: Optional[str]) -> Optional[str]:
     return ".".join(ip.split(".")[:3]) if ip and ip.count(".") == 3 else None
 
 
+def _http_text(url: str, timeout: float = 8.0) -> Optional[str]:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.read(4096).decode("utf-8", "replace").strip()
+    except Exception as e:
+        _log.debug("router http %s: %s", url, e)
+        return None
+
+
+def _asn_of(ip: Optional[str]) -> Optional[str]:
+    """„AS42306 Edera Group a.s.“ → „AS42306“ (ipinfo.io, bez klíče)."""
+    if not ip or not re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", ip):
+        return None
+    t = _http_text("https://ipinfo.io/%s/org" % ip)
+    m = re.match(r"(AS\d+)", t or "")
+    return m.group(1) if m else None
+
+
+def isp_info(config: dict, st: Optional[dict] = None) -> dict:
+    """HANS_ROUTER_LEAK_CHECK_V1 — kdo je domácí poskytovatel: router si sám
+    (přes WAN, mimo tunel) stáhne ipinfo.io. Výsledek se drží 24 h ve `st`;
+    záloha = `router.isp_asn` v configu. {'ip', 'asn', 'org'} nebo prázdné."""
+    now = time.time()
+    if st is not None and st.get("isp") and now - st.get("isp_ts", 0) < 86400:
+        return st["isp"]
+    out = _ssh(config, ':put ([/tool fetch url="https://ipinfo.io/json" '
+                       'output=user as-value]->"data")', timeout=25) or ""
+    ip = re.search(r'"ip":\s*"([\d.]+)"', out)
+    org = re.search(r'"org":\s*"(AS\d+)\s*([^"]*)"', out)
+    res = {}
+    if ip and org:
+        res = {"ip": ip.group(1), "asn": org.group(1), "org": org.group(2).strip()}
+    elif _cfg(config).get("isp_asn"):
+        res = {"ip": None, "asn": str(_cfg(config)["isp_asn"]), "org": ""}
+    if st is not None and res:
+        st["isp"], st["isp_ts"] = res, now
+    return res
+
+
+def leak_check(config: dict, st: Optional[dict] = None) -> dict:
+    """HANS_ROUTER_LEAK_CHECK_V1 (15. 10.) — uniká něco mimo tunel?
+    Únik = svět vidí domácnost z IP poskytovatele, NEBO dotazy na jména
+    vyřizuje resolver v síti poskytovatele (15. 10. se tak router ptal Quad9
+    přímo přes WAN a odpovídal resolver poskytovatele — jiná /24 než domácí IP,
+    proto se porovnává VLASTNÍK sítě (AS), ne podsíť).
+    Vrací {'state': 'ok'|'leak'|'unknown', 'public', 'public_asn', 'dns',
+    'dns_asn', 'isp_asn', 'why'}."""
+    c = _cfg(config)
+    isp = isp_info(config, st)
+    res = {"state": "unknown", "isp_asn": isp.get("asn"), "why": []}
+    t = _http_text("https://ipinfo.io/json")
+    m = re.search(r'"ip":\s*"([\d.]+)"', t or "")
+    res["public"] = m.group(1) if m else None
+    mo = re.search(r'"org":\s*"(AS\d+)', t or "")
+    res["public_asn"] = mo.group(1) if mo else _asn_of(res["public"])
+    res["dns"] = _dns_whoami(str(c.get("host", "192.168.1.1")))
+    res["dns_asn"] = _asn_of(res["dns"])
+    if not isp.get("asn") or not res["public"] or not res["dns"]:
+        return res
+    if (res["public_asn"] == isp["asn"]
+            or (isp.get("ip") and res["public"] == isp["ip"])):
+        res["why"].append("veřejná IP domácnosti je IP poskytovatele (%s)" % res["public"])
+    if res["dns_asn"] and res["dns_asn"] == isp["asn"]:
+        res["why"].append("dotazy na jména vyřizuje resolver poskytovatele (%s)" % res["dns"])
+    res["state"] = "leak" if res["why"] else "ok"
+    return res
+
+
 def dns_state(config: dict, public: Optional[str]) -> str:
     """'vpn' = domácnost se ptá přes Proton DNS v tunelu; 'leak' = resolver
-    vychází z domácí IP poskytovatele; 'backup' = odpovídá záložní server
-    (mimo tunel); 'unknown' = nešlo zjistit.
+    patří poskytovateli; 'other' = odpovídá jiný resolver (záložní Quad9 jde
+    od 15. 10. taky tunelem); 'unknown' = nešlo zjistit.
     Zjištěno 23. 9.: router se ptal `10.2.0.1` přes WAN (pravidla VPN platí
-    jen pro LAN), padal na Google a ten viděl podsíť poskytovatele."""
+    jen pro LAN), padal na Google a ten viděl podsíť poskytovatele.
+    HANS_ROUTER_LEAK_CHECK_V1: únik se pozná podle vlastníka sítě (AS), ne podle
+    /24 — resolver poskytovatele bývá v jiné podsíti než domácí IP."""
     host = str(_cfg(config).get("host", "192.168.1.1"))
     via_router = _dns_whoami(host)
     if not via_router:
@@ -184,14 +255,16 @@ def dns_state(config: dict, public: Optional[str]) -> str:
     proton = _dns_whoami(str(_cfg(config).get("vpn_dns", "10.2.0.1")))
     if proton and _net24(proton) == _net24(via_router):
         return "vpn"
-    if public and _net24(public) == _net24(via_router):
+    isp = (isp_info(config) or {}).get("asn")
+    if (isp and _asn_of(via_router) == isp) or (
+            public and _net24(public) == _net24(via_router)):
         return "leak"
-    return "backup"
+    return "other"
 
 
 _DNS_TXT = {"vpn": "přes VPN (Proton)",
-            "backup": "záložní server mimo VPN — Proton DNS neodpovídá",
-            "leak": "⚠️ MIMO VPN z domácí IP — poskytovatel vidí, kam se chodí",
+            "other": "přes jiný server (záložní Quad9), ne přes poskytovatele",
+            "leak": "⚠️ MIMO VPN — poskytovatel vidí, kam se chodí",
             "unknown": "nezjištěno"}
 
 
@@ -274,6 +347,13 @@ def summary(config: dict) -> str:
             d.get("active") or "žádný aktivní",
             (" (poslední spojení před %d s)" % hs) if hs is not None else ""))
         lines.append("• DNS: %s" % _DNS_TXT.get(d.get("dns"), "nezjištěno"))
+        # HANS_ROUTER_LEAK_CHECK_V1 — i veřejná IP proti poskytovateli
+        lk = leak_check(config)
+        if lk.get("state") == "leak":
+            lines.append("• ⚠️ ÚNIK mimo VPN: " + "; ".join(lk["why"]))
+        elif lk.get("state") == "ok":
+            lines.append("• únik mimo VPN: ne (veřejná IP %s, poskytovatel ji nevidí)"
+                         % lk.get("public"))
         lines.append("• nepovedená spojení tunelu za hodinu: %d" % d.get("hs_fail_1h", 0))
         if d.get("uptime"):
             lines.append("• router běží: %s" % d["uptime"])
@@ -315,6 +395,55 @@ def switch_text(res: dict) -> str:
                 " Internet ale zatím nejde.")
 
 
+def _leak_tick(config: dict, st: dict, notify=None) -> None:
+    """HANS_ROUTER_LEAK_CHECK_V1 — po změně VPN serveru (i přepnutí z menu
+    routeru) a jednou za `leak_check_interval_s` ověří únik. Změnu serveru
+    pozná levně: Proton DNS v tunelu odpovídá z podsítě aktivního serveru
+    (UDP dotaz, router ho nezapisuje do logu; ssh se loguje, proto jen při
+    změně). Na Matrix jen při NOVÉM úniku a když únik skončí."""
+    c = _cfg(config)
+    if not c.get("leak_check", True):
+        return
+    exit24 = _net24(_dns_whoami(str(c.get("vpn_dns", "10.2.0.1"))))
+    now = time.time()
+    changed = bool(exit24) and exit24 != st.get("exit24")
+    due = now - float(st.get("leak_ts", 0)) >= float(c.get("leak_check_interval_s", 21600))
+    if not (changed or due):
+        return
+    first = st.get("exit24") is None
+    if exit24:
+        st["exit24"] = exit24
+    st["leak_ts"] = now
+    r = leak_check(config, st)
+    prev = st.get("leak_state")
+    _log.info("HANS_ROUTER_LEAK_CHECK_V1: %s (%s) — veřejná IP %s/%s, DNS %s/%s, "
+              "poskytovatel %s", r["state"],
+              "první kontrola" if first else ("změna serveru" if changed else "pravidelná"),
+              r.get("public"), r.get("public_asn"), r.get("dns"), r.get("dns_asn"),
+              r.get("isp_asn"))
+    if r["state"] == "unknown":
+        return
+    st["leak_state"] = r["state"]
+    if r["state"] == "leak" and prev != "leak":
+        msg = ("⚠️ Něco uniká mimo VPN: " + "; ".join(r["why"]) +
+               ". Poskytovatel tak vidí, kam se z domu chodí — podívejte se "
+               "prosím na nastavení routeru.")
+        _log.warning("HANS_ROUTER_LEAK_CHECK_V1: %s", msg)
+        if notify:
+            try:
+                notify(msg)
+            except Exception:
+                pass
+    elif r["state"] == "ok" and prev == "leak":
+        msg = "Únik mimo VPN skončil — veřejná IP i dotazy na jména jdou zase tunelem."
+        _log.info("HANS_ROUTER_LEAK_CHECK_V1: %s", msg)
+        if notify:
+            try:
+                notify(msg)
+            except Exception:
+                pass
+
+
 def watch_tick(config: dict, st: dict, notify=None) -> None:
     """Jeden krok automatiky. `st` drží stav mezi voláními.
 
@@ -331,6 +460,7 @@ def watch_tick(config: dict, st: dict, notify=None) -> None:
                       st["strikes"])
         st["strikes"] = 0
         st["state"] = "ok"
+        _leak_tick(config, st, notify)
         return
     out = _ssh(config, ':put ("wan=" . [/ping 1.1.1.1 count=3 interval=300ms])')
     wan = None

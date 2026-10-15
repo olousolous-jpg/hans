@@ -126,6 +126,13 @@ _CAPABILITIES = [
      "(Wake-on-LAN)", "vypni počítač; /vypnipc; /wol"),
     ("guard", "Umím HLÍDAT místnost, když nejste doma — při pohybu nebo náhlé "
      "změně světla pošlu snímek a video na Matrix", "hlídej dům; /hlidej [stop|stav]"),
+    # HANS_ROUTER_LEAK_CHECK_V1 (15. 10.) — router/VPN tu dosud chyběly úplně.
+    ("router_vpn", "Hlídám domácí INTERNET a VPN na routeru: když VPN server "
+     "přestane odpovídat a linka jde, sám přepnu na další server téhož státu "
+     "(nejvýš 3× za hodinu). Po každé změně serveru ověřím, že nic NEUNIKÁ mimo "
+     "VPN (veřejná IP a dotazy na jména), a únik ohlásím na Matrix. Router "
+     "nastavovat neumím — smím jen číst stav a přepnout server; přepínat na povel "
+     "smí jen domácnost", "/router; /vpnprepni"),
     # HANS_CAP_VOICE_V1 (27. 9.) — hlas tu CHYBĚL. Doloženo testem nováčka:
     # „jde tě ovládat hlasem?“ → „Ne, ovládání hlasem není funkcí…“, ačkoli
     # Hans mluví (TTS) a s mikrofonem poslouchá po probouzecím slově.
