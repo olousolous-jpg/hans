@@ -58,7 +58,10 @@ def _kmeny(lemma: str) -> set:
     return {s for s in k if len(s) >= 2}
 
 
-def je_tvar(slovo: str, lemma: str) -> bool:
+_ZIVOTNE = {"ovi", "ove", "uv", "ova", "ovo", "ovy", "ovu"}
+
+
+def je_tvar(slovo: str, lemma: str, zivotne: bool = True) -> bool:
     """Je `slovo` (z věty) pádový tvar `lemma` (z názvu)? Obojí bez diakritiky.
     Nestačí stejný začátek: „kolumbus“ není tvar „kolumbo“, „william“ není
     „will“, „dal“ není „dalek“. Přídavné jméno od názvu ano („gotické“)."""
@@ -69,7 +72,16 @@ def je_tvar(slovo: str, lemma: str) -> bool:
     for s in _kmeny(lemma):
         if len(s) < 3 or not slovo.startswith(s):
             continue
-        if slovo[len(s):] in _KONC:
+        kon = slovo[len(s):]
+        # latinské jméno na -us/-os/-es (Kolumbus → Kolumba, Kolumbovi):
+        # „-o“/„-ou“ jeho tvar není („Kolumbo“ je sopka)
+        if (kon in ("o", "ou") and lemma[-2:] in ("us", "es", "os")
+                and s == lemma[:-2]):
+            continue
+        # „-ovi“, „-ův“ … mají jen osoby a postavy („Kolumbovi“ ≠ sopka Kolumbo)
+        if not zivotne and kon in _ZIVOTNE:
+            continue
+        if kon in _KONC:
             return True
         if len(s) >= 4 and _ADJ.fullmatch(slovo[len(s):]):
             return True
@@ -86,10 +98,10 @@ def nazev_slova(nazev) -> list:
     return [x for x in w if len(x) >= 3] or w
 
 
-def nazev_ve_vete(nazev, veta) -> bool:
+def nazev_ve_vete(nazev, veta, zivotne: bool = True) -> bool:
     """Každé slovo názvu stojí ve větě jako jeho pádový tvar."""
     nw, vw = nazev_slova(nazev), _slova(veta)
-    return bool(nw) and all(any(je_tvar(v, n) for v in vw) for n in nw)
+    return bool(nw) and all(any(je_tvar(v, n, zivotne) for v in vw) for n in nw)
 
 
 def mluvi_o(text, nazev) -> bool:
@@ -97,7 +109,9 @@ def mluvi_o(text, nazev) -> bool:
     if not text or not nazev:
         return False
     tw = set(_slova(str(text)[:4000]))
-    return all(any(je_tvar(t, n) for t in tw) for n in nazev_slova(nazev))
+    nw = [n for n in nazev_slova(nazev)
+          if not any(je_tvar(n, d) for d in _DRUHOVA)] or nazev_slova(nazev)
+    return all(any(je_tvar(t, n) for t in tw) for n in nw)
 
 
 # ── předmět ─────────────────────────────────────────────────────────────
@@ -111,14 +125,35 @@ def otazkova_cast(text) -> str:
     return " ".join(q) if q and len(kusy) > 1 else t
 
 
+_ZAPOR = re.compile(
+    r"\b(?:nejde|nejedn\w+ se|nemysl[ií]m|nem[aá]m na mysli|nen[ií] to|ne o)\b"
+    r"[^.;?!]*?,?\s*(?:ale|n[ýy]br[zž])\s+", re.IGNORECASE)
+
+
+def bez_zaporu(text) -> str:
+    """„Nejde o ponorné plavidlo Titan, ale o slavnou loď…“ → „o slavnou loď…“.
+    Přepis F1 opravu vyjádří záporem a kotva by vzala právě odmítnutou věc
+    (/tazatel 15. 10.: „Titan“ místo Titanicu)."""
+    return _ZAPOR.sub("", str(text or ""))
+
+
+_DILO_A = re.compile(
+    r"\b(?:hr[auy]|film\w*|oper\w*|balet\w*|knih\w*|knize|rom[aá]n\w*|p[ií]s[nň]\w*|"
+    r"seri[aá]l\w*|pohád\w*|pohad\w*)\s+([A-ZÁ-Ž]\w+(?:\s+[A-ZÁ-Ž]\w+)*\s+a\s+[A-ZÁ-Ž]\w+)")
+
+
 def kotvy_vsechny(text, vynech=()) -> list:
-    """Všechny skupiny kotev (`kotva_tematu` vrací jen první)."""
-    out, t = [], str(text or "")
+    """Všechny skupiny kotev (`kotva_tematu` vrací jen první). Název díla
+    „X a Y“ za druhovým slovem jde jako jedna kotva („hru Romeo a Julie“ —
+    `kotva_tematu` ho na „a“ rozdělí; „Karlovi a Josefovi“ zůstávají dva)."""
+    t = str(text or "")
+    out = [m.group(1) for m in _DILO_A.finditer(t)]
     for _ in range(4):
         k = kotva_tematu(t, vynech=vynech)
         if not k:
             break
-        out.append(k)
+        if not any(k in x for x in out):
+            out.append(k)
         posl = k.split()[-1]
         i = t.find(posl)
         if i < 0:
@@ -138,6 +173,26 @@ def osloveni(jm, text) -> bool:
                         or (not pred and za.startswith(","))):
                     return True
     return False
+
+
+_DILO_ZAVORKA = re.compile(
+    r"\((?:[^)]*\b)?(film|seri[aá]l|epizod|episode|p[ií]se[nň]|album|kniha|rom[aá]n|hra|"
+    r"opera|muzik[aá]l|balet|komiks|videohr|hudba|skupina|Doctor Who|[ČC]erven[ýy] trpasl)",
+    re.IGNORECASE)
+_DILO_NAZNAK = re.compile(
+    r"\b(film\w*|sn[ií]m\w*|seri[aá]l\w*|d[ií]l\w*|epizod\w*|p[ií]s[nň]\w*|alb\w*|"
+    r"knih\w*|knize|rom[aá]n\w*|hr[auy]|hr[aá]l\w*|hraj\w*|hrou|oper\w*|muzik[aá]l\w*|"
+    r"balet\w*|komiks\w*|herc\w*|herec|re[zž]i\w*|nato[cč]\w*|vid[eě]l\w*|sledoval\w*|"
+    r"pustil\w*|zahr\w*|skupin\w*|kapel\w*|zp[ií]v\w*)\b", re.IGNORECASE)
+
+
+def dilo_bez_naznaku(jmeno, *texty) -> bool:
+    """Entita je DÍLO s rozlišovací závorkou („Kleopatra (film, 1963)“), ale věta
+    o žádném díle nemluví („kdy žila Kleopatra?“) → předmětem je ta věc
+    sama, ne film. /tazatel 15. 10.: královna dostala oporou popis filmu."""
+    if not _DILO_ZAVORKA.search(str(jmeno or "")):
+        return False
+    return not any(_DILO_NAZNAK.search(str(t or "")) for t in texty)
 
 
 def kryje(jmeno, kotva) -> bool:
@@ -187,7 +242,7 @@ def predmet_z(h, text, vynech=()):
     if not text:
         return None, None, None
     from scripts.hans_recall_znalost import fakta_tituly_ve_vete
-    text = otazkova_cast(text)
+    text = bez_zaporu(otazkova_cast(text))
     tit = fakta_tituly_ve_vete(_db(h), text)
     kotvy = [k for k in kotvy_vsechny(text, vynech) if not osloveni(k, text)]
     ent = None
@@ -200,8 +255,12 @@ def predmet_z(h, text, vynech=()):
     except Exception:
         ent = None
     jm = str((ent or {}).get("name") or "")
-    ent_ok = bool(ent and jm and nazev_ve_vete(jm, text) and _entita_predmet(h, ent, text)
-                  and not osloveni(jm, text))
+    # „-ovi“ jen u osob; víceslovné jméno („F. L. Věk“ — v databázi dílo)
+    # takhle náhodou nesedne, omezení jen u jednoslovného („Kolumbo“)
+    _ziv = (str((ent or {}).get("etype") or "") in ("osoba", "postava")
+            or len(str((ent or {}).get("name") or "").split()) >= 2)
+    ent_ok = bool(ent and jm and nazev_ve_vete(jm, text, _ziv) and _entita_predmet(h, ent, text)
+                  and not osloveni(jm, text) and not dilo_bez_naznaku(jm, text))
     kotva = kotvy[0] if kotvy else None
     if ent_ok and kotvy:
         ew = nazev_slova(jm)
@@ -284,7 +343,7 @@ def posbirej(h, druh, nazev, ent, dotaz, veta, zpravy=""):
     return kusy
 
 
-def vyber(druh, kusy, nazev=None) -> list:
+def vyber(druh, kusy, nazev=None, texty=()) -> list:
     """Vybrané zdroje (pořadí = priorita), nebo ['kaskada'] = jako dnes;
     „-x“ = z kaskády vyřadit zdroj x."""
     if druh in ("titul", "entita"):
@@ -296,11 +355,52 @@ def vyber(druh, kusy, nazev=None) -> list:
         return v or ["bez_opory"]
     v = ["kaskada"]
     if (druh == "kotva" and nazev and kusy.get("entita_dnes")
-            and not kryje(kusy["entita_dnes"], nazev)):
-        v.append("-entita")     # Bell → Alexandrie, Karel Martel → Marťan
+            and (not kryje(kusy["entita_dnes"], nazev)
+                 or dilo_bez_naznaku(kusy["entita_dnes"], *texty))):
+        v.append("-entita")     # Bell → Alexandrie, Marťan; královna → film
     if druh in ("kotva", "entita_slaba") and kusy.get("zpravy") and not kusy.get("zpravy_o_predmetu"):
         v.append("-zpravy")
     return v
+
+
+def _tituly_cteni(h, blok) -> list:
+    """Názvy zápisků, které vybavila cesta četby (blok názvy nenese; dohledají
+    se v deníku podle začátku textu — logika výběru se nekopíruje)."""
+    import sqlite3
+    out = []
+    kusy = [k for k in re.split(r"\n\s*•\s*", str(blok or "")) if k.strip()][1:]
+    try:
+        c = sqlite3.connect("file:%s?mode=ro" % _db(h), uri=True, timeout=3)
+        try:
+            for k in kusy:
+                zac = k.strip()[:60]
+                r = c.execute(
+                    "SELECT coalesce(title,'') FROM diary WHERE event_type IN "
+                    "('web_read','reading_takeaway','study_note') AND "
+                    "(instr(note, ?) > 0 OR instr(data, ?) > 0) ORDER BY ts DESC LIMIT 1",
+                    (zac, zac)).fetchone()
+                out.append(r[0] if r else "")
+        finally:
+            c.close()
+    except Exception:
+        return []
+    return out
+
+
+def vyber_cteni(blok, druh, nazev, h=None) -> list:
+    """Cesta četby páruje téma začátkem slova („Titanic“ → Titan, Souboj
+    Titánů; „Kolumbus“ → sopka Kolumbo). U silného předmětu nebo kotvy se
+    počítá, kolik vybavených zápisků o předmětu skutečně mluví:
+    ['cteni k/n'] nebo ['-cteni'] (žádný → četba ven, dál kaskáda)."""
+    if druh not in ("titul", "entita", "kotva") or not nazev or not isinstance(blok, str):
+        return ["cteni"]
+    tit = _tituly_cteni(h, blok) if h is not None else []
+    if not tit or not any(tit):
+        return ["cteni"]
+    # o předmětu je zápisek, jehož NÁZEV předmět nese („Titan (ponorka)“
+    # ani „Souboj Titánů“ o Titanicu nejsou, i když ho text zmíní)
+    o = sum(1 for t in tit if t and mluvi_o(t, nazev))
+    return ["-cteni"] if o == 0 else ["cteni %d/%d" % (o, len(tit))]
 
 
 def tema_dnes(h, veta, prepis, vynech=()):
@@ -318,6 +418,7 @@ def tema_dnes(h, veta, prepis, vynech=()):
 
 
 # ── stín ────────────────────────────────────────────────────────────────
+_CTENI = {"reading_recall", "reading_recall_tema"}
 _OCAS = {"entita_c1", "zapisky_pred_entitou", "zapisky_fts", "zapisky_fallback",
          "fakta_titul", "rag", "zpravy", "karta_osoby"}
 _TICHO = threading.local()
@@ -390,7 +491,8 @@ def stin(h, ctx) -> None:
             return
         vysl = getattr(h, "_grounding_outcome", "") or ""
         cesta = getattr(h, "_grounding_cesta", "") or ""
-        if not (vysl == "factual_nofacts" or (vysl == "grounded" and cesta in _OCAS)):
+        if not (vysl == "factual_nofacts"
+                or (vysl == "grounded" and (cesta in _OCAS or cesta in _CTENI))):
             return
         veta = str(getattr(ctx, "_raw_message", "") or ctx.user_message or "")
         prepis = getattr(h, "_f1_query", None) or ""
@@ -405,7 +507,9 @@ def stin(h, ctx) -> None:
             vyn = _vynech(h, getattr(ctx, "name", None))
             druh, nazev, ent, odkud = predmet(h, veta, prepis, vyn)
             kusy = posbirej(h, druh, nazev, ent, prepis or veta, veta, zpravy)
-            vb = vyber(druh, kusy, nazev)
+            vb = vyber(druh, kusy, nazev, (veta, prepis))
+            if cesta in _CTENI:
+                vb = vyber_cteni(getattr(ctx, "_grounding", ""), druh, nazev, h) + vb[1:]
             td = tema_dnes(h, veta, prepis, vyn)
         finally:
             _TICHO.on = False
