@@ -2290,6 +2290,10 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         if ctx.response and not getattr(ctx, "_dohledano", False):
             try:
                 _pd = vyskrtni_predstirane_dohledani(ctx.response)
+                # HANS_CMD_TECH_LINE_ECHO_V1 — technický řádek výpisu příkazu
+                # v odpovědi MODELU je vždy opsaný z historie
+                from scripts.conversation_store import orez_technickych_radku as _otr
+                _pd = _otr(_pd)
                 if _pd != ctx.response:
                     logging.getLogger(__name__).info(
                         "HANS_FAKE_LOOKUP_CLAIM_V1: vyškrtnuto předstírané dohledání "

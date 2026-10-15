@@ -111,7 +111,9 @@ def mluvi_o(text, nazev) -> bool:
     tw = set(_slova(str(text)[:4000]))
     nw = [n for n in nazev_slova(nazev)
           if not any(je_tvar(n, d) for d in _DRUHOVA)] or nazev_slova(nazev)
-    return all(any(je_tvar(t, n) for t in tw) for n in nw)
+    # oběma směry: předmět může být kotva v pádě („Rudolfu Křesťanovi“) a text
+    # nese jiný tvar („Rudolf Křesťan“) — /tazatel 15. 10. by vyřadil zprávy
+    return all(any(je_tvar(t, n) or je_tvar(n, t) for t in tw) for n in nw)
 
 
 # ── předmět ─────────────────────────────────────────────────────────────

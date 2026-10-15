@@ -112,6 +112,25 @@ _RAMEC_DOHLEDANI_ZAC = _re_g4d.compile(
 _RAMEC_DOHLEDANI_KON = _re_g4d.compile(r"\s*Berte to (?:zat[íi]m )?s rezervou\s*[—-].*$", _re_g4d.S)
 
 
+# HANS_CMD_TECH_LINE_ECHO_V1 (15. 10.) — technický řádek výpisu příkazu
+# („Sessions: 11 | ručně: /studium teď, /studium přeskoč“ a fronta studia) model
+# z historie opisoval do odpovědí na cokoli (/tazatel 15. 10.: 6× v jednom
+# rozhovoru po třech výpisech /studium; v přepisech celkem 7×).
+_TECH_RADEK = _re_g4d.compile(r"^[ \t]*Sessions:\s*\d+\s*\|\s*ru[čc]n[ěe]:[^\n]*\n?", _re_g4d.M)
+_FRONTA_RADEK = _re_g4d.compile(
+    r"^[ \t]*Ve front[ěe] ke studiu \(zat[íi]m nenastudov[áa]no\):[^\n]*\n?", _re_g4d.M)
+
+
+def orez_technickych_radku(text):
+    """HANS_CMD_TECH_LINE_ECHO_V1 — text bez technických řádků výpisů příkazů."""
+    t = str(text or "")
+    o = _FRONTA_RADEK.sub("", _TECH_RADEK.sub("", t))
+    if o == t:
+        return text
+    o = _re_g4d.sub(r"\n{3,}", "\n\n", o).strip()
+    return o or text
+
+
 def orez_ramce_dohledani(text):
     """HANS_CONV_LOOKUP_ECHO_V1 — odpověď z dohledání bez rámce šablony."""
     t = str(text or "")
@@ -181,7 +200,8 @@ class ConversationStore:
         msgs = self._orez_pozdravy(msgs)  # HANS_CONV_GREETING_DIALOG_V1
         msgs = self._orez_pane(name, msgs)  # HANS_CONV_PANE_ECHO_V1
         msgs = self._orez_odmitnuti(msgs)   # HANS_CONV_REFUSAL_ECHO_V1
-        msgs = [dict(m, content=orez_ramce_dohledani(m["content"]))   # HANS_CONV_LOOKUP_ECHO_V1
+        msgs = [dict(m, content=orez_technickych_radku(   # HANS_CMD_TECH_LINE_ECHO_V1
+                    orez_ramce_dohledani(m["content"])))       # HANS_CONV_LOOKUP_ECHO_V1
                 if m.get("role") == "assistant" else m for m in msgs]
         return [{"role": m["role"],
                  "content": (dedup_address_g4d(m["content"], name, self.config)
