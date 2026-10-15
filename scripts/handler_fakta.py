@@ -775,6 +775,7 @@ class FaktaMixin:
             _dbp = (self.config.get("hans_idle", {}) or {}).get(
                 "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"
             out = lookup_now(self.config, _dbp, tema, veta or "", asker=name,
+                             otazka=_prepis or veta,   # HANS_LOOKUP_QUESTION_SUMMARY_V1
                              mel_zapisky=mel_zapisky)
             logging.getLogger(_h.__name__).info(
                 "HANS_ANCHOR_LOOKUP_V1: téma %r → %s", tema,

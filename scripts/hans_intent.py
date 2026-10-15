@@ -1003,6 +1003,25 @@ def zada_dohledani(text: str) -> bool:
     return bool(_ZADA_DOHLEDANI.search(text or ""))
 
 
+# HANS_LOOKUP_QUESTION_SUMMARY_V1 (15. 10.) — ptá se věta na KONKRÉTNÍ údaj
+# (rok, místo, autora, počet)? Shrnutí dohledaného článku pak odpovídá na
+# otázku, ne „kdo/co to je“ (/tazatel 15. 10.: „kdy se Marie Curie narodila“
+# → roky Nobelových cen). 📏 58 dohledání: 13 označeno, všechna správně,
+# 0 obecných („znáš X?“, „co víš o X?“, „jak vypadá X“). Backlog
+# `DOHLEDANI_UDAJ_15_10`.
+_PTA_SE_NA_UDAJ = re.compile(
+    r"\b(kdy|v jak\w+ (roce|letech|dobe|stoleti|meste|zemi)|jak\w* (presne )?rok"
+    r"|ktereho roku|ve kter\w+ (roce|meste|obci|stoleti|zemi)|na kter\w+ ostrove"
+    r"|kde (se )?(narodil\w*|zemrel\w*|umrel\w*|nachazi|lezi|stoji|zil\w*|je pohrben\w*)"
+    r"|kdo (ji |ho |to |je )?(postavil|napsal|zalozil|vynalezl|navrhl|namaloval|objevil"
+    r"|nechal|reziroval|slozil|zavrazdil)|kolik|jak (dlouho|vysok\w*|velk\w*|star\w*))\b")
+
+
+def pta_se_na_udaj(text: str) -> bool:
+    """HANS_LOOKUP_QUESTION_SUMMARY_V1 — otázka na konkrétní údaj."""
+    return bool(_PTA_SE_NA_UDAJ.search(_deaccent(str(text or "")).lower()))
+
+
 # HANS_ACK_NOT_SELF_V1 — prosté přikývnutí nebo poděkování („supr.“, „děkuji“)
 # NENÍ otázka na Hanse. Klasifikátor ho řadil mezi dotazy „o asistentovi“, do
 # zadání šel blok o Hansově dni a model z něj složil nesouvisející větu

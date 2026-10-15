@@ -570,7 +570,8 @@ def claim_correction_text(row: dict, asker: Optional[str] = None,
 
 def lookup_now(config: dict, db_path: str, topic: str, query: str,
                asker: Optional[str] = None,
-               mel_zapisky: bool = False) -> Optional[str]:   # HANS_LOOKUP_HAD_NOTES_V1
+               mel_zapisky: bool = False,   # HANS_LOOKUP_HAD_NOTES_V1
+               otazka: Optional[str] = None) -> Optional[str]:
     """Dohledej téma HNED a vrať PROVIZORNÍ odpověď (nebo None → volající
     použije poctivé „nemám záznam").
 
@@ -597,7 +598,20 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
         prev = recent_pending_for_topic(db_path, topic)
     except Exception:
         prev = None
+    # HANS_LOOKUP_QUESTION_SUMMARY_V1 — otázka (přepis F1 od volajícího,
+    # jinak věta člověka) jde do shrnutí, když se ptá na konkrétní údaj
+    otazka = otazka or query
     if prev and (prev.get("summary") or "").strip():
+        # nález z dneška má shrnutí k JINÉ otázce → u otázky na údaj nové
+        # shrnutí z uloženého článku (bez stahování a bez nového zápisu)
+        if (_shrnuti_podle_otazky(config, otazka)
+                and (prev.get("raw_text") or "").strip()):
+            _s = _summarize_for_user(
+                config, topic, {"title": prev.get("resolved_title") or topic,
+                                "text": prev.get("raw_text")}, otazka)
+            if _s:
+                return _render_provisional(dict(prev, summary=_s), asker,
+                                           config, mel_zapisky)
         return _render_provisional(prev, asker, config, mel_zapisky)
 
     try:
@@ -652,7 +666,7 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
     except Exception as e:
         _log.debug("HANS_WIKI_NAMESAKE_V1 preskocen: %s", e)
 
-    summary = _summarize_for_user(config, topic, art)
+    summary = _summarize_for_user(config, topic, art, otazka)
     if not summary:
         return None  # mozek mimo uprostřed → honest bypass
 
@@ -777,7 +791,22 @@ def _titles_align(topic: str, title: str) -> bool:
     return all(any(_sklonovany_tvar(q, x) for q in qt) for x in tt)
 
 
-def _summarize_for_user(config: dict, topic: str, art: dict) -> Optional[str]:
+def _shrnuti_podle_otazky(config: dict, otazka) -> bool:
+    """HANS_LOOKUP_QUESTION_SUMMARY_V1 — má shrnutí odpovídat na otázku?
+    Jen u otázky na konkrétní údaj; obecné „znáš X?“ dostane dnešní shrnutí
+    (zadání s otázkou by tam vnutilo nesouvisející údaj — „jak vypadá X“ →
+    „narodil se …“). Vypínač `instant_lookup.otazka_ve_shrnuti`."""
+    if not otazka or not _cfg(config).get("otazka_ve_shrnuti", True):
+        return False
+    try:
+        from scripts.hans_intent import pta_se_na_udaj
+        return pta_se_na_udaj(otazka)
+    except Exception:
+        return False
+
+
+def _summarize_for_user(config: dict, topic: str, art: dict,
+                        otazka: Optional[str] = None) -> Optional[str]:
     """Shrnutí článku HANS-CZECH modelem (rezidentní, žádný VRAM handoff).
 
     ⚠️ ZÁMĚRNĚ NEPOUŽÍVÁ `web_reader._summarize` — ten jede na BASE modelu
@@ -789,11 +818,25 @@ def _summarize_for_user(config: dict, topic: str, art: dict) -> Optional[str]:
     model = str((config.get("hans_dialog", {}) or {}).get(
         "ollama_model", "hans-czech:latest"))
     text = (art.get("text") or "")[:int(c.get("max_chars", 3000))]
-    prompt = (
-        "Níže je text encyklopedického článku „%s\". Shrň ve 2 až 4 větách, "
-        "co je téma „%s\" — nejdřív jednou větou KDO/CO to je, pak konkrétní "
-        "fakta z textu. Drž se VÝHRADNĚ textu, nic si nepřidávej. Bez uvozovek.\n\n"
-        "Text:\n%s" % (art.get("title") or topic, topic, text))
+    if _shrnuti_podle_otazky(config, otazka):
+        # HANS_LOOKUP_QUESTION_SUMMARY_V1 — otázka na údaj: nejdřív odpověď
+        # z textu, pak kdo/co to je. 📏 12 otázek × 2 běhy na týchž článcích:
+        # dnešní zadání 8/24, s otázkou 22/24 (backlog DOHLEDANI_UDAJ_15_10).
+        _log.info("HANS_LOOKUP_QUESTION_SUMMARY_V1: shrnutí %r podle otázky %r",
+                  topic, str(otazka)[:80])
+        prompt = (
+            "Níže je text encyklopedického článku „%s\". Člověk se ptá: „%s\"\n"
+            "Nejdřív v jedné větě odpověz PŘÍMO na tu otázku konkrétním údajem z textu "
+            "(rok, datum, místo, jméno, počet). Když text odpověď neobsahuje, napiš, že to "
+            "v článku není. Pak přidej 1 až 2 věty o tom, KDO/CO to je. Drž se VÝHRADNĚ "
+            "textu, nic si nepřidávej. Bez uvozovek.\n\nText:\n%s"
+            % (art.get("title") or topic, str(otazka).strip(), text))
+    else:
+        prompt = (
+            "Níže je text encyklopedického článku „%s\". Shrň ve 2 až 4 větách, "
+            "co je téma „%s\" — nejdřív jednou větou KDO/CO to je, pak konkrétní "
+            "fakta z textu. Drž se VÝHRADNĚ textu, nic si nepřidávej. Bez uvozovek.\n\n"
+            "Text:\n%s" % (art.get("title") or topic, topic, text))
     try:
         from scripts.ollama_client import ollama_chat
         out = ollama_chat(
