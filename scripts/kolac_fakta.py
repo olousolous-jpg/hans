@@ -58,7 +58,13 @@ def _conn(db: str):
     return c
 
 
-def soud(odpoved: str, klic: str) -> str:
+# KOLAC_EXAM_SOUD_V2 (15. 10.) — „po dohledání mi vyšlo…“ za přiznáním neznalosti
+# je TVRZENÍ, ne přiznání (zkouška #64: „v paměti nemám záznam… po dohledání
+# v databázi mi vyšlo Intersection“ → kód „nevěděl“, správně Rush Hour).
+_PO_PRIZNANI_TVRDI = re.compile(r"po dohled[aá]n|dohledal|vy[sš]lo mi|mi vy[sš]lo|na[sš]el jsem", re.I)
+
+
+def soud(odpoved: str, klic: str, otazka: str = "") -> str:
     """Je správný údaj v odpovědi? Čísla musí sedět přesně, slova kmenem
     (5 znaků). Vrací ok | nevedel | vedle | odmitl | neposouzeno | prazdno."""
     text = (odpoved or "").strip()
@@ -75,12 +81,17 @@ def soud(odpoved: str, klic: str) -> str:
             (re.search(r"(?<!\d)%s(?!\d)" % re.escape(t), o) is not None)
             if t.isdigit() else (t[:5] in o) for t in toks):
         return "ok"
-    if _ABST.search(text):
+    if _ABST.search(text) and not _PO_PRIZNANI_TVRDI.search(text):
         return "nevedel"
     # Hans píše čísla i slovy („ve třech tisících… kinech“) — klíč s číslem
     # proti odpovědi bez jediné číslice kód posoudit neumí (první ostrá
     # zkouška 12. 10.: správná odpověď slovy vyšla jako „vedle“)
-    if any(x.isdigit() for x in toks) and not re.search(r"\d", o):
+    # KOLAC_EXAM_SOUD_V2 — číslice, která stojí už v otázce, se nepočítá
+    # (#65: „Strážci Galaxie: Volume 3“ → „třicátý druhý“ vyšlo jako „vedle“).
+    # 📏 28 zkoušek z faktů: mění právě #64 a #65, oba podle ručního čtení.
+    _v_otazce = set(re.findall(r"\d+", _fold(otazka or "")))
+    if any(x.isdigit() for x in toks) and not [
+            c for c in re.findall(r"\d+", o) if c not in _v_otazce]:
         return "neposouzeno"
     return "vedle"
 

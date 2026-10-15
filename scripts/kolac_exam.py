@@ -465,7 +465,7 @@ def _ze_souboru(config: dict) -> Optional[dict]:
 
 # ── HODNOCENÍ ───────────────────────────────────────────────────────────────
 
-def ohodnot(zdroj: str, odpoved: str, klic: str) -> dict:
+def ohodnot(zdroj: str, odpoved: str, klic: str, otazka: str = "") -> dict:
     """Porovnej odpověď s klíčem. Vrací {verdikt, bez_opory, detail}.
 
     Verdikty:
@@ -483,7 +483,7 @@ def ohodnot(zdroj: str, odpoved: str, klic: str) -> dict:
         # KOLAC_EXAM_FAKTA_V1 — otázka s jedním správným údajem: soudí se
         # přítomnost údaje, ne poměr vět bez opory (ten dával falešné nálezy).
         from scripts import kolac_fakta as _kf
-        return {"verdikt": _kf.soud(text, klic or ""), "bez_opory": 0,
+        return {"verdikt": _kf.soud(text, klic or "", otazka or ""), "bez_opory": 0,
                 "detail": text[:200]}
     if _DOHLEDANI.search(text):
         # KOLAC_EXAM_RECALL_MISS_V1 — dohledání je správná reakce jen tam, kde
@@ -611,6 +611,30 @@ _POPIS = {"ok": "obstál", "castecne": "částečně", "vymyslel": "vymýšlel s
 # způsobil useknutý název kotvy, opravený týž den → reálně ještě míň. Strop drží
 # `max_denne` 2, takže víc než dvě zprávy denně z celého zkoušení nepřijdou.
 _HLASIT_VYCHOZI = ("vymyslel", "zapiral", "nenasel_v_pameti")
+
+
+def smi_hlasit_dnes(config: dict, db_path: str) -> bool:
+    """KOLAC_EXAM_NOTIFY_CAP_V1 (15. 10.) — nejvýš `hlasit_max_denne` hlášení
+    za den. Počítají se dnešní zkoušky s hlášeným verdiktem (i ta právě
+    zapsaná), ne odeslané zprávy — stačí to a nepotřebuje nový sloupec."""
+    c = _cfg(config)
+    strop = int(c.get("hlasit_max_denne", 2) or 0)
+    if strop <= 0:
+        return True
+    ver = tuple(c.get("hlasit_verdikty", list(_HLASIT_VYCHOZI)))
+    try:
+        import datetime as _dt
+        pulnoc = _dt.datetime.combine(_dt.date.today(), _dt.time()).timestamp()
+        con = _conn(db_path)
+        try:
+            n = con.execute(
+                "SELECT count(*) FROM kolac_exam WHERE ts >= ? AND verdikt IN (%s)"
+                % ",".join("?" * len(ver)), (pulnoc,) + ver).fetchone()[0]
+        finally:
+            con.close()
+        return n <= strop
+    except Exception:
+        return True
 
 
 def ma_se_hlasit(config: dict, verdikt: str) -> bool:

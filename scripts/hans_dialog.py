@@ -1258,7 +1258,8 @@ class HansDialog:
             _log.warning("KOLAC_EXAM_V1: prázdná odpověď na %r → zkouška "
                          "zahozena (mozek nejspíš dolů)", polozka["tema"])
             return False
-        hodnoceni = ke.ohodnot(polozka["zdroj"], odpoved, polozka.get("klic", ""))
+        hodnoceni = ke.ohodnot(polozka["zdroj"], odpoved, polozka.get("klic", ""),
+                               polozka.get("otazka", ""))   # KOLAC_EXAM_SOUD_V2
         _exam_id = ke.zapis(self._diary_path, polozka, odpoved, hodnoceni)
         if polozka.get("otazka_id"):       # KOLAC_EXAM_FAKTA_V1 — stav v zásobě
             try:
@@ -1270,7 +1271,8 @@ class HansDialog:
         # KOLAC_EXAM_NOTIFY_V1 — nález si najde uživatele sám. Notifier visí
         # na chatovém handleru (`telegram` = historický název), takže tu není
         # nové drátování. `send_proactive` respektuje tiché okno.
-        if _exam_id and ke.ma_se_hlasit(self.config, hodnoceni["verdikt"]):
+        if (_exam_id and ke.ma_se_hlasit(self.config, hodnoceni["verdikt"])
+                and ke.smi_hlasit_dnes(self.config, self._diary_path)):   # KOLAC_EXAM_NOTIFY_CAP_V1
             try:
                 _tg = getattr(handler, "telegram", None)
                 _send = (getattr(_tg, "send_proactive", None)

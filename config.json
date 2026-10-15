@@ -1450,12 +1450,14 @@
         "_note_kazdy_naty": "Každý N-tý dialog je zkouška — jen ROZESTUP; strop drží max_denne.",
         "max_denne": 0,
         "_note_max_denne": "KOLAC_EXAM_DENNI_STROP_V1 — nejvýš tolik zkoušek za den (0 = bez stropu).",
-        "hlasit": false,
+        "hlasit": true,
         "_note_hlasit": "KOLAC_EXAM_NOTIFY_V1 — nález, u kterého Hans neobstál, se ohlásí sám (Matrix, tiché okno respektuje).",
         "hlasit_verdikty": [
             "vymyslel",
             "zapiral",
-            "nenasel_v_pameti"
+            "nenasel_v_pameti",
+            "vedle",
+            "nevedel"
         ],
         "identita": "zkouška",
         "_note_identita": "Jméno, pod kterým Hans odpovídá. MUSÍ být v test_persons, jinak se zkoušení zapíše do deníku i RAG.",
@@ -1482,7 +1484,9 @@
         "nove_max_cekajicich": 10,
         "_note_nove": "nove_max_cekajicich: kdyz v nocni cekarne lezi tolik Kolacovych nalezu, nove podnety se ten den uz nekladou (noc overuje instant_lookup.verify_batch nalezu). podnety_min/podnety_davka: nocni doplneni zasoby podnetu.",
         "podnety_min": 15,
-        "podnety_davka": 20
+        "podnety_davka": 20,
+        "hlasit_max_denne": 2,
+        "_hlasit_note": "KOLAC_EXAM_NOTIFY_CAP_V1 (15. 10., uživatel): hlášení zkoušek na Matrix zapnuto i pro zkoušky z faktů (vedle, nevedel), nejvýš hlasit_max_denne za den; potvrzení / zamítnutí: /nalez N, /nalez N ne"
     },
     "subtitles": {
         "enabled": true,
