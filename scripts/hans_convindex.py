@@ -511,6 +511,12 @@ def kotvy_ve_vete(veta: str) -> list:
         w = m.group(0)
         if i == 0 or not w[:1].isupper() or w.isupper():
             continue
+        # HANS_ANCHOR_NOT_PRONOUN_V1 (15. 10.) — zájmeno ve vykání („Vás“,
+        # „Vám“, „Vaše“) se píše velkým písmenem, ale předmětem dotazu nikdy
+        # není. 📏 3 014 vět: kotva-zájmeno u 89, téma dohledání = zájmeno u 80
+        # („Děkuji Vám…“, „Co Vás vedlo…“); /tazatel 15. 10. téma „Vám“.
+        if _fold(w) in _ZAJMENA_VYKANI:
+            continue
         pred = text[:m.start()].rstrip()
         if not pred:
             continue
@@ -688,6 +694,8 @@ for _n, _tvary in {
 #   • cokoli jiného (i české „a"/„i") → NESPOJUJ, jsou to dvě témata
 # ⚠️ Česká „a" schválně NENÍ mezi spojovacími: „Karel a Josef" jsou dva lidé,
 # kdežto „of the" je součást jednoho názvu.
+_ZAJMENA_VYKANI = {"vy", "vas", "vam", "vami", "vase", "vaseho", "vasemu", "vasi",
+                   "vasich", "vasim", "vasimi"}   # HANS_ANCHOR_NOT_PRONOUN_V1
 _ANG_SPOJKA = {"of", "the", "and", "de", "van", "von", "du", "la", "le",
                "el", "dos", "da", "di", "in", "on", "at", "for", "with", "to"}
 _TOKEN_VSE = re.compile(r"[0-9a-zá-žA-ZÁ-Ž]+")

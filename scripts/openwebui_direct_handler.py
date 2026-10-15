@@ -1947,6 +1947,27 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 _pdk.stin(self, ctx)
             except Exception as _pde:
                 logging.getLogger(__name__).debug('PODKLAD_STIN_V1: %s', _pde)
+            # HANS_LOOKUP_ON_REQUEST_V2 (15. 10.) — výslovná žádost o dohledání
+            # („mohl byste mi prosím dohledat, kdy se narodil Mozart?“) i na cestě
+            # volného hovoru a názoru; V1 hlídá jen `factual_nofacts`. /tazatel
+            # 15. 10.: Mozart „ve Vídni“, Curie z hlavy. Předmět jen z otázkové
+            # části zprávy (rekapitulace před ní předmět nenese); nic nenalezeno
+            # → dosavadní odpověď modelu.
+            try:
+                if getattr(self, '_grounding_outcome', '') in ('nonfactual', 'opinion'):
+                    from scripts.hans_intent import zada_dohledani as _zd2
+                    if _zd2(ctx._raw_message):
+                        from scripts.hans_podklad import otazkova_cast as _oc2
+                        _dz = self._dohledej_kotvu(_oc2(ctx._raw_message), ctx.name)
+                        if _dz:
+                            ctx._a1_abstain = True
+                            ctx._predem_dohledano = _dz
+                            logging.getLogger(__name__).info(
+                                'HANS_LOOKUP_ON_REQUEST_V2: žádost o dohledání na cestě '
+                                '%s → dohledáno: %.60s', self._grounding_outcome,
+                                ctx._raw_message)
+            except Exception as _lr2:
+                logging.getLogger(__name__).debug('HANS_LOOKUP_ON_REQUEST_V2: %s', _lr2)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
                 # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
                 # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale
@@ -2172,7 +2193,9 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         ctx._dohledano = False   # HANS_ANCHOR_LOOKUP_ON_ADMIT_V1 — ať se nehledá 2×
         if ctx._a1_abstain:
             # HANS_ANCHOR_LOOKUP_V1 — než odmítneš, zkus to dohledat.
-            ctx.response = self._dohledej_kotvu(ctx._raw_message, ctx.name) or A1_ABSTAIN_TEXT
+            ctx.response = (getattr(ctx, '_predem_dohledano', None)   # HANS_LOOKUP_ON_REQUEST_V2
+                            or self._dohledej_kotvu(ctx._raw_message, ctx.name)
+                            or A1_ABSTAIN_TEXT)
             ctx._dohledano = True
             # CLAIM_RETRACT_V1 — brzda umí ODMÍTNOUT, ale neuměla se OPRAVIT.
             # Doloženo 6.8. 09:10→09:12: Hans tvrdil „hradby až 5 metrů",

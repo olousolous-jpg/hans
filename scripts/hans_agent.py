@@ -247,6 +247,16 @@ def _je_meta_pamet(message: str) -> bool:
         return False
 
 
+def _zada_udaj_ne_studium(message: str) -> bool:
+    """HANS_STUDY_BRIDGE_FACT_V1 — žádost o dohledání konkrétního údaje."""
+    try:
+        from scripts.hans_intent import zada_dohledani, pta_se_na_udaj
+        return (zada_dohledani(message) and pta_se_na_udaj(message)
+                and not _STUDY_ZADOST.search(message or ""))
+    except Exception:
+        return False
+
+
 def _je_dotaz_ne_zadost(message: str) -> bool:
     """Tázací věta, která NEobsahuje pokyn ke studiu → odpověz, nenabízej."""
     return _otazka_ne_pokyn("add_study_topic", message)
@@ -1841,7 +1851,13 @@ class AgentRouter:
         # HANS_CHAT_STUDY_BRIDGE_GUARD — recall („zjisti víc o / co víš o X") se
         # NESMÍ zrouteovat na studium (malý model občas splete „víc" a „si").
         dict(marker="HANS_CHAT_STUDY_BRIDGE_GUARD", akce=("add_study_topic",),
-             podminka=lambda s, aid, msg, dec, h: _looks_like_recall(msg),
+             # HANS_STUDY_BRIDGE_FACT_V1 (15. 10.) — i žádost o konkrétní
+             # údaj („zjisti mi, kdy zemřel Napoleon“) je dohledání, ne
+             # studium (cizímu → „jen pro domácnost“, domácnosti → téma
+             # studia místo odpovědi). Výslovné „nastuduj“ má přednost.
+             # 📏 3 019 vět: 8 nových, všechny žádosti o údaj.
+             podminka=lambda s, aid, msg, dec, h: (
+                 _looks_like_recall(msg) or _zada_udaj_ne_studium(msg)),
              verdikt=None, duvod="je to recall, ne žádost o studium"),
         # HANS_STUDY_KNOWN_TOPIC_V1 (6.8.) — DATOVÁ brzda: nenabízej nastudovat
         # něco, co UŽ máš odškrtnuté. Doloženo 5× po sobě. Regexový guard výše má
