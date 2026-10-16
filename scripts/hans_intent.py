@@ -1012,7 +1012,15 @@ def zada_dohledani(text: str) -> bool:
 _PTA_SE_NA_UDAJ = re.compile(
     r"\b(kdy|v jak\w+ (roce|letech|dobe|stoleti|meste|zemi)|jak\w* (presne )?rok"
     r"|ktereho roku|ve kter\w+ (roce|meste|obci|stoleti|zemi)|na kter\w+ ostrove"
-    r"|kde (se |byl\w? |je )?(narodil\w*|zemrel\w*|umrel\w*|nachazi|lezi|stoji|zil\w*|pohrben\w*)"
+    r"|kde (se |byl\w? |je )?(narodil\w*|zemrel\w*|umrel\w*|nachaz\w+|lez\w+|stal\w*|stoji"
+    r"|zil\w*|pohrben\w*)"
+    # HANS_LOOKUP_UDAJ_TVARY_V1 (16. 10.) — /tazatel 16. 10.: „kde se nacházel“,
+    # „kde trávil dětství“, „v kterém roce“, „jak dlouhá je“, „výška“ → obecné
+    # shrnutí místo údaje. 📏 376 přepisů F1: +8, všech 8 otázky na údaj.
+    r"|kde ([\w.]+ ){0,3}(travil\w*|vyrust\w*|vyrostl\w*|studoval\w*|pusobil\w*)"
+    r"|v kter\w+ (roce|meste|obci|stoleti|zemi)"
+    r"|jak\w* (byl\w? |je |jsou )?(vysok\w*|dlouh\w*|velk\w*|star\w*|sirok\w*|hlubok\w*)"
+    r"|(jak\w*|kolik) (byla |je )?(vysk\w*|delk\w*|rozloh\w*|hloubk\w*|sirk\w*)"
     r"|kdo (ji |ho |to |je )?(postavil|napsal|zalozil|vynalezl|navrhl|namaloval|objevil"
     r"|nechal|reziroval|slozil|zavrazdil)|kolik|jak (dlouho|vysok\w*|velk\w*|star\w*))\b")
 

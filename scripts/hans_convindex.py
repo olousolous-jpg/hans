@@ -729,6 +729,29 @@ _ADJ_KONCOVKA = re.compile(r"(ý|á|é|ém|ých|ého|ému|ou|ým|í|ova|ovu|ově
                            re.IGNORECASE)
 
 
+_VKLADNE_E = {"karl": "Karel", "pavl": "Pavel", "františk": "František", "zdeňk": "Zdeněk"}
+
+
+def _jmeno_1_pad(slovo: str) -> str:
+    """HANS_ANCHOR_RIMSKE_V1 — mužské jméno panovníka do 1. pádu:
+    Karlu/Karla/Karlem/Karlovi → Karel, Josefovi → Josef, Ludvíka → Ludvík.
+    Ženská jména (Alžběta, Marie) a nejisté tvary nechává beze změny."""
+    s = slovo
+    for kon, za in (("ovi", ""), ("em", ""), ("u", ""), ("a", "")):
+        if s.lower().endswith(kon) and len(s) - len(kon) >= 3:
+            kmen = s[: len(s) - len(kon)]
+            if kmen.lower() in _VKLADNE_E:
+                return _VKLADNE_E[kmen.lower()]
+            # -u/-a jen po souhlásce, po které ženské jméno nekončí
+            # (Alžbětu, Annu, Isabelu, Kateřina zůstanou)
+            if kon in ("u", "a") and not re.search(r"(?:k|ch|v|f|d|m|š|ř|r|s)$", kmen.lower()):
+                return s
+            if kon in ("u", "a") and re.search(r"(?:in|et|ět)$", kmen.lower()):
+                return s
+            return kmen + za
+    return s
+
+
 def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
     """HANS_ANCHOR_LOOKUP_V1 — předmět dotazu jako téma k DOHLEDÁNÍ.
 
@@ -857,6 +880,22 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
         _m_cis = re.search(re.escape(jmeno[-1]) + r"[.\s]+(\d{1,3})\b", veta or "")
         if _m_cis:
             jmeno.append(_m_cis.group(1))
+        else:
+            # HANS_ANCHOR_RIMSKE_V1 (16. 10.) — ŘADOVÁ ČÍSLICE PANOVNÍKA PATŘÍ
+            # K JMÉNU. `kotvy_ve_vete` slova psaná velkými písmeny (zkratky)
+            # přeskakuje a „I.“ je pod dvě písmena → „Karel IV.“ dával téma
+            # „Karel“ → heslo o křestním jménu (/tazatel 16. 10.). A Wikipedie
+            # najde panovníka jen v 1. pádě („Karlu IV.“ → nic), proto jméno
+            # před číslicí vrací do 1. pádu (jen mužské tvary; ženské nechává).
+            _m_rim = re.search(re.escape(jmeno[-1])
+                               + r"\s+((?:[IVX]{2,5}|[IVX])\.|[IVX]{2,5}(?![\w]))", veta or "")
+            if _m_rim:
+                _rim = _m_rim.group(1)
+                # 1. pád jen u panovníka (číslice s tečkou); název díla bez
+                # tečky („Star Trek VI“, „Final Fantasy VII“) zůstane, jak je
+                if _rim.endswith("."):
+                    jmeno = [_jmeno_1_pad(x) for x in jmeno]
+                jmeno.append(_rim)
         druh = _DRUH.get(_fold(words[i - 1]), "")
         return ((druh + " ") if druh else "") + " ".join(jmeno)
     return None

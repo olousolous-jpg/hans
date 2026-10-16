@@ -122,7 +122,11 @@ def otazkova_cast(text) -> str:
     nenese („…východně od Berouna. Znáte nějakou osobnost?“). Iniciála
     s tečkou („F. L. Věk“) větu nekončí."""
     t = str(text or "")
-    kusy = [k.strip() for k in re.split(r"(?<![ .][A-ZÁ-Ž]\.)(?<=[.!?])\s+", t) if k.strip()]
+    # HANS_ANCHOR_RIMSKE_V1 — „Kde Karel IV. trávil dětství?“: tečka za řadovou
+    # číslicí panovníka, po níž věta pokračuje malým písmenem, větu nekončí
+    _t = re.sub(r"(?<=\s)([IVX]{1,5})\.(?=\s+[a-zá-ž])", "\\1\x00", t)
+    kusy = [k.strip().replace("\x00", ".")
+            for k in re.split(r"(?<![ .][A-ZÁ-Ž]\.)(?<=[.!?])\s+", _t) if k.strip()]
     q = [k for k in kusy if "?" in k]
     return " ".join(q) if q and len(kusy) > 1 else t
 
