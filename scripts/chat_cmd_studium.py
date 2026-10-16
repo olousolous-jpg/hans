@@ -403,7 +403,22 @@ def _cmd_studium(handler, name, args) -> str:
 
     cur = ap["current_index"]
     total = len(ap["curriculum"])
-    out = ["Studuji: „%s\" — pod-téma %d z %d:" % (ap["topic"], cur + 1 if cur < total else total, total)]
+    # HANS_STUDY_SINCE_V1 — výpis nesl stav, ale ne začátek: „kolik měsíců /
+    # jak dlouho / od kdy studuješ…“ (/tazatel 9×, 15. 10.) dostalo výpis bez
+    # data a mimo výpis si model délku vymýšlí („30 hodin týdně“).
+    _od = ""
+    try:
+        import datetime as _dt
+        _st = float(ap.get("started_ts") or 0)
+        if _st > 0:
+            _dny = (_dt.date.today() - _dt.date.fromtimestamp(_st)).days
+            _od = " od %s (%s)" % (
+                _dt.date.fromtimestamp(_st).strftime("%-d. %-m."),
+                "dnes" if _dny <= 0 else ("1 den" if _dny == 1 else
+                                          ("%d dny" % _dny if _dny < 5 else "%d dní" % _dny)))
+    except Exception:
+        _od = ""
+    out = ["Studuji: „%s\"%s — pod-téma %d z %d:" % (ap["topic"], _od, cur + 1 if cur < total else total, total)]
     # HANS_STUDY_SKIPPED_MARK_V1 — přeskočené se NESMÍ kreslit jako ✓
     # (nález uživatele 6.8.: „ukazuje jako nastudováno").
     _skipped = ap.get("skipped_idx") or set()
