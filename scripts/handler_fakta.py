@@ -770,6 +770,15 @@ class FaktaMixin:
             except Exception as _efe:
                 logging.getLogger(_h.__name__).debug(
                     'HANS_ANCHOR_ENTITY_FIRST_V1: %s', _efe)
+            # HANS_PODKLAD_PREPNUTI_V1 — téma určil společný krok podkladu
+            # (Kolumbus, ne sopka Kolumbo; Shakespeare, ne K.Will)
+            _pt = getattr(self, '_podklad_tema', None)
+            self._podklad_tema = None   # jen pro tuto větu, ne pro další volání
+            if _pt:
+                if _pt != tema:
+                    logging.getLogger(_h.__name__).info(
+                        'HANS_PODKLAD_PREPNUTI_V1: téma dohledání %r → %r', tema, _pt)
+                tema = _pt
             if not tema:
                 return None
             _dbp = (self.config.get("hans_idle", {}) or {}).get(

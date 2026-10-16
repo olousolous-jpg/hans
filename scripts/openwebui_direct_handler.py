@@ -1880,8 +1880,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         # ministická abstinence (routing, ne prompt). Deferral-safe.
         ctx._grounding = _GROUNDING_UNSET
         ctx._a1_abstain = False
+        self._podklad_tema = None    # HANS_PODKLAD_PREPNUTI_V1
+        _pred_zpravami = None
         try:
             ctx._grounding = self._build_grounding(_q_for_retrieval, ctx.name)
+            _pred_zpravami = (ctx._grounding, getattr(self, '_grounding_outcome', ''),
+                              getattr(self, '_grounding_cesta', ''))
             # HANS_ZPRAVY_PODKLAD_V1 (3. 10.) — otázka na DĚNÍ ve světě dostane
             # sebrané zprávy (Matrix 3. 10.: Francie vymyšlená a připsaná Demagogu).
             # Ne u otázek na Hanse samotného a u názorů (tam zprávy nepatří).
@@ -1944,7 +1948,11 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # odpověď NEMĚNÍ. Backlog PODKLAD_PROTOTYP_15_10.
             try:
                 from scripts import hans_podklad as _pdk
-                _pdk.stin(self, ctx)
+                # HANS_PODKLAD_PREPNUTI_V1 — naostro jen za vypínačem
+                if bool((self.config.get("grounding", {}) or {}).get("spolecny_krok", False)):
+                    _pdk.prepni(self, ctx, _pred_zpravami)
+                else:
+                    _pdk.stin(self, ctx)
             except Exception as _pde:
                 logging.getLogger(__name__).debug('PODKLAD_STIN_V1: %s', _pde)
             # HANS_LOOKUP_ON_REQUEST_V2 (15. 10.) — výslovná žádost o dohledání

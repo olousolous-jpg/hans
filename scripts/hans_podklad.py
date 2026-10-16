@@ -524,9 +524,15 @@ def _zapis_jsonl(h, ctx, veta, prepis, druh, nazev, odkud, vb, vysl, cesta,
 
 def stin(h, ctx) -> None:
     """PODKLAD_STIN_V1 — zapiš, co by společný krok vybral; NIC NEMĚNÍ."""
+    if not bool((h.config.get("grounding", {}) or {}).get("podklad_stin", True)):
+        return
+    _rozhodni(h, ctx)
+
+
+def _rozhodni(h, ctx):
+    """Rozhodnutí společného kroku + záznam stínu. Vrací dict, nebo None
+    (věta nedošla ke konci faktické cesty / chyba)."""
     try:
-        if not bool((h.config.get("grounding", {}) or {}).get("podklad_stin", True)):
-            return
         vysl = getattr(h, "_grounding_outcome", "") or ""
         cesta = getattr(h, "_grounding_cesta", "") or ""
         if not (vysl == "factual_nofacts"
@@ -562,6 +568,88 @@ def stin(h, ctx) -> None:
             (" (entita %r)" % kusy["entita_dnes"]) if kusy.get("entita_dnes") else "",
             td, tn,
             "" if (td or None) == (tn or None) else " (JINÉ)", veta[:70])
+        return dict(druh=druh, nazev=nazev, vyber=vb, kusy=kusy, tema=tn,
+                    vysl=vysl, cesta=cesta)
     except Exception as e:
         _TICHO.on = False
         _log.debug("PODKLAD_STIN_V1 selhal: %s", e)
+        return None
+
+
+# ── přepnutí ────────────────────────────────────────────────────────────
+# HANS_PODKLAD_PREPNUTI_V1 (16. 10.) — společný krok podkladu NAOSTRO, za
+# vypínačem `grounding.spolecny_krok` (výchozí vypnuto). 📏 před přepnutím:
+# přehrání 882 vět (`STIN_ODECET_16_10`), sada 816 variant (`STIN_VARIANTY_16_10`).
+_ENTITNI = {"entita_c1", "zapisky_pred_entitou"}
+
+
+_BEZ_DEFINICE = re.compile(r"^Ověřený fakt o „[^“]*“ \([^)]*\): .{0,200}? — o tomto pojmu "
+                           r"mám záznam, ale bez bližší definice\.\s*", re.M)
+
+
+def _cista_cast(text, druh):
+    """Kus podkladu bez prázdného řádku entity (strukturovaná fakta pod ním zůstanou)."""
+    text = str(text or "")
+    if druh == "entita":
+        text = _BEZ_DEFINICE.sub("", text)
+    return text.strip()
+
+
+def prepni(h, ctx, pred_zpravami=None) -> None:
+    """Rozhodne jako stín a podle výběru PŘESTAVÍ podklad:
+    • silný předmět s kusy → podklad jen z kusů o předmětu (fakta, entita,
+      zápisky; zprávy, když vyhrály a mluví o předmětu);
+    • silný předmět bez kusů → bez opory (A1, dohledání předmětu);
+    • `-zpravy` → podklad před vložením zpráv; `-entita` u entitní cesty
+      a `-cteni` → bez opory;
+    • téma dohledání = předmět (`h._podklad_tema`, čte `_dohledej_kotvu`)."""
+    r = _rozhodni(h, ctx)
+    if not r:
+        return
+    from scripts.openwebui_direct_handler import ANTIKONFAB, ANTIKONFAB_NOFACTS
+    druh, vb, kusy = r["druh"], r["vyber"], r["kusy"]
+    if r["tema"]:
+        h._podklad_tema = r["tema"]
+    zmena = None
+    if druh in ("titul", "entita") and vb != ["bez_opory"] and vb[:1] != ["-cteni"] \
+            and not str(vb[0]).startswith("cteni"):
+        if "zpravy" in vb and r["cesta"] == "zpravy":
+            zmena = None          # zprávy o předmětu vyhrály i dnes — beze změny
+        else:
+            # HANS_PODKLAD_SESTAVA_V1 — blok zápisků už instrukci podkladu nese
+            # (dvakrát = model zmaten, párově 16. 10. „Dobrý den, ty.“ 2× ze 2)
+            # a entita bez definice (145 ze 782) je jen řádek „bez bližší
+            # definice“, který dnešní cesta zápisků do podkladu nedává
+            _kc = [(k, _cista_cast(kusy[k], k).replace(ANTIKONFAB, "").strip())
+                   for k in ("fakta", "entita", "zapisky") if k in vb and kusy.get(k)]
+            _kc = [(k, c) for k, c in _kc if c]
+            casti = [c for _, c in _kc]
+            if casti:
+                ctx._grounding = "\n\n" + ANTIKONFAB + "\n\n" + "\n\n".join(casti)
+                ctx._zpravy = None
+                # HANS_PODKLAD_TENKY_V1 — podklad se zápisky je TENKÝ jako dnešní
+                # `zapisky_pred_entitou` (název `zapisky…` čte GROUNDING_GUARD_ACTIVE_V2:
+                # „zápisky nestačily → dohledej“). Párově 16. 10.: Český ráj bez
+                # toho ztratil dohledání a odpověděl poeticky bez hradů.
+                _jm = "+".join(k for k, _ in _kc)
+                zmena = ("grounded", ("zapisky_podklad_" if any(k == "zapisky" for k, _ in _kc)
+                                      else "podklad_") + _jm)
+    elif druh in ("titul", "entita") and vb == ["bez_opory"]:
+        ctx._grounding = "\n\n" + ANTIKONFAB_NOFACTS
+        ctx._zpravy = None
+        zmena = ("factual_nofacts", "podklad_bez_opory")
+    else:
+        if "-zpravy" in vb and r["cesta"] == "zpravy" and pred_zpravami:
+            g, v, c = pred_zpravami
+            ctx._grounding = g
+            ctx._zpravy = None
+            zmena = (v, c)
+            r["cesta"] = c
+        if ("-entita" in vb and r["cesta"] in _ENTITNI) or "-cteni" in vb:
+            ctx._grounding = "\n\n" + ANTIKONFAB_NOFACTS
+            ctx._zpravy = None
+            zmena = ("factual_nofacts", "podklad_bez_" + ("entity" if "-entita" in vb else "cteni"))
+    if zmena:
+        h._vysledek_groundingu(*zmena)
+        _log.info("HANS_PODKLAD_PREPNUTI_V1: %s ← %s (dnes %s ← %s) · téma %r",
+                  zmena[0], zmena[1], r["vysl"], r["cesta"], r["tema"])
