@@ -2200,7 +2200,12 @@ _ROUTE_CUE = {
 # z nich a zadnou z 8 spravnych. Na 853 vetach lidi 1 shoda (o studentech).
 _ROUTE_ANTICUE = {
     "studium": re.compile(r"\bproc\b|\bco\s+(?:te|tebe|vas)\b[^?.!]{0,30}(?:zajima|bavi)|"
-                          r"zaskoc|prekvap|\bvybir|\bvybral", re.I),
+                          r"zaskoc|prekvap|\bvybir|\bvybral|"
+                          # HANS_STUDIUM_THIRD_PERSON_V1 (16. 10.) — „a kde studoval?“
+                          # se ptá na osobu z vlákna (fyzik), ne na Hansův program;
+                          # na 3 484 větách lidí 4 shody, všechny o třetí osobě
+                          r"\bkde\b(?![^?.!]{0,20}\b(?:jsi|jste)\b)[^?.!]{0,20}\bstudoval[aiy]?\b",
+                          re.I),
 }
 
 
