@@ -194,6 +194,8 @@ _SKUTECNA_OSOBA = re.compile(
     r"\b(skute[cč]n[eě]\s+(\w+\s+)?(existoval|[zž]il)\w*|vl[aá]dl\w*)\b",
     re.IGNORECASE)
 
+_KDO_BYL = re.compile(r"\bkdo\s+(?:byl|je|byla|jsou|byli)\b", re.IGNORECASE)
+
 
 def dilo_bez_naznaku(jmeno, *texty) -> bool:
     """Entita je DÍLO s rozlišovací závorkou („Kleopatra (film, 1963)“), ale věta
@@ -207,6 +209,14 @@ def dilo_bez_naznaku(jmeno, *texty) -> bool:
     # 15. 10.: Kleopatra 4×; 📏 korpus 16. 10.: 3 takové věty, všechny o osobě.
     if any(_SKUTECNA_OSOBA.search(str(t or "")) for t in texty):
         return True
+    # HANS_PODKLAD_DILO_TITUL_V1 — víceslovný název díla stojí ve větě celý
+    # („co víš o Vraždě v Orient expresu?“) = mluví se o díle, i bez slova
+    # film/kniha; „kdo byl hrabě Monte Christo?“ ale míří na postavu.
+    # 📏 sada variant 16. 10. + přehrání: 18 změn z 543, všechny Vražda v O. e.
+    if len(nazev_slova(jmeno)) >= 2 and any(
+            t and nazev_ve_vete(jmeno, t) and not _KDO_BYL.search(str(t))
+            for t in texty):
+        return False
     return not any(_DILO_NAZNAK.search(str(t or "")) for t in texty)
 
 
