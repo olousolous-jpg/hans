@@ -175,6 +175,30 @@ def _kratky_prefix(q_tok: str, t_tok: str) -> bool:
 # začátkem slova v titulu, titul se nebere (výjimka: dotaz je v titulu doslova).
 # 📏 46 dosavadních dohledání: 14 ověřených beze změny, ze zamítnutých padne
 # „Drown“ → „Drowners“; 714 entit se zdrojem z Wikipedie: 0 změn.
+# ── HANS_WIKI_PRVNI_PISMENO_V1 (16. 10.) — „Č“ NENÍ „C“ NA ZAČÁTKU SLOVA ──
+# Shoda tokenů běží bez diakritiky, takže „Čechách“ sedlo na „Cech“ (začátek
+# slova) → na „kdo vládl v Čechách v roce 1346?“ heslo o řemeslnických cechách
+# (Matrix 16. 10.). Skloňování počáteční písmeno nemění — uvnitř slova ano
+# (Tábor/Táboře, Petr/Petře), proto se hlídá JEN první písmeno a jen když ho
+# dotaz píše s diakritikou. 📏 782 entit × skloněné tvary (20 332 dotazů):
+# 0 nově zamítnutých; 130 dohledání: jen „Čechách → Cech“.
+def _konflikt_prvniho_pismene(query: str, title: str) -> bool:
+    """Sedí některé slovo dotazu v titulu JEN přes jiné počáteční písmeno
+    s diakritikou (Čechách × Cech)?"""
+    def _slova(s):
+        return [w for w in re.findall(r"\w+", _PAREN.sub("", s or "")) if len(w) >= 3]
+    tt = _slova(title)
+    for qw in _slova(query):
+        q0 = qw[0].lower()
+        if _odstran_diakritiku(q0) == q0:
+            continue                        # dotaz bez diakritiky na začátku
+        shody = [tw for tw in tt
+                 if _token_match(_odstran_diakritiku(qw), _odstran_diakritiku(tw))]
+        if shody and all(tw[0].lower() != q0 for tw in shody):
+            return True
+    return False
+
+
 def _zacatek_delsiho_slova(query: str, title: str) -> bool:
     t = _PAREN.sub("", title or "")
     _q = _odstran_diakritiku(query or "").strip()
@@ -503,7 +527,8 @@ class WebReader:
                             .get("wiki_title_min_coverage", 0.4))
                         and not (_pcov < 1.0
                                  and not _ma_presny_token(query, _best))
-                        and not _zacatek_delsiho_slova(query, _best)):
+                        and not _zacatek_delsiho_slova(query, _best)
+                        and not _konflikt_prvniho_pismene(query, _best)):
                     # HANS_WIKI_BEST_COVERAGE_V1 (7. 10.) — našeptávač na SKLONĚNÉ
                     # slovo vrací heslo se stejným začátkem: „Anglii“ → „Angličtina“
                     # (plné pokrytí jen prefixem). Bez přesného tokenu se proto
@@ -566,6 +591,10 @@ class WebReader:
                             "(pokrytí %.2f jen prefixové, žádný token nesedí "
                             "přesně) — raději nic než cizí článek",
                             query, best_title, _cov)
+                        return _pfx_zaloha
+                    if _konflikt_prvniho_pismene(query, best_title):
+                        _log.info("HANS_WIKI_PRVNI_PISMENO_V1: %r → %r zamítnuto (jiné "
+                                  "počáteční písmeno s diakritikou)", query, best_title)
                         return _pfx_zaloha
                     if _zacatek_delsiho_slova(query, best_title):
                         _log.info("HANS_WIKI_LONGER_WORD_V1: %r → %r zamítnuto (slovo "
