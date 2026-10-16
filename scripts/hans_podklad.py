@@ -140,14 +140,15 @@ def bez_zaporu(text) -> str:
 
 
 _DILO_A = re.compile(
-    r"\b(?:hr[auy]|film\w*|oper\w*|balet\w*|knih\w*|knize|rom[aá]n\w*|p[ií]s[nň]\w*|"
+    r"\b(?:hr[auy]|film\w*|oper\w*|balet\w*|knih\w*|knize|rom[aá]n\w*|p[ií]s[nň]\w*|d[ií]l[oau]|"
     r"seri[aá]l\w*|pohád\w*|pohad\w*)\s+([A-ZÁ-Ž]\w+(?:\s+[A-ZÁ-Ž]\w+)*\s+a\s+[A-ZÁ-Ž]\w+)")
 
 
 def kotvy_vsechny(text, vynech=()) -> list:
     """Všechny skupiny kotev (`kotva_tematu` vrací jen první). Název díla
     „X a Y“ za druhovým slovem jde jako jedna kotva („hru Romeo a Julie“ —
-    `kotva_tematu` ho na „a“ rozdělí; „Karlovi a Josefovi“ zůstávají dva)."""
+    `kotva_tematu` ho na „a“ rozdělí; „Karlovi a Josefovi“ zůstávají dva).
+    Druhové slovo i „dílo“ („známé dílo Romeo a Julie“, /tazatel 15. 10.)."""
     t = str(text or "")
     out = [m.group(1) for m in _DILO_A.finditer(t)]
     for _ in range(4):
@@ -207,6 +208,19 @@ def dilo_bez_naznaku(jmeno, *texty) -> bool:
     if any(_SKUTECNA_OSOBA.search(str(t or "")) for t in texty):
         return True
     return not any(_DILO_NAZNAK.search(str(t or "")) for t in texty)
+
+
+def bez_druhu_u_osoby(kotva, text):
+    """HANS_PODKLAD_OSOBA_BEZ_DRUHU_V1 — ptá-li se věta na skutečnou osobu,
+    druhové slovo kotvy („film Kleopatra“) do tématu nepatří: dohledání by
+    zase našlo film. Jinak kotva beze změny („hrad Kost“, „film Kleopatra“
+    u otázky na film)."""
+    k = str(kotva or "")
+    w = k.split()
+    if (len(w) >= 2 and _SKUTECNA_OSOBA.search(str(text or ""))
+            and any(je_tvar(_fold(w[0]), d) for d in _DRUHOVA)):
+        return " ".join(w[1:])
+    return kotva
 
 
 def kryje(jmeno, kotva) -> bool:
@@ -296,7 +310,7 @@ def predmet_z(h, text, vynech=()):
             return "entita_slaba", jm, ent
         return "entita", jm, ent
     if kotva:
-        return "kotva", kotva, None
+        return "kotva", bez_druhu_u_osoby(kotva, text), None
     return None, None, None
 
 
