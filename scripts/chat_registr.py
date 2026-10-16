@@ -925,7 +925,11 @@ def zaregistruj(_cc):
             # odpadly, jsou zadosti o spusteni („muzes pustit na kodi nejaky
             # film?"), dotazy na bezici prehravani („je pusteny nejaky film?")
             # a vypraveni — ani jedna neni dotaz na to, co Hans videl.
-            r"\bjak[ýy].{0,10}film",
+            # HANS_FILM_JAKY_O_HANSOVI_V1 (16. 10.) — jen když věta mluví NA Hanse
+            # („jaký film jsi viděl / vás zaujal / sis dal“). Holé „jaký film je
+            # Indiana Jones…?“ je otázka na svět; /film ji cizímu odmítl („O tom
+            # mluvím jen se svou domácností“). 📏 3 484 vět: 5 shod, všech 5 drží.
+            r"\bjak[ýy].{0,10}film(?=[^?.!]{0,40}\b(?:jsi|jste|sis|ses|vas|v[aá]s|v[aá]m|t[eě]|tebe|ti|naposled\w*|ned[aá]vno)\b)",
             # HANS_VIDEL_UPRESNI_V1 (23. 9.) — + vykani (`jste`); "videl"
             # s kamerovym dovetkem ("kamerou", "venku", "z okna") uz neni film
             # (driv i "co jsi videl kamerou?" vratilo vypis filmu).
