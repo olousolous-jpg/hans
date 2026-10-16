@@ -182,10 +182,16 @@ _DILO_ZAVORKA = re.compile(
     r"opera|muzik[aá]l|balet|komiks|videohr|hudba|skupina|Doctor Who|[ČC]erven[ýy] trpasl)",
     re.IGNORECASE)
 _DILO_NAZNAK = re.compile(
-    r"\b(film\w*|sn[ií]m\w*|seri[aá]l\w*|d[ií]l\w*|epizod\w*|p[ií]s[nň]\w*|alb\w*|"
+    r"\b(film\w*|sn[ií]m\w*|seri[aá]l\w*|d[ií]l\w*|epizod\w*|p[ií]s[nň]\w*|alb(?:um|a|u|em|ech|ům)?|"
     r"knih\w*|knize|rom[aá]n\w*|hr[auy]|hr[aá]l\w*|hraj\w*|hrou|oper\w*|muzik[aá]l\w*|"
     r"balet\w*|komiks\w*|herc\w*|herec|re[zž]i\w*|nato[cč]\w*|vid[eě]l\w*|sledoval\w*|"
     r"pustil\w*|zahr\w*|skupin\w*|kapel\w*|zp[ií]v\w*)\b", re.IGNORECASE)
+
+_SKUTECNA_OSOBA = re.compile(
+    r"\b(skute[cč]n\w*|historick\w*|re[aá]ln\w*)\s+(osob\w*|postav\w*|"
+    r"[cč]lov[eě]k\w*|kr[aá]lovn\w*|kr[aá]l\w*|panovn\w*)|"
+    r"\b(skute[cč]n[eě]\s+(\w+\s+)?(existoval|[zž]il)\w*|vl[aá]dl\w*)\b",
+    re.IGNORECASE)
 
 
 def dilo_bez_naznaku(jmeno, *texty) -> bool:
@@ -194,6 +200,12 @@ def dilo_bez_naznaku(jmeno, *texty) -> bool:
     sama, ne film. /tazatel 15. 10.: královna dostala oporou popis filmu."""
     if not _DILO_ZAVORKA.search(str(jmeno or "")):
         return False
+    # HANS_PODKLAD_DILO_OSOBA_V1 — ptá-li se věta na skutečnou osobu („vím, že
+    # existuje film Kleopatra, ale byla skutečnou osobou?“, „existovala
+    # historická osoba Drákula?“), zmínka o díle předmět nedělá. /tazatel
+    # 15. 10.: Kleopatra 4×; 📏 korpus 16. 10.: 3 takové věty, všechny o osobě.
+    if any(_SKUTECNA_OSOBA.search(str(t or "")) for t in texty):
+        return True
     return not any(_DILO_NAZNAK.search(str(t or "")) for t in texty)
 
 
