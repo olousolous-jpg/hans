@@ -1165,7 +1165,8 @@
         "history_max_chars": 200
     },
     "grounding": {
-        "strict_max_distance": 0.7
+        "strict_max_distance": 0.7,
+        "spolecny_krok": true
     },
     "contradiction": {
         "enabled": true,
