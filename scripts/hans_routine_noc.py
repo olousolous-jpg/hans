@@ -52,6 +52,7 @@ class NocMixin:
             ('offline_windows', self._nt_offline_windows),
             ('self_insight', self._nt_self_insight),
             ('verify_findings', self._nt_verify_findings),
+            ('book_summary', self._nt_book_summary),   # HANS_BOOK_SUMMARY_V1
             ('anomaly', self._nt_anomaly),
             ('night_summary', self._nt_night_summary),
             ('dream', self._nt_dream),
@@ -215,6 +216,19 @@ class NocMixin:
                     pass
         except Exception as _ile:
             _rt._log.debug("instant_lookup verify: %s", _ile)
+
+    def _nt_book_summary(self, ctx):
+        # HANS_BOOK_SUMMARY_V1 (16. 10.) — souhrn děje přečtených knih z celých
+        # úseků (qwen3 na CPU Ollamě), po dočtení souhrn knihy a úvaha z něj.
+        # Po kouscích s časovým rozpočtem; mozek dole → 'deferred'.
+        try:
+            from scripts.hans_book_summary import run_night as _bs_run
+            _bs = _bs_run(self.config, self._diary_path,
+                          reflection=getattr(self, '_reflection', None))
+            if _bs not in ("idle", "deferred"):
+                _rt._log.info("Souhrny knih: %s", _bs)
+        except Exception as _bse:
+            _rt._log.warning("book_summary: %s", _bse)
 
     def _nt_anomaly(self, ctx):
         # HANS_ANOMALY_V1 (18.7.) — algoritmický detektor odchylek (levný,

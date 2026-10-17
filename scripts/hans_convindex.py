@@ -77,6 +77,8 @@ SOURCES = {
                          "kind": "knowledge"},
     "book_read":        {"label": "přečtená kapitola", "text": "data",
                          "kind": "knowledge"},
+    "book_summary":     {"label": "souhrn přečtené knihy", "text": "note",   # HANS_BOOK_SUMMARY_V1
+                         "kind": "knowledge"},
 }
 
 

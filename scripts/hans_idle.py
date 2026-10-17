@@ -2552,6 +2552,11 @@ class HansIdle:
             return
         if not pend or not pend.get("title"):
             return
+        # HANS_BOOK_SUMMARY_V1 — úvahu o dočtené knize napíše noční úloha
+        # `hans_book_summary` až ze souhrnu CELÉ knihy (dřív stála na prvních
+        # ~7 názorech na kapitoly a děj si domýšlela)
+        if ((self.config.get("book_summary", {}) or {}).get("enabled", True)):
+            return
         refl = getattr(getattr(self, '_routine', None), '_reflection', None)
         if refl is None or not hasattr(refl, 'reflect_on_book'):
             _log.debug('book completion: reflexe nedostupná (zůstává pending, retry příště)')

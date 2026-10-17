@@ -36,7 +36,8 @@ _MESICE_GEN = ("", "ledna", "února", "března", "dubna", "května", "června",
 # Čtecí event typy (co Hans reálně četl/studoval)
 _READ_TYPES = ("web_read", "reading_takeaway", "book_read", "study_note",
                "study_note_part",   # HANS_STUDY_ARTICLE_REST_V1
-               "book_completion_reflection", "book_reflection")
+               "book_completion_reflection", "book_reflection",
+               "book_summary")   # HANS_BOOK_SUMMARY_V1
 
 # HANS_READING_KODI_SPLIT_V1 (25.8.) — CETBA vs CLANEK KVULI FILMU.
 # Nalez uzivatele 24.8.: „dotaz na cetbu — do ni micha filmy" (Jakubuv
