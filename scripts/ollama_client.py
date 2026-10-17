@@ -173,6 +173,17 @@ def set_game_mode(on: bool, ollama_url: str | None = None,
             _PAUSE_FLAG.write_text(str(time.time()))   # flag PRVNÍ → nové volání se gate
             time.sleep(0.4)
             freed = ollama_unload_all(ollama_url, config)
+            # HANS_GAME_MODE_CPU_OLLAMA_V1 (17. 10.) — i druhá Ollama jen na CPU
+            # (:11435, qwen3 ~19,5 GB RAM pro souhrny knih / ověřování): hra
+            # potřebuje RAM i procesor; dřív tam model zůstal až keep_alive
+            try:
+                if config:
+                    from scripts.hans_book_summary import _cpu_url
+                    _cpu = _cpu_url(config)
+                    if _cpu and _cpu != _resolve_url(ollama_url, config):
+                        freed += ollama_unload_all(_cpu, config)
+            except Exception as _ce:
+                _log.debug("HERNÍ MÓD: CPU Ollama neuvolněna: %s", _ce)
             _log.info("HERNÍ MÓD ZAP — uvolněno %d modelů, Ollama se nepoužívá", freed)
             _log_game_mode_diary(config, True)
             return {"game_mode": True, "unloaded": freed}
