@@ -1093,7 +1093,9 @@ _ZAZ_VLASTNI = re.compile(
     r"obraz\w*|díl\w*|dil[oau]|kresb\w*|text\w*|objev\w*|tvorb\w*|projekt\w*|web\w*)"
     r"|\b(?:vaše|vase|tvoje)\s+vlastn", re.IGNORECASE)
 _ZAZ_ZADOST = {"mohl", "mohla", "chtěl", "chtel", "chtěla", "chtela", "musel", "musela",
-               "měl", "mel", "měla", "mela"}     # „mohl byste…“ = žádost, ne zážitek
+               "měl", "mel", "měla", "mela",     # „mohl byste…“ = žádost, ne zážitek
+               # „slyšel jsi něco o poslední olympiádě?“ = ptá se na ZNALOST
+               "slyšel", "slysel", "slyšela", "slysela"}
 _ZAZ_BYL_KDE = re.compile(
     r"\bbyl[a]?\s+(?:jste|jsi)\s+(?:(?:někdy|nekdy|už|uz|osobně|osobne|sám|sam|naposledy|"
     r"nedávno|nedavno|kdysi)\s+)*(?:v|ve|na|do|u)\b|\b(?:jste|jsi)\s+(?:(?:někdy|nekdy|už|uz|"

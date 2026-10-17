@@ -211,6 +211,21 @@ def extract_subject(reply: str) -> str:
         if m.start() == 0:
             continue
         cand = m.group(1).strip()
+        # HANS_THREAD_NO_VOCATIVE_SUBJ_V1 (17. 10.) — oslovení tématem není:
+        # „Mám se dobře, Zkouško. Dnes…“ → další dotaz šel jako „a kdy vlastně
+        # byla? (k tématu: Zkouško)“ a směrovač ho poslal na /nalez (/tazatel)
+        if re.search(r"(?:^|,)\s*" + re.escape(cand) + r"\s*(?:[,.!?]|$)", reply):
+            continue
+        # …a slovo na začátku další věty je velké z gramatiky („Raději“)
+        if (re.search(r"[.!?…:]\s*$", reply[:m.start()])
+                and not re.search(r"(?:^|\s)[Ss]v\.\s*$", reply[:m.start()])):
+            continue
+        if _fold(cand.split()[0]) in ("vas", "vam", "vami", "vase", "vasi", "vasim",
+                                      "vasich", "vasem", "vasemu", "vaseho"):
+            continue
+        # rozsah „Á-Ž“ v `_TITLED` obsahuje i malá písmena s háčkem („řekl“)
+        if not cand[:1].isupper():
+            continue
         if _fold(cand) not in _FUNCTION_WORDS and len(cand) >= 4:
             return cand
     return ""

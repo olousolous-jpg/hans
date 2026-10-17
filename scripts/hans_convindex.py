@@ -858,7 +858,10 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
         # odpověděl statistikou menšin.
         # Připojuje se JEDNO následující slovo a jen u JEDNOSLOVNÉ kotvy —
         # víceslovná („Sherlock Holmes") je už úplná a nesmí se natahovat.
-        if len(jmeno) == 1 and _ADJ_KONCOVKA.search(jmeno[0]) and j < len(words):
+        _po_svatem = i >= 1 and _fold(words[i - 1]) in (   # HANS_ANCHOR_SV_TITUL_V1
+            "sv", "svateho", "svate", "svatych", "svatemu", "svatym", "svatou", "svaty", "svata")
+        if (len(jmeno) == 1 and _ADJ_KONCOVKA.search(jmeno[0]) and j < len(words)
+                and not _po_svatem):
             jmeno.append(words[j])
             j += 1
         preskoc_do = j
@@ -911,9 +914,16 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
         # „Katedrála sv. Víta“; holé „Praze“ dalo model o Notre-Dame)
         _sv = (i >= 1 and _fold(words[i - 1]) == "sv"
                and re.search(r"\b[Ss]v\.\s+" + re.escape(jmeno[0]), veta or ""))
+        _svaty = (i >= 1 and _fold(words[i - 1]) in (
+            "svateho", "svate", "svatych", "svatemu", "svatym", "svatou", "svaty", "svata"))
         if _sv:
             druh = _DRUH.get(_fold(words[i - 2]), "") if i >= 2 else ""
             jmeno = ["sv."] + jmeno
+        elif _svaty:
+            # vypsané „chrámu svatého Mikuláše“ → „chrám svatého Mikuláše“
+            # (holé „Mikuláše“ našlo slovenskou obec Mikulášová, /tazatel)
+            druh = _DRUH.get(_fold(words[i - 2]), "") if i >= 2 else ""
+            jmeno = [words[i - 1]] + jmeno
         # název díla s malými slovy („Příliš hlučná samota“) — jen když přesně
         # takový titul je v lokální Wikipedii
         elif len(jmeno) == 1:

@@ -426,6 +426,12 @@ def _overit(h, otazka, prepis, odpoved) -> list:
                 vd, hod = porovnej(u, U, text)
                 txt.append({"clanek": kan, "udaj": u[4], "druh": u[0], "verdikt": vd, "pramen": hod})
         wd = over_wd(r["veta"], r["ud"], [c[0] for c in r["cl"]])
+        # článek s číslem v názvu, které věta nemá („Praha 4“ z „v Praze“),
+        # je jiný předmět → jeho rozpor se nepočítá (/tazatel 17. 10.)
+        cizi = {kan for kan, _ in r["cl"]
+                if any(c not in r["veta"] for c in re.findall(r"\b\d+\b", kan))}
+        txt = [x for x in txt if not (x["verdikt"] == "rozpor" and x["clanek"] in cizi)]
+        wd = [x for x in wd if not (x["verdikt"] == "rozpor" and x["clanek"] in cizi)]
         dol = {x["udaj"] for x in txt + wd if x["verdikt"] == "doloženo"}
 
         def _v(det):
