@@ -172,14 +172,15 @@ python3 tools/preview.py --refraction 28 --chroma 0.6
 
 ## Stav a omezení
 
-- Efekt je přeložený a ověřený proti hlavičkám **KWinu 6.7.5** (stejná verze
+- Efekt jde přeložit pro **KWin 6.7 i 6.8** (ověřeno proti hlavičkám 6.7.5 a
+  6.8.0, kód se rozdílům v API přizpůsobí sám). Původně ověřeno proti **KWinu 6.7.5** (stejná verze
   jako na Archu k 2. 10. 2026). Shader se překládá a vykresluje (Mesa,
   GLSL 1.40). Instalace a odinstalace jsou vyzkoušené naostro v kontejneru, jen
   pacman byl nahrazený atrapou.
 - **Na skutečné ploše Plasmy to vyzkoušené není.** V kontejneru není grafický
   čip, takže KWin nešel spustit s OpenGL. Je možné, že bude potřeba doladit
   výchozí hodnoty nebo opravit drobnosti v kreslení rámečku.
-- Plasma 6.8 a novější: API KWinu se mezi verzemi mění. Pokud se efekt
+- Plasma 6.9 a novější: API KWinu se mezi verzemi mění. Pokud se efekt
   nepřeloží, je potřeba ho upravit podle `src/plugins/blur` z dané verze KWinu
   (změny bývají malé).
 - Nastavení panelu (`panelOpacity`, `floating` v `plasmashellrc`) je dělané

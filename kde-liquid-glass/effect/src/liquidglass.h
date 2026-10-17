@@ -21,6 +21,7 @@
 #include <QTimer>
 
 #include <unordered_map>
+#include <utility>
 
 namespace KWin
 {
@@ -73,7 +74,15 @@ public:
 
     void reconfigure(ReconfigureFlags flags) override;
     void prePaintScreen(ScreenPrePaintData &data) override;
-    void drawWindow(const RenderTarget &renderTarget, const RenderViewport &viewport, EffectWindow *w, int mask, const Region &deviceRegion, WindowPaintData &data) override;
+    // KWin 6.7 returns void, KWin 6.8+ returns bool (false = painting failed, e.g. after a
+    // GPU reset). Take whatever the installed KWin declares so one source builds against both.
+    using DrawWindowResult = decltype(std::declval<Effect &>().drawWindow(std::declval<const RenderTarget &>(),
+                                                                           std::declval<const RenderViewport &>(),
+                                                                           std::declval<EffectWindow *>(),
+                                                                           0,
+                                                                           std::declval<const Region &>(),
+                                                                           std::declval<WindowPaintData &>()));
+    DrawWindowResult drawWindow(const RenderTarget &renderTarget, const RenderViewport &viewport, EffectWindow *w, int mask, const Region &deviceRegion, WindowPaintData &data) override;
 
     bool provides(Feature feature) override;
     bool isActive() const override;

@@ -15,6 +15,7 @@
 // KConfigSkeleton
 #include "liquidglassconfig.h"
 
+#include "config-kwin.h"
 #include "core/rendertarget.h"
 #include "input.h"
 #include "input_event.h"
@@ -652,7 +653,16 @@ RegionF LiquidGlassEffect::blurRegion(EffectWindow *w) const
                 // for the whole window.
                 region = w->contentsRect();
             } else {
+#if PROJECT_VERSION_MAJOR * 10000 + PROJECT_VERSION_MINOR * 100 + PROJECT_VERSION_PATCH >= 60790
+                // KWin 6.8: the blur region of undecorated windows is already in frame coordinates
+                if (w->decoration()) {
+                    region = content->translated(w->contentsRect().topLeft()) & w->contentsRect();
+                } else {
+                    region = *content & w->contentsRect();
+                }
+#else
                 region = content->translated(w->contentsRect().topLeft()) & w->contentsRect();
+#endif
             }
             if (frame.has_value()) {
                 region += frame.value();
@@ -880,12 +890,13 @@ bool LiquidGlassEffect::shouldBlur(const EffectWindow *w, int mask, const Window
     return true;
 }
 
-void LiquidGlassEffect::drawWindow(const RenderTarget &renderTarget, const RenderViewport &viewport, EffectWindow *w, int mask, const Region &deviceRegion, WindowPaintData &data)
+LiquidGlassEffect::DrawWindowResult LiquidGlassEffect::drawWindow(const RenderTarget &renderTarget, const RenderViewport &viewport, EffectWindow *w, int mask, const Region &deviceRegion, WindowPaintData &data)
 {
     blur(renderTarget, viewport, w, mask, deviceRegion, data);
 
     // Draw the window over the blurred area
-    effects->drawWindow(renderTarget, viewport, w, mask, deviceRegion, data);
+    // "return" of a void expression is valid too, so this works for KWin 6.7 and 6.8+
+    return effects->drawWindow(renderTarget, viewport, w, mask, deviceRegion, data);
 }
 
 GLTexture *LiquidGlassEffect::ensureNoiseTexture()

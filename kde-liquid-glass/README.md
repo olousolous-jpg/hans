@@ -146,7 +146,7 @@ The values live in `~/.config/kwinrc`, group `[Effect-liquidglass]`.
 |---|---|
 | `liquid-glass status` says the effect is not running | log out and back in; after a KWin update `./install.sh --rebuild` |
 | `liquid-glass: command not found` | `~/.local/bin` is not in `PATH`: `source ~/.bashrc` or open a new terminal |
-| build fails (error in `liquidglass.cpp`) | KWin is a different version than the effect was written for (6.7); see below |
+| build fails (error in `liquidglass.cpp`) | KWin is a version the effect does not know yet (supported: 6.7, 6.8); see below |
 | the glass flickers or things feel slow | `liquid-glass preset no-ring`, `IdleShimmer false`, lower `BlurStrength` |
 | nothing helps | `liquid-glass off` goes back to the built-in Blur |
 
@@ -187,10 +187,11 @@ python3 tools/preview.py --refraction 28 --chroma 0.6
 
 ## Status and limitations
 
-- Built and checked against the **KWin 6.7.5** headers. The shader compiles and
+- Builds against **KWin 6.7 and 6.8** (checked against the 6.7.5 and 6.8.0
+  headers; the source adapts to API differences between the two). The shader compiles and
   renders (Mesa, GLSL 1.40). Installation and uninstallation were tested for
   real in a container with pacman stubbed out.
-- Plasma 6.8 and newer: the KWin API changes between versions. If the effect
+- Plasma 6.9 and newer: the KWin API changes between versions. If the effect
   does not build, it needs to be adapted to `src/plugins/blur` of that KWin
   version (changes are usually small).
 - The panel settings (`panelOpacity`, `floating` in `plasmashellrc`) follow
