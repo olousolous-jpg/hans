@@ -969,6 +969,14 @@ _POJEM_STOP = {"to", "tam", "tady", "dnes", "dneska", "za", "na", "v", "ve",
                "s", "se", "nejak", "nějak", "toho"}
 
 
+# HANS_POJEM_OBJEV_V1 (17. 10.) — „Kdo objevil penicilin a kdy?“, „kdo vynalezl
+# knihtisk?“: obecný pojem malým písmenem, kotva ho nepozná (měření 8. 10.)
+_POJEM_OBJEV = re.compile(
+    r"\bkdo\s+(?:objevil|vynalezl|vymyslel|sestrojil|zkonstruoval|objevila|vynalezla)\s+"
+    r"([a-záčďéěíňóřšťúůýž][\wáčďéěíňóřšťúůýž-]{2,30}(?:\s+[a-záčďéěíňóřšťúůýž][\wáčďéěíňóřšťúůýž-]{2,30})?)"
+    r"(?=\s*(?:\?|,|\ba\b|$))", re.IGNORECASE)
+
+
 def dotaz_na_pojem(veta: str) -> str:
     """Ptá se věta na VÝZNAM POJMU? Vrátí pojem, nebo '' když ne."""
     s = (veta or "").strip()
@@ -976,7 +984,8 @@ def dotaz_na_pojem(veta: str) -> str:
         return ""
     m = _POJEM_PAT.search(s)
     if not m:
-        return ""
+        mo = _POJEM_OBJEV.search(s)
+        return mo.group(1).strip() if mo else ""
     slova = [w for w in m.group(1).split()
              if w.lower().strip(",.?!") not in _POJEM_STOP]
     if not slova or len(slova) > 3:

@@ -71,6 +71,25 @@ def _cil(titul: str):
     return None
 
 
+def _prvni_pad(q: str) -> list:
+    """Jedno slovo velkým písmenem v jiném pádě → kandidáti 1. pádu
+    („Babičku“ → „Babička“). Jen pro PŘESNOU shodu s titulem."""
+    sl = (q or "").split()
+    if len(sl) != 1 or not sl[0][:1].isupper():
+        return []
+    w, out = sl[0], []
+    for a_, b_ in (("ku", "ka"), ("hu", "ha"), ("ou", "a"), ("u", "a"), ("y", "a"),
+                   ("ě", "a"), ("i", "e"),
+                   ("em", ""), ("a", ""), ("u", ""), ("ě", ""), ("e", "")):   # mužský rod
+        if w.endswith(a_) and len(w) > 4:
+            out.append(w[:-len(a_)] + b_)
+    return list(dict.fromkeys(out))
+
+
+_DRUHY_SLOVA = {"hora", "hrad", "zámek", "řeka", "město", "jezero", "ostrov", "film",
+                "kniha", "seriál", "kostel", "katedrála", "chrám", "muzeum", "kapela", "loď"}
+
+
 def prefixsearch(q: str, limit: int = 3) -> list:
     """Tituly začínající dotazem (bez ohledu na velikost písmen). Přesná
     shoda první, pak delší články (náhrada popularity). Přesměrování → cíl."""
@@ -96,6 +115,19 @@ def prefixsearch(q: str, limit: int = 3) -> list:
                            (r[0],)).fetchone()
             kand.setdefault(tit, d[0] if d else 0)
     ex = _cil(q)
+    if not ex:
+        # HANS_WIKI_OFFLINE_DIRY_V1 — přesný titul i (a) bez druhového slova
+        # před cizím názvem („hora Mount Everest“), (b) v 1. pádě u jednoho
+        # slova („Babičku“ → „Babička“); jen přesná shoda, žádné hádání
+        sl = q.split()
+        zkus = []
+        if len(sl) >= 3 and sl[0].lower() in _DRUHY_SLOVA:
+            zkus.append(" ".join(sl[1:]))
+        zkus += _prvni_pad(q)
+        for z in zkus:
+            if _cil(z):
+                q, ex = z, _cil(z)
+                break
     out = []
     if ex:
         p = db.execute("SELECT titul FROM presmerovani WHERE titul_norm=?",
@@ -118,18 +150,23 @@ def _slova(q: str) -> list:
     return [w for w in _SLOVO.findall(q or "") if w.lower() not in _STOP]
 
 
-def _kmen(w: str) -> str:
+def _kmen(w: str, kratke: bool = False) -> str:
     """Skloňování: bez koncovky, aspoň 4 znaky (Čechách → Čech, Jiřím → Jiř,
-    Bacha → Bach); kratší slova a čísla celá."""
+    Bacha → Bach); kratší slova a čísla celá. `kratke` (víceslovný dotaz,
+    ostatní slova ho zúží): i 3–4písmenná slova bez koncovky („Lva“ → „Lv“,
+    „Richarda Lva Srdce“ → „Richard I. Lví srdce“)."""
     if len(w) >= 5 and not w.isdigit():
-        return w[:max(4, len(w) - 2)]
+        return w[:max(4 if not kratke else 3, len(w) - 2)]
+    if kratke and 3 <= len(w) <= 4 and not w.isdigit() and not w.isupper():
+        return w[:len(w) - 1]
     return w
 
 
 def _fts_dotaz(q: str, spojka: str) -> str:
     casti = []
+    _vic = len(_slova(q)) >= 3
     for w in _slova(q):
-        k = _kmen(w).replace('"', '')
+        k = _kmen(w, _vic).replace('"', '')
         casti.append('"%s"*' % k if k != w else '"%s"' % k)
     return f" {spojka} ".join(casti)
 
@@ -170,7 +207,18 @@ def srsearch(q: str, limit: int = 5) -> list:
                 if roz and not roz[0]:
                     tituly.insert(0, ex[1])
 
-            kmeny = [_fold(_kmen(w)) for w in _slova(q)]
+            kmeny = [_fold(_kmen(w, len(_slova(q)) >= 3)) for w in _slova(q)]
+
+            # HANS_WIKI_OFFLINE_DIRY_V1 — „Babičku“: tituly se základem v 1. pádě
+            # („Babička (kniha)“) dopředu, ať nepropadne „Babice (Kbel)“
+            _pp = {_norm(x) for x in _prvni_pad(q)}
+            if _pp:
+                for (t2,) in db.execute(
+                        "SELECT titul FROM clanek WHERE rozcestnik=0 AND (" +
+                        " OR ".join(["titul_norm=? OR titul_norm LIKE ?"] * len(_pp)) + ")",
+                        [x for v in _pp for x in (v, v + " (%")]).fetchall():
+                    if t2 not in tituly:
+                        tituly.append(t2)
 
             def _rad(ti):
                 # přesný titul → titul pokrývá kmeny všech slov dotazu (méně
@@ -179,6 +227,10 @@ def srsearch(q: str, limit: int = 5) -> list:
                 i, t = ti
                 if ex and t == ex[1]:
                     return (0, 0, i)
+                if _pp and _norm(t) in _pp:
+                    return (0, 1, i)            # přesně 1. pád („Karlštejn“)
+                if _pp and _norm(re.sub(r"\s*\(.*?\)", "", t)) in _pp:
+                    return (0, 2, i)            # s upřesněním („Babička (kniha)“)
                 tw = [_fold(w) for w in _SLOVO.findall(re.sub(r"\(.*?\)", "", t))
                       if w.lower() not in _STOP]
                 if kmeny and all(any(w.startswith(k) for w in tw) for k in kmeny):

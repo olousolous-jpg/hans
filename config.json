@@ -1115,7 +1115,8 @@
         "_verify_min_similarity_note": "PŘÍSNĚJŠÍ než čtecí gate (0.6) — falešná shoda typu 'Zootropium'→'Zootropic' musí padnout při ověření",
         "verify_batch": 5,
         "judge_timeout": 90,
-        "_judge_note": "úsudek ANO/NE je EN prompt (vzor reasoning-tier-when-to-use); judge_model lze přepsat, default = chat model"
+        "_judge_note": "úsudek ANO/NE je EN prompt (vzor reasoning-tier-when-to-use); judge_model lze přepsat, default = chat model",
+        "presny_predmet": true
     },
     "downtime": {
         "enabled": true,

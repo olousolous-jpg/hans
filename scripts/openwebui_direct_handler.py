@@ -2172,6 +2172,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     except Exception as _zde:
                         logging.getLogger(__name__).debug(
                             'HANS_LOOKUP_ON_REQUEST_V1: %s', _zde)
+                # HANS_LOOKUP_PRESNY_V1 (17. 10.) — bez žádosti, ale předmět vede
+                # na článek přesně o něm → dohledat místo odpovědi z hlavy
+                if not _skip_a1 and not _zada:
+                    _pp = self._presny_predmet(ctx._raw_message, ctx.name)
+                    if _pp:
+                        _zada = True
+                        ctx._a1_abstain = True
+                        logging.getLogger(__name__).info(
+                            'HANS_LOOKUP_PRESNY_V1: předmět %r má přesný článek → '
+                            'dohledávám místo odpovědi z hlavy', _pp)
                 if not _skip_a1 and not _zada:
                     from scripts.hans_selfconsistency import is_unstable
                     _a1_vysl = is_unstable(self.config, ctx._raw_message)

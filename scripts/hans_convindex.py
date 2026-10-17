@@ -928,6 +928,12 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
         # takový titul je v lokální Wikipedii
         elif len(jmeno) == 1:
             jmeno = _natahni_titul(words, i, jmeno)
+        # „bitva na Bílé hoře“, „bitvě u Slavkova“ — samotné místo dalo
+        # „Dub na Bílé hoře“ (měření 8. 10. / 17. 10.)
+        _bitva = re.search(r"\b(bitv\w*)\s+(na|u|pod|nad|při|v|ve|o)\s+$",
+                           (veta or "")[:max(0, (veta or "").find(jmeno[0]))])
+        if _bitva and not druh:
+            druh = "bitva " + _bitva.group(2)
         kotva = ((druh + " ") if druh else "") + " ".join(jmeno)
         # přivlastňovací tvar („Hrabalův román“) ustoupí další kotvě ve větě
         # jen když název stojí HNED za podstatným jménem („Hrabalův román

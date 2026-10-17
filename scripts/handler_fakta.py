@@ -691,6 +691,69 @@ class FaktaMixin:
             popis[:40], len(herci))
         return '\n\n' + _h.ANTIKONFAB + '\n\n' + "\n".join(blok)
 
+    # HANS_LOOKUP_PRESNY_V1 (17. 10.) — „dohledat vždy“, ale JEN když předmět
+    # otázky vede na článek přesně o něm (lokální Wikipedie, bez sítě).
+    # 📏 korpus 281 faktických vět bez opory: libovolný článek 108 (≈⅓ cizí),
+    # přesná shoda 39 (cizí ≈2); 18 otázek (8. 10. + /tazatel 17. 10.): 14
+    # projde, 12 se správným údajem. ⛔ „dohledat vždy“ bez omezení (8. 10.)
+    # platí dál — tohle je úzká varianta, rozhodl uživatel 17. 10.
+    _PRESNY_DRUH = {"hrad", "zamek", "film", "kniha", "mesto", "kostel", "katedrala", "chram",
+                    "bazilika", "kaple", "hora", "serial", "bitva", "na", "u", "sv", "svateho",
+                    "hra", "reka", "jezero", "ostrov", "muzeum", "klaster"}
+
+    def _presny_predmet(self, veta: str, name: str = None):
+        """Téma k dohledání, jen když lokální článek je PŘESNĚ o předmětu; jinak None."""
+        import unicodedata as _ud
+
+        def _f(x):
+            return "".join(c for c in _ud.normalize("NFD", (x or "").lower())
+                           if _ud.category(c) != "Mn")
+
+        def _tok(x):
+            return [w for w in re.findall(r"\w{2,}", _f(re.sub(r"\(.*?\)", "", x or "")))
+                    if w not in self._PRESNY_DRUH]
+
+        def _kryje(a, b):
+            return all(any(x[:max(3, min(len(x), len(y)) - 2)] == y[:max(3, min(len(x), len(y)) - 2)]
+                           for y in b) for x in a)
+        try:
+            if not bool((self.config.get("instant_lookup", {}) or {}).get("presny_predmet", True)):
+                return None
+            from scripts.hans_intent import pta_se_na_zazitek_hanse, dotaz_na_pojem
+            from scripts.hans_convindex import kotva_tematu
+            from scripts import hans_wiki_offline as _wo
+            if not _wo.dostupna() or pta_se_na_zazitek_hanse(veta):
+                return None
+            _kp = self.config.get("known_persons", {}) or {}
+            _known = tuple(_kp.keys()) + tuple(str(v.get("nom", "")) for v in _kp.values())
+            try:
+                from scripts.hans_persona import persona_name as _pn
+                _known += (str(_pn(self.config) or ""),)
+            except Exception:
+                pass
+            if name:
+                _known += (str(name),)
+            _prepis = getattr(self, '_f1_query', None)
+            tema = ((kotva_tematu(_prepis, vynech=_known) if _prepis else None)
+                    or kotva_tematu(veta or "", vynech=_known))
+            if not tema:
+                return None
+            from scripts.web_reader import WebReader
+            from scripts.hans_overeni import _jen_lokalne
+            _wr = WebReader(self.config)
+            _wr._get = _jen_lokalne        # jen lokálně: rozhoduje se u každé otázky
+            titul = _wr._wikipedia_search(tema)
+            if not titul or _wo.extrakt(titul)[1]:
+                return None
+            a, b = _tok(tema), _tok(titul)
+            if not a or not b or not (_kryje(a, b) and _kryje(b, a)):
+                return None
+            silny = len(a) >= 2 or any(w in self._PRESNY_DRUH for w in re.findall(r"\w{2,}", _f(tema)))
+            return tema if silny else None
+        except Exception as _e:
+            logging.getLogger(__name__).debug("HANS_LOOKUP_PRESNY_V1: %s", _e)
+            return None
+
     def _dohledej_kotvu(self, veta: str, name: str = None,
                         mel_zapisky: bool = False):   # HANS_LOOKUP_HAD_NOTES_V1
         """HANS_ANCHOR_LOOKUP_V1 (22.8.) — dohledej PŘEDMĚT dotazu a vrať
