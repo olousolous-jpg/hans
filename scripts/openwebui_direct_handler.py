@@ -1112,6 +1112,13 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         self._sc_pojistky(ctx)
         self._sc_overeni_tvrzeni(ctx)
         self._sc_ulozeni(ctx)
+        # HANS_OVERENI_STIN_V1 (17. 10.) — ověření údajů kódem (lokální
+        # Wikipedie + Wikidata) na pozadí, jen záznam; odpověď beze změny.
+        try:
+            from scripts import hans_overeni as _ovr
+            _ovr.stin(self, ctx)
+        except Exception as _ove:
+            logging.getLogger(__name__).debug('HANS_OVERENI_STIN_V1: %s', _ove)
         return ctx.response
 
     def _sc_read_volba(self, ctx):

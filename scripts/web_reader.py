@@ -291,6 +291,20 @@ class ReadResult:
             self.fetched_at = time.time()
 
 
+class _LokalniOdpoved:
+    """HANS_WIKI_OFFLINE_V1 — odpověď z lokální Wikipedie ve tvaru `requests`."""
+    status_code = 200
+
+    def __init__(self, data: dict):
+        self._data = data
+
+    def json(self) -> dict:
+        return self._data
+
+    def raise_for_status(self) -> None:
+        return None
+
+
 class WebReader:
     """
     Stahuje a sumarizuje webový obsah pro Hanse.
@@ -336,6 +350,12 @@ class WebReader:
     # Ne-WMF adresy (RSS, přímé URL) jdou beze změny — cizí server nemá důvod
     # platit za wiki rate-limit.
     def _get(self, url: str, **kw):
+        # HANS_WIKI_OFFLINE_V1 (17. 10.) — česká Wikipedie nejdřív z lokálního
+        # výpisu (data/wiki/cswiki.db): hledání, článek, úvod. Brány nad tím
+        # beze změny. Nic lokálně / jiný dotaz / en → síť jako dřív.
+        _lok = self._wiki_lokalne(url, kw.get("params"))
+        if _lok is not None:
+            return _lok
         from scripts import _wiki_throttle as _wt
         if _wt.is_wikimedia(url):
             try:
@@ -347,6 +367,66 @@ class WebReader:
         r = self._sess.get(url, **kw)
         self._note_http(r)
         return r
+
+    def _wiki_lokalne(self, url: str, params):
+        """HANS_WIKI_OFFLINE_V1 — odpověď z lokálního výpisu ve tvaru API,
+        nebo None (= jdi na síť). Vypínač `wiki_offline.enabled`."""
+        if not url.startswith("https://cs.wikipedia.org/"):
+            return None
+        if not (self.config.get("wiki_offline") or {}).get("enabled", True):
+            return None
+        try:
+            from scripts import hans_wiki_offline as wo
+            if not wo.dostupna():
+                return None
+            p = params or {}
+            souhrn = WIKIPEDIA_API.split("{", 1)[0]
+            if url.startswith(souhrn):
+                titul = requests.utils.unquote(url[len(souhrn):]).replace("_", " ")
+                text, roz, kan = wo.extrakt(titul, intro_only=True)
+                if roz:
+                    return _LokalniOdpoved({"type": "disambiguation", "title": kan})
+                if not text:
+                    return self._wiki_lok_nic("souhrn", titul)
+                return _LokalniOdpoved({
+                    "type": "standard", "title": kan, "extract": text,
+                    "content_urls": {"desktop": {"page": "https://cs.wikipedia.org/wiki/"
+                                     + requests.utils.quote(kan.replace(" ", "_"))}}})
+            if p.get("action") != "query":
+                return None
+            if p.get("list") == "prefixsearch":
+                hity = wo.prefixsearch(p.get("pssearch") or "", int(p.get("pslimit") or 10))
+                if not hity:
+                    # prázdný začátek titulu je odpověď (index je úplný k datu
+                    # výpisu); hned po něm jde fulltext, ten případně na síť
+                    return _LokalniOdpoved({"query": {"prefixsearch": []}})
+                return _LokalniOdpoved({"query": {"prefixsearch": [{"title": t} for t in hity]}})
+            if p.get("list") == "search":
+                hity = wo.srsearch(p.get("srsearch") or "", int(p.get("srlimit") or 10))
+                if not hity:
+                    return self._wiki_lok_nic("search", p.get("srsearch"))
+                return _LokalniOdpoved({"query": {"search": [{"title": t} for t in hity]}})
+            if (p.get("prop") in ("extracts", "extracts|pageprops") and p.get("titles")
+                    and "|" not in str(p["titles"])):
+                text, roz, kan = wo.extrakt(p["titles"], intro_only=bool(p.get("exintro")))
+                if roz:
+                    stranka = {"title": kan, "extract": "",
+                               "pageprops": {"disambiguation": ""}}
+                elif text:
+                    stranka = {"title": kan, "extract": text}
+                else:
+                    return self._wiki_lok_nic("clanek", p.get("titles"))
+                stranky = ([stranka] if str(p.get("formatversion")) == "2"
+                           else {"0": stranka})
+                return _LokalniOdpoved({"query": {"pages": stranky}})
+        except Exception as e:
+            _log.debug("HANS_WIKI_OFFLINE_V1: lokálně selhalo (%s) → síť", e)
+        return None
+
+    @staticmethod
+    def _wiki_lok_nic(druh: str, co) -> None:
+        _log.info("HANS_WIKI_OFFLINE_V1: lokálně nic (%s %r) → síť", druh, co)
+        return None
 
     def _note_http(self, resp) -> None:
         """Zaznamenej přechodné selhání API (rate limit / výpadek serveru)."""

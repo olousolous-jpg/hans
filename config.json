@@ -1776,5 +1776,11 @@
         "_rozpor_snapshot_note": "BODY_TRACK_ROZPOR_SNIMEK_V1 (4. 10.): při rozporu stopy a tváře uloží snímek s oběma rámečky do <log_dir>/snimky (nejvýš 1 za interval, drží keep kusů) — uživatel označí, kdo se plete. Po rozhodnutí o ostrém režimu vypnout a smazat.",
         "rozpor_snapshot_notify": 40,
         "_rozpor_snapshot_notify_note": "BODY_TRACK_ROZPOR_HLIDAC_V1 (4. 10.): při tolika snímcích rozporu (a aspoň ze 2 dní) pošle hans_routine JEDNOU zprávu na Matrix, ať je uživatel označí. Znovu: smazat snimky/.nahlaseno. 0 = vypnuto."
+    },
+    "wiki_offline": {
+        "enabled": true
+    },
+    "overeni": {
+        "stin": true
     }
 }
