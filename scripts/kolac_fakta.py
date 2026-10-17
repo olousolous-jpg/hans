@@ -241,6 +241,8 @@ def vyber(config: dict, db: str):
         return None
     return {"zdroj": "fakta", "tema": r["clanek"] or r["tema"] or "",
             "otazka": r["otazka"], "klic": r["klic"], "url": "",
+            # KOLAC_EXAM_HLASENI_VETA_V1 — celá věta výpisu do hlášení
+            "veta": r["veta"] or "",
             "otazka_id": int(r["id"])}
 
 

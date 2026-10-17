@@ -1353,3 +1353,11 @@ def entita_prvni_posledni(etype: str, klic: str, veta: str) -> bool:
     finally:
         try: os.remove(db); os.rmdir(d)
         except Exception: pass
+
+
+def hlaseni_ma_vetu(klic: str, veta: str) -> bool:
+    """KOLAC_EXAM_HLASENI_VETA_V1 — nese hlášení nálezu celou větu výpisu?"""
+    from scripts.kolac_exam import hlaseni
+    t = hlaseni(1, {"zdroj": "fakta", "otazka": "?", "klic": klic, "veta": veta},
+                "odpověď", {"verdikt": "vedle"})
+    return ("Ve výpisu faktů: " + veta) in t

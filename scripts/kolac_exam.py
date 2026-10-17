@@ -270,7 +270,11 @@ def potvrd(db_path: str, exam_id: int, config: dict) -> str:
     # tak o řádek požádáme. NIKDY nebrat `detail`: tam jsou Hansovy
     # nepodložené věty, tedy přesně ten výmysl.
     klic = " ".join(str(r["klic"] or "").split())
-    if len(klic) < 20:
+    # KOLAC_EXAM_KLIC_KRATKY_V1 (17. 10.) — chybí-li klíč. Dřív „< 20 zn“,
+    # jenže zkouška z faktů má klíč krátký („Rush Hour“, „v roce 1732“):
+    # 31 ze 42 nálezů nešlo potvrdit a /nalez 79 z Matrixu skončil prosbou
+    # o ruční zápis.
+    if len(klic) < 2:
         return ("K nálezu #%s nemám uložený klíč, pane — dopište prosím řádek "
                 'ručně do %s ve tvaru: otázka | správná odpověď.'
                 % (exam_id, _cfg(config).get("soubor", SOUBOR_OTAZEK)))
@@ -672,6 +676,11 @@ def hlaseni(exam_id: int, polozka: dict, odpoved: str,
         "Odpověděl jsem: %s" % _zkrat(odpoved, 420),
         "Klíč: %s" % _zkrat(polozka.get("klic"), 420),
     ]
+    # KOLAC_EXAM_HLASENI_VETA_V1 (16. 10.) — klíč je kus věty a sám nemusí nic
+    # říkat (#69: „generála Letectva“); u zkoušky z faktů přidat celou větu
+    # výpisu, ze které vznikl, ať jde nález posoudit bez otevírání databáze
+    if polozka.get("veta") and polozka.get("veta") != polozka.get("klic"):
+        radky.append("Ve výpisu faktů: %s" % _zkrat(polozka["veta"], 420))
     if polozka.get("url"):
         radky.append("Zdroj klíče: %s" % polozka["url"])
     radky += ["",
