@@ -749,6 +749,13 @@ class FaktaMixin:
             if not a or not b or not (_kryje(a, b) and _kryje(b, a)):
                 return None
             silny = len(a) >= 2 or any(w in self._PRESNY_DRUH for w in re.findall(r"\w{2,}", _f(tema)))
+            # „kdo napsal Krakatit?“ — jednoslovný název díla s autorským
+            # slovesem, jen když titul článku je PŘESNĚ to slovo (/tazatel 17. 10.)
+            if (not silny and _f(re.sub(r"\s*\(.*?\)", "", titul)) == _f(tema)
+                    and re.search(r"\bkdo\s+(?:napsal|re[zž][ií]roval|slo[zž]il|nato[cč]il|"
+                                  r"namaloval|zkomponoval|nazp[ií]val)\b",
+                                  _f(veta) + " " + _f(_prepis or ""))):
+                silny = True
             return tema if silny else None
         except Exception as _e:
             logging.getLogger(__name__).debug("HANS_LOOKUP_PRESNY_V1: %s", _e)
