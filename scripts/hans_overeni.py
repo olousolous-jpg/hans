@@ -81,9 +81,17 @@ def _druh(okoli: str):
     return best
 
 
-def udaje_vety(veta: str) -> list:
-    """[(druh, rok, den|None, měsíc|None, kus)] — druh z ±60 zn před číslem."""
+_VEK = re.compile(r"(?:dožil\w*\s+se\s+(?:\w+\s+){0,2}?|ve\s+věku\s+|v\s+)(\d{1,3})\s+let", re.I)
+
+
+def udaje_vety(veta: str, otazka: str = "") -> list:
+    """[(druh, rok, den|None, měsíc|None, kus)] — druh z ±60 zn před číslem;
+    věta bez druhu s jediným datem bere druh z otázky („Kdy se narodil X?“ →
+    „X jsme přivítali na světě 2. března 1820“). Věk → („vek“, N, …)."""
     out = []
+    for m in _VEK.finditer(veta):
+        if re.search(r"zemřel|dožil|zesnul|skonal|věku", veta, re.I):
+            out.append(("vek", int(m.group(1)), None, None, m.group(0)))
     m2 = re.search(r"(?:žil|žila)\s+v\s+letech\s+(\d{3,4})\s*(?:až|-|–)\s*(\d{3,4})", veta, re.I)
     if m2:
         out += [("narozeni", int(m2.group(1)), None, None, m2.group(0)),
@@ -95,6 +103,8 @@ def udaje_vety(veta: str) -> list:
         # celá věta jako záloha jen u jediného údaje (jinak by všechny roky
         # dostaly druh jednoho slova: „narodil … 1543 … 1642“)
         d = _druh(okoli) or (_druh(veta) if len(cisla) == 1 else None)
+        if not d and len(cisla) == 1 and otazka:
+            d = _druh(otazka)
         out.append((d, int(m.group(3)), int(m.group(1)) if m.group(1) else None,
                     _MESICE.index(m.group(2)) + 1 if m.group(2) else None, m.group(0)))
     return out
@@ -303,6 +313,12 @@ def over_wd(veta, udaje, tituly) -> list:
         if not e.get("qid"):
             continue
         for u in udaje:
+            if u[0] == "vek" and P.get("P569") and P.get("P570"):
+                vek = {d[0] - n[0] for d in P["P570"] for n in P["P569"]}
+                ok = any(abs(u[1] - v) <= 1 for v in vek)
+                det.append({"clanek": t, "p": "P570-P569", "udaj": u[4],
+                            "verdikt": "doloženo" if ok else "rozpor", "wd": sorted(vek)})
+                continue
             for p in _DATA_P.get(u[0] or "", []):
                 if p in P:
                     roky = {x[0] for x in P[p]}
@@ -364,7 +380,7 @@ def _overit(h, otazka, prepis, odpoved) -> list:
     from scripts import hans_podklad as P
     from scripts.web_reader import WebReader
     vety = [v.strip() for v in _vety(odpoved)
-            if v.strip() and (_DATUM.search(v) or _TRIGGER.search(v))]
+            if v.strip() and (_DATUM.search(v) or _TRIGGER.search(v) or _VEK.search(v))]
     if not vety:
         return []
     try:
@@ -391,7 +407,8 @@ def _overit(h, otazka, prepis, odpoved) -> list:
             k for k in jmena(v) if not P.osloveni(k, v)]))[:3]
         cl = [c for c in (_clanek(k) for k in kand) if c]
         cl = list({c[0]: c for c in cl}.values())
-        radky.append({"veta": v, "kand": kand, "cl": cl, "ud": udaje_vety(v)})
+        radky.append({"veta": v, "kand": kand, "cl": cl,
+                      "ud": udaje_vety(v, prepis or otazka)})
     try:
         _nacti_wd([c[0] for r in radky for c in r["cl"]])
     except Exception as e:

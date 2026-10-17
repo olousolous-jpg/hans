@@ -1611,6 +1611,14 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 # HANS_BYPASS_TRACE_V1 — označ deterministickou cestu
                 self._log_human_chat_to_diary(ctx.name, ctx.user_message, _kb,
                                               bypass_kind=_bypass_kind)
+                # HANS_OVERENI_STIN_V1 — i shrnutí z okamžitého dohledání
+                if _bypass_kind == "instant_lookup":
+                    try:
+                        from scripts import hans_overeni as _ovr
+                        ctx.response = _kb
+                        _ovr.stin(self, ctx)
+                    except Exception as _ove:
+                        logging.getLogger(__name__).debug('HANS_OVERENI_STIN_V1: %s', _ove)
                 return _kb
         except Exception as _kce:
             print(f"[Chat] knowledge check bypass error: {_kce}")
