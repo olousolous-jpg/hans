@@ -946,16 +946,16 @@ _PRIVLASTEK = re.compile(r"(?:ův|ova|ovy|ových|ovým|ovou|ově|ovu)$")   # ne 
 
 
 def _natahni_titul(words: list, i: int, jmeno: list) -> list:
-    """HANS_ANCHOR_SV_TITUL_V1 — nejdelší „Slovo malá slova…“ (≤ 6), které
+    """HANS_ANCHOR_SV_TITUL_V1 — nejdelší „Slovo další slova…“ (≤ 8), které
     je přesným titulem (i přesměrováním) lokální Wikipedie; jinak beze změny."""
     try:
         from scripts import hans_wiki_offline as _wo
         if not _wo.dostupna():
             return jmeno
-        for k in range(min(6, len(words) - i), 1, -1):
+        for k in range(min(8, len(words) - i), 1, -1):
             kus = words[i:i + k]
-            if any(x[:1].isupper() for x in kus[1:]):
-                continue
+            # i s velkým písmenem uvnitř („Osudy dobrého vojáka Švejka za
+            # světové války“) — rozhoduje přesný titul, ne tvar slov
             if _wo._cil(" ".join(kus)):
                 return kus
     except Exception:

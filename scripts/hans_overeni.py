@@ -34,7 +34,8 @@ _NEJM = {"Dobrý", "Děkuji", "Ahoj", "Prosím", "Mohl", "Mohla", "Zajímalo", "
          "Získal", "Leží", "Začala", "Přesné", "Žil", "Režie", "Režírovala", "Spolupracoval",
          "Vedle", "Z", "V", "Ve", "Na", "Dnes", "Datum", "Činnost", "Existují", "Organizace",
          "Stavba", "Hrad", "Narodil", "Zemřel", "Omlouvám", "Především", "Klíčové", "Druhá",
-         "Největší", "Záznamy", "Můžu", "To", "Ten", "Ta", "Tak", "Ano", "Ne", "Pane", "Paní"}
+         "Největší", "Záznamy", "Můžu", "To", "Ten", "Ta", "Tak", "Ano", "Ne", "Pane", "Paní",
+         "Autor", "Autorem", "Autorkou"}
 
 
 def jmena(veta: str) -> list:
@@ -174,11 +175,23 @@ _VZTAHY = [
     (r"\bkraj\w*|ve správě|leží\s+v\w*|nachází\s+se\s+v\w*", ["P131"]),
     (r"\bautor\w*|napsal\w*", ["P50"]),
     (r"manžel\w*|\bžen(?:ou|a)\b", ["P26"]),
-    (r"architekt\w*|stavitel\w*|mistr\w*|řízen\w*", ["P84"]),
+    (r"architekt\w*|stavitel\w*|mistr\w*|řízen\w*|navrhl\w*|návrhář\w*|projektoval\w*", ["P84"]),
+    (r"založil\w*|zakladatel\w*", ["P112"]),
+    (r"složil\w*|zkomponoval\w*|skladatel\w*", ["P86"]),
+    (r"adaptac\w*|předloh\w*|na motivy|podle\s+(?:stejnojmenn\w+\s+)?(?:román\w*|knih\w*|povídk\w*)",
+     ["P144"]),
     (r"\brodu\b|dynasti\w*|Přemyslovc\w*|Lucemburk\w*|Habsburk\w*", ["P53"]),
     (r"\bhrál\w*|\bhrají\b|v hlavní roli|obsazen\w*", ["P161"]),
 ]
-_VSE_P = sorted({p for ps in _DATA_P.values() for p in ps} | {p for _, ps in _VZTAHY for p in ps})
+# HANS_OVERENI_ROZSIRENI_V1 (17. 10.) — číselné údaje s tolerancí
+_MNOZSTVI = [   # (klíčové slovo, vlastnost, relativní tolerance)
+    (r"vysok\w*|výšk\w*|nadmořsk\w*|měří", "P2044", 0.02),
+    (r"obyvatel\w*", "P1082", 0.15),
+    (r"rozloh\w*", "P2046", 0.05),
+    (r"dlouh\w*|délk\w*", "P2043", 0.05),
+]
+_VSE_P = sorted({p for ps in _DATA_P.values() for p in ps} | {p for _, ps in _VZTAHY for p in ps}
+                | {p for _, p, _ in _MNOZSTVI})
 _MISTA_P = ("P131", "P19", "P20")
 _cache = None
 
@@ -195,7 +208,12 @@ def _c() -> dict:
             _cache = json.load(open(CACHE, encoding="utf-8"))
         except Exception:
             _cache = {}
+        if _cache.get("_v") != _CACHE_V:      # nové vlastnosti → načíst znovu
+            _cache = {"_v": _CACHE_V}
     return _cache
+
+
+_CACHE_V = 2   # HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství
 
 
 def _uloz():
@@ -234,6 +252,11 @@ def _nacti_wd(tituly: list) -> None:
                     if isinstance(v, dict) and v.get("id"):
                         P.setdefault(p, []).append(v["id"])
                         odkazy.add(v["id"])
+                    elif isinstance(v, dict) and v.get("amount"):
+                        try:
+                            P.setdefault(p, []).append(float(v["amount"]))
+                        except ValueError:
+                            pass
                     elif isinstance(v, dict) and v.get("time"):
                         m = re.match(r"[+-]0*(\d+)-(\d\d)-(\d\d)", v["time"])
                         if m:
@@ -242,6 +265,18 @@ def _nacti_wd(tituly: list) -> None:
             nalez[t] = {"qid": q, "p": P}
         for t in chybi:
             C[t] = nalez.get(t, {"qid": None, "p": {}})
+    predlohy = [q for t in tituly for q in ((C.get(t) or {}).get("p") or {}).get("P144", [])
+                if isinstance(q, str) and "A:" + q not in C][:45]
+    if predlohy:
+        d = _wd(API + "?action=wbgetentities&props=claims&format=json&ids=" + "|".join(predlohy))
+        for q, e in (d.get("entities") or {}).items():
+            C["A:" + q] = [((cl.get("mainsnak") or {}).get("datavalue") or {}).get("value", {}).get("id")
+                           for cl in (e.get("claims") or {}).get("P50", [])
+                           if isinstance(((cl.get("mainsnak") or {}).get("datavalue") or {}).get("value"), dict)]
+            C["A:" + q] = [x for x in C["A:" + q] if x]
+            odkazy |= set(C["A:" + q])
+        for q in predlohy:
+            C.setdefault("A:" + q, [])
     mista = {q for t in tituly for p in _MISTA_P
              for q in ((C.get(t) or {}).get("p") or {}).get(p, []) if isinstance(q, str)}
     for _ in range(4):
@@ -291,12 +326,17 @@ def _jm(q):
     return vic or j
 
 
-def _shoda_jmena(ve_vete, jmena_wd) -> bool:
-    """Shoda začátků slov (5 zn); u víceslovného jména rozhoduje poslední slovo
-    (Martina Campbellová ≠ Martin Campbell); „-ová“ × mužské jméno neplatí."""
+def _shoda_jmena(ve_vete, jmena_wd, misto: bool = False) -> bool:
+    """Shoda začátků slov (5 zn); u víceslovného jména osoby rozhoduje poslední
+    slovo (Martina Campbellová ≠ Martin Campbell), u místa jméno bez přívěsku
+    („Všebořice u Dolních Kralovic“ → všechna slova před „u“); „-ová“ ×
+    mužské jméno neplatí."""
     sv = [w for w in re.findall(r"\w+", _fold(ve_vete)) if len(w) >= 3]
     for j in jmena_wd:
-        jw = [w for w in re.findall(r"\w+", _fold(j)) if len(w) >= 3][-1:]
+        if misto:
+            j = re.split(r"\s+(?:u|nad|pod|na|v|ve)\s+|\s*\(", j)[0]
+        jw = [w for w in re.findall(r"\w+", _fold(j)) if len(w) >= 3]
+        jw = jw if misto else jw[-1:]
         for a in sv:
             for b in jw:
                 n = min(5, len(a), len(b))
@@ -343,14 +383,46 @@ def over_wd(veta, udaje, tituly) -> list:
                 if _fold(t.split(" (")[0])[:5] in _fold(ve_vete):
                     continue
                 hodnoty = [j for p in props for q0 in P.get(p, []) if isinstance(q0, str)
-                           for q in (_predci(q0) if p in _MISTA_P else [q0]) for j in _jm(q)]
+                           for q in (_predci(q0) if p in _MISTA_P
+                                     else [q0] + _c().get("A:" + q0, []) if p == "P144"
+                                     else [q0]) for j in _jm(q)]
                 if not hodnoty:
                     continue
+                _misto = any(p in _MISTA_P for p in props)
                 det.append({"clanek": t, "p": props, "udaj": ve_vete.strip(" ,"),
-                            "verdikt": "doloženo" if _shoda_jmena(ve_vete, hodnoty) else "rozpor",
+                            "verdikt": ("doloženo" if _shoda_jmena(ve_vete, hodnoty, _misto)
+                                        else "rozpor"),
                             "wd": [_jm(q)[0] for p in props for q in P.get(p, [])
                                    if isinstance(q, str) and _jm(q)][:4]})
+        for vzor, p, tol in _MNOZSTVI:
+            if not P.get(p) or not re.search(vzor, veta, re.I):
+                continue
+            for x in _CISLA.finditer(veta):
+                n = _cislo(x)
+                if n is None or 1000 <= n <= 2100 and not x.group(3):
+                    continue       # letopočet, ne údaj
+                vals = [float(v) for v in P[p] if isinstance(v, (int, float))]
+                ok = any(abs(n * k - v) <= tol * v for v in vals for k in (1, 1000, 0.001))
+                det.append({"clanek": t, "p": p, "udaj": x.group(0).strip(),
+                            "verdikt": "doloženo" if ok else "rozpor", "wd": vals[:3]})
     return det
+
+
+_CISLA = re.compile(r"(\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:,(\d+))?\s*"
+                    r"(tisíc\w*|milion\w*|metr\w*|m\b|km\w*|kilometr\w*)?", re.I)
+
+
+def _cislo(m):
+    try:
+        n = float(re.sub(r"[ \u00a0]", "", m.group(1)) + ("." + m.group(2) if m.group(2) else ""))
+    except ValueError:
+        return None
+    jed = (m.group(3) or "").lower()
+    if jed.startswith("tisíc"):
+        n *= 1000
+    elif jed.startswith("milion"):
+        n *= 1_000_000
+    return n
 
 
 # ── lokální vyhledání přes produkční brány, bez sítě ─────────────────────────
@@ -376,7 +448,8 @@ def _jen_lokalne(url, params=None, **kw):
     raise RuntimeError("stín ověřování nejde na síť")
 
 
-_TRIGGER = re.compile("|".join(v for v, _ in _VZTAHY), re.I)
+_TRIGGER = re.compile("|".join([v for v, _ in _VZTAHY] + [v for v, _, _ in _MNOZSTVI]), re.I)
+_UVOZ = re.compile(r"[„\"]([^“\"]{3,90})[“\"]")
 
 
 def _overit(h, otazka, prepis, odpoved) -> list:
@@ -407,9 +480,9 @@ def _overit(h, otazka, prepis, odpoved) -> list:
         return clanky[k]
     radky = []
     for v in vety:
-        kand = list(dict.fromkeys(([pr] if pr else []) + [
+        kand = list(dict.fromkeys(([pr] if pr else []) + _UVOZ.findall(v) + [
             k for k in jmena(v) if not P.osloveni(k, v)]))[:3]
-        cl = [c for c in (_clanek(k) for k in kand) if c]
+        cl = [c for c in (_clanek(k) for k in kand) if c and not c[0].startswith("Seznam ")]
         cl = list({c[0]: c for c in cl}.values())
         radky.append({"veta": v, "kand": kand, "cl": cl,
                       "ud": udaje_vety(v, prepis or otazka)})
@@ -430,14 +503,27 @@ def _overit(h, otazka, prepis, odpoved) -> list:
         # je jiný předmět → jeho rozpor se nepočítá (/tazatel 17. 10.)
         cizi = {kan for kan, _ in r["cl"]
                 if any(c not in r["veta"] for c in re.findall(r"\b\d+\b", kan))}
-        txt = [x for x in txt if not (x["verdikt"] == "rozpor" and x["clanek"] in cizi)]
-        wd = [x for x in wd if not (x["verdikt"] == "rozpor" and x["clanek"] in cizi)]
+        # datum/číslo smí dát rozpor jen článek, jehož předmět věta nebo otázka
+        # jmenuje („Byla založena 1348…“ × vznik Česka, otázka na univerzitu)
+        _kontext = _fold(r["veta"] + " " + otazka + " " + prepis)
+        for kan, _ in r["cl"]:
+            sl = [w for w in re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", kan)))]
+            if sl and not any(w[:5] in _kontext for w in sl):
+                cizi.add(kan + "\x00datum")
+        _dat = lambda x: not isinstance(x.get("p"), list)      # datum/číslo, ne jméno
+        txt = [x for x in txt if not (x["verdikt"] == "rozpor" and (
+            x["clanek"] in cizi or x["clanek"] + "\x00datum" in cizi))]
+        wd = [x for x in wd if not (x["verdikt"] == "rozpor" and (
+            x["clanek"] in cizi or (_dat(x) and x["clanek"] + "\x00datum" in cizi)))]
         dol = {x["udaj"] for x in txt + wd if x["verdikt"] == "doloženo"}
 
         def _v(det):
             if any(x["verdikt"] == "rozpor" and x["udaj"] not in dol for x in det):
                 return "rozpor"
             return "doloženo" if any(x["verdikt"] == "doloženo" for x in det) else "nevim"
+        # ⛔ signál „jméno z věty chybí v článku o předmětu“ ZMĚŘEN 17. 10. a
+        # vyřazen: 0 skutečných chyb, 3 plané (oslovení za dvojtečkou,
+        # „Středočeském“, pravdivý Bernini, kterého článek nezmiňuje)
         out.append({"veta": r["veta"], "kandidati": r["kand"], "clanky": [c[0] for c in r["cl"]],
                     "text": _v(txt), "wikidata": _v(wd), "obe": _v(txt + wd),
                     "detail": [x for x in txt + wd if x["verdikt"] != "nevim"]})
