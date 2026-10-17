@@ -125,6 +125,9 @@ def otazkova_cast(text) -> str:
     # HANS_ANCHOR_RIMSKE_V1 — „Kde Karel IV. trávil dětství?“: tečka za řadovou
     # číslicí panovníka, po níž věta pokračuje malým písmenem, větu nekončí
     _t = re.sub(r"(?<=\s)([IVX]{1,5})\.(?=\s+[a-zá-ž])", "\\1\x00", t)
+    # HANS_ANCHOR_SV_TITUL_V1 (17. 10.) — „katedrálu sv. Víta“: zkratka „sv.“
+    # větu nekončí (jinak zbylo „Víta v Praze?“ a předmětem se stala „Praze“)
+    _t = re.sub(r"(?<=\s)([Ss]v)\.(?=\s+[A-ZÁ-Ž])", "\\1\x00", _t)
     kusy = [k.strip().replace("\x00", ".")
             for k in re.split(r"(?<![ .][A-ZÁ-Ž]\.)(?<=[.!?])\s+", _t) if k.strip()]
     q = [k for k in kusy if "?" in k]

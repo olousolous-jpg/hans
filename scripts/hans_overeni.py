@@ -284,7 +284,11 @@ def _predci(q, hloubka=5):
 
 
 def _jm(q):
-    return _c().get("L:" + q) or []
+    """Jména entity; má-li víceslovné, jednoslovné aliasy („Matyáš“) se
+    vynechají — samo křestní jméno doložilo „Matyáš z Kolova“."""
+    j = _c().get("L:" + q) or []
+    vic = [x for x in j if len(x.split()) > 1]
+    return vic or j
 
 
 def _shoda_jmena(ve_vete, jmena_wd) -> bool:

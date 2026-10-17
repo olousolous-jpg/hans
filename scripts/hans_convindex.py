@@ -520,7 +520,8 @@ def kotvy_ve_vete(veta: str) -> list:
         pred = text[:m.start()].rstrip()
         if not pred:
             continue
-        if pred[-1] in _KONEC_VETY:
+        # HANS_ANCHOR_SV_TITUL_V1 — „sv.“ (svatý) před jménem větu nekončí
+        if pred[-1] in _KONEC_VETY and not re.search(r"(?:^|\s)[Ss]v\.$", pred):
             # HANS_ANCHOR_COLON_V1 (30.8.) — DVOJTEČKA V NÁZVU NENÍ KONEC VĚTY.
             # `_KONEC_VETY` obsahuje i „:" a „;", protože dvojtečka uvozuje
             # výčet („Studuji: hrady…") a slovo za ní kotva být nemá. Jenže
@@ -676,9 +677,16 @@ for _n, _tvary in {
         "jezero": "jezero jezera jezeře",
         "ostrov": "ostrov ostrova ostrově",
         "muzeum": "muzeum muzea muzeu",
+        # HANS_ANCHOR_SV_TITUL_V1 (17. 10.) — sakrální stavby („katedrály sv.
+        # Víta“), /tazatel 17. 10.
+        "katedrála": "katedrála katedrály katedrále katedrálu katedrálou",
+        "chrám": "chrám chrámu chrámem",
+        "bazilika": "bazilika baziliky bazilice baziliku bazilikou",
+        "kaple": "kaple kapli kaplí",
 }.items():
     for _t in _tvary.split():
         _DRUH[_t] = _n
+        _DRUH.setdefault(_fold(_t), _n)   # HANS_ANCHOR_SV_TITUL_V1: hledá se složeně
 
 
 # ── HANS_ANCHOR_JOIN_V1 (30.8.) — CO SMÍ BÝT UVNITŘ JEDNOHO TÉMATU ──────────
@@ -809,6 +817,7 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
         return False
 
     preskoc_do = 0
+    _odlozena = None        # HANS_ANCHOR_SV_TITUL_V1
     for i, w in kotvy:
         if i < preskoc_do:
             continue        # druhé slovo téhož jména („Sherlock Holmes")
@@ -897,8 +906,51 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
                     jmeno = [_jmeno_1_pad(x) for x in jmeno]
                 jmeno.append(_rim)
         druh = _DRUH.get(_fold(words[i - 1]), "")
-        return ((druh + " ") if druh else "") + " ".join(jmeno)
-    return None
+        # HANS_ANCHOR_SV_TITUL_V1 (17. 10.) — „katedrály sv. Víta“: druhové
+        # slovo stojí před zkratkou → „katedrála sv. Víta“ (Wikipedie: heslo
+        # „Katedrála sv. Víta“; holé „Praze“ dalo model o Notre-Dame)
+        _sv = (i >= 1 and _fold(words[i - 1]) == "sv"
+               and re.search(r"\b[Ss]v\.\s+" + re.escape(jmeno[0]), veta or ""))
+        if _sv:
+            druh = _DRUH.get(_fold(words[i - 2]), "") if i >= 2 else ""
+            jmeno = ["sv."] + jmeno
+        # název díla s malými slovy („Příliš hlučná samota“) — jen když přesně
+        # takový titul je v lokální Wikipedii
+        elif len(jmeno) == 1:
+            jmeno = _natahni_titul(words, i, jmeno)
+        kotva = ((druh + " ") if druh else "") + " ".join(jmeno)
+        # přivlastňovací tvar („Hrabalův román“) ustoupí další kotvě ve větě
+        # jen když název stojí HNED za podstatným jménem („Hrabalův román
+        # Příliš…“), ne „Karlova mostu v Praze“
+        _dalsi = [x for k, x in kotvy if k == j]
+        if (_PRIVLASTEK.search(w) and _odlozena is None and _dalsi
+                and re.search(re.escape(words[j - 1]) + r"\s+" + re.escape(_dalsi[0]),
+                              veta or "")):
+            _odlozena = kotva
+            continue
+        return kotva
+    return _odlozena
+
+
+_PRIVLASTEK = re.compile(r"(?:ův|ova|ovy|ových|ovým|ovou|ově|ovu)$")   # ne -in/-ovo (Berlin, Kosovo)
+
+
+def _natahni_titul(words: list, i: int, jmeno: list) -> list:
+    """HANS_ANCHOR_SV_TITUL_V1 — nejdelší „Slovo malá slova…“ (≤ 6), které
+    je přesným titulem (i přesměrováním) lokální Wikipedie; jinak beze změny."""
+    try:
+        from scripts import hans_wiki_offline as _wo
+        if not _wo.dostupna():
+            return jmeno
+        for k in range(min(6, len(words) - i), 1, -1):
+            kus = words[i:i + k]
+            if any(x[:1].isupper() for x in kus[1:]):
+                continue
+            if _wo._cil(" ".join(kus)):
+                return kus
+    except Exception:
+        pass
+    return jmeno
 
 
 def _vyznamove_souvisi(query: str, rows: list) -> list:

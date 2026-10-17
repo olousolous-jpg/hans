@@ -691,3 +691,68 @@ def fix_weekday(text: str, now=None):
     text = re.sub(r"(\b(?:dnes|dneska|te[d\u010f])\s+(?:je|m[a\u00e1]me)\s+)(" + den_re + r")\b",
                   _za_dnes, text, flags=re.IGNORECASE)
     return text, pocet
+
+
+# ── HANS_YEAR_WORDS_V1 (17. 10.) — číslovka slovy → číslice ────────────────
+# Model občas píše letopočet slovy („tisíc devětsetšedesát šest“) — čte se
+# hůř a kontrola údajů (`hans_overeni`, `hans_claim_filter`) ho nevidí.
+# 📏 3 511 odpovědí: 34 s „tisíc…“. Převádí se JEN fráze, která se celá
+# rozebere (tisíce + aspoň jedna další část); „tisíc lidí“, řadové tvary
+# („dvanáctého“) a nesmysl („tisíc devětset sto dva“) zůstanou, jak jsou.
+_YW_J = {"jedna": 1, "jeden": 1, "dva": 2, "dvě": 2, "tři": 3, "čtyři": 4, "pět": 5,
+         "šest": 6, "sedm": 7, "osm": 8, "devět": 9}
+_YW_D = {"dvacet": 20, "třicet": 30, "čtyřicet": 40, "padesát": 50, "šedesát": 60,
+         "sedmdesát": 70, "osmdesát": 80, "devadesát": 90}
+_YW_N = {"deset": 10, "jedenáct": 11, "dvanáct": 12, "třináct": 13, "čtrnáct": 14,
+         "patnáct": 15, "šestnáct": 16, "sedmnáct": 17, "osmnáct": 18, "devatenáct": 19}
+_YW_S = {"sto": 100, "dvěstě": 200, "třista": 300, "čtyřista": 400, "pětset": 500,
+         "šestset": 600, "sedmset": 700, "osmset": 800, "devětset": 900}
+_yw_alt = lambda d: "|".join(sorted(d, key=len, reverse=True))
+_YW_RE = re.compile(
+    r"\b(?P<th>tisíc|dva\s*tisíce)"
+    r"(?:\s*(?P<h>" + "|".join(
+        k.replace("stě", r"\s*stě").replace("sta", r"\s*sta").replace("set", r"\s*set")
+        if k != "sto" else k for k in sorted(_YW_S, key=len, reverse=True)) + r"))?"
+    r"(?:\s*(?P<ja>" + _yw_alt(_YW_J) + r")a(?P<da>" + _yw_alt(_YW_D) + r")"
+    r"|(?:\s*(?P<n>" + _yw_alt(_YW_N) + r"))"
+    r"|(?:\s*(?P<d>" + _yw_alt(_YW_D) + r"))?(?:\s*(?P<j>" + _yw_alt(_YW_J) + r"))?)"
+    r"(?![\wáčďéěíňóřšťúůýž])"
+    r"(?!\s*(?:" + _yw_alt(_YW_J) + "|" + _yw_alt(_YW_D) + "|" + _yw_alt(_YW_N)
+    + r"|sto|st[ěa]|set|tisíc)\b)"
+    # ani zkomolené číslovky za frází („tisíc devětset osmmatsto“)
+    r"(?!\s*\w*(?:sto|set|st[ěa]|cet|desát|náct|tisíc))"
+    # ani řadový tvar za frází („dva tisíce dvacet šestý“)
+    r"(?!\s*(?:jedn|dv[aěo]|druh|tř|čtyř|čtvr|pět|pát|šest|sedm|osm|devě|devá)\w*)",
+    re.IGNORECASE)
+
+
+def _yw_hodnota(m) -> Optional[int]:
+    g = {k: (v or "").lower() for k, v in m.groupdict().items()}
+    if not (g["h"] or g["ja"] or g["n"] or g["d"] or g["j"]):
+        return None                      # holé „tisíc“ / „dva tisíce“
+    v = 2000 if g["th"].startswith("dva") else 1000
+    if g["h"]:
+        v += _YW_S[re.sub(r"\s+", "", g["h"])]
+    if g["ja"]:
+        v += _YW_J[g["ja"]] + _YW_D[g["da"]]
+    elif g["n"]:
+        v += _YW_N[g["n"]]
+    else:
+        v += _YW_D.get(g["d"], 0) + _YW_J.get(g["j"], 0)
+    return v
+
+
+def fix_year_words(text: str):
+    """HANS_YEAR_WORDS_V1 — (text, počet převodů)."""
+    if not text or "tis" not in text.lower():
+        return text, 0
+    n = 0
+
+    def _sub(m):
+        nonlocal n
+        v = _yw_hodnota(m)
+        if v is None:
+            return m.group(0)
+        n += 1
+        return str(v)
+    return _YW_RE.sub(_sub, text), n

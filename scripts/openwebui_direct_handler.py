@@ -2790,6 +2790,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         "HANS_WEEKDAY_FIX_V1: opraven den v tydnu (%d×)", _nden)
             except Exception:
                 pass
+            # HANS_YEAR_WORDS_V1 (17. 10.) — letopočet slovy → číslicemi
+            # („tisíc devětset čtyřicet dva“ → 1942); čtení i kontrola údajů
+            try:
+                from scripts.cz_names import fix_year_words
+                ctx.response, _nrok = fix_year_words(ctx.response)
+                if _nrok:
+                    logging.getLogger(__name__).info(
+                        "HANS_YEAR_WORDS_V1: číslovka slovy → číslice (%d×)", _nrok)
+            except Exception:
+                pass
             # HANS_GREETING_OUTPUT_TRIM_V1 (19. 9.) — nadbytecny pozdrav
             # v NAVAZUJICI replice. Vstupni cisteni okna (`_orez_pozdravy`)
             # na to NESTACI: meni jen pohled do promptu, ne odpoved —

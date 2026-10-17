@@ -1071,3 +1071,52 @@ def jiny_predmet(text: str, titul: str, vynech=()) -> bool:
     mimo |= {str(v).lower()[:5] for v in vynech if v}
     return any(m.group(0).lower()[:5] not in mimo
                for m in _VLASTNI_JMENO.finditer(t))
+
+
+# ── HANS_ASK_HANS_EXPERIENCE_V1 (17. 10.) — otázka na Hansův zážitek či dílo ──
+# „Byl jste někdy v Paříži?“, „Které knihy jste si přečetl o Predátorovi?“,
+# „jakou technikou jsi to dělal?“, „vaše esej o hradech…“ NEJSOU dotazem na
+# fakt o světě — dohledání kotvy z nich udělalo článek („Paříži, miluji tě“).
+# 📏 /tazatel (60 dohledání): 9 takových, predikát sedí 9/9; odkazy na
+# rozhovor („o kterou jste se zmínil“, „zmínil jste X“) a výslovná žádost
+# o dohledání se NEpočítají. Rozhoduje jen otázková část zprávy.
+_ZAZ_ODKAZ = re.compile(
+    r"\b(?:zmínil|zminil|řekl|rekl|uvedl|psal|napsal|mluvil|hovořil|hovoril|vyprávěl|vypravel)\w*"
+    r"\s+(?:jste|jsi)\b|\b(?:jste|jsi)\s+(?:se\s+|mi\s+|nám\s+)?(?:zmínil|zminil|řekl|rekl|uvedl|"
+    r"psal|napsal|mluvil|hovořil|hovoril|vyprávěl|vypravel)\w*", re.IGNORECASE)
+_ZAZ_MINULE = re.compile(
+    r"\b(\w{2,}l[aoiy]?)\s+(?:jste|jsi)\b|\b(?:jste|jsi)\s+(?:(?:si|se|ji|ho|je|to|někdy|nekdy|"
+    r"už|uz|sám|sam|osobně|osobne|tehdy|dnes|dneska|včera|vcera|naposledy|nedávno|nedavno|"
+    r"kdysi|letos|tam)\s+)*(\w{2,}l[aoiy]?)\b", re.IGNORECASE)
+_ZAZ_VLASTNI = re.compile(
+    r"\b(?:vaš\w*|váš|tvoj\w*|tvůj|tvuj)\s+(?:vlastn\w*\s+)?(?:esej\w*|stránk\w*|strank\w*|"
+    r"obraz\w*|díl\w*|dil[oau]|kresb\w*|text\w*|objev\w*|tvorb\w*|projekt\w*|web\w*)"
+    r"|\b(?:vaše|vase|tvoje)\s+vlastn", re.IGNORECASE)
+_ZAZ_ZADOST = {"mohl", "mohla", "chtěl", "chtel", "chtěla", "chtela", "musel", "musela",
+               "měl", "mel", "měla", "mela"}     # „mohl byste…“ = žádost, ne zážitek
+_ZAZ_BYL_KDE = re.compile(
+    r"\bbyl[a]?\s+(?:jste|jsi)\s+(?:(?:někdy|nekdy|už|uz|osobně|osobne|sám|sam|naposledy|"
+    r"nedávno|nedavno|kdysi)\s+)*(?:v|ve|na|do|u)\b|\b(?:jste|jsi)\s+(?:(?:někdy|nekdy|už|uz|"
+    r"naposledy)\s+)?byl[a]?\s+(?:v|ve|na|do|u)\b", re.IGNORECASE)
+
+
+def pta_se_na_zazitek_hanse(text: str) -> bool:
+    """Ptá se otázková část zprávy na Hansův vlastní zážitek nebo dílo?"""
+    if not text or zada_dohledani(text):
+        return False
+    try:
+        from scripts.hans_podklad import otazkova_cast
+        q = otazkova_cast(text)
+    except Exception:
+        q = text
+    q = _ZAZ_ODKAZ.sub(" ", q)
+    if _ZAZ_VLASTNI.search(q):
+        return True
+    for m in _ZAZ_MINULE.finditer(q):
+        sl = (m.group(1) or m.group(2) or "").lower()
+        if sl in _ZAZ_ZADOST:
+            continue
+        if sl in ("byl", "byla") and not _ZAZ_BYL_KDE.search(q):
+            continue
+        return True
+    return False

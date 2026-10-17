@@ -702,6 +702,18 @@ class FaktaMixin:
         Zápis jde JEN do čekárny `unverified_findings`; noční ověření
         a ranní oprava už běží ([[instant-lookup-verify-loop]]).
         """
+        # HANS_ASK_HANS_EXPERIENCE_V1 (17. 10.) — otázka na Hansův zážitek či
+        # dílo („Byl jste někdy v Paříži?“) není dotaz na fakt o světě →
+        # nedohledávat (dřív film „Paříži, miluji tě“)
+        try:
+            from scripts.hans_intent import pta_se_na_zazitek_hanse
+            if pta_se_na_zazitek_hanse(veta):
+                logging.getLogger(__name__).info(
+                    "HANS_ASK_HANS_EXPERIENCE_V1: otázka na můj zážitek/dílo → "
+                    "nedohledávám: %.60s", veta or "")
+                return None
+        except Exception:
+            pass
         try:
             from scripts.hans_convindex import kotva_tematu
             from scripts.hans_findings import lookup_now
