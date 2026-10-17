@@ -86,8 +86,32 @@ def _prvni_pad(q: str) -> list:
     return list(dict.fromkeys(out))
 
 
+_UPRESNENI = {"kniha": ("kniha", "román", "novela"), "film": ("film",), "seriál": ("seriál",),
+              "hora": ("hora",), "hrad": ("hrad",), "zámek": ("zámek",), "řeka": ("řeka",)}
+
 _DRUHY_SLOVA = {"hora", "hrad", "zámek", "řeka", "město", "jezero", "ostrov", "film",
                 "kniha", "seriál", "kostel", "katedrála", "chrám", "muzeum", "kapela", "loď"}
+
+
+def _presna_zaloha(q: str):
+    """HANS_WIKI_OFFLINE_DIRY_V1 — přesný titul i (a) bez druhového slova
+    („hora Mount Everest“, „kniha Krakatit“ → „Krakatit (kniha)“/„Krakatit“),
+    (b) v 1. pádě u jednoho slova („Babičku“ → „Babička“). Jen přesná shoda,
+    rozcestník ne. → (titul dotazu, řádek článku) nebo None."""
+    db = _db()
+    sl = q.split()
+    zkus = []
+    if len(sl) >= 2 and sl[0].lower() in _DRUHY_SLOVA and sl[1][:1].isupper():
+        zbytek = " ".join(sl[1:])
+        zkus += ["%s (%s)" % (zbytek, u) for u in _UPRESNENI.get(sl[0].lower(), ())]
+        zkus.append(zbytek)
+    zkus += _prvni_pad(q)
+    for z in zkus:
+        r = _cil(z)
+        if r and not db.execute("SELECT rozcestnik FROM clanek WHERE id=?",
+                                (r[0],)).fetchone()[0]:
+            return z, r
+    return None
 
 
 def prefixsearch(q: str, limit: int = 3) -> list:
@@ -116,18 +140,9 @@ def prefixsearch(q: str, limit: int = 3) -> list:
             kand.setdefault(tit, d[0] if d else 0)
     ex = _cil(q)
     if not ex:
-        # HANS_WIKI_OFFLINE_DIRY_V1 — přesný titul i (a) bez druhového slova
-        # před cizím názvem („hora Mount Everest“), (b) v 1. pádě u jednoho
-        # slova („Babičku“ → „Babička“); jen přesná shoda, žádné hádání
-        sl = q.split()
-        zkus = []
-        if len(sl) >= 3 and sl[0].lower() in _DRUHY_SLOVA:
-            zkus.append(" ".join(sl[1:]))
-        zkus += _prvni_pad(q)
-        for z in zkus:
-            if _cil(z):
-                q, ex = z, _cil(z)
-                break
+        z = _presna_zaloha(q)
+        if z:
+            q, ex = z
     out = []
     if ex:
         p = db.execute("SELECT titul FROM presmerovani WHERE titul_norm=?",
@@ -201,6 +216,10 @@ def srsearch(q: str, limit: int = 5) -> list:
         if rows:
             tituly = [r[0] for r in rows]
             ex = _cil(q)
+            if not ex:
+                _z = _presna_zaloha(q)
+                if _z:
+                    ex = _z[1]
             if ex and ex[1] not in tituly:
                 roz = db.execute("SELECT rozcestnik FROM clanek WHERE id=?",
                                  (ex[0],)).fetchone()
