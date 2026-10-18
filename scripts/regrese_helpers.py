@@ -1402,3 +1402,12 @@ def a1_otazka_bez_otazniku(veta: str) -> bool:
     """HANS_A1_QUESTION_COMMA_V1 — obal nad predikátem handleru."""
     from scripts.openwebui_direct_handler import _a1_otazka_bez_otazniku
     return _a1_otazka_bez_otazniku(veta)
+
+
+def wiki_presna_zaloha_titul(q: str):
+    """HANS_WIKI_DRUH_ROK_V1 — titul, který lokální wiki vezme jako přesnou zálohu."""
+    from scripts import hans_wiki_offline as _wo
+    if not _wo.dostupna():
+        return "BEZ_WIKI"
+    r = _wo._presna_zaloha(q)
+    return r[0] if r else None

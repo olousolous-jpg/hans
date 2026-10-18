@@ -111,6 +111,20 @@ def _presna_zaloha(q: str):
         if r and not db.execute("SELECT rozcestnik FROM clanek WHERE id=?",
                                 (r[0],)).fetchone()[0]:
             return z, r
+        # HANS_WIKI_DRUH_ROK_V1 (18. 10.) — „film Titanic“: „Titanic (film)“ je
+        # rozcestník a článek se jmenuje „Titanic (film, 1997)“ → hledání
+        # propadlo až na „Titan (film)“. Jediná varianta „X (druh, …)“ se vezme
+        # HNED (před holým „X“ = loď); víc variant (Duna 1984 × 2021) → beze
+        # změny. 📏 13 logovaných dohledání s druhovým slovem: změna jen Titanic.
+        if z.endswith(")") and " (" in z:
+            n = _norm(z[:-1] + ", ")
+            var = [t for t, roz in db.execute(
+                "SELECT titul, rozcestnik FROM clanek WHERE titul_norm >= ? "
+                "AND titul_norm < ? LIMIT 5", (n, n + "\U0010ffff")) if not roz]
+            if len(var) == 1:
+                r = _cil(var[0])
+                if r:
+                    return var[0], r
     return None
 
 
