@@ -1361,3 +1361,9 @@ def hlaseni_ma_vetu(klic: str, veta: str) -> bool:
     t = hlaseni(1, {"zdroj": "fakta", "otazka": "?", "klic": klic, "veta": veta},
                 "odpověď", {"verdikt": "vedle"})
     return ("Ve výpisu faktů: " + veta) in t
+
+
+def podklad_kryje(titul: str, podklad: str) -> bool:
+    """HANS_LOOKUP_PRESNY_PODKLAD_V1 — obal nad FaktaMixin._podklad_kryje."""
+    from scripts.handler_fakta import FaktaMixin
+    return FaktaMixin._podklad_kryje(titul, podklad)

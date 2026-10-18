@@ -686,6 +686,7 @@ class FaktaMixin:
             blok.append("(v seznamu je celkem %d jmen, tohle je prvních %d)"
                         % (len(herci), len(radky)))
         blok.append(pata)
+        self._kodi_cast_titul = popis   # HANS_LOOKUP_PRESNY_PODKLAD_V1
         logging.getLogger(_h.__name__).info(
             'HANS_KODI_CAST_FACT_V1: obsazení z knihovny pro %r (%d jmen)',
             popis[:40], len(herci))
@@ -743,6 +744,7 @@ class FaktaMixin:
             _wr = WebReader(self.config)
             _wr._get = _jen_lokalne        # jen lokálně: rozhoduje se u každé otázky
             titul = _wr._wikipedia_search(tema)
+            self._presny_titul = titul     # HANS_LOOKUP_PRESNY_PODKLAD_V1
             if not titul or _wo.extrakt(titul)[1]:
                 return None
             a, b = _tok(tema), _tok(titul)
@@ -760,6 +762,39 @@ class FaktaMixin:
         except Exception as _e:
             logging.getLogger(__name__).debug("HANS_LOOKUP_PRESNY_V1: %s", _e)
             return None
+
+    @staticmethod
+    def _podklad_kryje(titul: str, podklad: str) -> bool:
+        """HANS_LOOKUP_PRESNY_PODKLAD_V1 — je podklad (entita C1 / titul z Kodi)
+        o témž, co přesný článek předmětu? Shoda titulu; konkrétnější entita
+        („X (film, 2024)“ × článek „X“); jinak tokeny oběma směry (prefix
+        o 1 znak kratší, čísla se počítají). Entita se závorkou a jiným
+        základem je cizí (Midway (1976 film) × Bitva u Midway)."""
+        import unicodedata as _ud
+        if not titul or not podklad:
+            return True     # nevíme → nic neměnit
+
+        def _f(x):
+            return "".join(c for c in _ud.normalize("NFD", (x or "").lower())
+                           if _ud.category(c) != "Mn").strip()
+
+        def _bez(x):
+            return re.sub(r"\s*\(.*?\)", "", x or "").strip()
+
+        def _tok(x):
+            return re.findall(r"\d+|\w{2,}", _f(_bez(x)))
+
+        def _kryje(a, b):
+            return all(any(x[:max(4, min(len(x), len(y)) - 1)]
+                           == y[:max(4, min(len(x), len(y)) - 1)] for y in b) for x in a)
+        if _f(titul) == _f(podklad):
+            return True
+        if _f(_bez(titul)) == _f(_bez(podklad)) and "(" not in titul:
+            return True
+        if "(" in podklad:
+            return False
+        a, b = _tok(titul), _tok(podklad)
+        return bool(a and b and _kryje(a, b) and _kryje(b, a))
 
     def _dohledej_kotvu(self, veta: str, name: str = None,
                         mel_zapisky: bool = False):   # HANS_LOOKUP_HAD_NOTES_V1
@@ -1078,6 +1113,7 @@ class FaktaMixin:
                 return ''
             if not self._entita_je_predmet(_ent, self._bez_tazatele(text)):
                 return ''
+            self._c1_entita = _ent.get('name')   # HANS_LOOKUP_PRESNY_PODKLAD_V1
             logging.getLogger(_h.__name__).info(
                 'C1: entita resolvována z dotazu → %r (ev=%s)',
                 _ent.get('name'), _ent.get('evidence_count'))

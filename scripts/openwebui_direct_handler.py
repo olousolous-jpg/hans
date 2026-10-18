@@ -566,6 +566,9 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         musí být vidět, kudy dotazy reálně tečou.
         """
         self._grounding_outcome = vysledek
+        if cesta == 'start':   # HANS_LOOKUP_PRESNY_PODKLAD_V1 — nic z minulého tahu
+            self._c1_entita = None
+            self._kodi_cast_titul = None
         # GROUNDING_GUARD_ACTIVE_V2 (22.8.) — cesta se PAMATUJE, ne jen loguje:
         # guard smí zasáhnout jen u tenkého fallbacku (zápisky), ne u plného RAG.
         self._grounding_cesta = cesta
@@ -1991,6 +1994,42 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                                 ctx._raw_message)
             except Exception as _lr2:
                 logging.getLogger(__name__).debug('HANS_LOOKUP_ON_REQUEST_V2: %s', _lr2)
+            # HANS_LOOKUP_PRESNY_PODKLAD_V1 (18. 10.) — podložená cesta s CIZÍM
+            # podkladem: entita C1 nebo obsazení z Kodi je o něčem jiném než
+            # předmět, který má přesný lokální článek → dohledat místo odpovědi
+            # z hlavy. /tazatel 17. 10.: sv. Mikuláš (entita Staroměstské nám.)
+            # „Petr Parléř“, Krakatit (Krakatoa) „Hašek“, film Krakatit (Kodi:
+            # jiný seriál) „Kašák 1963“. 📏 přepisy tazatele 8.–17. 10.: 154
+            # tahů na těch cestách, přesný předmět 49, z toho podklad cizí 18
+            # (~16 skutečně cizích, 2 neutrální), krytých 27 vše správně
+            # (data/mereni/presny_grounded_18_10/). Vypínač
+            # instant_lookup.presny_podklad.
+            try:
+                _cesta_g = getattr(self, '_grounding_cesta', '')
+                if (getattr(self, '_grounding_outcome', '') == 'grounded'
+                        and _cesta_g in ('entita_c1', 'obsazeni_kodi')
+                        and not getattr(ctx, '_predem_dohledano', None)
+                        and bool((self.config.get('instant_lookup', {}) or {})
+                                 .get('presny_podklad', True))):
+                    _pod = (getattr(self, '_c1_entita', None) if _cesta_g == 'entita_c1'
+                            else getattr(self, '_kodi_cast_titul', None))
+                    self._presny_titul = None
+                    _pp = self._presny_predmet(ctx._raw_message, ctx.name) if _pod else None
+                    if _pp and not self._podklad_kryje(getattr(self, '_presny_titul', None), _pod):
+                        # téma = předmět, ne entita (HANS_ANCHOR_ENTITY_FIRST_V1
+                        # by ho vrátila na cizí podklad) — kanál společného kroku
+                        self._podklad_tema = _pp
+                        _dz = self._dohledej_kotvu(ctx._raw_message, ctx.name)
+                        logging.getLogger(__name__).info(
+                            'HANS_LOOKUP_PRESNY_PODKLAD_V1: podklad %r (%s) není o '
+                            'předmětu %r (článek %r) → %s', _pod, _cesta_g, _pp,
+                            getattr(self, '_presny_titul', None),
+                            'dohledáno' if _dz else 'nic, beze změny')
+                        if _dz:
+                            ctx._a1_abstain = True
+                            ctx._predem_dohledano = _dz
+            except Exception as _lpp:
+                logging.getLogger(__name__).debug('HANS_LOOKUP_PRESNY_PODKLAD_V1: %s', _lpp)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
                 # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
                 # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale
