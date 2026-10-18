@@ -352,6 +352,34 @@ def reading_answer(db_path: str, question: str = "",
     regresni behoun) — tam neni z ceho vokativ odvodit."""
     oslov = _hr._cz_address(asker) if asker else "pane"   # HANS_READING_ASKER_V1
     topic = _hr._extract_topic(question)
+    # HANS_READING_TOPIC_ANCHOR_V1 (18. 10.) — „Četl jste někdy něco od Bohumila
+    # Hrabala?“, „Četl jste Babičku?“: extraktor téma nenajde (velké písmeno,
+    # 2./4. pád) → výpis posledního čtení místo odpovědi na otázku. Záloha =
+    # kotva věty bez Hanse, tazatele a domácnosti (i 5. pád: začátek 4 znaků).
+    # 📏 26 vět s „četl…“ bez tématu a s kotvou; ve výpisu četby: Hrabal,
+    # Babička → „záznam nemám“, Sherlock, Le Guinová → skutečné záznamy.
+    if not topic:
+        try:
+            from scripts.hans_convindex import kotva_tematu, _fold
+            from scripts import config_io
+            _cfg = config_io.load(hlasit=False)
+            _kp = _cfg.get("known_persons", {}) or {}
+            _jm = [str(x) for x in _kp] + [str(v.get("nom", "")) for v in _kp.values()
+                                          if isinstance(v, dict)]
+            try:
+                from scripts.hans_persona import persona_name
+                _jm.append(str(persona_name(_cfg) or ""))
+            except Exception:
+                pass
+            if asker:
+                _jm.append(str(asker))
+                _jm += [w for w in re.findall(r"\w+", str(oslov)) if len(w) >= 3]
+            _k = kotva_tematu(question or "", vynech=tuple(x for x in _jm if x))
+            _p4 = {_fold(x)[:4] for x in _jm if len(x) >= 3}
+            if _k and _fold(_k.split()[-1])[:4] not in _p4:
+                topic = _k
+        except Exception as _ke:
+            _hr._log.debug("HANS_READING_TOPIC_ANCHOR_V1: %s", _ke)
     conn = None
     try:
         conn = _hr._ro(db_path)

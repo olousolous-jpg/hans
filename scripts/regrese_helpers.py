@@ -1417,3 +1417,9 @@ def necitelne_roky_text(s: str) -> str:
     """HANS_NOTES_YEAR_WORDS_V1 — jen text z `cz_names.necitelne_roky`."""
     from scripts.cz_names import necitelne_roky
     return necitelne_roky(s)[0]
+
+
+def cetba_zacatek(q: str, asker: str = "Marek") -> str:
+    """HANS_READING_TOPIC_ANCHOR_V1 — prvních 22 znaků odpovědi výpisu četby."""
+    from scripts.hans_recall_cetba import reading_answer
+    return (reading_answer("data/hans_diary.db", q, asker=asker) or "")[:22]

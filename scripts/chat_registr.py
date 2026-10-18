@@ -964,7 +964,12 @@ def zaregistruj(_cc):
             # detail na vyžádání: „připomeň (mi) rozhovor o Maradonovi"
             r"(p[řr]ipome[ňnt]\w*|vzpome[ňn]\w*|zopakuj)\s+.{0,25}"
             r"(rozhovor|konverzac|bavil|mluvil|pov[íi]dal)",
-            r"(rozhovor|konverzac\w*)\s+o\s+\w{3,}",
+            # HANS_ROZHOVORY_NOT_FAREWELL_V1 (18. 10.) — „Děkuji… Byl to zajímavý
+            # rozhovor o architektuře.“ je rozloučení, ne žádost o výpis (/tazatel
+            # 17. 10. → „V deníku nemám zapsaný žádný náš rozhovor“). 📏 ~3 600 vět
+            # (přepisy + chaty z deníku): vzor chytil jen tuhle jednu.
+            r"^(?!.*\b(?:byl[aoy]?\s+to|d[ěe]kuj\w*|d[íi]k\w*)\b)"
+            r".*(rozhovor|konverzac\w*)\s+o\s+\w{3,}",
             r"(bavil|mluvil|pov[íi]dal)[iy]\s+jsme\s+(se\s+)?o\s+\w{3,}(?![^.?!]*\s[-–]\s)",  # HANS_ROZHOVORY_NOT_PREAMBLE_V1: „Mluvili jsme o X – <jiná otázka>“ je úvod, ne dotaz
             # „pošli detail o rychlém obědě…", „ukaž ten recept", „vypiš záznam o…"
             # Bez tohohle Hans odpověď VYGENERUJE ZNOVU (doložený případ 13.7. —
