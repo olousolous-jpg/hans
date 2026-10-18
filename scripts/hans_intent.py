@@ -1096,7 +1096,11 @@ _ZAZ_ODKAZ = re.compile(
 _ZAZ_MINULE = re.compile(
     r"\b(\w{2,}l[aoiy]?)\s+(?:jste|jsi)\b|\b(?:jste|jsi)\s+(?:(?:si|se|ji|ho|je|to|někdy|nekdy|"
     r"už|uz|sám|sam|osobně|osobne|tehdy|dnes|dneska|včera|vcera|naposledy|nedávno|nedavno|"
-    r"kdysi|letos|tam)\s+)*(\w{2,}l[aoiy]?)\b", re.IGNORECASE)
+    r"kdysi|letos|tam|"
+    # HANS_ASK_HANS_EXPERIENCE_OBJ_V1 (18. 10.) — ukazovací předmět mezi „jste“
+    # a příčestím („Sám jste si TU KNIHU někdy přečetl?“, „jste to právě
+    # vyhledal?“). 📏 2 543 vět (tazatel + korpus): 5 nových, všech 5 o Hansovi.
+    r"(?:t(?:u|en|o|uto|ento|oto|uhle|enhle|ohle))\s+\w{3,})\s+)*(\w{2,}l[aoiy]?)\b", re.IGNORECASE)
 _ZAZ_VLASTNI = re.compile(
     r"\b(?:vaš\w*|váš|tvoj\w*|tvůj|tvuj)\s+(?:vlastn\w*\s+)?(?:esej\w*|stránk\w*|strank\w*|"
     r"obraz\w*|díl\w*|dil[oau]|kresb\w*|text\w*|objev\w*|tvorb\w*|projekt\w*|web\w*)"
