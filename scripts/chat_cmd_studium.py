@@ -270,7 +270,8 @@ def _cmd_studium(handler, name, args) -> str:
 
         def _run():
             try:
-                code = run_study_session(cfg, db, knowledge=kn)
+                code = run_study_session(cfg, db, knowledge=kn,
+                                         odlozit_pri_obsazenem_slotu=False)   # HANS_STUDY_SLOT_DEFER_V1
                 _cc._log.info("/studium teď → %s", code)
                 _msg = None
                 if code == "noread":

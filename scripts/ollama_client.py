@@ -406,6 +406,30 @@ def release_base_slot(token: Optional[int]) -> None:
             _base_slot_thread = None
 
 
+def prodluz_base_slot(hold_s: float) -> bool:
+    """HANS_BASE_SLOT_RENEW_V1 (18. 10.) — drží-li slot TOTO vlákno, posune
+    jeho konec (i pauzu keepalive) na „teď + hold_s“. Nic nezkracuje.
+
+    Slot i pauza měly pevnou dobu (maker, reflexe 1800 s). 18. 10. maker
+    pracoval ~44 min: slot mu v 02:32 vypršel, zabrala ho reflexe, a když
+    vypršela pauza i reflexi, keepalive jí do běhu znovu načítal hans-czech
+    → přehazování modelů, zaseknutá Ollama, tři restarty. Prodlužuje se
+    jen činností (volání modelu, obrázek makera), takže zaseknutý držitel
+    slot dál ztratí po auto-expiry. Fail-safe: chyba → False."""
+    global _base_slot_until, _warmup_pause_until
+    try:
+        with _warmup_state_lock:
+            _ted = time.time()
+            if _base_slot_thread != threading.get_ident() or _ted >= _base_slot_until:
+                return False
+            _base_slot_until = max(_base_slot_until, _ted + float(hold_s))
+            if _warmup_pause_depth > 0:
+                _warmup_pause_until = max(_warmup_pause_until, _ted + float(hold_s))
+            return True
+    except Exception:
+        return False
+
+
 def base_slot_busy() -> bool:
     """HANS_HC_YIELD_TO_BASE_V1 — drzi base slot JINE vlakno?
 
@@ -723,6 +747,10 @@ def _post_with_retry(url: str, payload: dict, timeout: int,
     ⚠️ Nesmí změnit chování: měření je v `try/except` a výsledek se vrací
     beze změny, výjimka se propaguje dál."""
     _sjednot_okno(payload)            # HANS_OLLAMA_RESIDENT_CTX_V1
+    try:   # HANS_BASE_SLOT_RENEW_V1 — dva pokusy po `timeout` + rezerva
+        prodluz_base_slot(2 * float(timeout or 300) + 300)
+    except Exception:
+        pass
     _t0 = time.time()
     try:
         _out = _post_with_retry_impl(url, payload, timeout, extractor)

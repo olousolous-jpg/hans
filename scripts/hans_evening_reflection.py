@@ -273,6 +273,20 @@ class HansEveningReflection:
         # kontence byla neviditelna. Pojistka existovala a sedela za tim, co
         # mela chranit (tataz trida jako HANS_PAPER_TAKEAWAY_DEFERRED_V1).
         self._vram_handoff()
+        # HANS_REFLECTION_SLOT_DEFER_V1 (18. 10.) — slotu se nedočkala a drží
+        # ho jiná dávka → odložit na další tick (run() → None = zkusí znovu),
+        # ne běžet bez výlučnosti. 18. 10. 02:19 tak vyšla prázdná reflexe
+        # vedle makera. Volný slot bez tokenu (handoff selhal) běží jako dřív.
+        try:
+            from scripts.ollama_client import base_slot_busy, base_slot_label
+            if getattr(self, "_slot_tok", None) is None and base_slot_busy():
+                _log.info("HANS_REFLECTION_SLOT_DEFER_V1: slot drží '%s' — "
+                          "reflexi %s odkládám na další tick",
+                          base_slot_label(), date_str)
+                self._vram_release()
+                return None
+        except Exception as _sde:
+            _log.debug("reflexe slot check: %s", _sde)
 
         # HANS_NIGHT_RESTART_ONCE_V1 (7. 10.) — nocni tick po restartu
         # prevezme reflexi, ktera uz v deniku je, a jen dojede navazujici

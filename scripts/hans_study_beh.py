@@ -116,7 +116,7 @@ def completed_studies_block(config: dict, diary_db_path: str,
 
 # ── Top-level noční vstup (volá hans_routine) ───────────────────────────────
 def run_study_session(config: dict, diary_db_path: str, knowledge=None,
-                      diary_writer=None) -> str:
+                      diary_writer=None, odlozit_pri_obsazenem_slotu=True) -> str:
     """Jedna studijní session. Vrací JEDEN ze ŠESTI kódů (HANS_STUDY_UNIFY_V1 —
     dřív jich docstring jmenoval jen 4, `skipped` a `noread` chyběly):
        'studied'   — nastudováno pod-téma
@@ -156,6 +156,21 @@ def run_study_session(config: dict, diary_db_path: str, knowledge=None,
     if _bmb is None:
         return _hs._run_study_session_impl(config, diary_db_path, knowledge,
                                        diary_writer)
+    # HANS_STUDY_SLOT_DEFER_V1 (18. 10.) — drží-li slot JINÁ base dávka,
+    # studium se odloží na další tick místo čekání. `base_model_batch` po
+    # 15 min čekání běží BEZ výlučnosti a studium tím vyhodí model běžící
+    # dávce z paměti: 24. 9. i 18. 10. (studium přes večerní reflexi) to
+    # skončilo zaseknutou Ollamou a třemi restarty. Za ~50 dní jediné noci
+    # se třemi restarty. Ruční `/studium teď` dál čeká (uživatel ho chce hned).
+    if odlozit_pri_obsazenem_slotu:
+        try:
+            from scripts.ollama_client import base_slot_busy, base_slot_label
+            if base_slot_busy():
+                _hs._log.info("study: %s — slot drží '%s' → odkládám na další tick",
+                              "HANS_STUDY_SLOT_DEFER_V1", base_slot_label())
+                return "deferred"
+        except Exception as _se:
+            _hs._log.debug("study slot check: %s", _se)
     with _bmb(config, pause_s=1200, label="studium"):
         return _hs._run_study_session_impl(config, diary_db_path, knowledge,
                                        diary_writer)

@@ -548,6 +548,11 @@ def _render_site_images(config: dict, pages: dict, dest_dir: Path, cap: int):
                 _ollama_unload(config, _ollama_loaded(config))
                 try:
                     for i, desc in enumerate(all_gens):
+                        try:   # HANS_BASE_SLOT_RENEW_V1 — obrázek jde mimo Ollamu
+                            from scripts.ollama_client import prodluz_base_slot
+                            prodluz_base_slot(600)
+                        except Exception:
+                            pass
                         prompt = desc.strip() + ", high quality, sharp, detailed"
                         fn = "img%d.png" % (i + 1)
                         seed = uuid.uuid4().int % (2 ** 31)
