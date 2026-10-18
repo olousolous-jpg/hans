@@ -673,6 +673,12 @@ for _n, _tvary in {
         "řeka": "řeka řeky řece řeku řekou",
         "hora": "hora hory hoře horu horou",
         "kniha": "kniha knihy knize knihu knihou",
+        # HANS_WIKI_DILO_DRUH_V1 (18. 10.) — „románu Proces“, „novelu Proměna“:
+        # bez druhu holé „Proces“/„Proměna“ = rozcestník, s druhem „Proměna
+        # (povídka)“ (/tazatel 18. 10.: „novela Proměna“ → „Lilli Promet“)
+        "román": "román románu románem",
+        "novela": "novela novely novele novelu novelou",
+        "povídka": "povídka povídky povídce povídku povídkou",
         "film": "film filmu filmem filmy",
         "seriál": "seriál seriálu seriálem",
         "kapela": "kapela kapely kapele kapelu",

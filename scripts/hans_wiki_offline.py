@@ -86,11 +86,21 @@ def _prvni_pad(q: str) -> list:
     return list(dict.fromkeys(out))
 
 
-_UPRESNENI = {"kniha": ("kniha", "román", "novela"), "film": ("film",), "seriál": ("seriál",),
+_UPRESNENI = {"kniha": ("kniha", "román", "novela", "povídka"), "film": ("film",), "seriál": ("seriál",),
+              # HANS_WIKI_DILO_DRUH_V1 — druh díla přímo v kotvě („novela Proměna“)
+              "román": ("román", "novela", "povídka", "kniha"),
+              "novela": ("novela", "povídka", "román", "kniha"),
+              "povídka": ("povídka", "novela", "román", "kniha"),
               "hora": ("hora",), "hrad": ("hrad",), "zámek": ("zámek",), "řeka": ("řeka",)}
 
 _DRUHY_SLOVA = {"hora", "hrad", "zámek", "řeka", "město", "jezero", "ostrov", "film",
-                "kniha", "seriál", "kostel", "katedrála", "chrám", "muzeum", "kapela", "loď"}
+                "kniha", "seriál", "kostel", "katedrála", "chrám", "muzeum", "kapela", "loď",
+                "román", "novela", "povídka"}   # HANS_WIKI_DILO_DRUH_V1
+# HANS_WIKI_DILO_DRUH_V1 — druh kotvy → druh infoboxu holého titulu („Psycho“
+# je film 1960 s infoboxem filmu; remake má „(film, 1998)“)
+_DRUH_INFOBOX = {"film": "film"}
+# „Karlova mostu“ → „Karlův most“ (přivlastňovací 2. pád; /tazatel 18. 10.)
+_PRIVL_GEN = re.compile(r"^(\w+?)(ova|ovy|ina|iny) (\w+?)(u|a|e|y)$")
 
 
 def _presna_zaloha(q: str):
@@ -103,8 +113,21 @@ def _presna_zaloha(q: str):
     zkus = []
     if len(sl) >= 2 and sl[0].lower() in _DRUHY_SLOVA and sl[1][:1].isupper():
         zbytek = " ".join(sl[1:])
+        # HANS_WIKI_DILO_DRUH_V1 — holé „X“, jehož infobox je téhož druhu
+        # („film Psycho“ → „Psycho“ = film 1960), má přednost před variantou
+        # s rokem („Psycho (film, 1998)“, remake)
+        _ib = _DRUH_INFOBOX.get(sl[0].lower())
+        if _ib:
+            r = _cil(zbytek)
+            if r and db.execute("SELECT rozcestnik=0 AND infobox_druh=? FROM clanek "
+                                "WHERE id=?", (_ib, r[0])).fetchone()[0]:
+                return zbytek, r
         zkus += ["%s (%s)" % (zbytek, u) for u in _UPRESNENI.get(sl[0].lower(), ())]
         zkus.append(zbytek)
+    _pg = _PRIVL_GEN.match(q.strip())
+    if _pg:   # HANS_WIKI_DILO_DRUH_V1 — „Karlova mostu“ → „Karlův most“
+        zkus.append("%sův %s" % (_pg.group(1), _pg.group(3)) if _pg.group(2)[0] == "o"
+                    else "%sin %s" % (_pg.group(1), _pg.group(3)))
     zkus += _prvni_pad(q)
     for z in zkus:
         r = _cil(z)
@@ -125,6 +148,26 @@ def _presna_zaloha(q: str):
                 r = _cil(var[0])
                 if r:
                     return var[0], r
+    return None
+
+
+def film_holy_titul(q: str):
+    """HANS_WIKI_DILO_DRUH_V1 — „film Psycho“ → „Psycho“, když holý titul je
+    článek s infoboxem filmu (originál 1960; remake má „(film, 1998)“). Brána
+    shody v `web_reader` holý titul jinak zamítne (chybí v něm slovo „film“)
+    a srsearch najde remake. Jinak None."""
+    try:
+        sl = (q or "").split()
+        if len(sl) < 2 or sl[0].lower() not in _DRUH_INFOBOX or not sl[1][:1].isupper():
+            return None
+        db = _db()
+        zb = " ".join(sl[1:])
+        r = _cil(zb)
+        if r and db.execute("SELECT rozcestnik=0 AND infobox_druh=? FROM clanek WHERE id=?",
+                            (_DRUH_INFOBOX[sl[0].lower()], r[0])).fetchone()[0]:
+            return r[1]
+    except Exception as e:
+        _log.debug("film_holy_titul %r: %s", q, e)
     return None
 
 

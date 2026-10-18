@@ -567,6 +567,17 @@ class WebReader:
         _phrase = bool(re.search(r"[,:;]|\s(?:a|i|nebo|se|si|v|ve|na|o|od|"
                                  r"pro|při|za|s|k|do)\s", query or "", re.I))
         _pfx_zaloha = None      # HANS_WIKI_BEST_COVERAGE_V1
+        # HANS_WIKI_DILO_DRUH_V1 (18. 10.) — „film Psycho“: holý titul s infoboxem
+        # filmu je ten film (1960); bránu by neprošel a srsearch vrátil remake
+        if lang == "cs":
+            try:
+                from scripts import hans_wiki_offline as _wo_f
+                if _wo_f.dostupna():
+                    _fh = _wo_f.film_holy_titul(query)
+                    if _fh:
+                        return _fh
+            except Exception as _fe:
+                _log.debug("film_holy_titul: %s", _fe)
         # 1) prefixsearch — přesné začátky titulů (u fráze se přeskočí)
         try:
             if _phrase:
