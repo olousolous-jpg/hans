@@ -1313,6 +1313,23 @@ def film_serie(veta: str) -> str:
 
 
 # ── HANS_NOTES_TITLE_SUPPORT_V1 (12. 10.) ────────────────────────────────────
+def zapisky_po_kontrole_vyznamu(zdroje: list) -> list:
+    """HANS_NOTES_SEMANTIC_ALL_V1 — které zápisky (podle typu) zůstanou, když
+    kontrola významu vyřadí VŠECHNO, co kontroluje. Bez modelu a sítě."""
+    from scripts import handler_fakta as _hf, hans_convindex as _ci
+    o = _hf.FaktaMixin.__new__(_hf.FaktaMixin)
+    o.config = {"grounding": {"notes_semantic": True}}
+    rows = [(0, s, 0, "T%d" % i, "x") for i, s in enumerate(zdroje)]
+    _s, _v = _ci.search, _ci._vyznamove_souvisi
+    _ci.search = lambda *a, **k: list(rows)
+    _ci._vyznamove_souvisi = lambda q, r: []
+    try:
+        o._knowledge_fts_grounding("otázka")
+    finally:
+        _ci.search, _ci._vyznamove_souvisi = _s, _v
+    return [zdroje[int(t[1:])] for t in (getattr(o, "_kfts_tituly", None) or [])]
+
+
 def zapisky_fallback_s_kontrolou_titulu() -> bool:
     """HANS_NOTES_TITLE_FALLBACK_V1 — cesta `zapisky_fallback` hledá v zápiscích
     přes `_zapisky_k_veci` (s kontrolou titulu), ne přímo."""

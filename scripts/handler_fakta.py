@@ -146,6 +146,32 @@ class FaktaMixin:
         try:
             from scripts.hans_convindex import search as _kfts
             hits = _kfts(str(text), limit=3, kind='knowledge')
+            # HANS_NOTES_SEMANTIC_ALL_V1 (18. 10.) — kontrola významu
+            # (HANS_RELAX_SEMANTIC_V1, bge-m3, práh 0,48) i pro NErelaxované
+            # nálezy. Zápisek se slovem dotazu v titulu bývá o něčem jiném,
+            # stačí jedno obecné slovo: ~13 % opor ze zápisků je cizích
+            # (Karel IV. → Karel Sabina, telefon → Televizní studio Brno).
+            # 📏 dvě ručně označené sady: zahodí ~13/33 cizích, ~5/125
+            # správných. Vlastní četba knihy (kapitoly, úvahy) se nekontroluje
+            # — text kapitoly otázce o knize významem nesedí (0,31) a je to
+            # Hansův zážitek. Nedostupný model / herní mód → beze změny.
+            # Vypínač grounding.notes_semantic.
+            if hits and bool((self.config.get("grounding") or {})
+                             .get("notes_semantic", True)):
+                try:
+                    from scripts.hans_convindex import _vyznamove_souvisi
+                    _cetba = ('book_read', 'book_reflection')
+                    _ost = [_x for _x in hits if _x[1] not in _cetba]
+                    _nech = _vyznamove_souvisi(str(text), _ost) if _ost else []
+                    if len(_nech) < len(_ost):
+                        logging.getLogger(_h.__name__).info(
+                            'HANS_NOTES_SEMANTIC_ALL_V1: %d z %d zápisků významem '
+                            'mimo otázku %r → vyřazeno', len(_ost) - len(_nech),
+                            len(hits), str(text)[:50])
+                    hits = [_x for _x in hits if _x[1] in _cetba or _x in _nech]
+                except Exception as _nse:
+                    logging.getLogger(_h.__name__).debug(
+                        'HANS_NOTES_SEMANTIC_ALL_V1: %s', _nse)
             self._kfts_tituly = [str(_x[3] or '') for _x in (hits or [])]
             if not hits:
                 return ''
