@@ -1313,6 +1313,18 @@ def film_serie(veta: str) -> str:
 
 
 # ── HANS_NOTES_TITLE_SUPPORT_V1 (12. 10.) ────────────────────────────────────
+def zapisky_fallback_s_kontrolou_titulu() -> bool:
+    """HANS_NOTES_TITLE_FALLBACK_V1 — cesta `zapisky_fallback` hledá v zápiscích
+    přes `_zapisky_k_veci` (s kontrolou titulu), ne přímo."""
+    import inspect
+    from scripts import handler_grounding as _hg
+    src = inspect.getsource(_hg)
+    i = src.index("'zapisky_fallback'")
+    blok = src[max(0, i - 1500):i]
+    j = blok.rfind("_kb = self.")
+    return j >= 0 and blok[j:].startswith("_kb = self._zapisky_k_veci(")
+
+
 def zapisky_k_veci(veta: str, tituly: list, vypinac: bool = True) -> bool:
     """Počítají se nalezené zápisky (dané tituly) jako opora pro větu?"""
     h = _handler_bez_initu()

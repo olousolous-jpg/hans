@@ -535,7 +535,13 @@ class GroundingMixin:
                 # OPRAVENÉ věty, ne syrové. Holé „kdo tu knihu napsal?" nenese
                 # název a fulltext na něj trefí cizí knihu (změřeno: Murakami);
                 # F1 ho doplní z vlákna. Potřetí týž vzorec za den.
-                _kb = self._knowledge_fts_grounding(
+                # HANS_NOTES_TITLE_FALLBACK_V1 (18. 10.) — i tady jen zápisek
+                # se slovem dotazu v titulu (HANS_NOTES_TITLE_SUPPORT_V1 platil
+                # jen pro druhé dvě cesty). Provoz od 27. 9.: 42 různých vět,
+                # 23 dostalo cizí zápisek jako oporu (americká revoluce →
+                # Licence to Kill, Lucas → Star Wars, Napoleon → Korsika
+                # a k tomu výmysly) — opora vypnula abstinenci i dohledání.
+                _kb = self._zapisky_k_veci(
                     str(ctx._q_for_retrieval or ctx._text))
                 if _kb:
                     self._vysledek_groundingu('grounded', 'zapisky_fallback')
