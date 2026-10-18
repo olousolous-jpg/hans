@@ -236,6 +236,13 @@ class FaktaMixin:
                     return ('[Cetl jsem si o tomhle clanek, kdyz v televizi bezel '
                             '\u201e%s\u201c — NENI to moje cetba te knihy/filmu]' % _n)
                 return '[Z mých zápisků — %s]' % _n
+            # HANS_NOTES_YEAR_WORDS_V1 — letopočet slovy v zápisku: číslicemi,
+            # zkomolený jako nečitelný (data se nemění, jen podklad)
+            try:
+                from scripts.cz_names import necitelne_roky as _nr
+                hits = [(_a, _b, _c, _d, _nr(_e or '')[0]) for _a, _b, _c, _d, _e in hits]
+            except Exception as _nre:
+                logging.getLogger(_h.__name__).debug('HANS_NOTES_YEAR_WORDS_V1: %s', _nre)
             blk = '\n\n'.join(
                 # HANS_NOTE_FULL_LENGTH_V1 (14. 9.) — 700 → 1800. Limit vznikl
                 # 6. 8. bez zdůvodnění; hans-czech má num_ctx 16384 a system

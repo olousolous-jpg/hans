@@ -1411,3 +1411,9 @@ def wiki_presna_zaloha_titul(q: str):
         return "BEZ_WIKI"
     r = _wo._presna_zaloha(q)
     return r[0] if r else None
+
+
+def necitelne_roky_text(s: str) -> str:
+    """HANS_NOTES_YEAR_WORDS_V1 — jen text z `cz_names.necitelne_roky`."""
+    from scripts.cz_names import necitelne_roky
+    return necitelne_roky(s)[0]

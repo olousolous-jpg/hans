@@ -742,6 +742,37 @@ def _yw_hodnota(m) -> Optional[int]:
     return v
 
 
+# HANS_NOTES_YEAR_WORDS_V1 (18. 10.) — letopočet slovy v Hansových ZÁPISCÍCH,
+# který převod výš nerozebere („roku devětadevadesátého devatenáctého“ u Grand
+# Canyonu → model z něj spočítal 1896; „roku devětasedmdesát“ u filmu z 2009).
+# 📏 zápisky znalostí: 109 takových frází, rozebratelných 17, zkomolených 92;
+# v říjnu 2,4 % nových zápisků. Do podkladu jde místo nich „(rok v zápisku
+# nečitelný)“ — data se nemění.
+_ZK_NUM = (r"(?:tisíc\w*|dvoutisíc\w*|devatenáct\w*|osmnáct\w*|sedmnáct\w*|"
+           r"devadesát\w*|osmdesát\w*|sedmdesát\w*|šedesát\w*|padesát\w*|"
+           r"čtyřicát\w*|třicát\w*|dvacát\w*|devětset\w*|osmset\w*|sedmset\w*|"
+           r"\w+adevadesát\w*|\w+aosmdesát\w*|\w+asedmdesát\w*|\w+ašedesát\w*|"
+           r"\w+apadesát\w*|\w+ačtyřicát\w*|\w+atřicát\w*|\w+advacát\w*)")
+_ZK_RE = re.compile(r"\b(rok[ua]?|roce|letech)(?:\s+" + _ZK_NUM + r"(?![\w])){1,4}",
+                    re.IGNORECASE)
+
+
+def necitelne_roky(text: str):
+    """HANS_NOTES_YEAR_WORDS_V1 — (text, počet): rozebratelný letopočet slovy
+    → číslice (`fix_year_words`), zbylý zkomolený → „(rok v zápisku nečitelný)“."""
+    if not text:
+        return text, 0
+    text, n = fix_year_words(text)
+    m = 0
+
+    def _sub(x):
+        nonlocal m
+        m += 1
+        return x.group(1) + " (rok v zápisku nečitelný)"
+    text = _ZK_RE.sub(_sub, text)
+    return text, n + m
+
+
 def fix_year_words(text: str):
     """HANS_YEAR_WORDS_V1 — (text, počet převodů)."""
     if not text or "tis" not in text.lower():
