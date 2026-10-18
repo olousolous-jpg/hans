@@ -282,8 +282,35 @@ def _tvar_otazky(message: str) -> bool:
         return False
     t = "".join(c for c in _u.normalize("NFD", m.lower())
                 if not _u.combining(c))
-    return bool(_STUDY_TAZACI.search(m) or _ASK_INFO_PAT.search(t)
-                or m.endswith("?"))
+    if _STUDY_TAZACI.search(m) or _ASK_INFO_PAT.search(t) or m.endswith("?"):
+        return True
+    # HANS_AGENT_QUESTION_SHAPE_V2 (18. 10.) — /tazatel 18. 10. a přepisy:
+    # 8× otázka vzatá jako pokyn („a kdy ta kniha vysla“ → seznam přání,
+    # „videl jsi X? je to hrozny film“ → pustit film). Otazník kdekoli, tázací
+    # slovo po výplni, „viděl/četl jsi …“ na začátku. Pokyn (`_ASK_ORDER_PAT`)
+    # se testuje dřív a má dál přednost. 📏 2 575 vět: 76 nových, ve vzorku
+    # otázky; s pokynem 1 („umis pustit film? jen se ptam“ → zůstává pokyn).
+    if "?" in m:
+        return True
+    # začátek zprávy i poslední věty („ok tak nas zajima film. videl jsi …“)
+    for kus in {t, re.split(r"[.!]\s+", t.strip())[-1]}:
+        w = [x.strip(".,;:!") for x in kus.split()]
+        while w and w[0] in _VYPLN_OTAZKY:
+            w = w[1:]
+        if not w:
+            continue
+        if _TAZACI_SLOVO.match(w[0]):
+            return True
+        if (len(w) > 1 and re.match(r"\w{2,}l[aoiy]?$", w[0])
+                and w[1] in ("jsi", "jste", "sis", "ses")):
+            return True
+    return False
+
+
+_VYPLN_OTAZKY = {"a", "ok", "okay", "tak", "no", "jo", "jj", "aha", "hm", "hmm",
+                 "dobre", "jasne", "ale", "takze", "i", "hele", "fajn", "pak"}
+_TAZACI_SLOVO = re.compile(r"^(jak\w*|kolik\w*|kde|kdy|proc|co|cos|kdo|cim|cemu|"
+                           r"kter\w+|odkud|kam|koho|komu)$")
 
 
 def _otazka_ne_pokyn(akce: str, message: str) -> bool:
@@ -2181,6 +2208,16 @@ class AgentRouter:
             except Exception:
                 _znamy = False
             if not _znamy:
+                # HANS_STRANGER_QUESTION_FIRST_V1 (18. 10.) — otázka cizího není
+                # pokyn: dostane běžnou odpověď, ne „jen pro svou domácnost“
+                # (pravidla HANS_AGENT_ASK_NOT_* by ji u domácnosti potlačila
+                # až po tomhle bloku).
+                if (aid in ("add_study_topic", "add_book_wishlist", "add_note",
+                            "kodi_play_film")
+                        and _otazka_ne_pokyn(aid, message or "")):
+                    log.info("HANS_STRANGER_QUESTION_FIRST_V1: %s od neznámého "
+                             "je otázka → běžný hovor", aid)
+                    return None
                 log.info("HANS_STRANGER_NO_MUTATE_V1: agent %s od neznámého "
                          "(%s) odmítnuto", aid, name)
                 # HANS_STRANGER_GOODNIGHT_V1 (28. 9.) — „přeji vám dobrou

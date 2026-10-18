@@ -289,25 +289,65 @@ def je_dotaz_na_vlastni_dilo(text: str, db_path: str) -> bool:
     t = text or ""
     if not (_hr._DOTAZ_PSANI.search(t) or _hr._DOTAZ_MALBA.search(t)):
         return False
-    if _hr._DRUHA_OS.search(t) or re.search(r"\bsv(?:[ůu]j|[ée]|ou|[ée]m|[ée]ho|ými?)\b", t, re.I):
-        return True
     fold = lambda s: "".join(c for c in _ud.normalize("NFD", (s or "").lower())
                              if _ud.category(c) != "Mn")
-    conn = None
-    try:
-        conn = _hr._ro(db_path)
-        nazvy = [r[0] for r in conn.execute(
-            "SELECT title FROM diary WHERE event_type='artwork' ORDER BY ts DESC LIMIT 20")]
-        nazvy += [r[0] for r in conn.execute(
-            "SELECT title FROM writing_project ORDER BY id DESC LIMIT 3")]
-    except Exception:
-        return False
-    finally:
-        if conn is not None:
-            conn.close()
-    slova = {w[:5] for n in nazvy for w in re.findall(r"\w{5,}", fold(n))}
-    return any(w[:5] in slova for w in re.findall(r"\w{5,}", fold(t))
-               if not w.startswith(_hr._VLASTNI_OBECNE))
+
+    def _titul_vlastniho():
+        conn = None
+        try:
+            conn = _hr._ro(db_path)
+            nazvy = [r[0] for r in conn.execute(
+                "SELECT title FROM diary WHERE event_type='artwork' ORDER BY ts DESC LIMIT 20")]
+            nazvy += [r[0] for r in conn.execute(
+                "SELECT title FROM writing_project ORDER BY id DESC LIMIT 3")]
+        except Exception:
+            return False
+        finally:
+            if conn is not None:
+                conn.close()
+        slova = {w[:5] for n in nazvy for w in re.findall(r"\w{5,}", fold(n))}
+        # krátký název s velkým písmenem („obraz Sen“) — celé slovo názvu
+        cela = {w for n in nazvy for w in re.findall(r"\w{3,}", fold(n))}
+        if any(fold(m.group(1)) in cela for m in _JMENO_RE.finditer(t)):
+            return True
+        return any(w[:5] in slova for w in re.findall(r"\w{5,}", fold(t))
+                   if not w.startswith(_hr._VLASTNI_OBECNE))
+    if _hr._DRUHA_OS.search(t) or re.search(r"\bsv(?:[ůu]j|[ée]|ou|[ée]m|[ée]ho|ými?)\b", t, re.I):
+        # HANS_OWN_WORK_FOREIGN_NAME_V1 (18. 10.) — zdvořilé „víte / mohl byste“
+        # je 2. osoba v každé otázce cizího: „dílo Franze Kafky“, „důležité dílo
+        # Esperanto“, „kolik obrazů Rembrandt“ → A1 i dohledání se přeskočily.
+        # Věta jmenuje cizí osobu/dílo a nemá přivlastnění ani tvůrčí sloveso
+        # ve 2. osobě → není to otázka na Hansovo dílo (shoda s názvem jeho
+        # díla má přednost). 📏 2 603 vět: 128 → 114, vyřazeno 14, z toho 10
+        # cizí díla, 2 vlastní tituly vráceny shodou názvu.
+        if (_CIZI_JMENO_VE_VETE(t) and not _VLASTNI_VAZBA.search(t)
+                and not _titul_vlastniho()):
+            return False
+        return True
+    return _titul_vlastniho()
+
+
+_VLASTNI_VAZBA = re.compile(
+    r"\b(?:tv(?:[ůu]j|oje?|oji|[ée]ho|[ée]mu|[ée]m|[ýy]m|[áa]|ou)|va[sš](?:e|[íi]|eho|emu|em|[íi]m|ich|imi)|v[áa]š)\b"
+    r"|\b(?:napsal\w*|namaloval\w*|maloval\w*|psal\w*|vytvo[řr]il\w*|tvo[řr]il\w*|nakreslil\w*)"
+    r"\s+(?:\w+\s+){0,2}?(?:jste|jsi|sis)\b"
+    r"|\b(?:jste|jsi|sis)\s+(?:\w+\s+){0,3}?(?:napsal|namaloval|maloval|psal|vytvo[řr]il|tvo[řr]il|nakreslil)\w*"
+    r"|\b(?:p[íi][šs]e[šs]|p[íi][šs]ete|maluje[šs]|malujete|tvo[řr][íi][šs]|tvo[řr][íi]te)\b", re.I)
+_NE_JMENO = {"Vás", "Vám", "Váš", "Vaše", "Vaši", "Vaší", "Vaším", "Vy", "Vámi", "Hansi",
+             "Hans", "Děkuji", "Dobrý", "Ahoj"}
+_JMENO_RE = re.compile(r"\b([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ](?:[a-záčďéěíňóřšťúůýž]{2,}|[A-Z]{2,}))\b")
+
+
+def _CIZI_JMENO_VE_VETE(t: str) -> bool:
+    """Vlastní jméno uprostřed věty (ne na začátku věty, ne oslovení)."""
+    for m in _JMENO_RE.finditer(t or ""):
+        s = t[:m.start()].rstrip()
+        if not s or s[-1] in ".!?:–-„\"'(":
+            continue
+        if m.group(1) in _NE_JMENO:
+            continue
+        return True
+    return False
 
 
 def lasting_facts(db_path: str) -> list:

@@ -750,12 +750,25 @@ class FaktaMixin:
             a, b = _tok(tema), _tok(titul)
             if not a or not b or not (_kryje(a, b) and _kryje(b, a)):
                 return None
+            # HANS_LOOKUP_PRESNY_JINY_DRUH_V1 (18. 10.) — „Karlova mostu“ →
+            # „Muzeum Karlova mostu“: druhové slovo se z porovnání vynechá,
+            # takže článek o JINÉ věci (muzeum, pomník, nádraží…) prošel.
+            # /tazatel 18. 10.: 1 z 25 přesných dohledání.
+            _jiny = {"muzeum", "pomnik", "socha", "nadrazi", "stanice", "ulice",
+                     "letiste", "stadion", "galerie", "divadlo", "skola", "nemocnice"}
+            if (set(re.findall(r"\w+", _f(re.sub(r"\(.*?\)", "", titul)))) & _jiny) - set(
+                    re.findall(r"\w+", _f(tema))):
+                return None
             silny = len(a) >= 2 or any(w in self._PRESNY_DRUH for w in re.findall(r"\w{2,}", _f(tema)))
             # „kdo napsal Krakatit?“ — jednoslovný název díla s autorským
             # slovesem, jen když titul článku je PŘESNĚ to slovo (/tazatel 17. 10.)
             if (not silny and _f(re.sub(r"\s*\(.*?\)", "", titul)) == _f(tema)
                     and re.search(r"\bkdo\s+(?:napsal|re[zž][ií]roval|slo[zž]il|nato[cč]il|"
-                                  r"namaloval|zkomponoval|nazp[ií]val)\b",
+                                  r"namaloval|zkomponoval|nazp[ií]val)\b"
+                                  # HANS_LOOKUP_PRESNY_VYDANI_V1 (18. 10.) — „kdy vyšel
+                                  # Krakatit?“ → z hlavy „Karel Poláček“ (živě 18. 10.)
+                                  r"|\bkdy\s+(?:vy[sš]el|vy[sš]l[aoiy]|byl[aoiy]?\s+vyd[aá]n\w*|"
+                                  r"vznikl\w*|m[eě]l[aoiy]?\s+premi[eé]r\w*)\b",
                                   _f(veta) + " " + _f(_prepis or ""))):
                 silny = True
             return tema if silny else None

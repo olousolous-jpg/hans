@@ -177,6 +177,20 @@ def _a1_otazka_bez_otazniku(veta: str) -> bool:
     w = [x.strip(".,;:!") for x in t.split()]
     while w and w[0] in _A1_VYPLN:
         w = w[1:]
+    if bool(w) and w[0] in _A1_TAZACI:
+        return True
+    # HANS_A1_QUESTION_COMMA_V1 (18. 10.) — tázací slovo až za čárkou v krátké
+    # větě („a mara tereza, kdy zemrela“, „a chopina, kdy se narodil“): /tazatel
+    # 18. 10. 10× A1 přeskočena → odpověď z hlavy (Marie Terezie „Innsbruck“).
+    # 📏 2 574 vět: 15 nových, všechny otázky nebo žádosti o údaj.
+    if len(t.split()) > 10 or re.search(r"[.!]\s+\S", t.strip()):
+        return False
+    seg = [s for s in re.split(r"[,;:]|\s[-\u2013]\s", t) if s.strip()]
+    if len(seg) < 2:
+        return False
+    w = [x.strip(".!") for x in seg[-1].split()]
+    while w and w[0] in _A1_VYPLN:
+        w = w[1:]
     return bool(w) and w[0] in _A1_TAZACI
 
 

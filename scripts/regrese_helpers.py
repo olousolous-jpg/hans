@@ -1367,3 +1367,9 @@ def podklad_kryje(titul: str, podklad: str) -> bool:
     """HANS_LOOKUP_PRESNY_PODKLAD_V1 — obal nad FaktaMixin._podklad_kryje."""
     from scripts.handler_fakta import FaktaMixin
     return FaktaMixin._podklad_kryje(titul, podklad)
+
+
+def a1_otazka_bez_otazniku(veta: str) -> bool:
+    """HANS_A1_QUESTION_COMMA_V1 — obal nad predikátem handleru."""
+    from scripts.openwebui_direct_handler import _a1_otazka_bez_otazniku
+    return _a1_otazka_bez_otazniku(veta)
