@@ -638,6 +638,25 @@ class FaktaMixin:
             return '\n\n' + "\n".join(radky)
         return ''
 
+    def _jmenuje_dilo(self, text: str, kandidati=()) -> bool:
+        """HANS_KODI_CAST_NOWPLAYING_GUARD_V1 — jmenuje věta (nebo přepis)
+        konkrétní dílo? Titul s výpisem faktů, přesný titul článku z věty,
+        nebo „v článku / ve filmu / v seriálu / v díle <Název>“."""
+        for s in [text] + list(kandidati or []):
+            s = self._bez_tazatele(str(s or ""))
+            if re.search(r"\b(?:v|ve)\s+(?:článku|clanku|filmu|seriálu|serialu|díle|dile|"
+                         r"pořadu|poradu|knize|románu|romanu)\s+[„\"']?[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]", s):
+                return True
+            try:
+                from scripts.hans_recall import fakta_tituly_ve_vete
+                db = ((self.config.get("hans_idle", {}) or {}).get("diary_db")
+                      or "data/hans_diary.db")
+                if fakta_tituly_ve_vete(db, s):
+                    return True
+            except Exception:
+                pass
+        return False
+
     def _jiny_film_ve_vete(self, raw: str, titul: str) -> bool:
         """HANS_KODI_FILM_FACT_OTHER_V1 (19. 10.) — jmenuje věta po slovech
         JINÝ film z Hansova deníku než `titul`? Doloženo 19. 10.: po odpovědi
@@ -715,6 +734,15 @@ class FaktaMixin:
                 polozka = kodi.movie_details(mv.get("movieid"))
                 popis = mv.get("title") or ''
                 break
+        if polozka is None and self._jmenuje_dilo(t, kandidati):
+            # HANS_KODI_CAST_NOWPLAYING_GUARD_V1 (19. 10.) — otázka JMENUJE
+            # dílo, které knihovna nemá → ne obsazení toho, co běží na TV.
+            # Koláčova zkouška #88: „Kdo hraje Kendyho v … Jak svět přichází
+            # o básníky?“ → obsazení Harryho Pottera (běžel) → výmysl.
+            logging.getLogger(_h.__name__).info(
+                'HANS_KODI_CAST_NOWPLAYING_GUARD_V1: otázka jmenuje jiné dílo '
+                '→ obsazení z TV nedávám: %.60s', t)
+            return ''
         if polozka is None:
             # nikdo titul neřekl → ber, co běží na TV
             try:

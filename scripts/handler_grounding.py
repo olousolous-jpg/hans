@@ -53,7 +53,7 @@ class GroundingMixin:
             # bez opory (A1 by abstinovala — i když vnitřní cesta vrátila jen
             # anti-konfab pokyn) nebo otázka na herce → knihovna sama
             self._vysledek_groundingu('grounded', 'film_kodi')
-            return _ff
+            return self._s_fakty(_ff, _txt)        # HANS_FILM_FACTS_BY_TITLE_V1
         return g + _ff
 
     def _build_grounding_v1(self, user, name=None) -> str:
@@ -204,7 +204,7 @@ class GroundingMixin:
                         _fr0 = None
                     if _fr0:
                         self._vysledek_groundingu('grounded', 'film_recall')
-                        return _fr0
+                        return self._s_fakty(_fr0, ctx._text)   # HANS_FILM_FACTS_BY_TITLE_V1
                 # HANS_READING_RECALL_V1 — nejdřív deterministicky dohledej, co
                 # si o tom Hans SÁM přečetl (declension-safe, obchází flaky RAG
                 # na tenkých souhrnech). Má přednost před „nemám záznam".
@@ -332,6 +332,19 @@ class GroundingMixin:
                 "_build_grounding: blok kontextu selhal (ř. 802): %s", _tiche)
         return _h._POKRACUJ
 
+    def _s_fakty(self, blok, text):
+        """HANS_FILM_FACTS_BY_TITLE_V1 (19. 10.) — k filmovému podkladu
+        (záznam zhlédnutí, popis a obsazení z Kodi) přidej výpis faktů
+        z článku, jehož titul věta jmenuje. Koláčovy zkoušky 18.–19. 10.:
+        „Kde byl Tatínek natočen?“ → „nevím“ (fakt „Barrandov“ ve výpisu byl),
+        Vozka smrti → vymyšlené „v úvodu filmu“ (výpis měl „o silvestrovské
+        noci“). Dosud blok dostávaly jen cesty entity a zápisků."""
+        try:
+            _ft = self._fakta_podle_titulu(self._bez_tazatele(str(text or "")))
+        except Exception:
+            _ft = ''
+        return blok + ('\n\n' + _ft if _ft else '')
+
     def _gr_film(self, ctx):
         # HANS_FILM_RECALL_V1 — dotaz na FILM podle názvu: dohledej Hansovy
         # VLASTNÍ deníkové záznamy (movie_opinion/kodi_playing) o tom filmu, ať
@@ -351,7 +364,7 @@ class GroundingMixin:
                                asker=ctx.name or "")  # HANS_FILM_OPINION_PRIVACY_V1
             if _fr:
                 self._vysledek_groundingu('grounded', 'film_recall')
-                return _fr
+                return self._s_fakty(_fr, ctx._text)   # HANS_FILM_FACTS_BY_TITLE_V1
         except Exception as _tiche:
             _h.log_once(  # HANS_NO_SILENT_CTX_V1
                 logging.getLogger(_h.__name__), "_build_grounding(ř. 818)",
@@ -426,7 +439,7 @@ class GroundingMixin:
                 _cf = self._kodi_cast_fact(str(ctx._q_for_retrieval))
                 if _cf:
                     self._vysledek_groundingu('grounded', 'obsazeni_kodi')
-                    return _cf
+                    return self._s_fakty(_cf, ctx._q_for_retrieval)   # HANS_FILM_FACTS_BY_TITLE_V1
             except Exception as _tiche:
                 _h.log_once(  # HANS_NO_SILENT_CTX_V1
                     logging.getLogger(_h.__name__), "_build_grounding(obsazeni)",
