@@ -594,6 +594,17 @@ def _overit(h, otazka, prepis, odpoved) -> list:
             if x["verdikt"] != "rozpor" or x["clanek"] != _hl or x["udaj"] in dol:
                 continue
             _p = x["p"] if isinstance(x["p"], str) else (x["p"][0] if len(x["p"]) == 1 else "")
+            # autor/režie: dílo musí jmenovat přímo Hansova VĚTA a údaj musí
+            # být víceslovné jméno — vedlejší věta o osobě („Poláček, který
+            # napsal … v Rychnově“, „Menzel, který natočil … podle novely
+            # Bohumila Hrabala“) dávala plané návrhy (sada 40 otázek 19. 10.)
+            if _p in ("P50", "P57"):
+                _vv = _fold(r["veta"])
+                _slt = re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", _hl).split(",")[0]))
+                _jm = re.findall(r"[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž]+", str(x["udaj"]))
+                if (not _slt or 2 * sum(w[:5] in _vv for w in _slt) <= len(_slt)
+                        or len(_jm) < 2):
+                    continue
             if _p in _OPRAVA_POPIS and len(x.get("wd") or []) == 1:
                 oprava = {"p": _p, "clanek": _hl, "udaj": str(x["udaj"]).strip(" .,"),
                           "spravne": str(x["wd"][0]),
