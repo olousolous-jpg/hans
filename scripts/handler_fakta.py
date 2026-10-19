@@ -1220,8 +1220,25 @@ class FaktaMixin:
             logging.getLogger(_h.__name__).info(
                 'HANS_FACTS_BY_TITLE_V1: %s → %d řádků faktů pro %r',
                 ', '.join(tituly)[:80], blok.count('\n') + 1, str(text)[:50])
-            return ('Fakta z článku, který jsi o tom četl („%s“):\n%s'
-                    % (', '.join(tituly), blok))
+            # HANS_FACTS_WIKIDATA_V1 (19. 10.) — k výpisu faktů ověřené údaje
+            # z Wikidat (data, režie, autor, hudba…); výpis je z modelu a údaje
+            # často vynechá. 📏 30 otázek z paměti na údaj, který výpis nemá:
+            # 3 → 28 (`data/mereni/vytah_18_10/wd_vypis.py`). Označení neutrální —
+            # „(Wikidata)“ model vplétal do odpovědi. Uložená data se nemění.
+            # Vypínač `grounding.facts_wikidata`.
+            _wd = ''
+            if bool((self.config.get("grounding", {}) or {}).get("facts_wikidata", True)):
+                try:
+                    from scripts.hans_findings import _wikidata_blok
+                    for _t in tituly[:2]:
+                        _b = _wikidata_blok(_t)
+                        if _b:
+                            _wd += ('\nOvěřené údaje k „%s“:\n' % _t
+                                    + "\n".join("- " + r for r in _b.split("\n")[1:]))
+                except Exception:
+                    _wd = ''
+            return ('Fakta z článku, který jsi o tom četl („%s“):\n%s%s'
+                    % (', '.join(tituly), blok, _wd))
         except Exception:
             return ''
 
