@@ -1135,3 +1135,29 @@ def pta_se_na_zazitek_hanse(text: str) -> bool:
             continue
         return True
     return False
+
+
+# ── HANS_YEAR_EVENTS_V1 (19. 10.) — otázka na události / vládce / válku v roce ──
+# „Co se stalo v Německu a Francii v roce 1640?“ → Hans odpovídal z hlavy
+# (vykání: „Fronsideovo povstání“, „Gustav II. Adolf vstoupil do války 1640“ —
+# zemřel 1632). Zdroj existuje: článek Wikipedie o roce (Události, Probíhající
+# události, Hlavy států). Vrací rok jako text, nebo ''.
+_ROK_HIST = re.compile(r"\b(1\d{3}|20[01]\d|202[0-5])\b")
+_ROK_UDALOST = re.compile(
+    r"\b(?:stal[oa]?|děl[oa]|delo|dalo|událost\w*|udalost\w*|odehr\w*|probíh\w*|probih\w*|"
+    r"vládl\w*|vladl\w*|vládn\w*|vladn\w*|panoval\w*|panovník\w*|panovnik\w*|král\w*|kral\w*|"
+    r"válk\w*|valk\w*|bitv\w*|důležit\w*|dulezit\w*|významn\w*|vyznamn\w*)\b", re.IGNORECASE)
+
+
+def rok_udalosti(text: str) -> str:
+    """Rok, na jehož události/vládce/války se věta ptá; jinak ''."""
+    # jen věta s OTÁZKOU (rok v oznamovací větě před ní se nepočítá:
+    # „…24. října 1945. … Mohl byste mi říci, kdy…“)
+    vety = [v for v in re.split(r"(?<=[.!?])\s+", (text or "").strip()) if v.strip()]
+    for v in reversed(vety):
+        if "?" in v or re.search(r"^\s*(?:a\s+)?(?:co|kdo|jak[éáý]|kdy)\b", v, re.IGNORECASE):
+            m = _ROK_HIST.search(v)
+            if m and _ROK_UDALOST.search(v):
+                return m.group(1)
+            return ""
+    return ""

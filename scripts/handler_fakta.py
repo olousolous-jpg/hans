@@ -846,6 +846,15 @@ class FaktaMixin:
         try:
             if not bool((self.config.get("instant_lookup", {}) or {}).get("presny_predmet", True)):
                 return None
+            # HANS_YEAR_EVENTS_V1 (19. 10.) — otázka na události / vládce / válku
+            # v roce → článek o roce (Události, Hlavy států), ne odpověď z hlavy
+            from scripts.hans_intent import rok_udalosti
+            _rok = rok_udalosti(getattr(self, '_f1_query', None) or "") or rok_udalosti(veta or "")
+            if _rok:
+                logging.getLogger(__name__).info(
+                    "HANS_YEAR_EVENTS_V1: otázka na rok %s → dohledám článek o roce", _rok)
+                self._presny_z_vety = _rok
+                return _rok
             from scripts.hans_intent import pta_se_na_zazitek_hanse, dotaz_na_pojem
             from scripts.hans_convindex import kotva_tematu
             from scripts import hans_wiki_offline as _wo

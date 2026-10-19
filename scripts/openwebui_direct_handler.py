@@ -2407,6 +2407,37 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         "HANS_ZPRAVY_URL_GUARD_V1: vyřazen vymyšlený odkaz %s", _vym[0][:80])
             except Exception as _zue:
                 logging.getLogger(__name__).debug("url guard: %s", _zue)
+            # HANS_URL_NOT_IN_PODKLAD_V1 (19. 10.) — odkaz v odpovědi MODELU,
+            # který v podkladu tahu není, je vymyšlený zdroj (odpověď z hlavy
+            # na rok 1640 přidala dva odkazy na Wikipedii, Hedy Lamarr
+            # radarcentury.com). Vyškrtne se jen odkaz, věta zůstane.
+            # Zpravodajské weby řeší pojistka nad tímhle (proti titulkům).
+            if not getattr(ctx, "_dohledano", False) and not getattr(ctx, "_zpravy", None):
+                try:
+                    _g = getattr(ctx, "_grounding", "")
+                    _sys = (str(getattr(ctx, "system", "") or "")
+                            + (_g if isinstance(_g, str) else ""))
+                    _urls = [u.rstrip(").,;]>\"'\u201c") for u in
+                             re.findall(r"https?://[^\s<>\]\)\"\u201c]+", ctx.response)]
+                    _cizi = [u for u in dict.fromkeys(_urls) if u and u not in _sys]
+                    if _cizi:
+                        # po slovech: slovo nesoucí cizí odkaz pryč celé (i markdown
+                        # „[…](…)“ a závorky v URL), koncová interpunkce zůstane
+                        def _slovo(m):
+                            w = m.group(0)
+                            if any(u in w for u in _cizi):
+                                _k = re.search(r"[.,;:!?]+$", w)
+                                return _k.group(0) if _k else ""
+                            return w
+                        _r = re.sub(r"\S*https?://\S*", _slovo, ctx.response)
+                        _r = re.sub(r"[ \t]{2,}", " ", _r)
+                        _r = re.sub(r"\s+([.,;:!?])", r"\1", _r).strip()
+                        logging.getLogger(__name__).info(
+                            "HANS_URL_NOT_IN_PODKLAD_V1: vyškrtnut odkaz mimo podklad %s",
+                            _cizi[0][:80])
+                        ctx.response = _r
+                except Exception as _uge:
+                    logging.getLogger(__name__).debug("url podklad guard: %s", _uge)
             # HANS_NO_FALSE_MEMORY_CLAIM_V1 (7. 10.) — na cestě BEZ FAKT (v zápiscích
             # nic nebylo) odpověď začínala „V paměti mám záznamy o…“ a pokračovala
             # obecnou znalostí; jednou i „vytvořil jsem si k tomu obraz“ (v deníku

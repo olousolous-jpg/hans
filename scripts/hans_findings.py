@@ -619,6 +619,8 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
         wr = WebReader(config)
         _lang = str(config.get("curiosity", {}).get("wiki_lang", "cs"))
         _max = int(c.get("max_chars", 3000))
+        if re.fullmatch(r"\d{3,4}", str(topic).strip()):
+            _max = max(_max, 20000)   # HANS_YEAR_EVENTS_V1 — Hlavy států jsou na konci
         # HANS_ANCHOR_TRUNCATED_NAME_V1 — kotva mohla useknout víceslovný název.
         # O delším tvaru rozhoduje EXISTUJÍCÍ wiki gate, ne nová heuristika:
         # změřeno 1. 9., že název najde („Nemocnice na kraji města", „Bolek
@@ -643,6 +645,26 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
         return None
     if not art or not (art.get("text") or "").strip():
         return None
+    # HANS_YEAR_EVENTS_V1 (19. 10.) — článek o roce: jen Události, Probíhající
+    # události a Hlavy států (seznamy narození a úmrtí by shrnutí zahltily a
+    # strop 3000 zn by Hlavy států uřízl)
+    if re.fullmatch(r"\d{3,4}", str(topic).strip()):
+        try:
+            _txt = str(art.get("text") or "")
+            _sekce = re.split(r"\n(?===+\s)", _txt)
+            # podsekce „Svět/Česko“ jen pod Událostmi (pod Narozením je seznam lidí)
+            _out, _v_udal = [], True
+            for s in _sekce:
+                h = re.match(r"(==+)\s*([^=]+?)\s*==+", s)
+                if h and len(h.group(1)) == 2:
+                    _v_udal = h.group(2).startswith(("Události", "Hlavy"))
+                if not h or _v_udal:
+                    _out.append(s)
+            art = dict(art, text="\n".join(_out)[:6000])
+            _log.info("HANS_YEAR_EVENTS_V1: článek o roce %s → %d zn (bez narození/úmrtí)",
+                      topic, len(art["text"]))
+        except Exception as _rse:
+            _log.debug("HANS_YEAR_EVENTS_V1: %s", _rse)
     # HANS_LOOKUP_YEAR_VARIANT_V1 (19. 10.) — článek „X (film, 2025)“, ale
     # otázka chce jiný rok („a drakulu z 92?“ → F1 „…z roku 1992?“) → zkus
     # „X (film, 1992)“. Téma dohledání rok nenese, nese ho otázka.
@@ -816,8 +838,8 @@ def _shrnuti_podle_otazky(config: dict, otazka) -> bool:
     if not otazka or not _cfg(config).get("otazka_ve_shrnuti", True):
         return False
     try:
-        from scripts.hans_intent import pta_se_na_udaj
-        return pta_se_na_udaj(otazka)
+        from scripts.hans_intent import pta_se_na_udaj, rok_udalosti
+        return pta_se_na_udaj(otazka) or bool(rok_udalosti(otazka))   # HANS_YEAR_EVENTS_V1
     except Exception:
         return False
 

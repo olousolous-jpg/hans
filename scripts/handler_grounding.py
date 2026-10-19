@@ -7,6 +7,7 @@ Import původního modulu je na KONCI souboru (kruhový import oběma směry).
 from __future__ import annotations
 
 import logging
+import re
 
 
 class GroundingMixin:
@@ -619,7 +620,37 @@ class GroundingMixin:
                         'HANS_ACK_NOT_SELF_V1: přikývnutí → bez bloku o sobě')
                     self._vysledek_groundingu('nonfactual', 'volny_hovor')
                     return ''
-                if is_about_self(str(ctx._text), self.config):
+                # HANS_SELF_STATE_HIST_YEAR_V1 (19. 10.) — věta s historickým
+                # letopočtem se neptá na Hansův stav (tehdy neexistoval), pokud
+                # se neptá na jeho zážitek. Doloženo: „Mohl byste mi říci, jaké
+                # události se odehrály v roce 1640 ve Francii…?“ → blok o sobě →
+                # výmysly („Fronsideovo povstání“, Gustav II. Adolf 1640).
+                # 📏 509 tahů na cestě self_state v přepisech: 2 s letopočtem,
+                # mění se jen tahle (druhý se ptá na zážitek → zůstává).
+                # Klasifikátor bez prefixu tazatele změřen: 16/154 změn oběma
+                # směry → plošně NE.
+                _hist_rok = False
+                try:
+                    from scripts.hans_intent import pta_se_na_zazitek_hanse as _pzh
+                    _hist_rok = bool(re.search(r"\b(1\d{3}|20[01]\d|202[0-5])\b",
+                                               str(ctx._text))) and not _pzh(str(ctx._text))
+                except Exception:
+                    _hist_rok = False
+                if _hist_rok:
+                    logging.getLogger(_h.__name__).info(
+                        'HANS_SELF_STATE_HIST_YEAR_V1: historický letopočet → ne blok o sobě')
+                    # HANS_YEAR_EVENTS_V1 — otázka na události/vládce roku je
+                    # FAKTICKÁ, i když ji klasifikátor záměru nebere: jinak volný
+                    # hovor a výmysl („bitva u Breitenau“ 1640). Bez opory → A1
+                    # brána → přesné dohledání článku o roce.
+                    try:
+                        from scripts.hans_intent import rok_udalosti as _ru
+                        if _ru(self._bez_tazatele(str(ctx._text))):
+                            self._vysledek_groundingu('factual_nofacts', 'rok_udalosti')
+                            return '\n\n' + _h.ANTIKONFAB_NOFACTS
+                    except Exception:
+                        pass
+                if not _hist_rok and is_about_self(str(ctx._text), self.config):
                     from scripts.hans_recall import self_state_facts
                     _dbp_ss = (self.config.get("diary_db")
                                or (self.config.get("hans_idle", {}) or {}).get("diary_db")
@@ -745,6 +776,33 @@ class GroundingMixin:
         except Exception as _f1e:
             logging.getLogger(_h.__name__).debug(
                 'F1: rewriter selhal (%s) — použit originál', _f1e)
+        # HANS_YEAR_EVENTS_V1 (19. 10.) — „tehdy / v té době / tenkrát“ bez
+        # letopočtu navazuje na rok z předchozích otázek: „probihala tehdy
+        # nejaka valka?“ po otázce na rok 1640 → „o kterém období se ptáš?“,
+        # „kdo tehdy vladl ve francii?“ → obecný článek Francie. Přepis F1 rok
+        # nepřenesl; doplní se deterministicky (rok z posledních 4 otázek).
+        try:
+            _raw_t = self._bez_tazatele(str(ctx._text))
+            _q = str(getattr(self, '_f1_query', None) or _raw_t)
+            if (re.search(r"\b(?:tehdy|tenkr[áa]t|v\s+t[ée]\s+dob[ěe]|toho\s+roku|v\s+tom\s+roce)\b",
+                          _raw_t, re.IGNORECASE)
+                    and not re.search(r"\b1\d{3}\b|\b20[0-2]\d\b", _raw_t + " " + _q)
+                    and ctx.name):
+                _hist_y = self.conv_store.get_history(ctx.name) or []
+                _rok_t = ""
+                for _m in reversed([m for m in _hist_y if m.get("role") == "user"][-4:]):
+                    _my = re.search(r"\b(1\d{3}|20[01]\d|202[0-5])\b", str(_m.get("content") or ""))
+                    if _my:
+                        _rok_t = _my.group(1)
+                        break
+                if _rok_t:
+                    _nq = _q.rstrip(" ?") + " v roce %s?" % _rok_t
+                    logging.getLogger(_h.__name__).info(
+                        'HANS_YEAR_EVENTS_V1: „tehdy“ → rok %s z vlákna: %r', _rok_t, _nq[:70])
+                    ctx._q_for_retrieval = _nq
+                    self._f1_query = _nq
+        except Exception as _rte:
+            logging.getLogger(_h.__name__).debug('HANS_YEAR_EVENTS_V1 vlákno: %s', _rte)
 
     def _grr_hledani(self, ctx):
         # 3) query VŠECHNY kolekce PARALELNĚ (fakta roztroušená).

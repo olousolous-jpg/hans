@@ -380,6 +380,12 @@ class WebReader:
             if not wo.dostupna():
                 return None
             p = params or {}
+            # HANS_YEAR_EVENTS_V1 (19. 10.) — článek o ROCE je skoro celý seznam
+            # a lokální výpis seznamy nemá („1640“ = jedna věta) → síť
+            _tit = str(p.get("titles") or requests.utils.unquote(url.rsplit("/", 1)[-1]))
+            if re.fullmatch(r"\d{3,4}", _tit.strip()):
+                _log.info("HANS_YEAR_EVENTS_V1: článek o roce %s lokálně bez seznamů → síť", _tit)
+                return None
             souhrn = WIKIPEDIA_API.split("{", 1)[0]
             if url.startswith(souhrn):
                 titul = requests.utils.unquote(url[len(souhrn):]).replace("_", " ")
