@@ -473,6 +473,9 @@ def _jen_lokalne(url, params=None, **kw):
     raise RuntimeError("stín ověřování nejde na síť")
 
 
+_OPRAVA_POPIS = {"P569": "uveden rok narození", "P570": "uveden rok úmrtí",
+                 "P571": "uveden rok založení či začátku stavby", "P50": "uveden autor",
+                 "P57": "uvedena režie"}
 _UVOD_DOHL = re.compile(r"Podle toho, co jsem te\u010f na\u0161el \(Wikipedie \u2014 heslo "
                         r"[\u201e\"]([^\u201c\"]{2,90})[\u201c\"]\):?")
 _DRUH_ZAVORKA = {"film", "kniha", "roman", "serial", "novela", "povidka", "album", "pisen",
@@ -573,7 +576,24 @@ def _overit(h, otazka, prepis, odpoved) -> list:
         # ⛔ signál „jméno z věty chybí v článku o předmětu“ ZMĚŘEN 17. 10. a
         # vyřazen: 0 skutečných chyb, 3 plané (oslovení za dvojtečkou,
         # „Středočeském“, pravdivý Bernini, kterého článek nezmiňuje)
+        # HANS_OVERENI_OPRAVA_V1 (19. 10.) — návrh opravy jen z článku o PŘEDMĚTU
+        # (první kandidát = heslo dohledání / předmět otázky), jen úzký výčet
+        # údajů a jen jednoznačná hodnota Wikidat
+        _hl = clanky.get(r["kand"][0]) if r["kand"] else None
+        _hl = _hl[0] if _hl else None
+        oprava = None
+        for x in wd:
+            if x["verdikt"] != "rozpor" or x["clanek"] != _hl or x["udaj"] in dol:
+                continue
+            _p = x["p"] if isinstance(x["p"], str) else (x["p"][0] if len(x["p"]) == 1 else "")
+            if _p in _OPRAVA_POPIS and len(x.get("wd") or []) == 1:
+                oprava = {"p": _p, "clanek": _hl, "udaj": str(x["udaj"]).strip(" .,"),
+                          "spravne": str(x["wd"][0]),
+                          "text": "Ještě oprava: podle Wikidat je u „%s“ %s %s, ne %s." % (
+                              _hl, _OPRAVA_POPIS[_p], x["wd"][0], str(x["udaj"]).strip(" .,"))}
+                break
         out.append({"veta": r["veta"], "kandidati": r["kand"], "clanky": [c[0] for c in r["cl"]],
+                    "oprava": oprava,
                     "text": _v(txt), "wikidata": _v(wd), "obe": _v(txt + wd),
                     "detail": [x for x in txt + wd if x["verdikt"] != "nevim"]})
     return out
@@ -596,6 +616,12 @@ def _beh(h, kdo, otazka, prepis, odpoved, cesta):
     kp = {str(k).lower() for k in (h.config.get("known_persons") or {})}
     trida = ("test" if kdo.lower() in testy else "domacnost" if kdo.lower() in kp else "jiny")
     roz = [v for v in vysl if v["obe"] == "rozpor"]
+    # HANS_OVERENI_OPRAVA_V1 — zatím JEN do logu (týden sledovat plané), nic
+    # se neposílá (vypíná se s celým stínem `overeni.stin`). 📏 označené sady
+    # 19. a 16. 10.: 5 návrhů, všech 5 u skutečné chyby, 0 u pravdy
+    for v in vysl:
+        if v.get("oprava"):
+            _log.info("HANS_OVERENI_OPRAVA_V1 [%s, jen log]: %s", trida, v["oprava"]["text"])
     _log.info("HANS_OVERENI_STIN_V1: %d vět, rozpor %d, doloženo %d (%s, %.1f s)%s",
               len(vysl), len(roz), sum(v["obe"] == "doloženo" for v in vysl), cesta,
               time.time() - t0, (" — " + roz[0]["veta"][:80]) if roz else "")
