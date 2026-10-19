@@ -418,7 +418,8 @@ def _fold_db():
 def _pady(w: str) -> list:
     out = [w]
     for a_, b_ in (("ku", "ka"), ("hu", "ha"), ("ou", "a"), ("u", "a"), ("y", "a"),
-                   ("e", "a"), ("i", "e"), ("em", ""), ("a", ""), ("u", "")):
+                   ("e", "a"), ("i", "e"), ("em", ""), ("a", ""), ("u", ""),
+                   ("e", "")):   # „Spalovače“ → „Spalovač“ (sada 40 otázek 19. 10.)
         if w.endswith(a_) and len(w) > 4:
             out.append(w[:-len(a_)] + b_)
     return list(dict.fromkeys(out))

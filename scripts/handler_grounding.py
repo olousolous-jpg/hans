@@ -343,7 +343,29 @@ class GroundingMixin:
             _ft = self._fakta_podle_titulu(self._bez_tazatele(str(text or "")))
         except Exception:
             _ft = ''
-        return blok + ('\n\n' + _ft if _ft else '')
+        # HANS_FILM_INFOBOX_V1 (19. 10.) — údaje z infoboxu lokálního článku
+        # o filmu (režie, hrají, premiéra). „Kdo režíroval Dědictví aneb
+        # Kurvahošigutntag?“ → film_recall měl jen žánr a děj z přehrávače
+        # a model řekl „Zuzana Němcová“ (Chytilová je v infoboxu).
+        _ib = ''
+        try:
+            from scripts import hans_wiki_offline as _wo
+            _tz = _wo.titul_z_vety(self._bez_tazatele(str(text or "")))
+            if _tz:
+                _druh, _box = _wo.infobox(_tz)
+                if _druh in ("film", "seriál") and _box:
+                    _rad = [r for r in str(_box).splitlines()
+                            if r.split(":", 1)[0].strip() in (
+                                "režie", "scénář", "námět", "hrají", "premiéra", "země",
+                                "žánr", "hudba", "kamera", "délka", "předloha")]
+                    if _rad:
+                        _ib = ("Údaje z článku o filmu „%s“ (Wikipedie):\n%s"
+                               % (_tz, "\n".join("- " + r for r in _rad[:10])))
+                        logging.getLogger(_h.__name__).info(
+                            'HANS_FILM_INFOBOX_V1: %r → %d řádků infoboxu', _tz, len(_rad))
+        except Exception:
+            _ib = ''
+        return blok + ('\n\n' + _ft if _ft else '') + ('\n\n' + _ib if _ib else '')
 
     def _gr_film(self, ctx):
         # HANS_FILM_RECALL_V1 — dotaz na FILM podle názvu: dohledej Hansovy
