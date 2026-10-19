@@ -472,7 +472,11 @@ _STOPWORDS = {"něco", "neco", "dnes", "dneska", "včera", "vcera", "naposledy",
               # zájmena — nejsou téma; „četl jsi JI?" nesmí dát bogus topic „ji“
               # → falešné „o ‚ji' nemám záznam". Prázdné téma → radši nech projít.
               "ji", "ho", "je", "jej", "něj", "nej", "ni", "ně", "to", "tom",
-              "toho", "této", "teto", "tuto", "tu", "ten", "tim", "tím"}
+              "toho", "této", "teto", "tuto", "tu", "ten", "tim", "tím",
+              # HANS_READING_TIME_STOP_V1 (19. 10.) — časové určení není téma
+              # („necetl jsi posledni dobou neco?“ → „o ‚posledni dobou‘ nemám“)
+              "poslední", "posledni", "posledních", "poslednich", "dobou",
+              "dobu", "době", "dobe", "nedávno", "nedavno", "teď", "ted"}
 
 
 # Explicitní PŘEDMĚT „o knize/filmu/tématu X“ — má přednost před koncovým

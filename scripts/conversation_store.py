@@ -264,7 +264,13 @@ class ConversationStore:
     _ODMITNUTI_RE = _re_g4d.compile(
         r"(jen (se )?svou dom\u00e1cnost\u00ed|jen lidem, kter\u00e9 zn\u00e1m|"
         r"jen s t\u011bmi, koho zn\u00e1m|nem\u00e1m spolehliv\u00fd z\u00e1znam|"
-        r"zeptejte u n\u00ed|pat\u0159\u00ed jin\u00e9 osob\u011b)", _re_g4d.I)
+        r"zeptejte u n\u00ed|pat\u0159\u00ed jin\u00e9 osob\u011b|"
+        # HANS_CONV_REFUSAL_ECHO_V2 (19. 10.) — i odmítnutí AKCE cizímu
+        r"jen pro svou dom\u00e1cnost)", _re_g4d.I)
+    # Odmítnutí akce je pevná věta bez obsahu → ven i jako POSLEDNÍ replika.
+    # Doloženo /tazatel 19. 10.: po „Tohle mohu udělat jen pro svou
+    # domácnost.“ model touž větu opsal na další dvě obyčejné otázky.
+    _ODMITNUTI_AKCE_RE = _re_g4d.compile(r"jen pro svou dom\u00e1cnost", _re_g4d.I)
 
     @classmethod
     def _orez_odmitnuti(cls, msgs: list) -> list:
@@ -281,9 +287,10 @@ class ConversationStore:
         jako `_orez_pozdravy`. ⚠️ Meni JEN pohled do promptu, v ulozisti vse."""
         out = []
         for i, m in enumerate(msgs or []):
-            if (m.get("role") == "assistant" and i < len(msgs) - 1
-                    and len(m.get("content") or "") <= 300
-                    and cls._ODMITNUTI_RE.search(m.get("content") or "")):
+            _c = m.get("content") or ""
+            if (m.get("role") == "assistant" and len(_c) <= 300
+                    and (i < len(msgs) - 1 or cls._ODMITNUTI_AKCE_RE.search(_c))
+                    and cls._ODMITNUTI_RE.search(_c)):
                 if out and out[-1].get("role") == "user":
                     out.pop()
                 continue

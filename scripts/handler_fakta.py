@@ -98,6 +98,7 @@ class FaktaMixin:
         2 odpovědi mimo). Vrací podklad, nebo '' (věta pak pokračuje stejně,
         jako kdyby zápisky nic nenašly). Vypínač `grounding.notes_need_title`.
         """
+        text = self._bez_tazatele(text)     # HANS_FTS_NO_ASKER_V1
         kb = self._knowledge_fts_grounding(text)
         if not kb:
             return kb
@@ -145,6 +146,13 @@ class FaktaMixin:
         """
         try:
             from scripts.hans_convindex import search as _kfts
+            # HANS_FTS_NO_ASKER_V1 (19. 10.) — bez „<jméno> se ptá:“. Hledání
+            # chce VŠECHNA slova, takže jméno tazatele a „ptá“ nález zabily
+            # („a drakulu z 92?“ → nic, ačkoli zápisek o Drákulovi je).
+            # 📏 log ~50 dní: 565 z 1 116 prázdných hledání neslo prefix;
+            # vzorek 200 vět přepisů: bez prefixu nově 5 nálezů (2 správné,
+            # 1 obecný, 2 šum — ty dál hlídá kontrola významu a titulu).
+            text = self._bez_tazatele(text)
             hits = _kfts(str(text), limit=3, kind='knowledge')
             # HANS_NOTES_SEMANTIC_ALL_V1 (18. 10.) — kontrola významu
             # (HANS_RELAX_SEMANTIC_V1, bge-m3, práh 0,48) i pro NErelaxované
@@ -587,6 +595,11 @@ class FaktaMixin:
             ve_zprave = (" %s " % nk) in nr
             if not (ve_zprave or (navaz and k in posl)):
                 continue
+            if not ve_zprave and self._jiny_film_ve_vete(raw, k):
+                logging.getLogger(_h.__name__).info(
+                    'HANS_KODI_FILM_FACT_OTHER_V1: věta jmenuje jiný film než %r '
+                    '→ fakta z předchozí repliky nepřidávám', k[:40])
+                continue
             if not ve_zprave:
                 try:
                     from scripts.hans_intent import mluvi_o_filmu, jiny_predmet
@@ -624,6 +637,32 @@ class FaktaMixin:
                 'HANS_KODI_FILM_FACT_V1: film z knihovny %r (%d herců)', k[:40], len(herci))
             return '\n\n' + "\n".join(radky)
         return ''
+
+    def _jiny_film_ve_vete(self, raw: str, titul: str) -> bool:
+        """HANS_KODI_FILM_FACT_OTHER_V1 (19. 10.) — jmenuje věta po slovech
+        JINÝ film z Hansova deníku než `titul`? Doloženo 19. 10.: po odpovědi
+        o „Agent, který mne miloval“ přišlo „jack the ripper z 88 – kdo to
+        režíroval?“ → blok faktů o Agentovi (`jiny_predmet` čte jen velká
+        písmena). Párování týmž `_titul_po_slovech` jako film recall."""
+        try:
+            from scripts.hans_recall_filmy import _titul_po_slovech
+            from scripts.hans_recall import _ro
+            db = ((self.config.get("hans_idle", {}) or {}).get("diary_db")
+                  or "data/hans_diary.db")
+            c = _ro(db)
+            try:
+                tituly = [r[0] for r in c.execute(
+                    "SELECT DISTINCT title FROM diary WHERE event_type IN "
+                    "('movie_opinion','kodi_playing') AND length(title) >= 4").fetchall()]
+            finally:
+                c.close()
+            jiny = _titul_po_slovech(raw, tituly)
+            if not jiny:
+                return False
+            n = lambda s: re.sub(r"\s*\(.*$", "", str(s or "")).strip().lower()
+            return n(jiny) != n(titul)
+        except Exception:
+            return False
 
     def _kodi_cast_fact(self, text: str) -> str:
         """Obsazení (a režie) toho, o čem je řeč — deterministicky z Kodi.
@@ -1090,7 +1129,8 @@ class FaktaMixin:
             return False
 
     def _bez_tazatele(self, text) -> str:
-        return self._ASKER_PFX.sub("", str(text or ""))
+        _p = getattr(self, "_ASKER_PFX", None) or re.compile(r"^\s*\S+\s+se\s+pt[áa]:\s*")
+        return _p.sub("", str(text or ""))
 
     def _fakta_podle_titulu(self, text: str) -> str:
         """HANS_FACTS_BY_TITLE_V1 — blok faktů z článku, jehož titul věta

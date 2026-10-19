@@ -1444,3 +1444,22 @@ def kniha_z_otazky_titul(q: str) -> str:
     """HANS_BOOK_PROGRESS_FAR_V1 — titul knihy z knihovny jmenované v otázce."""
     from scripts.hans_recall import _kniha_z_otazky
     return ((_kniha_z_otazky("data/hans_diary.db", q) or {}).get("title") or "")[:10]
+
+
+def odmitnuti_zustane(posledni: str) -> int:
+    """HANS_CONV_REFUSAL_ECHO_V2 — kolik zpráv zůstane v okně po ořezu odmítnutí,
+    když je `posledni` poslední Hansova replika (2 = zůstala, 0 = vynechána)."""
+    from scripts.conversation_store import ConversationStore
+    return len(ConversationStore._orez_odmitnuti(
+        [{"role": "user", "content": "otázka"},
+         {"role": "assistant", "content": posledni}]))
+
+
+def jiny_film_ve_vete(raw: str, titul: str) -> bool:
+    """HANS_KODI_FILM_FACT_OTHER_V1 — jmenuje věta jiný Hansův film než `titul`?"""
+    from scripts import config_io, handler_fakta as hf
+    cls = [c for c in vars(hf).values() if isinstance(c, type)
+           and c.__module__ == hf.__name__ and hasattr(c, "_jiny_film_ve_vete")][0]
+    o = cls.__new__(cls)
+    o.config = config_io.load(hlasit=False)
+    return o._jiny_film_ve_vete(raw, titul)

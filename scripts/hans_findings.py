@@ -643,6 +643,23 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
         return None
     if not art or not (art.get("text") or "").strip():
         return None
+    # HANS_LOOKUP_YEAR_VARIANT_V1 (19. 10.) — článek „X (film, 2025)“, ale
+    # otázka chce jiný rok („a drakulu z 92?“ → F1 „…z roku 1992?“) → zkus
+    # „X (film, 1992)“. Téma dohledání rok nenese, nese ho otázka.
+    try:
+        _mt = re.match(r"^(.+?) \((film|seriál|kniha|hra)(?:, (\d{4}))?\)$",
+                       str(art.get("title") or ""))
+        _ry = re.findall(r"\b(1[89]\d\d|20\d\d)\b", "%s %s" % (otazka or "", query or ""))
+        if _mt and _ry and _mt.group(3) != _ry[0]:
+            _alt2 = "%s (%s, %s)" % (_mt.group(1), _mt.group(2), _ry[0])
+            _art2 = wr.wikipedia_article(_alt2, lang=_lang, max_chars=_max)
+            if _art2 and (_art2.get("text") or "").strip() and \
+                    str(_art2.get("title") or "").strip() == _alt2:
+                _log.info("HANS_LOOKUP_YEAR_VARIANT_V1: %r → %r (rok z otázky)",
+                          art.get("title"), _alt2)
+                art = _art2
+    except Exception as _ye:
+        _log.debug("HANS_LOOKUP_YEAR_VARIANT_V1: %s", _ye)
 
     # HANS_WIKI_NAMESAKE_V1 (5.9.) - nasel se clanek o VECI POJMENOVANE po tom,
     # nac se uzivatel ptal? Dolozeno: "neco od Karla Capka" -> "Karla Capka
