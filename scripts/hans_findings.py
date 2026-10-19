@@ -660,9 +660,23 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
                     _v_udal = h.group(2).startswith(("Události", "Hlavy"))
                 if not h or _v_udal:
                     _out.append(s)
-            art = dict(art, text="\n".join(_out)[:6000])
-            _log.info("HANS_YEAR_EVENTS_V1: článek o roce %s → %d zn (bez narození/úmrtí)",
-                      topic, len(art["text"]))
+            _cs = "\n".join(_out)[:4000]
+            # druhý zdroj: anglický článek o roce (události po měsících; česká
+            # stránka je řídká — u 1640 chybí Turín, Arras, braniborský kurfiřt)
+            _en = ""
+            try:
+                _ea = wr.wikipedia_article(str(topic).strip(), lang="en", max_chars=20000)
+                _et = str((_ea or {}).get("text") or "")
+                _i = _et.find("== Events ==")
+                if _i >= 0:
+                    _j = _et.find("\n== ", _i + 5)
+                    _en = _et[_i:_j if _j > 0 else None].strip()[:4000]
+            except Exception as _ee:
+                _log.debug("HANS_YEAR_EVENTS_V1 en: %s", _ee)
+            art = dict(art, text=_cs + (("\n\nAnglická Wikipedie (události roku %s):\n%s"
+                                         % (str(topic).strip(), _en)) if _en else ""))
+            _log.info("HANS_YEAR_EVENTS_V1: článek o roce %s → %d zn česky + %d zn anglicky",
+                      topic, len(_cs), len(_en))
         except Exception as _rse:
             _log.debug("HANS_YEAR_EVENTS_V1: %s", _rse)
     # HANS_LOOKUP_YEAR_VARIANT_V1 (19. 10.) — článek „X (film, 2025)“, ale
@@ -856,8 +870,23 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
     c = _cfg(config)
     model = str((config.get("hans_dialog", {}) or {}).get(
         "ollama_model", "hans-czech:latest"))
-    text = (art.get("text") or "")[:int(c.get("max_chars", 3000))]
-    if _shrnuti_podle_otazky(config, otazka):
+    _strop = int(c.get("max_chars", 3000))
+    if re.fullmatch(r"\d{3,4}", str(topic or "").strip()):
+        _strop = max(_strop, 8500)   # HANS_YEAR_EVENTS_V1 — česky + anglicky
+    text = (art.get("text") or "")[:_strop]
+    _rok_t = bool(re.fullmatch(r"\d{3,4}", str(topic or "").strip()))
+    if _rok_t and otazka:
+        # HANS_YEAR_EVENTS_V1 — článek o roce (česky + anglicky): vyber události
+        # k tomu, na co se člověk ptá (země, vládce, války), česky a s daty
+        prompt = (
+            "Níže jsou výpisy z článků o roce %s (česká a anglická Wikipedie). Člověk se "
+            "ptá: „%s“\nOdpověz ČESKY ve 2 až 5 větách: vyber z textu události, vládce "
+            "nebo války, které se týkají toho, na co se ptá (země, osoby), i s datem, když "
+            "ho text uvádí. Anglické názvy přelož do češtiny. Když text o něčem z otázky "
+            "nic neříká, napiš, že to v článcích není. Drž se VÝHRADNĚ textu, nic si "
+            "nepřidávej. Bez uvozovek.\n\nText:\n%s"
+            % (str(topic).strip(), str(otazka).strip(), text))
+    elif _shrnuti_podle_otazky(config, otazka):
         # HANS_LOOKUP_QUESTION_SUMMARY_V1 — otázka na údaj: nejdřív odpověď
         # z textu, pak kdo/co to je. 📏 12 otázek × 2 běhy na týchž článcích:
         # dnešní zadání 8/24, s otázkou 22/24 (backlog DOHLEDANI_UDAJ_15_10).
@@ -883,8 +912,8 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             [{"role": "user", "content": prompt}],
             config=config,
             timeout=int(c.get("llm_timeout", 45)),
-            options={"num_predict": int(c.get("num_predict", 220)),
-                     "num_ctx": int(c.get("num_ctx", 4096)),
+            options={"num_predict": (380 if _rok_t else int(c.get("num_predict", 220))),
+                     "num_ctx": (8192 if _rok_t else int(c.get("num_ctx", 4096))),
                      "temperature": 0.2},
         )
     except Exception as e:

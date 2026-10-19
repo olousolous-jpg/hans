@@ -781,20 +781,43 @@ class GroundingMixin:
         # nejaka valka?“ po otázce na rok 1640 → „o kterém období se ptáš?“,
         # „kdo tehdy vladl ve francii?“ → obecný článek Francie. Přepis F1 rok
         # nepřenesl; doplní se deterministicky (rok z posledních 4 otázek).
+        self._rok_kontext = None
         try:
             _raw_t = self._bez_tazatele(str(ctx._text))
             _q = str(getattr(self, '_f1_query', None) or _raw_t)
-            if (re.search(r"\b(?:tehdy|tenkr[áa]t|v\s+t[ée]\s+dob[ěe]|toho\s+roku|v\s+tom\s+roce)\b",
-                          _raw_t, re.IGNORECASE)
-                    and not re.search(r"\b1\d{3}\b|\b20[0-2]\d\b", _raw_t + " " + _q)
+            _tehdy = re.search(r"\b(?:tehdy|tenkr[áa]t|v\s+t[ée]\s+dob[ěe]|toho\s+roku|v\s+tom\s+roce)\b",
+                               _raw_t, re.IGNORECASE)
+            if (not re.search(r"\b1\d{3}\b|\b20[0-2]\d\b", _raw_t + " " + _q)
                     and ctx.name):
                 _hist_y = self.conv_store.get_history(ctx.name) or []
+                _uziv = [m for m in _hist_y if m.get("role") == "user"]
                 _rok_t = ""
-                for _m in reversed([m for m in _hist_y if m.get("role") == "user"][-4:]):
-                    _my = re.search(r"\b(1\d{3}|20[01]\d|202[0-5])\b", str(_m.get("content") or ""))
-                    if _my:
-                        _rok_t = _my.group(1)
-                        break
+                if _tehdy:
+                    for _m in reversed(_uziv[-4:]):
+                        _my = re.search(r"\b(1\d{3}|20[01]\d|202[0-5])\b", str(_m.get("content") or ""))
+                        if _my:
+                            _rok_t = _my.group(1)
+                            break
+                else:
+                    # HANS_YEAR_CONTEXT_V1 (19. 10.) — rozhovor o roce drží kontext
+                    # i bez „tehdy“: „a co brandenbursko, zmenilo se tam neco?“ po
+                    # otázce na rok 1640 → dřív Brandenburg (jednotka) z 2. sv. války.
+                    # Jen navazující otázka (ne na Hanse) a jen když v posledních
+                    # dvou otázkách padla otázka na události roku.
+                    from scripts.hans_intent import rok_udalosti as _ru2
+                    _naváz = (re.match(r"\s*(?:a\b|co\b|kdo\b|kde\b|jak\b|probíhal|probihal|"
+                                       r"byl[aoiy]?\b|došlo|doslo|stal)", _raw_t, re.IGNORECASE)
+                              and not re.search(r"\b(?:jsi|jste|m[áa][šs]|m[áa]te|tv[ůu]j|tvoje|"
+                                                r"v[áa][šs]|va[šs]e|t[ěe]|v[áa]s|ti|v[áa]m|sis|ses)\b",
+                                                _raw_t, re.IGNORECASE)
+                              and len(_raw_t.split()) <= 14)
+                    if _naváz:
+                        for _m in reversed(_uziv[-2:]):
+                            _ry = _ru2(str(_m.get("content") or ""))
+                            if _ry:
+                                _rok_t = _ry
+                                self._rok_kontext = _ry
+                                break
                 if _rok_t:
                     _nq = _q.rstrip(" ?") + " v roce %s?" % _rok_t
                     logging.getLogger(_h.__name__).info(

@@ -849,7 +849,8 @@ class FaktaMixin:
             # HANS_YEAR_EVENTS_V1 (19. 10.) — otázka na události / vládce / válku
             # v roce → článek o roce (Události, Hlavy států), ne odpověď z hlavy
             from scripts.hans_intent import rok_udalosti
-            _rok = rok_udalosti(getattr(self, '_f1_query', None) or "") or rok_udalosti(veta or "")
+            _rok = (rok_udalosti(getattr(self, '_f1_query', None) or "") or rok_udalosti(veta or "")
+                    or getattr(self, '_rok_kontext', None))   # HANS_YEAR_CONTEXT_V1
             if _rok:
                 logging.getLogger(__name__).info(
                     "HANS_YEAR_EVENTS_V1: otázka na rok %s → dohledám článek o roce", _rok)
