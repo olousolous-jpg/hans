@@ -581,6 +581,14 @@ def _overit(h, otazka, prepis, odpoved) -> list:
         # údajů a jen jednoznačná hodnota Wikidat
         _hl = clanky.get(r["kand"][0]) if r["kand"] else None
         _hl = _hl[0] if _hl else None
+        # článek musí jmenovat Hansova VĚTA nebo PŮVODNÍ otázka (většina slov
+        # titulu před čárkou), ne jen přepis F1 — 17. 10. F1 „Kdy se narodil
+        # Vítězslav Nezval, známý jako Smetana?“ → návrh „u Nezvala 1900“
+        if _hl:
+            _kv = _fold(r["veta"] + " " + otazka)
+            _sl = re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", _hl).split(",")[0]))
+            if not _sl or 2 * sum(w[:5] in _kv for w in _sl) <= len(_sl):
+                _hl = None
         oprava = None
         for x in wd:
             if x["verdikt"] != "rozpor" or x["clanek"] != _hl or x["udaj"] in dol:
