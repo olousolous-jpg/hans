@@ -238,9 +238,17 @@ def _nacti_wd(tituly: list) -> None:
     C = _c()
     chybi = [t for t in dict.fromkeys(tituly) if t and t not in C]
     odkazy = set()
-    if chybi:
+    # HANS_WD_CACHE_NO_POISON_V1 (19. 10.) — po 50 titulech (víc rozhraní
+    # odmítne) a selhané volání NIC neukládá: dřív se každý titul zapsal jako
+    # „nemá záznam“ natrvalo (měření 19. 10.: 167 titulů naráz → všech 167 prázdných)
+    for _i in range(0, len(chybi), 50):
+        _davka = chybi[_i:_i + 50]
         d = _wd(API + "?action=wbgetentities&sites=cswiki&props=claims|sitelinks"
-                "&sitefilter=cswiki&format=json&titles=" + urllib.parse.quote("|".join(chybi)))
+                "&sitefilter=cswiki&format=json&titles=" + urllib.parse.quote("|".join(_davka)))
+        if not isinstance(d, dict) or "entities" not in d:
+            _log.debug("HANS_WD_CACHE_NO_POISON_V1: Wikidata neodpověděla (%d titulů) — "
+                       "neukládám", len(_davka))
+            continue
         nalez = {}
         for q, e in (d.get("entities") or {}).items():
             if not q.startswith("Q"):
@@ -266,7 +274,7 @@ def _nacti_wd(tituly: list) -> None:
                             P.setdefault(p, []).append([int(m.group(1)), int(m.group(2)),
                                                         int(m.group(3))])
             nalez[t] = {"qid": q, "p": P}
-        for t in chybi:
+        for t in _davka:
             C[t] = nalez.get(t, {"qid": None, "p": {}})
     predlohy = [q for t in tituly for q in ((C.get(t) or {}).get("p") or {}).get("P144", [])
                 if isinstance(q, str) and "A:" + q not in C][:45]
