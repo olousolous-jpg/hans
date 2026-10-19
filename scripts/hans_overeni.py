@@ -332,6 +332,9 @@ def _shoda_jmena(ve_vete, jmena_wd, misto: bool = False) -> bool:
     („Všebořice u Dolních Kralovic“ → všechna slova před „u“); „-ová“ ×
     mužské jméno neplatí."""
     sv = [w for w in re.findall(r"\w+", _fold(ve_vete)) if len(w) >= 3]
+    if not sv:
+        return None   # HANS_OVERENI_ODECET_V1 — useknuté jméno („Josef Ab“): nevím
+    import difflib
     for j in jmena_wd:
         if misto:
             j = re.split(r"\s+(?:u|nad|pod|na|v|ve)\s+|\s*\(", j)[0]
@@ -341,6 +344,16 @@ def _shoda_jmena(ve_vete, jmena_wd, misto: bool = False) -> bool:
             for b in jw:
                 n = min(5, len(a), len(b))
                 if a[:n] == b[:n] and not (a.endswith("ova") and not b.endswith("ova")):
+                    return True
+                # HANS_OVERENI_ODECET_V1 (19. 10.) — místo v jiném pádě
+                # („Praze“ × Praha, „Vídni“ × Vídeň, „Woli“ × Wola) a překlep
+                # jména („Parronaud“ × Paronnaud)
+                if misto and len(a) >= 4 and len(b) >= 4:
+                    k = max(3, min(len(a), len(b)) - 2)
+                    if a[:k] == b[:k]:
+                        return True
+                if (len(a) >= 6 and len(b) >= 6
+                        and difflib.SequenceMatcher(None, a, b).ratio() >= 0.85):
                     return True
     return False
 
@@ -382,16 +395,28 @@ def over_wd(veta, udaje, tituly) -> list:
                 # podmět, ne předmět: entita jmenovaná ve vztahu se nekontroluje
                 if _fold(t.split(" (")[0])[:5] in _fold(ve_vete):
                     continue
+                # HANS_OVERENI_ODECET_V1 — článek o jménu samém („Přemyslovců“ →
+                # Anežka Přemyslovna) není podmět věty
+                if any(w[:5] in _fold(ve_vete)
+                       for w in re.findall(r"\w{5,}", _fold(t.split(" (")[0]))):
+                    continue
+                # HANS_OVERENI_ODECET_V1 — u místa VŠECHNA jména (jen víceslovná
+                # nechala z Vídně „Vienna, Austria“ a „ve Vídni“ byl rozpor)
                 hodnoty = [j for p in props for q0 in P.get(p, []) if isinstance(q0, str)
                            for q in (_predci(q0) if p in _MISTA_P
                                      else [q0] + _c().get("A:" + q0, []) if p == "P144"
-                                     else [q0]) for j in _jm(q)]
+                                     else [q0])
+                           for j in ((_c().get("L:" + q) or []) if p in _MISTA_P else _jm(q))]
                 if not hodnoty:
                     continue
                 _misto = any(p in _MISTA_P for p in props)
+                _sh = _shoda_jmena(ve_vete, hodnoty, _misto)
+                # HANS_OVERENI_ODECET_V1 — správní celek (P131) neodliší pohoří,
+                # geopark ani přívlastek → u něj jen doložení, rozpor ne
+                if _sh is None or (not _sh and props == ["P131"]):
+                    continue
                 det.append({"clanek": t, "p": props, "udaj": ve_vete.strip(" ,"),
-                            "verdikt": ("doloženo" if _shoda_jmena(ve_vete, hodnoty, _misto)
-                                        else "rozpor"),
+                            "verdikt": ("doloženo" if _sh else "rozpor"),
                             "wd": [_jm(q)[0] for p in props for q in P.get(p, [])
                                    if isinstance(q, str) and _jm(q)][:4]})
         for vzor, p, tol in _MNOZSTVI:
@@ -448,6 +473,11 @@ def _jen_lokalne(url, params=None, **kw):
     raise RuntimeError("stín ověřování nejde na síť")
 
 
+_UVOD_DOHL = re.compile(r"Podle toho, co jsem te\u010f na\u0161el \(Wikipedie \u2014 heslo "
+                        r"[\u201e\"]([^\u201c\"]{2,90})[\u201c\"]\):?")
+_DRUH_ZAVORKA = {"film", "kniha", "roman", "serial", "novela", "povidka", "album", "pisen",
+                 "opera", "hrad", "zamek", "mesto", "obec", "hora", "reka", "hudebnik",
+                 "spisovatel", "malir", "herec", "politik", "skladatel", "kostel", "chram"}
 _TRIGGER = re.compile("|".join([v for v, _ in _VZTAHY] + [v for v, _, _ in _MNOZSTVI]), re.I)
 _UVOZ = re.compile(r"[„\"]([^“\"]{3,90})[“\"]")
 
@@ -479,12 +509,18 @@ def _overit(h, otazka, prepis, odpoved) -> list:
             clanky[k] = (kan, text) if text else None
         return clanky[k]
     radky = []
-    for v in vety:
-        kand = list(dict.fromkeys(([pr] if pr else []) + _UVOZ.findall(v) + [
-            k for k in jmena(v) if not P.osloveni(k, v)]))[:3]
+    for v0 in vety:
+        # HANS_OVERENI_ODECET_V1 (19. 10.) — úvod dohledání „Podle toho, co jsem
+        # teď našel (Wikipedie — heslo „X“):“ není údaj; X je článek předmětu,
+        # „Wikipedie“ kandidát není (dřív „autor Spalovače = Jimmy Wales“)
+        _uv = _UVOD_DOHL.search(v0)
+        v = v0[_uv.end():].strip() if _uv else v0
+        _hes = [_uv.group(1)] if _uv else []
+        kand = list(dict.fromkeys(_hes + ([pr] if pr else []) + _UVOZ.findall(v) + [
+            k for k in jmena(v) if not P.osloveni(k, v) and k != "Wikipedie"]))[:3]
         cl = [c for c in (_clanek(k) for k in kand) if c and not c[0].startswith("Seznam ")]
         cl = list({c[0]: c for c in cl}.values())
-        radky.append({"veta": v, "kand": kand, "cl": cl,
+        radky.append({"veta": v0, "kand": kand, "cl": cl,
                       "ud": udaje_vety(v, prepis or otazka)})
     try:
         _nacti_wd([c[0] for r in radky for c in r["cl"]])
@@ -508,13 +544,26 @@ def _overit(h, otazka, prepis, odpoved) -> list:
         _kontext = _fold(r["veta"] + " " + otazka + " " + prepis)
         for kan, _ in r["cl"]:
             sl = [w for w in re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", kan)))]
-            if sl and not any(w[:5] in _kontext for w in sl):
+            # HANS_OVERENI_ODECET_V1 — datum jen z článku, jehož titul věta či
+            # otázka jmenuje VĚTŠINOU slov („Marie Tereza Luisa Savojská“ ×
+            # Marie Terezie: 2/4 → cizí); dřív stačilo jedno slovo
+            # (výčet za čárkou se nepočítá: „Katedrála svatého Víta, Václava
+            # a Vojtěcha“ × „katedrála sv. Víta“)
+            sl1 = [w for w in re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", kan).split(",")[0]))]
+            if sl1 and 2 * sum(w[:5] in _kontext for w in sl1) <= len(sl1):
                 cizi.add(kan + "\x00datum")
+            # upřesnění v závorce, které věta ani otázka nezná („(Kazaň)“ u
+            # chrámu v Londýně, „Národní (Praha)“ u národního parku) = jiný předmět
+            _zav = re.findall(r"\w{4,}", _fold(" ".join(re.findall(r"\((.*?)\)", kan))))
+            if any(w not in _DRUH_ZAVORKA and w[:5] not in _kontext for w in _zav):
+                cizi.add(kan)
         _dat = lambda x: not isinstance(x.get("p"), list)      # datum/číslo, ne jméno
         txt = [x for x in txt if not (x["verdikt"] == "rozpor" and (
             x["clanek"] in cizi or x["clanek"] + "\x00datum" in cizi))]
+        # HANS_OVERENI_ODECET_V1 — článek, jehož titul věta ani otázka většinou
+        # nejmenuje, nedá rozpor ani u jména (Marie Tereza Savojská × „ve Vídni“)
         wd = [x for x in wd if not (x["verdikt"] == "rozpor" and (
-            x["clanek"] in cizi or (_dat(x) and x["clanek"] + "\x00datum" in cizi)))]
+            x["clanek"] in cizi or x["clanek"] + "\x00datum" in cizi))]
         dol = {x["udaj"] for x in txt + wd if x["verdikt"] == "doloženo"}
 
         def _v(det):
