@@ -1463,3 +1463,9 @@ def jiny_film_ve_vete(raw: str, titul: str) -> bool:
     o = cls.__new__(cls)
     o.config = config_io.load(hlasit=False)
     return o._jiny_film_ve_vete(raw, titul)
+
+
+def agent_autor_dila(veta: str) -> bool:
+    """HANS_AGENT_AUTHOR_NOT_PERSON_V1 — ptá se věta na autora díla?"""
+    from scripts.hans_agent import _AUTOR_DILA
+    return bool(_AUTOR_DILA.search(veta or ""))

@@ -371,3 +371,126 @@ def infobox(titul: str):
     row = _db().execute("SELECT infobox_druh, infobox FROM clanek WHERE id=?",
                         (r[0],)).fetchone()
     return (row[0] or "", row[1] or "") if row else ("", "")
+
+
+# ── HANS_WIKI_TITUL_Z_VETY_V1 (19. 10.) — přesný titul článku přímo z holé věty ─
+# Kotva bere jen slova s velkým písmenem a přepis F1 umí název zkomolit:
+# „kdo navrhl karluv most?“ → F1 „Karlov most“ → rozcestník Karlov;
+# „kdo napsal valku s mloky?“ → kotva „Válku“ → heslo Válka; „kdo napsal babicku
+# a kdy vysla?“ → F1 „Babí léto“. V holé větě název JE, jen bez háčků a v jiném
+# pádě. Hledá se nejdelší úsek věty, který je přesně titulem (bez diakritiky,
+# první slovo i v 1. pádě); jednoslovný jen s infoboxem nebo velkým písmenem;
+# rozcestník jen s druhem podle slovesa (napsal → kniha…, režíroval → film).
+# Tituly bez diakritiky: data/wiki/tituly_fold.db (tools/wiki_tituly_fold.py).
+_FOLD_DB = os.path.join(os.path.dirname(DB), "tituly_fold.db")
+_TZV_STOP = set("""kdo co jak kdy kde proc je jsi jste byl byla bylo byli a i s v ve na o z ze
+do od po pro za u k ke se si mi ti to ten ta tu ty jeho jeji jaky jaka jake jakou kolik ktery
+ktera ktere kterou napsal napsala navrhl navrhla reziroval rezirovala slozil slozila zalozil
+zalozila vysel vysla vyslo vysly postavil postavili ma mel mela mela znas znate vis vite
+rekni reknete prosim muzes muzete mohl mohla byste bys dobry den hele tak ted uz jeste
+nejaky nejake neco nekdo prvni posledni nebo ale aby kdyz jestli tam tady dobre rano
+dekuji diky ahoj vidim jsem mate mam velice poprve naposled moc hodne velmi docela
+zajimave zajimavy krasne krasna pekne pekny vas vase vasi tvuj tvoje svuj sve muj moje""".split())
+_TZV_DRUH_SLOVO = {"roman": "román", "romanu": "román", "novela": "novela", "novelu": "novela",
+                   "povidka": "povídka", "povidku": "povídka", "kniha": "kniha", "knihu": "kniha",
+                   "film": "film", "filmu": "film", "serial": "seriál", "opera": "opera",
+                   "operu": "opera", "hrad": "hrad", "hora": "hora", "zamek": "zámek"}
+_TZV_DRUH = [(re.compile(r"\b(?:napsal\w*|autor\w*|vysl[aoiy]|vysel|vydal\w*)\b"),
+              ("kniha", "román", "novela", "povídka")),
+             (re.compile(r"\b(?:rezir\w*|natocil\w*)\b"), ("film",)),
+             (re.compile(r"\b(?:slozil\w*|zkomponoval\w*)\b"), ("opera", "píseň", "album"))]
+
+
+def _fold_tzv(s: str) -> str:
+    import unicodedata as _u
+    return "".join(c for c in _u.normalize("NFD", (s or "").lower())
+                   if _u.category(c) != "Mn")
+
+
+def _fold_db():
+    c = getattr(_tls, "fold_db", None)
+    if c is None:
+        c = sqlite3.connect(f"file:{_FOLD_DB}?mode=ro", uri=True, check_same_thread=False)
+        _tls.fold_db = c
+    return c
+
+
+def _pady(w: str) -> list:
+    out = [w]
+    for a_, b_ in (("ku", "ka"), ("hu", "ha"), ("ou", "a"), ("u", "a"), ("y", "a"),
+                   ("e", "a"), ("i", "e"), ("em", ""), ("a", ""), ("u", "")):
+        if w.endswith(a_) and len(w) > 4:
+            out.append(w[:-len(a_)] + b_)
+    return list(dict.fromkeys(out))
+
+
+def titul_z_vety(veta: str):
+    """Nejdelší úsek věty, který je PŘESNĚ titulem článku → titul, jinak None."""
+    try:
+        if not os.path.exists(_FOLD_DB):
+            return None
+        slova = re.findall(r"[^\W\d_]+(?:[.-][^\W\d_]+)*\.?|\d+\.?", veta or "")
+        fs = [_fold_tzv(w).rstrip(".") for w in slova]
+        vf = " ".join(fs)
+        druhy, _sl_poz = [], len(fs)
+        for vz, ds in _TZV_DRUH:
+            m = vz.search(vf)
+            if m:
+                druhy += list(ds)
+                _sl_poz = min(_sl_poz, vf[:m.start()].count(" "))
+        db = _fold_db()
+        # začátky vět (první slovo a slovo po . ! ? :) — velké písmeno tam nic neznamená
+        _zac = {0} | {j + 1 for j, w in enumerate(slova) if j + 1 < len(slova) and re.search(
+            re.escape(w) + r"\s*[.!?:]\s+" + re.escape(slova[j + 1]), veta or "")}
+
+        def _velke(i, n):
+            # velké písmeno uprostřed věty = vlastní jméno
+            return any(slova[j][:1].isupper() and j not in _zac for j in range(i, i + n))
+
+        for n in range(min(6, len(fs)), 0, -1):
+            for i in range(0, len(fs) - n + 1):
+                usek = fs[i:i + n]
+                if usek[0] in _TZV_STOP or usek[-1] in _TZV_STOP:
+                    continue
+                # druhové slovo na začátku → upřesnění („román Saturnin“ →
+                # „Saturnin (román)“); samo druhové slovo titul není
+                if usek[0] in _TZV_DRUH_SLOVO:
+                    if n >= 2:
+                        r3 = db.execute("SELECT titul FROM t WHERE fold=? AND rozcestnik=0",
+                                        ("%s (%s)" % (" ".join(usek[1:]),
+                                                      _fold_tzv(_TZV_DRUH_SLOVO[usek[0]])),)).fetchone()
+                        if r3:
+                            return r3[0]
+                    continue
+                if usek[-1] in _TZV_DRUH_SLOVO or len(usek[0]) < 4 or len(usek[-1]) < 4:
+                    continue
+                cela = (n == len(fs))
+                # druh podle autorského slovesa („kdo napsal babicku“ → „Babička
+                # (kniha)“, „kdo reziroval obecnou skolu“ → film): oba kraje
+                # smí být v jiném pádě
+                if druhy and i > _sl_poz and (n >= 2 or len(usek[0]) >= 5):
+                    for prvni in _pady(usek[0]):
+                        for posl in (_pady(usek[-1]) if n >= 2 else [None]):
+                            klic = " ".join([prvni] + usek[1:-1] + [posl]) if posl else prvni
+                            for d in druhy:
+                                r2 = db.execute("SELECT titul FROM t WHERE fold=? AND rozcestnik=0",
+                                                ("%s (%s)" % (klic, _fold_tzv(d)),)).fetchone()
+                                if r2:
+                                    return r2[0]
+                if n < 2 or (cela and not _velke(i, n)):
+                    continue
+                # holý titul: jen jeden kraj v jiném pádě; obecné pojmy bez
+                # infoboxu jen s velkým písmenem („webove stranky“ ≠ téma)
+                klice = [" ".join([p] + usek[1:]) for p in _pady(usek[0])] + \
+                        [" ".join(usek[:-1] + [p]) for p in _pady(usek[-1])[1:]]
+                for klic in dict.fromkeys(klice):
+                    for titul, roz, ib in db.execute(
+                            "SELECT titul, rozcestnik, infobox FROM t WHERE fold=?", (klic,)):
+                        if roz or titul.startswith("Seznam "):
+                            continue
+                        if ib or _velke(i, n):
+                            return titul
+        return None
+    except Exception as e:
+        _log.debug("titul_z_vety %r: %s", veta, e)
+        return None

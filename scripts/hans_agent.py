@@ -197,6 +197,11 @@ _KODI_OVLADANI = re.compile(
     r"konec|pokracuj\w*|odpauz\w*|pust\w*|spust\w*|hraj\s+dal|play|resume)\b")
 
 
+_AUTOR_DILA = re.compile(
+    r"\bkdo\s+(?:je\s+autor\w*|napsal\w*|re[zž][ií]roval\w*|slo[zž]il\w*|"
+    r"zkomponoval\w*|namaloval\w*|nato[cč]il\w*|nazp[ií]val\w*)\b", re.IGNORECASE)
+
+
 def _ma_kodi_ovladani(msg: str) -> bool:
     import unicodedata as _ud
     f = "".join(c for c in _ud.normalize("NFD", (msg or "").lower())
@@ -2037,6 +2042,13 @@ class AgentRouter:
         dict(marker="HANS_AGENT_TV_CUE_V1", akce=("report_now_playing",),
              podminka=lambda s, aid, msg, dec, h: not _ma_tv_podnet(msg),
              verdikt=None, duvod="věta nemluví o TV ani přehrávání"),
+        # HANS_AGENT_AUTHOR_NOT_PERSON_V1 (19. 10.) — „kdo napsal román
+        # Saturnin?“ se ptá na AUTORA DÍLA, ne kdo je osoba: `report_person`
+        # spároval „román“ s entitou Romário (fotbalista). Dílo patří faktické
+        # cestě (přesné dohledání „Saturnin (román)“).
+        dict(marker="HANS_AGENT_AUTHOR_NOT_PERSON_V1", akce=("report_person",),
+             podminka=lambda s, aid, msg, dec, h: bool(_AUTOR_DILA.search(msg or "")),
+             verdikt=None, duvod="ptá se na autora díla, ne na osobu"),
         # HANS_AGENT_KODI_CTRL_CUE_V1 (19. 10.) — viz `_ma_kodi_ovladani`.
         dict(marker="HANS_AGENT_KODI_CTRL_CUE_V1",
              akce=("kodi_pause", "kodi_stop", "kodi_resume"),

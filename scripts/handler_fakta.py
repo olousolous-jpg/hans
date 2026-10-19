@@ -795,6 +795,7 @@ class FaktaMixin:
     # projde, 12 se správným údajem. ⛔ „dohledat vždy“ bez omezení (8. 10.)
     # platí dál — tohle je úzká varianta, rozhodl uživatel 17. 10.
     _PRESNY_DRUH = {"hrad", "zamek", "film", "kniha", "mesto", "kostel", "katedrala", "chram",
+                    "roman", "novela", "povidka",   # HANS_WIKI_TITUL_Z_VETY_V1 (Saturnin (román))
                     "bazilika", "kaple", "hora", "serial", "bitva", "na", "u", "sv", "svateho",
                     "hra", "reka", "jezero", "ostrov", "muzeum", "klaster"}
 
@@ -813,6 +814,7 @@ class FaktaMixin:
         def _kryje(a, b):
             return all(any(x[:max(3, min(len(x), len(y)) - 2)] == y[:max(3, min(len(x), len(y)) - 2)]
                            for y in b) for x in a)
+        self._presny_z_vety = None     # HANS_WIKI_TITUL_Z_VETY_V1 — jen pro tuto větu
         try:
             if not bool((self.config.get("instant_lookup", {}) or {}).get("presny_predmet", True)):
                 return None
@@ -833,6 +835,29 @@ class FaktaMixin:
             _prepis = getattr(self, '_f1_query', None)
             tema = ((kotva_tematu(_prepis, vynech=_known) if _prepis else None)
                     or kotva_tematu(veta or "", vynech=_known))
+            # HANS_WIKI_TITUL_Z_VETY_V1 (19. 10.) — přesný titul článku přímo
+            # z holé věty, když kotva chybí, v holé větě není (přepis F1 si ji
+            # vymyslel: „babicku“ → „Babí léto“, „karluv“ → „Karlov“), nebo je
+            # jen začátkem delšího titulu („Válku“ × „Válka s Mloky“)
+            try:
+                _tzv = _wo.titul_z_vety(re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or ""))
+            except Exception:
+                _tzv = None
+            if _tzv:
+                _tv = _tok(tema) if tema else []
+                _vf = re.findall(r"\w+", _f(veta))
+                _ve_vete = bool(_tv) and all(any(x[:4] == y[:4] for y in _vf) for x in _tv)
+                if (not tema or not _ve_vete
+                        or (len(_tok(_tzv)) > len(_tv) and _kryje(_tv, _tok(_tzv)))
+                        # tatáž věc upřesněná druhem („Babičku“ → rozcestník,
+                        # „Babička (kniha)“ → článek)
+                        or ("(" in _tzv and _kryje(_tv, _tok(_tzv))
+                            and _kryje(_tok(_tzv), _tv))):
+                    logging.getLogger(__name__).info(
+                        "HANS_WIKI_TITUL_Z_VETY_V1: předmět %r → %r (titul z holé věty)",
+                        tema, _tzv)
+                    tema = _tzv
+                    self._presny_z_vety = _tzv
             if not tema:
                 return None
             from scripts.web_reader import WebReader
@@ -1005,6 +1030,15 @@ class FaktaMixin:
                     logging.getLogger(_h.__name__).info(
                         'HANS_PODKLAD_PREPNUTI_V1: téma dohledání %r → %r', tema, _pt)
                 tema = _pt
+            # HANS_WIKI_TITUL_Z_VETY_V1 — přesný titul z holé věty (určil ho
+            # `_presny_predmet`) má přednost: kotva z přepisu F1 by šla na
+            # „Karlov“/„Válku“, ačkoli předmět je „Karlův most“/„Válka s Mloky“
+            _pz = getattr(self, '_presny_z_vety', None)
+            self._presny_z_vety = None
+            if _pz and _pz != tema:
+                logging.getLogger(_h.__name__).info(
+                    'HANS_WIKI_TITUL_Z_VETY_V1: téma dohledání %r → %r', tema, _pz)
+                tema = _pz
             if not tema:
                 return None
             _dbp = (self.config.get("hans_idle", {}) or {}).get(
