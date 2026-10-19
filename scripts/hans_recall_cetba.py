@@ -47,6 +47,14 @@ def _extract_topic(question: str) -> str:
     """Vytáhni téma z dotazu na čtení ('četl jsi o hradech?' → 'hradech').
     '' když dotaz téma nemá (obecné 'co jsi četl')."""
     q = (question or "").strip()
+    # HANS_READING_TITLE_MATCH_V1 (19. 10.) — název vytčený před pomlčkou nebo
+    # čárkou a za ním jen „četl jsi to?“ („krajinou barona ringhoffera - cetl
+    # jsi to?“). Sdílené `vytcene_tema` chce „o tom“, a to tu není.
+    m0 = _VYTK_CETL.match(q)
+    if m0:
+        _w0 = [w for w in m0.group(1).split() if w.lower() not in _hr._STOPWORDS]
+        if _w0 and any(len(w) >= 4 for w in _w0):
+            return " ".join(_w0)
     m = _hr._SUBJECT_PAT.search(q)          # nejdřív explicitní předmět „o knize X“
     if not m:
         m = _hr._TOPIC_PAT.search(q)
@@ -55,7 +63,16 @@ def _extract_topic(question: str) -> str:
         m = re.match(r"^o\s+(.{2,60}?)\s*\??$", q, re.IGNORECASE)
     if not m:
         return _hr._vytcene_tema(q)
-    words = [w for w in re.findall(r"[\wěščřžýáíéúůďťňó-]+", m.group(1))
+    # HANS_READING_TITLE_MATCH_V1 — „carodeje zememori od le guinove“: autor za
+    # „od“ přetáhl téma přes 4 slova → prázdno → výpis poslední četby. Téma je
+    # název před „od“; bez názvu („něco od Hrabala“) autor.
+    _cap = m.group(1)
+    _od = re.split(r"\s+od\s+", _cap, maxsplit=1, flags=re.IGNORECASE)
+    if len(_od) == 2:
+        _lev = [w for w in re.findall(r"[\wěščřžýáíéúůďťňó-]+", _od[0])
+                if w.lower() not in _hr._STOPWORDS and len(w) >= 3]
+        _cap = _od[0] if _lev else _od[1]
+    words = [w for w in re.findall(r"[\wěščřžýáíéúůďťňó-]+", _cap)
              if w.lower() not in _hr._STOPWORDS]
     # HANS_READING_TOPIC_SENTENCE_BOUND_V1 — reálné čtenářské téma je krátké
     # (1-4 slova: „hradech", „Sherlock Holmes"). Delší = pahýl z ukecané věty,
@@ -70,6 +87,69 @@ def _extract_topic(question: str) -> str:
     if not any(len(w) >= 3 for w in words if w.lower() not in _hr._TEMA_SPOJKY):
         return _hr._vytcene_tema(q)
     return " ".join(words).strip() or _hr._vytcene_tema(q)
+
+
+_VYTK_CETL = re.compile(
+    r"^(?:a\s+|no\s+|tak\s+)?([\wÀ-ſ]+(?:\s+[\wÀ-ſ]+){0,4})"
+    r"\s*[-–—,]\s*(?:a\s+)?(?:u[žz]\s+)?(?:jsi\s+|jste\s+)?"
+    r"(?:p[řr]e)?[čc]etla?\s*(?:jsi|jste|sis|ses)?\s*(?:to|ji|ho|je)?"
+    r"\s*(?:u[žz]|n[ěe]kdy)?\s*\??$", re.IGNORECASE)
+
+# HANS_READING_TITLE_MATCH_V1 — druhové slovo před názvem není část názvu
+# („román Psycho“ se spletl s osobou Romário, „film Going Postal“ chtěl
+# v záznamu i slovo „film“).
+_DRUH_SLOVA = {"kniha", "knihu", "knihy", "knize", "knížku", "knizku", "román",
+               "romanu", "román", "románu", "roman", "novela", "novelu", "povídka",
+               "povídku", "povidka", "povidku", "film", "filmu", "seriál",
+               "serial", "seriálu", "serialu", "článek", "clanek", "článku",
+               "clanku"}
+
+
+def _bez_druhu(topic: str) -> str:
+    sl = (topic or "").split()
+    while len(sl) > 1 and sl[0].lower() in _DRUH_SLOVA:
+        sl = sl[1:]
+    return " ".join(sl)
+
+
+def _titulove_shody(conn, topic: str, limit: int):
+    """HANS_READING_TITLE_MATCH_V1 — záznamy, jejichž TITUL nese každé slovo
+    tématu (bez diakritiky, po slovech, skloňování přes `_tok_match`).
+
+    Doloženo 19. 10.: „Četl jste Čaroděje Zeměmoří?“ → „žádný záznam“, protože
+    LIKE s háčky nesedne na titul souboru „Carodej Zememori“; „cetl jsi psycho?“
+    → kognitivní disonance a Gestalt (pahýl „psycho“ v „psychologie“) místo
+    zápisku „Psycho (kniha)“, který LIMIT podle data ani nepustil. Titul se
+    proto hledá napřed a v Pythonu nad všemi tituly čtení."""
+    try:
+        from scripts.hans_entities import _tokens, _tok_match
+    except Exception:
+        return []
+    slova = [w for w in _tokens(topic) if len(w) >= 3]
+    if not slova:
+        return []
+    qm = ",".join("?" * len(_hr._READ_TYPES))
+    tituly = []
+    # od nejnovějšího titulu — kniha po kapitolách má stovky titulů a strop
+    # 60 nesmí ukázat ty nejstarší
+    for (t, _m) in conn.execute(
+            f"SELECT title, max(ts) m FROM diary WHERE event_type IN ({qm}) "
+            f"AND title IS NOT NULL AND title != '' GROUP BY title "
+            f"ORDER BY m DESC", _hr._READ_TYPES).fetchall():
+        tok = _tokens(t)
+        if all(any(w == x or _tok_match(w, x) for x in tok) for w in slova):
+            tituly.append(t)
+            if len(tituly) >= 60:
+                break
+    if not tituly:
+        return []
+    qt = ",".join("?" * len(tituly))
+    return conn.execute(
+        f"SELECT ts, event_type, title, "
+        f"substr(COALESCE(NULLIF(data,''),note),1,160) "
+        f"FROM diary WHERE event_type IN ({qm}) AND title IN ({qt}) "
+        f"ORDER BY ts DESC LIMIT ?",
+        (*_hr._READ_TYPES, *tituly, limit * 4)).fetchall()
 
 
 # HANS_READING_FRONTED_TOPIC_V1 (4.9.) — VYTCENE TEMA JAKO ZALOHA.
@@ -172,9 +252,10 @@ def _vsechna_slova_sedi(text: str, topic: str) -> bool:
     nedá; odstraní ji až požadavek, aby sedělo i „Václav".
     Jednoslovné téma zůstává beze změny (není co křížit).
     """
-    slova = [w for w in (topic or "").split() if len(w) >= 3]
+    slova = [_hr._fold(w) for w in (topic or "").split() if len(w) >= 3]
     if len(slova) < 2:
         return True
+    text = _hr._fold(text)          # HANS_READING_TITLE_MATCH_V1 — bez háčků
     for w in slova:
         varianty = []
         for cut in (0, 1, 2, 3):
@@ -385,30 +466,41 @@ def reading_answer(db_path: str, question: str = "",
         conn = _hr._ro(db_path)
         qmarks = ",".join("?" * len(_hr._READ_TYPES))
         if topic:
+            topic = _bez_druhu(topic)       # HANS_READING_TITLE_MATCH_V1
+            # HANS_READING_TITLE_MATCH_V1 — titul nesoucí celé téma má přednost
+            # před pahýlem v textu (viz `_titulove_shody`).
+            rows = _titulove_shody(conn, topic, limit)
+            if rows:
+                _hr._log.info("HANS_READING_TITLE_MATCH_V1: téma %r → %d záznamů "
+                              "podle titulu", topic[:40], len(rows))
             # HANS_TOPIC_ENTITY_AWARE_V1 — je téma ZNÁMÁ OSOBA? Pak se
             # nehledá pahýl, ale celé jméno (viz komentář u tema_entita).
-            _osoba = _hr.jmeno_entity(_hr.tema_entita(topic))
+            _osoba = "" if rows else _hr.jmeno_entity(_hr.tema_entita(topic))
             if _osoba:
                 _hr._log.info("HANS_TOPIC_ENTITY_AWARE_V1: téma %r je osoba %r "
                           "→ vyžaduji celé jméno", topic[:40], _osoba)
             # hledej podle tématu (title i note, hrubé stemy na skloňování)
-            rows = []
-            for stem in _hr._topic_stems(topic):
+            for stem in ([] if rows else _hr._topic_stems(topic)):
+                # HANS_READING_TITLE_MATCH_V1 — i pahýl bez diakritiky (deník
+                # píše tituly souborů bez háčků, uživatel bez nich píše dotaz)
                 like = f"%{stem}%"
+                like_f = f"%{_hr._fold(stem)}%"
                 cand = conn.execute(
                     f"SELECT ts, event_type, title, "
                     f"substr(COALESCE(NULLIF(data,''),note),1,160) "
                     f"FROM diary WHERE event_type IN ({qmarks}) "
-                    f"AND (title LIKE ? OR note LIKE ? OR data LIKE ?) "
+                    f"AND (title LIKE ? OR note LIKE ? OR data LIKE ? "
+                    f"OR title LIKE ?) "
                     f"ORDER BY ts DESC LIMIT ?",
-                    (*_hr._READ_TYPES, like, like, like, limit * 4)).fetchall()
+                    (*_hr._READ_TYPES, like, like, like, like_f,
+                     limit * 4)).fetchall()
                 # LIKE nemá hranice slov („hradech" chytá i „Vinohradech")
                 # → post-filtr: stem musí začínat na hranici slova
-                _wb = re.compile(r"(?i)\b" + re.escape(stem))
+                _wb = re.compile(r"(?i)\b" + re.escape(_hr._fold(stem)))
                 rows = []
                 for r in cand:
                     _txt = " ".join(str(x) for x in r[2:] if x)
-                    if not _wb.search(_txt):
+                    if not _wb.search(_hr._fold(_txt)):
                         continue
                     if _osoba:
                         # u osoby rozhoduje jméno, ne pahýl tématu

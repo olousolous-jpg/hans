@@ -574,7 +574,11 @@ from scripts.hans_recall_filmy import last_seen_answer   # ROZDELENI_PRIKAZU_V1 
 _FILM_CTX = re.compile(
     r"\b(film|filmu|filmy|filmem|serial|serialu|seri[aá]l|po[řr]ad|kino|"
     r"co v[ií][sš] o|rekni mi o|reknes mi o|zn[aá][sš]|vid[eě]l jsi|"
-    r"vim o|v[ií][sš] o|pamatuje[sš] .*film)\b", re.IGNORECASE)
+    r"vim o|v[ií][sš] o|pamatuje[sš] .*film|"
+    # HANS_FILM_TITLE_TOKENS_V1 (19. 10.) — vykání a otázka na tvůrce:
+    # „jack the ripper z 88 – kdo to režíroval?“ film recall minul
+    r"vid[eě]la?\s+jste|zhl[eé]dla?\s+jste|zhl[eé]dl\w*\s+jsi|"
+    r"re[zž][ií]rov\w*|re[zž]i[eí])\b", re.IGNORECASE)
 
 
 from scripts.hans_recall_filmy import _looks_like_film_query   # ROZDELENI_PRIKAZU_V1 — přesunuto

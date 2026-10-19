@@ -736,6 +736,47 @@ def _serie_blok(conn, jmeno: str, dily: dict, asker: str = "") -> Optional[str]:
     return "\n\n" + hl + "\n" + "\n".join(radky)
 
 
+def _titul_po_slovech(question: str, tituly) -> Optional[str]:
+    """HANS_FILM_TITLE_TOKENS_V1 (19. 10.) — víceslovný titul filmu ve větě
+    po SLOVECH, když přesná shoda nesedla: skloňování (`_tok_match`), bez
+    čárek, a titul z Kodi bez přívěsku „(1988): …“.
+
+    Doloženo 19. 10.: „videl jsi agenta ktery mne miloval?“ → A1 „nemám
+    spolehlivý záznam“ (u cizího výmysl „Agent Cody Banks“), ačkoli Hans film
+    6. 10. viděl čtyřikrát; titul „Agent, který mne miloval“ má čárku a 1. pád.
+    Slova titulu musí jít ve větě ZA SEBOU; krátká slova (< 4 znaky) se
+    párují jen přesně. Jednoslovné tituly se tu neberou (riziko shody)."""
+    try:
+        from scripts.hans_entities import _tokens, _tok_match
+    except Exception:
+        return None
+    _stejne = {"me": "mne", "te": "tebe"}       # „který mě miloval“ = „mne“
+    qt = [_stejne.get(w, w) for w in _tokens(question)]
+    if len(qt) < 2:
+        return None
+    best, best_n = None, 0
+    for title in tituly:
+        tf = str(title or "")
+        varianty = {tf, re.sub(r"\s*\(.*$", "", tf)}
+        if ":" in tf:
+            varianty.add(tf.split(":", 1)[1])
+        for v in varianty:
+            vt = [_stejne.get(w, w) for w in _tokens(v)]
+            if len(vt) < 2 or len(vt) > len(qt) or len(vt) <= best_n:
+                continue
+            if sum(len(w) for w in vt) < 8:
+                continue
+            for i in range(len(qt) - len(vt) + 1):
+                okno = list(zip(vt, qt[i:i + len(vt)]))
+                # aspoň polovina slov PŘESNĚ („film stop“ ≠ „Filmy: Stopa“)
+                if (all(a == b or (len(a) >= 4 and _tok_match(a, b))
+                        for a, b in okno)
+                        and 2 * sum(a == b for a, b in okno) >= len(okno)):
+                    best, best_n = title, len(vt)
+                    break
+    return best
+
+
 def film_knowledge_answer(db_path: str, question: str = "",
                           asker: str = "") -> Optional[str]:
     """HANS_FILM_RECALL_V1 — když dotaz zmiňuje FILM podle názvu, dohledej v
@@ -788,6 +829,12 @@ def film_knowledge_answer(db_path: str, question: str = "",
             _sb = _serie_blok(conn, _ser[0], _ser[1], asker=asker)
             if _sb:
                 return _sb
+        # HANS_FILM_TITLE_TOKENS_V1 — po slovech až za sérií a ne u otázky
+        # na knihu („co víš o knize Sherlock Holmes?“ k filmům nepatří)
+        if (not best and not _ser and _film_dotaz
+                and not re.search(r"\bkni[hz]\w*|\brom[aá]n\w*|\b[cč]etl\w*",
+                                  question, re.IGNORECASE)):
+            best = _titul_po_slovech(question, [r[0] for r in rows])
         if not best or not _film_dotaz:
             return None
         # Hansovy vlastní názory/poznámky (obsah bývá v `data`, fallback `note`)

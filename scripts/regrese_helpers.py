@@ -1423,3 +1423,18 @@ def cetba_zacatek(q: str, asker: str = "Marek") -> str:
     """HANS_READING_TOPIC_ANCHOR_V1 — prvních 22 znaků odpovědi výpisu četby."""
     from scripts.hans_recall_cetba import reading_answer
     return (reading_answer("data/hans_diary.db", q, asker=asker) or "")[:22]
+
+
+def cetba_text(q: str, asker: str = "Marek") -> str:
+    """HANS_READING_TITLE_MATCH_V1 — prvních 400 znaků odpovědi výpisu četby."""
+    from scripts.hans_recall_cetba import reading_answer
+    return (reading_answer("data/hans_diary.db", q, asker=asker) or "")[:400]
+
+
+def film_zaznam_titul(q: str) -> str:
+    """HANS_FILM_TITLE_TOKENS_V1 — titul filmu, ke kterému film recall našel záznam."""
+    import re as _re
+    from scripts.hans_recall import film_knowledge_answer
+    a = film_knowledge_answer("data/hans_diary.db", q, asker="Marek") or ""
+    m = _re.search(r"ZÁZNAM o „([^“]+)“", a)
+    return m.group(1) if m else ""

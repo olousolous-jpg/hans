@@ -696,6 +696,30 @@ class FaktaMixin:
                     popis = mv.get("title") or nazev
         if not polozka:
             return ''
+        # HANS_KODI_CAST_YEAR_V1 (19. 10.) — rok v otázce musí sedět s rokem
+        # položky. Doloženo: „jack the ripper z 88 – kdo to režíroval?“ → film
+        # 1976 z knihovny (Franco, Kinski) vydaný za verzi 1988. Jiný rok =
+        # jiné dílo → radši bez obsazení než cizí obsazení jako fakt.
+        try:
+            _rok_q = None
+            for _k in [t] + kandidati:
+                _mr = re.search(r"\b(1[89]\d\d|20\d\d)\b", str(_k))
+                if not _mr:
+                    _mr2 = re.search(r"\bz\s+(?:roku\s+)?(\d\d)\b", str(_k))
+                    if _mr2:
+                        _rok_q = 1900 + int(_mr2.group(1))
+                        break
+                else:
+                    _rok_q = int(_mr.group(1))
+                    break
+            _rok_p = int(polozka.get("year") or 0)
+            if _rok_q and _rok_p and abs(_rok_q - _rok_p) > 1:
+                logging.getLogger(_h.__name__).info(
+                    'HANS_KODI_CAST_YEAR_V1: %r je z roku %d, otázka chce %d '
+                    '→ obsazení nedávám', (popis or '')[:40], _rok_p, _rok_q)
+                return ''
+        except Exception:
+            pass
         herci = polozka.get("cast") or []
         if not herci:
             return ''
