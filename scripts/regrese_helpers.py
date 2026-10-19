@@ -1438,3 +1438,9 @@ def film_zaznam_titul(q: str) -> str:
     a = film_knowledge_answer("data/hans_diary.db", q, asker="Marek") or ""
     m = _re.search(r"ZÁZNAM o „([^“]+)“", a)
     return m.group(1) if m else ""
+
+
+def kniha_z_otazky_titul(q: str) -> str:
+    """HANS_BOOK_PROGRESS_FAR_V1 — titul knihy z knihovny jmenované v otázce."""
+    from scripts.hans_recall import _kniha_z_otazky
+    return ((_kniha_z_otazky("data/hans_diary.db", q) or {}).get("title") or "")[:10]

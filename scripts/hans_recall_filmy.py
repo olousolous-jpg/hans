@@ -451,7 +451,10 @@ def _kniha_z_otazky(db_path: str, question: str) -> Optional[dict]:
         slova_t = [w for w in re.findall(r"\w+", _hr._fold(title or "").lower())
                    if len(w) >= 5]
         # oboustranně: „guin" → „guinova", „doriana" → „dorian"
+        # HANS_BOOK_PROGRESS_FAR_V1 (19. 10.) — i společný začátek ≥ 5 znaků
+        # mimo rámcová slova: „ta motorka“ → „Motorcycle, Solo …“
         if any(t.startswith(q) or (len(q) >= 5 and q.startswith(t))
+               or (len(q) >= 5 and q not in _hr._PRUBEH_RAMEC and q[:5] == t[:5])
                for q in slova_q for t in slova_t):
             return {"id": bid or "", "title": title or "", "author": author or "",
                     "url": url or ""}

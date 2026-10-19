@@ -1344,7 +1344,16 @@ _PRUBEH_CTENI_PAT = re.compile(
     r"|\b(?:kolik[áa]t\w*|kter[ée]|jak[ée])\s+kapitol\w*\s+(?:u[žz]\s+)?(?:jsi|jste|[čc]te)"
     r"|\b(?:na|u)\s+(?:kolik[áa]t|kter)[ée]\s+kapitol"
     r"|\b[čc]etla?\s+(?:jsi|jste)\s+(?:ji|ho|tu\s+knihu)\s+(?:u[žz]\s+)?"
-    r"(?:n[ěe]kdy\s+)?(?:d[řr][íi]v|p[řr]edt[íi]m)", re.I)
+    r"(?:n[ěe]kdy\s+)?(?:d[řr][íi]v|p[řr]edt[íi]m)"
+    # HANS_BOOK_PROGRESS_FAR_V1 (19. 10.) — „jak daleko jsi s tou knihou?“ šlo
+    # na /dilo, brána V3 ho zamítla a model si vymyslel „74. den, 156 kapitol“.
+    # 📏 2 690 vět (přepisy + retro korpus): 0 nových shod mimo zamýšlené.
+    r"|\bjak\s+daleko\s+(?:u[žz]\s+)?(?:jsi|jste|[čc]te[šs]|[čc]tete|se\s+dostal\w*)\b"
+    r"[^.?!]{0,30}\b(?:knih\w*|kn[íi][žz]k\w*|knize|[čc]ten[íi]\w*|rom[áa]n\w*|tou|t[ée]|n[íi])"
+    r"|\bkolik\s+(?:ti|v[áa]m)\s+(?:je[šs]t[ěe]\s+)?zb[ýy]v[áa]\s+"
+    r"(?:do\s+konce|kapitol|do[čc][íi]st|str[áa]n)"
+    r"|\bkde\s+(?:jsi|jste)\s+(?:te[ďd]\s+)?v\s+(?:t[ée]\s+|t[ée]to\s+)?"
+    r"(?:knize|kn[íi][žz]ce|[čc]ten[íi])", re.I)
 
 
 from scripts.chat_cmd_pamet import _cmd_cetl   # ROZDELENI_PRIKAZU_V1 — přesunuto

@@ -286,7 +286,31 @@ def _cmd_cetl(handler, name, args) -> str:
         except Exception as _pe:
             _cc._log.debug("prubeh cteni selhal: %s", _pe)
     # HANS_COUNT_FILMS_BOOKS_V1 — „kolik knih“ chce POCET, ne posledni cteni.
-    if _cc._KOLIK_RE.search(q):
+    # HANS_BOOK_PROGRESS_FAR_V1 (19. 10.) — „kolik ti zbývá do konce?“ je
+    # průběh, ne počet knih (dřív „Dočetl jsem 11 knih“)
+    _prubeh = (_cc._PRUBEH_CTENI_PAT.search(q)
+               or _cc._PRUBEH_CTENI_PAT.search(_cc._fold_diacritics(q)))
+    if _prubeh:
+        # HANS_BOOK_PROGRESS_FAR_V1 — kniha z otázky není v knihovně ani ve
+        # vlákně: poctivě řekni, co čtu, místo výpisu nesouvisející četby
+        try:
+            import sqlite3 as _sq
+            _c = _sq.connect("file:%s?mode=ro" % _cc._recall_db(handler), uri=True)
+            try:
+                _ct = [r[0] for r in _c.execute(
+                    "SELECT book_title FROM hans_library WHERE status='reading' "
+                    "ORDER BY started_at DESC").fetchall()]
+            finally:
+                _c.close()
+            if _ct:
+                _cc._log.info("HANS_BOOK_PROGRESS_FAR_V1: kniha z otázky nenalezena "
+                              "→ jmenuji rozečtenou")
+                return ("Nejsem si jistý, kterou knihu myslíte — v knihovně ji "
+                        "podle názvu nenacházím. Teď čtu „%s“; jestli jde o ni, "
+                        "zeptejte se prosím přímo na ni." % "“, „".join(_ct[:2]))
+        except Exception as _pe:
+            _cc._log.debug("rozectena kniha selhala: %s", _pe)
+    if _cc._KOLIK_RE.search(q) and not _prubeh:
         _p = _cc._pocet_knih(handler)
         if _p:
             return _p

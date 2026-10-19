@@ -186,6 +186,24 @@ def _ma_tv_podnet(msg: str) -> bool:
     return bool(_TV_PODNET.search(f))
 
 
+# ── HANS_AGENT_KODI_CTRL_CUE_V1 (19. 10.) — pauza/stop/pokračování jen se
+# SLOVEM ovládání. Doloženo /tazatel 19. 10. 2×: „zijes jenom dvakrat – znas
+# ten film?“, „viděl jste někdy film Agent, který mě miloval?“ → `kodi_pause`
+# (cizímu „jen pro domácnost“, domácnosti by nabídl pauzu). Snímek rozhodnutí
+# (2 720 vět s nahranými routery): pause/stop 0×, resume 4× a všechny
+# špatně („zkus to znova“). Všechny nápovědy akcí podnět mají.
+_KODI_OVLADANI = re.compile(
+    r"\b(pauz\w*|pozastav\w*|zastav\w*|stop\w*|vypn\w*|vypni|ukonc\w*|"
+    r"konec|pokracuj\w*|odpauz\w*|pust\w*|spust\w*|hraj\s+dal|play|resume)\b")
+
+
+def _ma_kodi_ovladani(msg: str) -> bool:
+    import unicodedata as _ud
+    f = "".join(c for c in _ud.normalize("NFD", (msg or "").lower())
+                if _ud.category(c) != "Mn")
+    return bool(_KODI_OVLADANI.search(f))
+
+
 # ── HANS_AGENT_WEATHER_CUE_V1 (7. 10.) — počasí jen se ZMÍNKOU o počasí ─────
 # Doloženo testem 7. 10.: „co se tam deje dnes?“ (o cizí zemi) a dotaz na
 # zprávu o útoku na město → `report_weather` (conf 0,80) → „Za oknem: …“.
@@ -2019,6 +2037,11 @@ class AgentRouter:
         dict(marker="HANS_AGENT_TV_CUE_V1", akce=("report_now_playing",),
              podminka=lambda s, aid, msg, dec, h: not _ma_tv_podnet(msg),
              verdikt=None, duvod="věta nemluví o TV ani přehrávání"),
+        # HANS_AGENT_KODI_CTRL_CUE_V1 (19. 10.) — viz `_ma_kodi_ovladani`.
+        dict(marker="HANS_AGENT_KODI_CTRL_CUE_V1",
+             akce=("kodi_pause", "kodi_stop", "kodi_resume"),
+             podminka=lambda s, aid, msg, dec, h: not _ma_kodi_ovladani(msg),
+             verdikt=None, duvod="věta neříká nic o ovládání přehrávání"),
         # HANS_AGENT_WEATHER_CUE_V1 (7. 10.) — viz `_ma_pocasi_podnet`.
         dict(marker="HANS_AGENT_WEATHER_CUE_V1", akce=("report_weather",),
              podminka=lambda s, aid, msg, dec, h: not _ma_pocasi_podnet(msg),
@@ -2217,6 +2240,13 @@ class AgentRouter:
                         and _otazka_ne_pokyn(aid, message or "")):
                     log.info("HANS_STRANGER_QUESTION_FIRST_V1: %s od neznámého "
                              "je otázka → běžný hovor", aid)
+                    return None
+                # HANS_AGENT_KODI_CTRL_CUE_V1 — bez slova ovládání to není
+                # pokyn ani u cizího (pravidla níž by to chytla až po odmítnutí)
+                if (aid in ("kodi_pause", "kodi_stop", "kodi_resume")
+                        and not _ma_kodi_ovladani(message or "")):
+                    log.info("HANS_AGENT_KODI_CTRL_CUE_V1: %s od neznámého bez "
+                             "slova ovládání → běžný hovor", aid)
                     return None
                 log.info("HANS_STRANGER_NO_MUTATE_V1: agent %s od neznámého "
                          "(%s) odmítnuto", aid, name)

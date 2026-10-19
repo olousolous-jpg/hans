@@ -619,7 +619,11 @@ _PRUBEH_RAMEC = {
     "driv", "drive", "predtim", "jsi", "jste", "knihu", "kniha", "knize",
     "tuhle", "tahle", "cetl", "cetla", "opakovane", "prave", "porad", "jeste",
     "vlastne", "vubec", "tedy", "takze", "jakou", "jake", "jaky", "rikal",
-    "rikate", "rikas", "myslim", "prosim", "hansi"}
+    "rikate", "rikas", "myslim", "prosim", "hansi",
+    # HANS_BOOK_PROGRESS_FAR_V1 (19. 10.) — „jak daleko jsi s tou knihou?“,
+    # „kolik ti ještě zbývá do konce?“
+    "daleko", "knihou", "knizkou", "knizce", "cteni", "zbyva", "konce",
+    "dostal", "dostala", "docist", "stran", "kolik", "ted", "uz"}
 
 
 from scripts.hans_recall_filmy import _PRUBEH_OBSAHOVA_SLOVA   # ROZDELENI_PRIKAZU_V1 — přesunuto
