@@ -858,6 +858,61 @@ def _shrnuti_podle_otazky(config: dict, otazka) -> bool:
         return False
 
 
+# ── HANS_LOOKUP_WIKIDATA_V1 (19. 10.) — ověřené údaje do podkladu shrnutí ────
+# Bod B (výtah ze shrnutí): u otázky na údaj model často vytáhl jiný údaj
+# z textu (sv. Vít „1060“ místo 1344, Karlův most bez Parléře, otec Karla IV.
+# vynechán). Blok z Wikidat k článku o předmětu PŘED textem s označením, že má
+# přednost. 📏 38 otázek se známou odpovědí (`data/mereni/vytah_18_10/mer2.py`):
+# dnes 26 a 25 → 32 a 32 (poctivě 31: Beethoven „Symfonie č. 9“), 0 zhoršení.
+# Data a mezipaměť z `hans_overeni` (tytéž Wikidata jako stín). Vypínač
+# `instant_lookup.wikidata`.
+_WD_POPIS = [("P571", "založení / začátek"), ("P569", "narození"), ("P570", "úmrtí"),
+             ("P577", "vydání / premiéra"), ("P84", "architekt"), ("P50", "autor"),
+             ("P57", "režie"), ("P22", "otec"), ("P25", "matka"), ("P19", "místo narození"),
+             ("P20", "místo úmrtí"), ("P112", "zakladatel"), ("P86", "skladatel"),
+             ("P800", "nejznámější díla"), ("P26", "manžel / manželka"), ("P551", "bydliště")]
+
+
+def _wikidata_blok(titul: str) -> str:
+    """Řádky ověřených údajů z Wikidat k titulu (kanonickému), nebo ''."""
+    try:
+        from scripts import hans_overeni as O
+        try:
+            from scripts import hans_wiki_offline as _wo
+            _r = _wo._cil(titul)
+            if _r:
+                titul = _r[1]
+        except Exception:
+            pass
+        O._nacti_wd([titul])
+        P = (O._c().get(titul) or {}).get("p") or {}
+        out = []
+        for p, popis in _WD_POPIS:
+            vals = P.get(p) or []
+            hod = []
+            dat = [v for v in vals if isinstance(v, (list, tuple)) and v]
+            if dat:
+                y, m, d = (list(min(dat)) + [0, 0])[:3]
+                hod.append("%s. %s. %s" % (d, m, y) if d and m and (d, m) != (1, 1) else str(y))
+            for v in [v for v in vals if isinstance(v, str)][:4]:
+                j = O._c().get("L:" + v) or []
+                cz = [x for x in j if re.search(r"[áčďéěíňóřšťúůýž]", x, re.I)
+                      and len(x.split()) > 1]
+                jm = (cz or O._jm(v) or [None])[0]
+                if jm:
+                    hod.append(jm)
+            if hod:
+                out.append("%s: %s" % (popis, ", ".join(dict.fromkeys(hod))))
+        if not out:
+            return ""
+        _log.info("HANS_LOOKUP_WIKIDATA_V1: %r → %d údajů z Wikidat", titul, len(out))
+        return ("OVĚŘENÉ ÚDAJE (Wikidata) — když se některý týká otázky, odpověz podle něj "
+                "(má přednost před textem níže):\n" + "\n".join(out))
+    except Exception as e:
+        _log.debug("HANS_LOOKUP_WIKIDATA_V1: %s", e)
+        return ""
+
+
 def _summarize_for_user(config: dict, topic: str, art: dict,
                         otazka: Optional[str] = None) -> Optional[str]:
     """Shrnutí článku HANS-CZECH modelem (rezidentní, žádný VRAM handoff).
@@ -875,6 +930,12 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
         _strop = max(_strop, 8500)   # HANS_YEAR_EVENTS_V1 — česky + anglicky
     text = (art.get("text") or "")[:_strop]
     _rok_t = bool(re.fullmatch(r"\d{3,4}", str(topic or "").strip()))
+    # HANS_LOOKUP_WIKIDATA_V1 — ověřené údaje před text u každého dohledání
+    # s otázkou („kdo byl otcem…“, „nejznámější novela…“ nejsou `pta_se_na_udaj`)
+    if otazka and not _rok_t and c.get("wikidata", True):
+        _wdb = _wikidata_blok(str(art.get("title") or topic))
+        if _wdb:
+            text = _wdb + "\n\nText článku:\n" + text
     if _rok_t and otazka:
         # HANS_YEAR_EVENTS_V1 — článek o roce (česky + anglicky): vyber události
         # k tomu, na co se člověk ptá (země, vládce, války), česky a s daty
@@ -886,7 +947,15 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             "nic neříká, napiš, že to v článcích není. Drž se VÝHRADNĚ textu, nic si "
             "nepřidávej. Bez uvozovek.\n\nText:\n%s"
             % (str(topic).strip(), str(otazka).strip(), text))
-    elif _shrnuti_podle_otazky(config, otazka):
+    elif _shrnuti_podle_otazky(config, otazka) or (
+            # HANS_LOOKUP_WIKIDATA_V1 — i „kdo byl otcem…“, „jakou nejznámější
+            # novelu…“ (`pta_se_na_udaj` je nebere) odpovídá na otázku, když je
+            # tázací; obecné „znáš X?“ / „co víš o X?“ zůstává u shrnutí
+            otazka and c.get("wikidata", True) and re.search(
+                r"\b(?:kdo|kdy|kde|kolik|kter[ýáéoéhu]\w*|jak[ýáéou]\w*|čím|koho|komu|odkud)\b",
+                str(otazka), re.IGNORECASE)
+            and not re.search(r"\b(?:zn[áa][šs]|zn[áa]te|co\s+v[íi][šs]|co\s+v[íi]te)\b",
+                              str(otazka), re.IGNORECASE)):
         # HANS_LOOKUP_QUESTION_SUMMARY_V1 — otázka na údaj: nejdřív odpověď
         # z textu, pak kdo/co to je. 📏 12 otázek × 2 běhy na týchž článcích:
         # dnešní zadání 8/24, s otázkou 22/24 (backlog DOHLEDANI_UDAJ_15_10).

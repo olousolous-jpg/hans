@@ -191,7 +191,10 @@ _MNOZSTVI = [   # (klíčové slovo, vlastnost, relativní tolerance)
     (r"dlouh\w*|délk\w*", "P2043", 0.05),
 ]
 _VSE_P = sorted({p for ps in _DATA_P.values() for p in ps} | {p for _, ps in _VZTAHY for p in ps}
-                | {p for _, p, _ in _MNOZSTVI})
+                | {p for _, p, _ in _MNOZSTVI}
+                # HANS_LOOKUP_WIKIDATA_V1 (19. 10.) — pro údaje do podkladu shrnutí
+                # dohledání: nejznámější dílo, bydliště (stín je nepoužívá)
+                | {"P800", "P551"})
 _MISTA_P = ("P131", "P19", "P20")
 _cache = None
 
@@ -213,7 +216,7 @@ def _c() -> dict:
     return _cache
 
 
-_CACHE_V = 2   # HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství
+_CACHE_V = 3   # HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
 
 
 def _uloz():
