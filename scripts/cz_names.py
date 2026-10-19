@@ -601,9 +601,10 @@ def greeting_for_hour(hour: int) -> str:
         return "Dobré ráno"
     if 9 <= h < 18:
         return "Dobrý den"
-    if 18 <= h < 22:
-        return "Dobrý večer"
-    return "Dobrou noc"
+    # HANS_GREETING_NIGHT_V1 (19. 10.) — „Dobrou noc“ je v češtině ROZLOUČENÍ;
+    # v noci se zdraví „Dobrý večer“ (Koláčova zkouška #87 v 00:42 začínala
+    # „Dobrou noc.“ a odešla tak na Matrix)
+    return "Dobrý večer"
 
 
 # ── HANS_WEEKDAY_FIX_V1 (14. 9.) — den v tydnu vedle DNESNIHO data ─────────

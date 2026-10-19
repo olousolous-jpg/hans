@@ -78,8 +78,30 @@ def is_opinion_query(text: str) -> bool:
     # filosofické téma + otázkový signál (samotné slovo „láska" v běžné větě
     # postoje nespouští)
     if _PHIL_PAT.search(msg) and _QUESTION_SIGNAL.search(msg):
+        # HANS_OPINION_PHIL_IN_TITLE_V1 (19. 10.) — filosofické slovo uvnitř
+        # TITULU díla není filosofická otázka: „…ve Vozce smrti?“ (Koláčova
+        # zkouška #87) šlo cestou názoru a odpověď si vymyslela datum scény
+        if _phil_jen_v_titulu(msg):
+            return False
         return True
     return False
+
+
+def _phil_jen_v_titulu(msg: str) -> bool:
+    """Leží každý výskyt filosofického slova uvnitř titulu, který věta jmenuje?"""
+    try:
+        from scripts.hans_recall import fakta_tituly_ve_vete, _fold
+        from scripts.hans_wiki_offline import titul_z_vety
+        tituly = list(fakta_tituly_ve_vete("data/hans_diary.db", msg) or [])
+        _t = titul_z_vety(msg)
+        if _t:
+            tituly.append(_t)
+        if not tituly:
+            return False
+        ft = " ".join(_fold(x).lower() for x in tituly)
+        return all(_fold(m.group(0)).lower()[:4] in ft for m in _PHIL_PAT.finditer(msg))
+    except Exception:
+        return False
 
 
 # ── Stavba bloku postojů ─────────────────────────────────────────────────────

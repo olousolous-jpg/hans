@@ -525,6 +525,15 @@ def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
         return []
     kv = _ft_kmeny(veta, mn=2)
     fv = _hr._fold(_ft_norm(veta)).lower()
+    # HANS_FACTS_TITLE_ALTERNATION_V1 (19. 10.) — střídání souhlásek v 3./6.
+    # pádě: „ve Vozce smrti“ × titul „Vozka smrti“ (Koláčova zkouška #87),
+    # „Praze“ × „Praha“. Jen na straně VĚTY (titul by jinak chtěl kmeny navíc).
+    # 📏 2 730 vět korpusu: 0 změn.
+    for _w in re.findall(r"[^\W_]+", fv):
+        for _a, _b in (("ce", "ka"), ("ci", "ka"), ("ze", "ha"), ("zi", "ha"),
+                       ("se", "cha"), ("re", "ra")):
+            if _w.endswith(_a) and len(_w) >= 5:
+                kv.add((_w[:-len(_a)] + _b)[:5])
     out = []
     for t, kt in tituly.items():
         if not kt or not kt <= kv:

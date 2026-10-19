@@ -1250,6 +1250,7 @@ class HansDialog:
                 handler.conv_store.clear(jmeno)
             except Exception:
                 pass
+        odpoved = ke.bez_pozdravu(odpoved)   # KOLAC_EXAM_BEZ_POZDRAVU_V1
         if not odpoved.strip():
             # KOLAC_EXAM_BRAIN_GATE_V1 — dřív tichý `return False`: jediná
             # stopa byla „zkouška nevyšla" o patro výš a příčina se musela

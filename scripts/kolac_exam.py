@@ -253,6 +253,21 @@ def _radek_souboru(otazka: str, klic: str) -> str:
     return "%s | %s" % (o, k)
 
 
+# KOLAC_EXAM_BEZ_POZDRAVU_V1 (19. 10.) — zkouška si před otázkou maže historii,
+# takže model bere otázku jako začátek rozhovoru a pozdraví („Dobré ráno.“,
+# „Dobrý den, Zkouško.“ — 11 z 88 zkoušek). Pozdrav není odpověď: ven před
+# hodnocením, uložením i hlášením na Matrix. Hlas Hanse se nemění.
+_POZDRAV_UVOD = re.compile(
+    r"^\s*(?:dobr[ýy]\s+(?:den|ve[čc]er)|dobr[ée]\s+(?:r[áa]no|odpoledne)|dobrou\s+noc|"
+    r"zdrav[íi]m|ahoj)\b[^.!?\n]{0,30}[.!?,]?\s*", re.IGNORECASE)
+
+
+def bez_pozdravu(odpoved: str) -> str:
+    """Odpověď bez úvodního pozdravu (když za ním něco zbývá)."""
+    t = _POZDRAV_UVOD.sub("", odpoved or "", count=1)
+    return t if t.strip() else (odpoved or "")
+
+
 def potvrd(db_path: str, exam_id: int, config: dict) -> str:
     """Udělej z nálezu trvalou zkušební otázku. Vrací hlášku pro uživatele."""
     try:
