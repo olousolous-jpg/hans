@@ -194,7 +194,10 @@ _VSE_P = sorted({p for ps in _DATA_P.values() for p in ps} | {p for _, ps in _VZ
                 | {p for _, p, _ in _MNOZSTVI}
                 # HANS_LOOKUP_WIKIDATA_V1 (19. 10.) — pro údaje do podkladu shrnutí
                 # dohledání: nejznámější dílo, bydliště (stín je nepoužívá)
-                | {"P800", "P551"})
+                | {"P800", "P551"}
+                # HANS_LOOKUP_PRIBUZNI_V1 (20. 10.) — děti a sourozenci do podkladu
+                # dohledání (otázka na příbuzné; stín je nepoužívá)
+                | {"P40", "P3373"})
 _MISTA_P = ("P131", "P19", "P20")
 _cache = None
 
@@ -216,7 +219,7 @@ def _c() -> dict:
     return _cache
 
 
-_CACHE_V = 3   # HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
+_CACHE_V = 4   # 20. 10.: P40, P3373 (HANS_LOOKUP_PRIBUZNI_V1) · HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
 
 
 def _uloz():

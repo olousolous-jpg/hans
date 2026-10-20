@@ -604,7 +604,7 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
     if prev and (prev.get("summary") or "").strip():
         # nález z dneška má shrnutí k JINÉ otázce → u otázky na údaj nové
         # shrnutí z uloženého článku (bez stahování a bez nového zápisu)
-        if (_shrnuti_podle_otazky(config, otazka)
+        if ((_shrnuti_podle_otazky(config, otazka) or _pta_na_pribuzne(otazka))   # HANS_LOOKUP_PRIBUZNI_V1
                 and (prev.get("raw_text") or "").strip()):
             _s = _summarize_for_user(
                 config, topic, {"title": prev.get("resolved_title") or topic,
@@ -870,7 +870,46 @@ _WD_POPIS = [("P571", "založení / začátek"), ("P569", "narození"), ("P570",
              ("P577", "vydání / premiéra"), ("P84", "architekt"), ("P50", "autor"),
              ("P57", "režie"), ("P22", "otec"), ("P25", "matka"), ("P19", "místo narození"),
              ("P20", "místo úmrtí"), ("P112", "zakladatel"), ("P86", "skladatel"),
-             ("P800", "nejznámější díla"), ("P26", "manžel / manželka"), ("P551", "bydliště")]
+             ("P800", "nejznámější díla"), ("P26", "manžel / manželka"), ("P551", "bydliště"),
+             ("P40", "děti"), ("P3373", "sourozenci")]   # HANS_LOOKUP_PRIBUZNI_V1
+_WD_STROP = {"P40": 14, "P3373": 8, "P26": 6}   # HANS_LOOKUP_PRIBUZNI_V1 — panovník má 10+ dětí
+
+
+# ── HANS_LOOKUP_PRIBUZNI_V1 (20. 10.) — otázka na příbuzné ──────────────────
+# Matrix 19. 10.: „zjisti příbuzné Karla IV.“ → jen rodiče (děti a manželky jsou
+# v infoboxu a v sekci Potomci na 56. tisícím znaku, shrnutí bere první 3000);
+# navazující „měl nějaké děti?“ nemá tázací slovo → vrátil se doslova dnešní
+# nález. Otázka na příbuzné = shrnutí podle otázky (i u navazující), v podkladu
+# řádky infoboxu o příbuzných z lokální Wikipedie a děti/sourozenci z Wikidat.
+# 📏 vzor: 1 ze 185 dohledání, 2 ze 192 vět lidí v chatech (obě z 19. 10.).
+_PRIBUZNI_RE = re.compile(
+    r"\b(?:d[ěe]t[ií]?|d[ěe]tmi|dcer\w*|syn(?:a|em|ov\w*|y|u|ech)?|potomk\w*|potomci"
+    r"|man[žz]el\w*|cho[ťt]\w*|o[žz]enil\w*|vdal\w*|sourozen\w*|bratr\w*|sestr\w*"
+    r"|rodi[čc]\w*|p[řr][íi]buzn\w*|p[řr]edk\w*|p[řr]edci|vnu[kc]\w*|vnu[čc]k\w*"
+    r"|rodokmen\w*|dynasti\w*)\b", re.IGNORECASE)
+_IB_PRIBUZNI = re.compile(
+    r"^(?:cho[ťt]\d*|man[žz]el\w*\d*|d[ěe]ti|potomstvo|potomci|rodi[čc]e|otec|matka"
+    r"|sourozenci|p[řr][íi]buzn[íi]|dynastie|rod)\s*:", re.IGNORECASE)
+
+
+_OBECNE_PRIBUZNI_RE = re.compile(r"\b(?:p[řr][íi]buzn\w*|rodokmen\w*|rodin\w*|p[řr]edk\w*|p[řr]edci)\b",
+                                 re.IGNORECASE)
+
+
+def _pta_na_pribuzne(otazka) -> bool:
+    return bool(otazka and _PRIBUZNI_RE.search(str(otazka)))
+
+
+def _infobox_pribuzni(titul: str) -> str:
+    """Řádky infoboxu lokální Wikipedie o příbuzných, nebo ''."""
+    try:
+        from scripts import hans_wiki_offline as _wo
+        _d, ib = _wo.infobox(titul)
+        r = [l.strip() for l in (ib or "").split("\n") if _IB_PRIBUZNI.match(l.strip())]
+        return "\n".join(r)[:1500]
+    except Exception as e:
+        _log.debug("HANS_LOOKUP_PRIBUZNI_V1 infobox: %s", e)
+        return ""
 
 
 def _wikidata_blok(titul: str) -> str:
@@ -894,7 +933,7 @@ def _wikidata_blok(titul: str) -> str:
             if dat:
                 y, m, d = (list(min(dat)) + [0, 0])[:3]
                 hod.append("%s. %s. %s" % (d, m, y) if d and m and (d, m) != (1, 1) else str(y))
-            for v in [v for v in vals if isinstance(v, str)][:4]:
+            for v in [v for v in vals if isinstance(v, str)][:_WD_STROP.get(p, 4)]:
                 j = O._c().get("L:" + v) or []
                 cz = [x for x in j if re.search(r"[áčďéěíňóřšťúůýž]", x, re.I)
                       and len(x.split()) > 1]
@@ -936,6 +975,12 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
         _wdb = _wikidata_blok(str(art.get("title") or topic))
         if _wdb:
             text = _wdb + "\n\nText článku:\n" + text
+    if otazka and not _rok_t and _pta_na_pribuzne(otazka):   # HANS_LOOKUP_PRIBUZNI_V1
+        _ibp = _infobox_pribuzni(str(art.get("title") or topic))
+        if _ibp:
+            text = "ÚDAJE Z INFOBOXU ČLÁNKU (příbuzní):\n" + _ibp + "\n\n" + text
+            _log.info("HANS_LOOKUP_PRIBUZNI_V1: %r → infobox %d zn", art.get("title") or topic,
+                      len(_ibp))
     if _rok_t and otazka:
         # HANS_YEAR_EVENTS_V1 — článek o roce (česky + anglicky): vyber události
         # k tomu, na co se člověk ptá (země, vládce, války), česky a s daty
@@ -947,7 +992,7 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             "nic neříká, napiš, že to v článcích není. Drž se VÝHRADNĚ textu, nic si "
             "nepřidávej. Bez uvozovek.\n\nText:\n%s"
             % (str(topic).strip(), str(otazka).strip(), text))
-    elif _shrnuti_podle_otazky(config, otazka) or (
+    elif _shrnuti_podle_otazky(config, otazka) or _pta_na_pribuzne(otazka) or (
             # HANS_LOOKUP_WIKIDATA_V1 — i „kdo byl otcem…“, „jakou nejznámější
             # novelu…“ (`pta_se_na_udaj` je nebere) odpovídá na otázku, když je
             # tázací; obecné „znáš X?“ / „co víš o X?“ zůstává u shrnutí
@@ -968,6 +1013,20 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             "v článku není. Pak přidej 1 až 2 věty o tom, KDO/CO to je. Drž se VÝHRADNĚ "
             "textu, nic si nepřidávej. Bez uvozovek.\n\nText:\n%s"
             % (art.get("title") or topic, str(otazka).strip(), text))
+        if _OBECNE_PRIBUZNI_RE.search(str(otazka)):
+            # HANS_LOOKUP_PRIBUZNI_V1 — „zjisti příbuzné X“ dostalo jen rodiče
+            # (jedna věta jedním údajem); vyjmenovat všechny. Jen u OBECNÉ otázky:
+            # 📏 17 osob — s tímto zadáním i na „jaké děti měl“ sypal sourozence
+            # (4 ze 17), původní zadání u konkrétní otázky 15/17 děti, 17/17 manželky
+            prompt = (
+                "Níže je text encyklopedického článku „%s\". Člověk se ptá: „%s\"\n"
+                "Odpověz PŘÍMO na tu otázku: vyjmenuj VŠECHNY příbuzné, na které se ptá "
+                "(u obecné otázky na příbuzné rodiče, manžele, děti i sourozence), přesně "
+                "podle údajů níže. Nepřiřazuj děti k matkám ani nepiš vztahy, které údaje "
+                "neuvádějí. Když údaje odpověď neobsahují, napiš, že to v článku není. Pak "
+                "přidej jednu větu o tom, KDO to je. Drž se VÝHRADNĚ textu, nic si "
+                "nepřidávej. Bez uvozovek.\n\nText:\n%s"
+                % (art.get("title") or topic, str(otazka).strip(), text))
     else:
         prompt = (
             "Níže je text encyklopedického článku „%s\". Shrň ve 2 až 4 větách, "
@@ -981,7 +1040,8 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             [{"role": "user", "content": prompt}],
             config=config,
             timeout=int(c.get("llm_timeout", 45)),
-            options={"num_predict": (380 if _rok_t else int(c.get("num_predict", 220))),
+            options={"num_predict": (380 if (_rok_t or _pta_na_pribuzne(otazka))   # HANS_LOOKUP_PRIBUZNI_V1
+                                     else int(c.get("num_predict", 220))),
                      "num_ctx": (8192 if _rok_t else int(c.get("num_ctx", 4096))),
                      "temperature": 0.2},
         )

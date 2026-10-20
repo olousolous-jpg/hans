@@ -1994,7 +1994,15 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # části zprávy (rekapitulace před ní předmět nenese); nic nenalezeno
             # → dosavadní odpověď modelu.
             try:
-                if getattr(self, '_grounding_outcome', '') in ('nonfactual', 'opinion'):
+                # HANS_LOOKUP_ON_REQUEST_V3 (20. 10.) — i na podložené cestě ze
+                # zápisků / entity: „zjisti příbuzné Jiřího z Poděbrad“ (entita +
+                # 3 zápisky) → model si vymyslel rodiče i sourozence a další tah
+                # z toho přepsal předmět. 📏 7 žádostí v rozhovorech, 3 na té cestě.
+                _g_out = getattr(self, '_grounding_outcome', '')
+                _g_ces = str(getattr(self, '_grounding_cesta', '') or '')
+                if _g_out in ('nonfactual', 'opinion') or (
+                        _g_out == 'grounded' and ('zapisky' in _g_ces or 'entita' in _g_ces)
+                        and not getattr(ctx, '_predem_dohledano', None)):
                     from scripts.hans_intent import zada_dohledani as _zd2
                     if _zd2(ctx._raw_message):
                         from scripts.hans_podklad import otazkova_cast as _oc2
