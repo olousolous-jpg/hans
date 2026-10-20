@@ -604,7 +604,7 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
     if prev and (prev.get("summary") or "").strip():
         # nález z dneška má shrnutí k JINÉ otázce → u otázky na údaj nové
         # shrnutí z uloženého článku (bez stahování a bez nového zápisu)
-        if ((_shrnuti_podle_otazky(config, otazka) or _pta_na_pribuzne(otazka))   # HANS_LOOKUP_PRIBUZNI_V1
+        if (_konkretni_otazka(config, otazka)   # HANS_LOOKUP_PRIBUZNI_V1, HANS_LOOKUP_VYBER_V1
                 and (prev.get("raw_text") or "").strip()):
             _s = _summarize_for_user(
                 config, topic, {"title": prev.get("resolved_title") or topic,
@@ -882,11 +882,7 @@ _WD_STROP = {"P40": 14, "P3373": 8, "P26": 6}   # HANS_LOOKUP_PRIBUZNI_V1 — pa
 # nález. Otázka na příbuzné = shrnutí podle otázky (i u navazující), v podkladu
 # řádky infoboxu o příbuzných z lokální Wikipedie a děti/sourozenci z Wikidat.
 # 📏 vzor: 1 ze 185 dohledání, 2 ze 192 vět lidí v chatech (obě z 19. 10.).
-_PRIBUZNI_RE = re.compile(
-    r"\b(?:d[ěe]t[ií]?|d[ěe]tmi|dcer\w*|syn(?:a|em|ov\w*|y|u|ech)?|potomk\w*|potomci"
-    r"|man[žz]el\w*|cho[ťt]\w*|o[žz]enil\w*|vdal\w*|sourozen\w*|bratr\w*|sestr\w*"
-    r"|rodi[čc]\w*|p[řr][íi]buzn\w*|p[řr]edk\w*|p[řr]edci|vnu[kc]\w*|vnu[čc]k\w*"
-    r"|rodokmen\w*|dynasti\w*)\b", re.IGNORECASE)
+# 20. 10.: velký seznam slov odstraněn, zůstala jen obecná otázka (viz níž).
 _IB_PRIBUZNI = re.compile(
     r"^(?:cho[ťt]\d*|man[žz]el\w*\d*|d[ěe]ti|potomstvo|potomci|rodi[čc]e|otec|matka"
     r"|sourozenci|p[řr][íi]buzn[íi]|dynastie|rod)\s*:", re.IGNORECASE)
@@ -897,7 +893,12 @@ _OBECNE_PRIBUZNI_RE = re.compile(r"\b(?:p[řr][íi]buzn\w*|rodokmen\w*|rodin\w*|
 
 
 def _pta_na_pribuzne(otazka) -> bool:
-    return bool(otazka and _PRIBUZNI_RE.search(str(otazka)))
+    """Obecná otázka na příbuzné / rodinu. Konkrétní („měl děti?“, „kdo byla
+    jeho žena?“) řeší HANS_LOOKUP_VYBER_V1 + Wikidata bez seznamu slov:
+    📏 20. 10., 17 osob — s velkým seznamem (25 slov) i bez něj děti a manželky
+    stejně; „jaké jsou příbuzné X“ bez tohoto pravidla 17/17 → ~2/17 (slovo
+    „příbuzní“ nesdílí slovo s klíči infoboxu choť/děti/otec)."""
+    return bool(otazka and _OBECNE_PRIBUZNI_RE.search(str(otazka)))
 
 
 def _infobox_pribuzni(titul: str) -> str:
@@ -910,6 +911,109 @@ def _infobox_pribuzni(titul: str) -> str:
     except Exception as e:
         _log.debug("HANS_LOOKUP_PRIBUZNI_V1 infobox: %s", e)
         return ""
+
+
+# ── HANS_LOOKUP_VYBER_V1 (20. 10.) — podklad shrnutí vybraný podle otázky ────
+# Shrnutí bralo prvních 3000 zn článku; odpověď na konkrétní otázku bývá hlouběji
+# (Karel IV. „na co zemřel“ 47 683. znak, Napoleon „kde zemřel“ 95 158.). Místo
+# toho úvod + údaje infoboxu a sekce lokálního článku, jejichž nadpis a text
+# sdílí slova otázky. Konkrétní otázka = má otazník a není obecná („co je X“,
+# „co víš o X“, „znáš X“) ani na Hanse (2. osoba) — místo seznamu tázacích slov
+# („jak/na co zemřel“ neprošlo).
+# 📏 data/mereni/vyber_podkladu_20_10/: 40 otázek s odpovědí často hluboko +
+# 38 ze sady 18. 10.: dnes 26 + 32, výběr podle slov 31/30 + 35, výběr MODELEM
+# 32/32 + 33 (+2,5 s) → bez modelu; 0 zhoršení. Pokrytí (odpověď v podkladu):
+# prvních 3000 zn 23/39 + 30/38 → úvod 2500 + sekce podle hustoty slov, strop
+# 5000: 33/39 + 30/38, nic ztraceno. Podmínka na 189 dřívějších
+# dohledáních přepne 0. Vypínač `instant_lookup.vyber_podle_otazky`.
+_VYB_STROP = 5000
+_VYB_UVOD = 2500
+_VYB_SKIP = re.compile(r"^(?:Odkazy|Reference|Literatura|Externí odkazy|Související články|"
+                       r"Poznámky|Galerie|Vývod z předků|Externí|Zdroje)", re.IGNORECASE)
+_VYB_STOP = set("kdo kdy kde jak jaky jaka jake jaku jakou co na byl byla bylo byli jeho jeji "
+                "se z ze v ve po do od pro svateho tomu toho".split())
+_OBECNA_OTAZKA = re.compile(
+    r"^\W*(?:a\s+)?co\s+(?:je|jsou|to\s+je|to\s+jsou|byl[aoy]?|se\s+rozumi|znamena)\b"
+    r"|\bco\s+(?:\w+\s+){0,3}(?:vis|vite|rici|rict|povedet|dozvedel\w*)\b"
+    r"|\b(?:znas|znate|povez\w*|rekn\w+\s+(?:mi\s+)?(?:neco\s+)?o)\b"
+    r"|\b(?:zjisti|zjistete|najdi|najdete|dohledej\w*)\s+(?:mi\s+)?(?:prosim\s+)?neco\b"
+    r"|\b(?:ti|te|tebe|tobe|vam|vas|vase?|tvuj|tvoje|mas|mate|jsi|jste|libi|rikas|rikate"
+    r"|myslis|myslite|pamatujes|pamatujete|byste|bys)\b")
+
+
+def _fold_cs(s: str) -> str:
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFD", str(s).lower())
+                   if unicodedata.category(ch) != "Mn")
+
+
+def _konkretni_otazka(config: dict, otazka) -> bool:
+    """Má shrnutí odpovídat přímo na otázku (ne obecné „kdo/co to je“)?"""
+    if not otazka:
+        return False
+    if _shrnuti_podle_otazky(config, otazka) or _pta_na_pribuzne(otazka):
+        return True
+    q = str(otazka)
+    if (_cfg(config).get("wikidata", True)
+            and re.search(r"\b(?:kdo|kdy|kde|kolik|kter[ýáéoéhu]\w*|jak[ýáéou]\w*|čím|koho|komu|odkud)\b",
+                          q, re.IGNORECASE)
+            and not re.search(r"\b(?:zn[áa][šs]|zn[áa]te|co\s+v[íi][šs]|co\s+v[íi]te)\b",
+                              q, re.IGNORECASE)):
+        return True
+    return ("?" in q and _cfg(config).get("vyber_podle_otazky", True)
+            and not _OBECNA_OTAZKA.search(_fold_cs(q)))
+
+
+def _podklad_podle_otazky(titul: str, otazka: str) -> str:
+    """Úvod + údaje infoboxu + sekce lokálního článku podle slov otázky, nebo ''."""
+    try:
+        from scripts import hans_wiki_offline as _wo
+        txt, roz, kan = _wo.extrakt(titul)
+        if roz or len(txt or "") <= 3000:
+            return ""
+        _d, ib = _wo.infobox(kan or titul)
+    except Exception as e:
+        _log.debug("HANS_LOOKUP_VYBER_V1: %s", e)
+        return ""
+    casti = re.split(r"\n\n== (.+?) ==\n?", txt)
+    sek = [("", casti[0])] + [(casti[i].strip(), casti[i + 1].strip())
+                              for i in range(1, len(casti) - 1, 2)]
+    tw = {w[:5] for w in re.findall(r"\w{4,}", _fold_cs(kan or titul))}
+    kl = [w[:5] for w in re.findall(r"\w{4,}", _fold_cs(otazka))
+          if w not in _VYB_STOP and w[:5] not in tw]
+    if not kl:
+        return ""
+    sk = []
+    for i, (h, b) in enumerate(sek[1:], 1):
+        if not b or _VYB_SKIP.match(h):
+            continue
+        fh, fb = _fold_cs(h), _fold_cs(b)
+        # hustota: „zemřel“ je skoro v každé sekci — přítomnost slova by vybrala
+        # první sekci v pořadí (Karel IV. „Boj o Tyroly“ místo „Poslední rok a smrt“)
+        s = (sum(3 for k in set(kl) if k in fh)
+             + sum(fb.count(k) for k in set(kl)) * 1000.0 / (len(fb) + 500))
+        if s > 0:
+            sk.append((s, i))
+    ibr = [l.strip() for l in (ib or "").split("\n")
+           if ":" in l and any(k in _fold_cs(l.split(":")[0]) for k in kl)]
+    if not sk and not ibr:
+        return ""   # nic nesedí → dnešní prvních 3000 zn
+    out = txt[:_VYB_UVOD].strip()
+    if ibr:
+        out = "ÚDAJE Z INFOBOXU:\n" + "\n".join(ibr) + "\n\n" + out
+    vyb = []
+    for s, i in sorted(sk, key=lambda x: (-x[0], x[1]))[:3]:
+        zbyva = _VYB_STROP - len(out)
+        if zbyva < 300:
+            break
+        h, b = sek[i]
+        if b[:200] in out:   # sekce už je v úvodu
+            continue
+        out += "\n\n== %s ==\n%s" % (h, b[:min(1800, zbyva)])
+        vyb.append(h)
+    _log.info("HANS_LOOKUP_VYBER_V1: %r podle otázky %r → sekce %s, infobox %s",
+              kan or titul, str(otazka)[:60], vyb, [l.split(":")[0] for l in ibr])
+    return out
 
 
 def _wikidata_blok(titul: str) -> str:
@@ -969,6 +1073,12 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
         _strop = max(_strop, 8500)   # HANS_YEAR_EVENTS_V1 — česky + anglicky
     text = (art.get("text") or "")[:_strop]
     _rok_t = bool(re.fullmatch(r"\d{3,4}", str(topic or "").strip()))
+    # HANS_LOOKUP_VYBER_V1 — u konkrétní otázky podklad podle otázky
+    if (otazka and not _rok_t and c.get("vyber_podle_otazky", True)
+            and _konkretni_otazka(config, otazka)):
+        _vyb = _podklad_podle_otazky(str(art.get("title") or topic), str(otazka))
+        if _vyb:
+            text = _vyb
     # HANS_LOOKUP_WIKIDATA_V1 — ověřené údaje před text u každého dohledání
     # s otázkou („kdo byl otcem…“, „nejznámější novela…“ nejsou `pta_se_na_udaj`)
     if otazka and not _rok_t and c.get("wikidata", True):
@@ -992,15 +1102,7 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             "nic neříká, napiš, že to v článcích není. Drž se VÝHRADNĚ textu, nic si "
             "nepřidávej. Bez uvozovek.\n\nText:\n%s"
             % (str(topic).strip(), str(otazka).strip(), text))
-    elif _shrnuti_podle_otazky(config, otazka) or _pta_na_pribuzne(otazka) or (
-            # HANS_LOOKUP_WIKIDATA_V1 — i „kdo byl otcem…“, „jakou nejznámější
-            # novelu…“ (`pta_se_na_udaj` je nebere) odpovídá na otázku, když je
-            # tázací; obecné „znáš X?“ / „co víš o X?“ zůstává u shrnutí
-            otazka and c.get("wikidata", True) and re.search(
-                r"\b(?:kdo|kdy|kde|kolik|kter[ýáéoéhu]\w*|jak[ýáéou]\w*|čím|koho|komu|odkud)\b",
-                str(otazka), re.IGNORECASE)
-            and not re.search(r"\b(?:zn[áa][šs]|zn[áa]te|co\s+v[íi][šs]|co\s+v[íi]te)\b",
-                              str(otazka), re.IGNORECASE)):
+    elif _konkretni_otazka(config, otazka):   # HANS_LOOKUP_VYBER_V1 (dřív seznam tázacích slov)
         # HANS_LOOKUP_QUESTION_SUMMARY_V1 — otázka na údaj: nejdřív odpověď
         # z textu, pak kdo/co to je. 📏 12 otázek × 2 běhy na týchž článcích:
         # dnešní zadání 8/24, s otázkou 22/24 (backlog DOHLEDANI_UDAJ_15_10).
@@ -1009,7 +1111,8 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
         prompt = (
             "Níže je text encyklopedického článku „%s\". Člověk se ptá: „%s\"\n"
             "Nejdřív v jedné větě odpověz PŘÍMO na tu otázku konkrétním údajem z textu "
-            "(rok, datum, místo, jméno, počet). Když text odpověď neobsahuje, napiš, že to "
+            "(rok, datum, místo, jméno, počet, způsob nebo příčina — podle toho, na co se "
+            "ptá). Když text odpověď neobsahuje, napiš, že to "
             "v článku není. Pak přidej 1 až 2 věty o tom, KDO/CO to je. Drž se VÝHRADNĚ "
             "textu, nic si nepřidávej. Bez uvozovek.\n\nText:\n%s"
             % (art.get("title") or topic, str(otazka).strip(), text))

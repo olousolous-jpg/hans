@@ -1469,3 +1469,9 @@ def agent_autor_dila(veta: str) -> bool:
     """HANS_AGENT_AUTHOR_NOT_PERSON_V1 — ptá se věta na autora díla?"""
     from scripts.hans_agent import _AUTOR_DILA
     return bool(_AUTOR_DILA.search(veta or ""))
+
+
+def konkretni_otazka(veta: str) -> bool:
+    """HANS_LOOKUP_VYBER_V1 — má shrnutí dohledání odpovídat přímo na otázku?"""
+    from scripts.hans_findings import _konkretni_otazka
+    return bool(_konkretni_otazka(_cfg(), veta))

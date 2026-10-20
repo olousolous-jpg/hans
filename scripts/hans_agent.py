@@ -270,12 +270,21 @@ def _je_meta_pamet(message: str) -> bool:
         return False
 
 
+_ZJISTI_SIROKE = re.compile(r"\b(?:n[ěe]co|v[íi]c|v[íi]ce|informac\w*)\b", re.IGNORECASE)   # HANS_STUDY_BRIDGE_LOOKUP_V2
+
+
 def _zada_udaj_ne_studium(message: str) -> bool:
-    """HANS_STUDY_BRIDGE_FACT_V1 — žádost o dohledání konkrétního údaje."""
+    """HANS_STUDY_BRIDGE_FACT_V1 — žádost o dohledání, ne o studium.
+    HANS_STUDY_BRIDGE_LOOKUP_V2 (20. 10.): už ne jen konkrétní údaj — „zjisti
+    mi prosím příbuzné krále Václava II.“ nabídlo studium. Výslovné studium
+    („nastuduj“, „zjisti si“, „zařaď“) dál vede na studium. 📏 841 vět lidí:
+    23 nově; široké „zjisti něco / víc o X“ ale zůstává jako dřív (regrese
+    15. 10.: „zjisti něco o Heideggerovi“ smí vést na studium) → 10 nově."""
     try:
         from scripts.hans_intent import zada_dohledani, pta_se_na_udaj
-        return (zada_dohledani(message) and pta_se_na_udaj(message)
-                and not _STUDY_ZADOST.search(message or ""))
+        if not zada_dohledani(message) or _STUDY_ZADOST.search(message or ""):
+            return False
+        return bool(pta_se_na_udaj(message) or not _ZJISTI_SIROKE.search(message or ""))
     except Exception:
         return False
 
