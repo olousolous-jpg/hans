@@ -64,7 +64,14 @@ def zaregistruj(_cc):
             # a zachranoval to jen slozeny dvojnik `nl_fold`.
             r"\b(m[áa]m|nem[áa]m|m[áa][šs]|nem[áa][šs]|m[áa]te|nem[áa]te)\b"
             r"[^?.!]{0,12}\bn[ěe]co\b[^?.!]{0,16}\bnapl[áa]nov[áa]n\w*",  # co mám naplánováno / nemám něco naplánovaného
-            r"\bschůzk|\bschuzk",
+            # HANS_CALENDAR_SCHUZKA_ANCHOR_V1 (20. 10.) — holý kmen „schůzk“ chytil
+            # Koláčovu zkoušku „Kde se zúčastnil Idi Amin schůzky, jak je uvedeno
+            # v článku…?“ → „Váš kalendář zatím nemám napojený“. Jen vlastní
+            # schůzka (mám/máš/máte/moje/naše… nebo schůzka + kdy). 📏 2 216 vět
+            # lidí: „schůzk“ 0×, zásahy dosud jen ve zkouškách.
+            r"\b(m[áa]m|m[áa][šs]|m[áa]te|nem[áa]m|nem[áa][šs]|nem[áa]te|moje?|m[ée]|tvoje?|va[šs]e|na[šs]e)\b"
+            r"[^?.!]{0,20}\bsch[ůu]zk",
+            r"\bsch[ůu]zk\w*\b[^?.!]{0,20}\b(dnes|z[ií]tra|pozít[ří]í|tento t[ýy]den|tenhle t[ýy]den|p[řr][íi][šs]t[íi]\w*)\b",
         ],
         handler=_cc._cmd_kalendar,
         help_text="Nadcházející události z Proton kalendáře (/kalendar, /kalendar sync)",

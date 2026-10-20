@@ -282,6 +282,14 @@ def _db(h) -> str:
             or h.config.get("diary_db") or "data/hans_diary.db")
 
 
+def _na_zacatku(jmeno, text) -> bool:
+    """HANS_PODKLAD_ENTITA_ZACATEK_V1 — začíná věta jménem entity (i skloněným)?"""
+    ew = nazev_slova(jmeno)
+    vw = _slova(text)
+    return bool(ew and len(vw) >= len(ew)
+                and all(je_tvar(v, e) for v, e in zip(vw[:len(ew)], ew)))
+
+
 def predmet_z(h, text, vynech=()):
     """(druh, název, entita) z jedné věty; druh titul | entita | entita_slaba | kotva | None."""
     if not text:
@@ -316,6 +324,13 @@ def predmet_z(h, text, vynech=()):
             if len(ew) == 1 and len(kotvy) > len(kryta):
                 # jedna z víc kotev („Česko proti Slovensku“) → předmět nejistý
                 return "entita_slaba", jm, ent
+        elif _na_zacatku(jm, text):
+            # HANS_PODKLAD_ENTITA_ZACATEK_V1 (20. 10.) — první slovo věty kotvou
+            # není (velké písmeno je tam povinné), takže entita na začátku
+            # („Korsika - je francouzský ostrov a kdy se stala součástí Francie?“)
+            # prohrála s vedlejší kotvou „Francie“ → podklad bez entity, odpověď
+            # z hlavy („Republika Ženeva“). /tazatel 20. 10.
+            kotva = None
         else:
             ent_ok = False
     if tit:
