@@ -523,7 +523,13 @@ def kotvy_ve_vete(veta: str) -> list:
         if not pred:
             continue
         # HANS_ANCHOR_SV_TITUL_V1 — „sv.“ (svatý) před jménem větu nekončí
-        if pred[-1] in _KONEC_VETY and not re.search(r"(?:^|\s)[Ss]v\.$", pred):
+        # HANS_ANCHOR_TITUL_ZKRATKA_V1 (20. 10.) — ani titul před jménem („Dr.“,
+        # „Mr.“, „Ing.“, „prof.“…): Koláčova zkouška „…v knize Dr. Divnoláska?“
+        # → kotva „kniha Dr“ → heslo „Kniha Drnovská“. 📏 5 123 vět: 3 se
+        # zkratkou titulu, všechny Dr. Divnoláska.
+        if pred[-1] in _KONEC_VETY and not re.search(
+                r"(?:^|\s)(?:[Ss]v|Dr|Mr|Mrs|Ms|St|Ing|Mgr|MUDr|JUDr|PhDr|RNDr|[Pp]rof|doc|Bc"
+                r"|gen|plk|kpt|mjr)\.$", pred):
             # HANS_ANCHOR_COLON_V1 (30.8.) — DVOJTEČKA V NÁZVU NENÍ KONEC VĚTY.
             # `_KONEC_VETY` obsahuje i „:" a „;", protože dvojtečka uvozuje
             # výčet („Studuji: hrady…") a slovo za ní kotva být nemá. Jenže
@@ -942,6 +948,12 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
                            (veta or "")[:max(0, (veta or "").find(jmeno[0]))])
         if _bitva and not druh:
             druh = "bitva " + _bitva.group(2)
+        # HANS_ANCHOR_TITUL_ZKRATKA_V1 — tečka za titulem patří k názvu
+        # (heslo „Dr. Divnoláska“; „Dr Divnoláska“ nenajde nic)
+        if (len(jmeno) > 1 and re.fullmatch(r"Dr|Mr|Mrs|Ms|St|Ing|Mgr|MUDr|JUDr|PhDr|RNDr|[Pp]rof",
+                                            jmeno[0])
+                and re.search(r"\b" + re.escape(jmeno[0]) + r"\.\s+" + re.escape(jmeno[1]), veta or "")):
+            jmeno = [jmeno[0] + "."] + jmeno[1:]
         kotva = ((druh + " ") if druh else "") + " ".join(jmeno)
         # přivlastňovací tvar („Hrabalův román“) ustoupí další kotvě ve větě
         # jen když název stojí HNED za podstatným jménem („Hrabalův román

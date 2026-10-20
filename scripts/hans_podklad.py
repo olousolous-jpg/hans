@@ -385,6 +385,24 @@ def posbirej(h, druh, nazev, ent, dotaz, veta, zpravy=""):
         pass
     kusy["zpravy"] = zpravy or ""
     kusy["zpravy_o_predmetu"] = bool(zpravy) and bool(nazev) and mluvi_o(zpravy, nazev)
+    # HANS_PODKLAD_CLANEK_V1 (20. 10.) — u konkrétní otázky na předmět výběr
+    # z lokálního článku podle otázky (HANS_LOOKUP_VYBER_V1). Na podložené cestě
+    # (entita + výpis faktů z noci) se nedohledává a model doplnil, co výpis
+    # neměl: „na co zemřel Karel IV.?“ → „žlutá zimnice ve Vídni“ (zápal plic,
+    # Praha — sekce „Poslední rok a smrt“). Vypínač `grounding.clanek_podle_otazky`.
+    kusy["clanek"] = ""
+    try:
+        if (druh in ("titul", "entita") and nazev
+                and bool((h.config.get("grounding", {}) or {}).get("clanek_podle_otazky", True))):
+            from scripts.hans_findings import _konkretni_otazka, _podklad_podle_otazky
+            if _konkretni_otazka(h.config, dotaz):
+                _c = _podklad_podle_otazky(re.sub(r"\s*\([^)]*\)$", "", nazev)
+                                           if druh == "entita" else nazev, dotaz, h.config)
+                if _c:
+                    kusy["clanek"] = ("Z encyklopedického článku o „%s“ (části k otázce):\n%s"
+                                      % (nazev, _c))
+    except Exception as _ce:
+        _log.debug("HANS_PODKLAD_CLANEK_V1: %s", _ce)
     return kusy
 
 
@@ -395,6 +413,8 @@ def vyber(druh, kusy, nazev=None, texty=()) -> list:
         v = [k for k in ("fakta", "entita") if kusy.get(k)]
         if kusy.get("zapisky") and kusy.get("zapisky_o_predmetu"):
             v.append("zapisky")
+        if kusy.get("clanek") and v:   # HANS_PODKLAD_CLANEK_V1 — jen vedle vlastní opory
+            v.append("clanek")
         if kusy.get("zpravy") and kusy.get("zpravy_o_predmetu"):
             v.append("zpravy")
         return v or ["bez_opory"]
@@ -628,7 +648,7 @@ def prepni(h, ctx, pred_zpravami=None) -> None:
             # a entita bez definice (145 ze 782) je jen řádek „bez bližší
             # definice“, který dnešní cesta zápisků do podkladu nedává
             _kc = [(k, _cista_cast(kusy[k], k).replace(ANTIKONFAB, "").strip())
-                   for k in ("fakta", "entita", "zapisky") if k in vb and kusy.get(k)]
+                   for k in ("fakta", "entita", "zapisky", "clanek") if k in vb and kusy.get(k)]
             _kc = [(k, c) for k, c in _kc if c]
             casti = [c for _, c in _kc]
             if casti:

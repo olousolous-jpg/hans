@@ -964,8 +964,45 @@ def _konkretni_otazka(config: dict, otazka) -> bool:
             and not _OBECNA_OTAZKA.search(_fold_cs(q)))
 
 
-def _podklad_podle_otazky(titul: str, otazka: str) -> str:
-    """Úvod + údaje infoboxu + sekce lokálního článku podle slov otázky, nebo ''."""
+def _vyber_modelem(config, titul: str, otazka: str, sek: list, ib: str):
+    """HANS_LOOKUP_VYBER_MODEL_V1 — (indexy sekcí, klíče infoboxu) od modelu, nebo None.
+    Model dostane jen nadpisy sekcí a klíče infoboxu (ne text) → krátké volání."""
+    if not config or not _cfg(config).get("vyber_modelem", True):
+        return None
+    try:
+        from scripts.ollama_client import ollama_chat
+        seznam = "\n".join("%d. %s (%d zn)" % (i, h, len(b)) for i, (h, b) in enumerate(sek)
+                           if i and b and not _VYB_SKIP.match(h))
+        klice = ", ".join(l.split(":")[0].strip() for l in (ib or "").split("\n") if ":" in l)
+        prompt = ("Člověk se ptá: „%s“\nMáš encyklopedický článek „%s“. Úvod článku dostaneš "
+                  "vždy. Článek má dále tyto sekce:\n%s\n\nInfobox článku má údaje: %s\n\n"
+                  "Vyber NEJVÝŠ 3 sekce, ve kterých nejspíš je odpověď na otázku, a údaje "
+                  "infoboxu, které se otázky týkají. Odpověz jen JSON: "
+                  "{\"sekce\": [čísla], \"infobox\": [názvy údajů]}"
+                  % (otazka, titul, seznam or "(žádné)", klice or "(žádné)"))
+        model = str((config.get("hans_dialog", {}) or {}).get("ollama_model", "hans-czech:latest"))
+        out = ollama_chat(model, [{"role": "user", "content": prompt}], config=config,
+                          timeout=int(_cfg(config).get("vyber_timeout", 20)),
+                          options={"num_predict": 120, "num_ctx": 4096, "temperature": 0})
+        m = re.search(r"\{.*\}", out or "", re.S)
+        import json as _json
+        j = _json.loads(m.group(0)) if m else {}
+        idx = [int(x) for x in (j.get("sekce") or []) if str(x).isdigit()
+               and 0 < int(x) < len(sek) and sek[int(x)][1]][:3]
+        chce = {_fold_cs(str(x)).strip() for x in (j.get("infobox") or [])}
+        return idx, chce
+    except Exception as e:
+        _log.debug("HANS_LOOKUP_VYBER_MODEL_V1: %s", e)
+        return None
+
+
+def _podklad_podle_otazky(titul: str, otazka: str, config: Optional[dict] = None) -> str:
+    """Úvod + údaje infoboxu + sekce lokálního článku vybrané modelem a podle
+    slov otázky, nebo ''.
+    HANS_LOOKUP_VYBER_MODEL_V1 (20. 10.): samotný výběr podle slov selhal na
+    synonymu — „na co ZEMŘEL Karel IV.“ → „Potomci“ (nejhustší „zemřel“), sekce
+    „Poslední rok a smrt“ nesdílí slovo; model ji vybral. Sekce modelu napřed,
+    za nimi 2 podle slov; bez modelu (výpadek, vypínač) jen podle slov."""
     try:
         from scripts import hans_wiki_offline as _wo
         txt, roz, kan = _wo.extrakt(titul)
@@ -981,7 +1018,8 @@ def _podklad_podle_otazky(titul: str, otazka: str) -> str:
     tw = {w[:5] for w in re.findall(r"\w{4,}", _fold_cs(kan or titul))}
     kl = [w[:5] for w in re.findall(r"\w{4,}", _fold_cs(otazka))
           if w not in _VYB_STOP and w[:5] not in tw]
-    if not kl:
+    _m = _vyber_modelem(config, kan or titul, otazka, sek, ib) if config else None
+    if not kl and not _m:
         return ""
     sk = []
     for i, (h, b) in enumerate(sek[1:], 1):
@@ -996,13 +1034,22 @@ def _podklad_podle_otazky(titul: str, otazka: str) -> str:
             sk.append((s, i))
     ibr = [l.strip() for l in (ib or "").split("\n")
            if ":" in l and any(k in _fold_cs(l.split(":")[0]) for k in kl)]
-    if not sk and not ibr:
+    poradi = [i for s, i in sorted(sk, key=lambda x: (-x[0], x[1]))]
+    if _m:
+        _idx, _chce = _m
+        poradi = list(_idx) + [i for i in poradi[:2] if i not in _idx]
+        for l in (ib or "").split("\n"):
+            if ":" in l and _fold_cs(l.split(":")[0]).strip() in _chce and l.strip() not in ibr:
+                ibr.append(l.strip())
+    else:
+        poradi = poradi[:3]
+    if not poradi and not ibr:
         return ""   # nic nesedí → dnešní prvních 3000 zn
     out = txt[:_VYB_UVOD].strip()
     if ibr:
         out = "ÚDAJE Z INFOBOXU:\n" + "\n".join(ibr) + "\n\n" + out
     vyb = []
-    for s, i in sorted(sk, key=lambda x: (-x[0], x[1]))[:3]:
+    for i in poradi:
         zbyva = _VYB_STROP - len(out)
         if zbyva < 300:
             break
@@ -1011,8 +1058,9 @@ def _podklad_podle_otazky(titul: str, otazka: str) -> str:
             continue
         out += "\n\n== %s ==\n%s" % (h, b[:min(1800, zbyva)])
         vyb.append(h)
-    _log.info("HANS_LOOKUP_VYBER_V1: %r podle otázky %r → sekce %s, infobox %s",
-              kan or titul, str(otazka)[:60], vyb, [l.split(":")[0] for l in ibr])
+    _log.info("HANS_LOOKUP_VYBER_V1: %r podle otázky %r → sekce %s, infobox %s%s",
+              kan or titul, str(otazka)[:60], vyb, [l.split(":")[0] for l in ibr],
+              "" if _m else " (bez modelu)")
     return out
 
 
@@ -1076,7 +1124,7 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
     # HANS_LOOKUP_VYBER_V1 — u konkrétní otázky podklad podle otázky
     if (otazka and not _rok_t and c.get("vyber_podle_otazky", True)
             and _konkretni_otazka(config, otazka)):
-        _vyb = _podklad_podle_otazky(str(art.get("title") or topic), str(otazka))
+        _vyb = _podklad_podle_otazky(str(art.get("title") or topic), str(otazka), config)
         if _vyb:
             text = _vyb
     # HANS_LOOKUP_WIKIDATA_V1 — ověřené údaje před text u každého dohledání

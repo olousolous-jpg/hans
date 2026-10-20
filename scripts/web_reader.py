@@ -606,6 +606,20 @@ class WebReader:
             if pfx:
                 _pmin = float((self.config.get("curiosity", {}) or {})
                               .get("wiki_title_min_score", 0.6))
+                # HANS_WIKI_DRUH_GATE_V1 (20. 10.) — úvodní druhové slovo
+                # („kniha Dr. Divnoláska“) bránu nesoudí: lokální hledání ho už
+                # zohlednilo („hrad Kost“ → „Kost (hrad)“) a jinak srazí
+                # podobnost pod práh (0,5) i u přesné shody zbytku — Koláčova
+                # zkouška „v knize Dr. Divnoláska“ (je to film) skončila na
+                # fulltextu u „Kniha Drnovská“.
+                _query_full = query
+                try:
+                    from scripts.hans_wiki_offline import _DRUHY_SLOVA as _DS
+                    _sl = query.split()
+                    if len(_sl) >= 2 and _sl[0].lower() in _DS and _sl[1][:1].isupper():
+                        query = " ".join(_sl[1:])
+                except Exception:
+                    pass
                 _best = max((p.get("title", "") for p in pfx),
                             key=lambda t: _title_similarity(query, t),
                             default="")
@@ -636,11 +650,13 @@ class WebReader:
                         _pfx_zaloha = _best
                 _log.debug("Wikipedia prefixsearch %r pro %r pod prahem → "
                            "zkouším srsearch", _best, query)
+                query = _query_full   # HANS_WIKI_DRUH_GATE_V1 — fulltext s druhem jako dřív
         except _SkipPrefix:
             _log.debug("Wikipedia: %r je fráze → prefixsearch přeskočen "
                        "(šetřím dotaz proti rate-limitu)", query)
         except Exception as e:
             _log.debug("Wikipedia prefixsearch error: %s", e)
+        query = locals().get("_query_full", query)   # HANS_WIKI_DRUH_GATE_V1
         # 2) srsearch s title-similarity filtrem
         try:
             r = self._get(api, params={
