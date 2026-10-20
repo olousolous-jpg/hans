@@ -623,6 +623,21 @@ class WebReader:
                 _best = max((p.get("title", "") for p in pfx),
                             key=lambda t: _title_similarity(query, t),
                             default="")
+                # HANS_WIKI_PADY_VIC_V1 (20. 10.) — lokální výpis našel PŘESNÝ
+                # titul po převodu skloněného názvu do 1. pádu („Jana
+                # Lucemburského“ → „Jan Lucemburský“); brána tokenů tvar
+                # nepozná a propadlo by to na fulltext (tituly velkovévody)
+                try:
+                    from scripts import hans_wiki_offline as _wo
+                    if lang == "cs" and _wo.dostupna() and not _wo._cil(_query_full):
+                        _z = _wo._presna_zaloha(_query_full)
+                        if _z and any(p.get("title") == _z[0] or p.get("title") == _z[1][1]
+                                      for p in pfx):
+                            _log.info("HANS_WIKI_PADY_VIC_V1: %r → %r (přesný titul "
+                                      "v 1. pádě)", _query_full, _z[0])
+                            return _z[0]
+                except Exception as _pe:
+                    _log.debug("HANS_WIKI_PADY_VIC_V1: %s", _pe)
                 _pcov = _title_coverage(query, _best) if _best else 0.0
                 # HANS_WIKI_EXACT_TOKEN_V1 — i v prefix větvi. Gate na
                 # pokrytí tu byl, kontrola TVARU shody ne — a prefixsearch

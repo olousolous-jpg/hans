@@ -1154,6 +1154,60 @@ class FaktaMixin:
             pass
         return False
 
+    # HANS_F1_PREDMET_V1 (20. 10.) — přepis F1 si občas vymyslí nebo přenese
+    # předmět z jiného tahu: „co je to NDR“ → „Kolik her má Divadlo Járy
+    # Cimrmana?“, „a kolik her tam je?“ (o divadle) → „Kolik her má Messi?“,
+    # „a smetana? kdy se narodil?“ → „…Vítězslav Nezval…“. Přepis se pak
+    # zahodí (platí původní věta), když (1) otázková část věty jmenuje silný
+    # předmět (přesný titul z věty, zkratka velkými) a přepis z něj nemá nic,
+    # nebo (2) přepis přidá jméno, které není ve větě ani v posledním tahu
+    # (otázka + odpověď), mimo jméno persony a tazatele. Hlásková shoda
+    # (c=k, ae=e, ph=f, w=v, y=i), kmen 3 znaky.
+    # 📏 (1) 456 dvojic věta+přepis ze stínu podkladu: zásah jen „NDR“ ×2;
+    # (2) 867 přepisů z přepisů /tazatel s historií: 8 zásahů, 6 výmyslů, 2 neškodné.
+    @staticmethod
+    def _f1_hlasky(s) -> set:
+        from scripts.hans_convindex import _fold
+        s = (_fold(str(s or "")).replace("ch", "#").replace("ph", "f").replace("th", "t")
+             .replace("ae", "e").replace("c", "k").replace("w", "v").replace("y", "i")
+             .replace("#", "ch"))
+        return {w[:3] for w in re.findall(r"\w{3,}", s)}
+
+    def _f1_ztratil_predmet(self, veta: str, novy: str, hist=None, kdo: str = "") -> str:
+        """HANS_F1_PREDMET_V1 — důvod k zahození přepisu, nebo ''."""
+        try:
+            from scripts import hans_wiki_offline as _wo
+            from scripts.hans_podklad import otazkova_cast, kotvy_vsechny
+            veta = self._bez_tazatele(veta)
+            q = otazkova_cast(veta) or veta
+            kn = self._f1_hlasky(novy)
+            silne = set()
+            _t = _wo.titul_z_vety(q) if _wo.dostupna() else None
+            if _t:
+                silne.add(_t)
+                _r = _wo._cil(_t)
+                if _r:
+                    silne.add(_r[1])
+            for w in re.findall(r"\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]{2,}(?:\.[A-Z]+)*\.?", q):
+                if not re.fullmatch(r"[IVXLC]+\.?", w):
+                    silne.add(w)
+            if silne and not any(self._f1_hlasky(x) & kn for x in silne):
+                return "předmět %r v přepisu chybí" % sorted(silne)[0]
+            posl = ""
+            if hist:
+                posl = " ".join(str(m.get("content") or "") for m in list(hist)[-2:]
+                                if isinstance(m, dict))
+            persona = str((self.config.get("persona", {}) or {}).get("name") or "Hans")
+            zn = (self._f1_hlasky(veta) | self._f1_hlasky(posl) | self._f1_hlasky(persona)
+                  | self._f1_hlasky(kdo))
+            nova = [k for k in kotvy_vsechny(novy)
+                    if self._f1_hlasky(k) and not (self._f1_hlasky(k) & zn)]
+            if nova:
+                return "přidal jméno %r mimo větu i poslední tah" % nova[0]
+        except Exception as e:
+            logging.getLogger(_h.__name__).debug("HANS_F1_PREDMET_V1: %s", e)
+        return ""
+
     def _f1_o_tazateli(self, novy: str, kdo: str = "") -> bool:
         """HANS_F1_NOT_ABOUT_ASKER_V1 (16. 9.) — prehodil prepis podmet na tazatele?
 

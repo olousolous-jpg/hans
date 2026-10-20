@@ -762,10 +762,16 @@ class GroundingMixin:
                     # k nicemu: FTS hleda, co vi tazatel, misto co delal
                     # Hans → prazdny podklad → falesne zapreni (15. 9.,
                     # „co si uz malovai?“ → „Co <tazatel> vi o obrazech?“).
+                    _ztr = ''
                     if self._f1_o_tazateli(_rw, ctx.name):
                         logging.getLogger(_h.__name__).info(
                             'HANS_F1_NOT_ABOUT_ASKER_V1: prepis %r prehodil '
                             'podmet na tazatele — drzim original', _rw[:60])
+                    elif bool((self.config.get("rewriter", {}) or {}).get("hlidat_predmet", True)) \
+                            and (_ztr := self._f1_ztratil_predmet(str(ctx._text), _rw, _hist, ctx.name or "")):
+                        logging.getLogger(_h.__name__).info(
+                            'HANS_F1_PREDMET_V1: přepis %r zahozen (%s) — držím původní větu',
+                            _rw[:60], _ztr)
                     else:
                         logging.getLogger(_h.__name__).info(
                             'F1: rewrite %r -> %r',

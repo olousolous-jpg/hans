@@ -830,6 +830,15 @@ def _titles_align(topic: str, title: str) -> bool:
         return True
     if a in b or b in a:
         return True
+    # HANS_WIKI_PADY_VIC_V1 (20. 10.) — titul je 1. pád skloněného dotazu
+    # („Karlově mostě“ → „Karlův most“): lokální výpis ho našel přesnou shodou
+    try:
+        from scripts import hans_wiki_offline as _wo
+        _z = _wo._presna_zaloha(topic or "")
+        if _z and title in (_z[0], _z[1][1]):
+            return True
+    except Exception:
+        pass
     # Tokenově: každé obsahové slovo TITULU musí mít protějšek v dotazu.
     # Směr je podstatný — titul smí být kratší než dotaz („hrad Kost" →
     # „Kost"), ale nesmí přinést slovo, o které nikdo nežádal.

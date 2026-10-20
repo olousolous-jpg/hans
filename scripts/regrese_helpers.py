@@ -1475,3 +1475,24 @@ def konkretni_otazka(veta: str) -> bool:
     """HANS_LOOKUP_VYBER_V1 — má shrnutí dohledání odpovídat přímo na otázku?"""
     from scripts.hans_findings import _konkretni_otazka
     return bool(_konkretni_otazka(_cfg(), veta))
+
+
+def presna_zaloha_titul(q: str):
+    """HANS_WIKI_PADY_VIC_V1 — titul, na který lokální záloha převede skloněný název."""
+    from scripts import hans_wiki_offline as W
+    z = W._presna_zaloha(q)
+    return z[0] if z else None
+
+
+def f1_ztratil_predmet(veta: str, novy: str, posledni_otazka: str = "",
+                       posledni_odpoved: str = "") -> bool:
+    """HANS_F1_PREDMET_V1 — zahodí se přepis F1? (True = ano)."""
+    from scripts.handler_fakta import FaktaMixin
+
+    class _H(FaktaMixin):
+        pass
+    h = _H.__new__(_H)
+    h.config = _cfg()
+    hist = ([{"role": "user", "content": posledni_otazka},
+             {"role": "assistant", "content": posledni_odpoved}] if posledni_otazka else [])
+    return bool(h._f1_ztratil_predmet(veta, novy, hist, "Marek"))

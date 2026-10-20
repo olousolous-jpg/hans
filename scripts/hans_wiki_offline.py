@@ -103,6 +103,53 @@ _DRUH_INFOBOX = {"film": "film"}
 _PRIVL_GEN = re.compile(r"^(\w+?)(ova|ovy|ina|iny) (\w+?)(u|a|e|y)$")
 
 
+# ── HANS_WIKI_PADY_VIC_V1 (20. 10.) — víceslovný název v jiném pádě → 1. pád ──
+# `_prvni_pad` umí jen jedno slovo, takže kotva ze skloněné věty hledala
+# cizí heslo: „Jana Lucemburského“ → tituly velkovévody, „Marii Terezii“ →
+# Tereza Marinovová, „Karla IV.“ → Sady Karla IV., „Karlově mostě“ → nic
+# (/tazatel 20. 10., 3× za den). Každé slovo dostane kandidáty 1. pádu,
+# bere se jen PŘESNÁ shoda s titulem (ne rozcestník); slova za předložkou
+# („z Poděbrad“) se neskloňují.
+_PADY_PRIDAVNA = (("ého", "ý"), ("ému", "ý"), ("ém", "ý"), ("ým", "ý"), ("ými", "ý"),
+                  ("ou", "á"), ("é", "á"), ("é", "ý"),
+                  ("ově", "ův"), ("ovu", "ův"), ("ova", "ův"), ("ovým", "ův"),
+                  ("ině", "in"), ("inu", "in"), ("ina", "in"))
+_PADY_PODSTATNA = (("ovi", ""), ("em", ""), ("ii", "ie"), ("ií", "ie"), ("ie", "ie"),
+                   ("la", "el"), ("lu", "el"), ("lovi", "el"), ("ra", "er"), ("ru", "er"),
+                   ("ka", "ek"), ("ku", "ek"),
+                   ("y", "a"), ("i", "a"), ("u", "a"), ("ou", "a"), ("e", "a"), ("ě", "a"),
+                   ("a", ""), ("u", ""), ("e", ""), ("ě", ""), ("i", ""))
+_PREDLOZKY = {"z", "ze", "na", "nad", "pod", "u", "v", "ve", "von", "van", "de", "da", "di",
+              "of", "the", "a", "aneb", "and"}
+
+
+def _tvary_slova(w: str) -> list:
+    if re.fullmatch(r"[IVXLC]+\.?", w) or len(w) < 3:
+        return [w]   # malá písmena ano: „Karlově mostě“ → „Karlův most“
+    out = [w]
+    for a_, b_ in _PADY_PRIDAVNA + _PADY_PODSTATNA:
+        if w.endswith(a_) and len(w) - len(a_) >= 2:
+            out.append(w[:-len(a_)] + b_)
+    return list(dict.fromkeys(out))
+
+
+def _prvni_pad_vic(q: str, strop: int = 200) -> list:
+    """Kandidáti 1. pádu víceslovného názvu (2–4 slova)."""
+    sl = (q or "").split()
+    if not (2 <= len(sl) <= 4):
+        return []
+    varianty = []
+    za_predlozkou = False
+    for w in sl:
+        if w.lower() in _PREDLOZKY:
+            za_predlozkou = True
+        varianty.append([w] if za_predlozkou else _tvary_slova(w))
+    out = [[]]
+    for v in varianty:
+        out = [o + [x] for o in out for x in v][:strop]
+    return [" ".join(o) for o in out if " ".join(o) != q]
+
+
 def _presna_zaloha(q: str):
     """HANS_WIKI_OFFLINE_DIRY_V1 — přesný titul i (a) bez druhového slova
     („hora Mount Everest“, „kniha Krakatit“ → „Krakatit (kniha)“/„Krakatit“),
@@ -124,11 +171,13 @@ def _presna_zaloha(q: str):
                 return zbytek, r
         zkus += ["%s (%s)" % (zbytek, u) for u in _UPRESNENI.get(sl[0].lower(), ())]
         zkus.append(zbytek)
+        zkus += _prvni_pad(zbytek)   # HANS_WIKI_PADY_VIC_V1 — „město Korsiky“ → Korsika
     _pg = _PRIVL_GEN.match(q.strip())
     if _pg:   # HANS_WIKI_DILO_DRUH_V1 — „Karlova mostu“ → „Karlův most“
         zkus.append("%sův %s" % (_pg.group(1), _pg.group(3)) if _pg.group(2)[0] == "o"
                     else "%sin %s" % (_pg.group(1), _pg.group(3)))
     zkus += _prvni_pad(q)
+    zkus += _prvni_pad_vic(q)   # HANS_WIKI_PADY_VIC_V1
     for z in zkus:
         r = _cil(z)
         if r and not db.execute("SELECT rozcestnik FROM clanek WHERE id=?",
