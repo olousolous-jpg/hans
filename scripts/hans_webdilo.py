@@ -55,6 +55,10 @@ def _gen(config, model, prompt, system, schema=None, num_predict=3000,
          num_gpu=99):
     from scripts.ollama_client import ollama_generate
     opts = {"temperature": temperature, "num_ctx": num_ctx, "num_predict": num_predict}
+    # HANS_WEB_QWEN3_NOTHINK_V1 (21. 10.) — qwen3 jako coder „přemýšlel nahlas“
+    # v odpovědi i s think=False (27 000 zn úvah, HTML nedopsal); měkký přepínač
+    if schema is None and re.search(r"qwen3", model, re.I):
+        prompt = (prompt or "") + "\n/no_think"
     if num_gpu is not None:      # None = rozložení GPU/CPU nech na Ollamě
         opts["num_gpu"] = num_gpu
     return ollama_generate(
@@ -219,9 +223,26 @@ def _obsah_html(t: dict) -> str:
         out.append("<section>")
         if o.get("nadpis"):
             out.append("<h2>%s</h2>" % _h.escape(o["nadpis"]))
-        out += ["<p>%s</p>" % _h.escape(p) for p in o["odstavce"]]
+        out += ["<p>%s</p>" % _kod(_h.escape(p)) for p in o["odstavce"]]
         out.append("</section>")
+    # HANS_WEB_NAVRH_V1 — datované události jako časová osa (dřív jen JSON,
+    # který žádná stránka nezobrazila)
+    ud = [u for u in (t.get("udalosti") or []) if u.get("rok") and u.get("co")]
+    if len(ud) >= 2:
+        def _rok(u):
+            m = re.search(r"\d{3,4}", str(u["rok"]))
+            return int(m.group(0)) if m else 9999
+        out.append('<section class="hans-osa-oddil"><h2>Časová osa</h2><ol class="hans-osa">')
+        out += ['<li><span class="rok">%s</span>%s</li>' % (_h.escape(str(u["rok"])),
+                                                           _kod(_h.escape(u["co"])))
+                for u in sorted(ud, key=_rok)]
+        out.append("</ol></section>")
     return "\n".join(out)
+
+
+def _kod(t: str) -> str:
+    """HANS_WEB_NAVRH_V1 — `zápis` v textu → <code> (dřív holé zpětné apostrofy)."""
+    return re.sub(r"`([^`]{1,120})`", r"<code>\1</code>", t or "")
 
 
 def _poznamka_jako_text(note: str) -> dict:
@@ -229,6 +250,225 @@ def _poznamka_jako_text(note: str) -> dict:
     return {"perex": "", "oddily": [{"nadpis": "", "odstavce": [
         p.strip() for p in re.split(r"\n\s*\n", note or "") if p.strip()] or [note]}],
         "udalosti": [], "stat": {"znaku": len(note or ""), "zaloha": True}}
+
+
+# ── 2b) NÁVRHOVÝ SYSTÉM Z VLASTNÍCH POZNÁMEK ─────────────────────────────
+# HANS_WEB_NAVRH_V1 (21. 10.) — uživatel: „píše o designu stránek a sám ho
+# nepoužívá“. Plán bral výchozí šedé barvy z CSS knihoven; Hansovy poznámky
+# (základní barva podle tématu, harmonická paleta, typografická škála) se
+# k němu nedostaly. Teď si Hans z poznámek sestaví návrhový systém, kód z něj
+# vyrobí CSS proměnné, coder je musí použít a sonda změří, jestli je stránka
+# dodržuje. Volba se opírá o doslovnou citaci z poznámky (kontrola kódem).
+_NAVRH_TEMATA = re.compile(r"barv|typograf|písm|pism|font|ux|ui\b|přístupn|pristupn|"
+                           r"estetik|design|rozvržen|hierarch", re.I)
+_PISMA = {
+    "bezpatkove": "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "patkove": "Georgia, Cambria, 'Times New Roman', Times, serif",
+    "humanisticke": "'Gill Sans', 'Trebuchet MS', Calibri, 'Noto Sans', 'DejaVu Sans', sans-serif",
+    "geometricke": "Futura, 'Century Gothic', 'URW Gothic', Avenir, sans-serif",
+    "strojopisne": "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'DejaVu Sans Mono', monospace",
+}
+_ROLE = ("pozadi", "povrch", "text", "text_tlumeny", "primarni", "akcent")
+_NAVRH_SYSTEM = (
+    "You are a web designer who studied web design and wrote the NOTES below "
+    "himself. Design the visual system of a website about the given topic by "
+    "APPLYING WHAT YOUR NOTES SAY (how to choose a base colour, build a palette, "
+    "use few colours, type scale, hierarchy, whitespace, contrast). Do not use "
+    "generic grey defaults; the base colour must suit the topic. For every "
+    "decision give the reason and quote, VERBATIM, the sentence from the notes it "
+    "follows (copy it exactly, in Czech).")
+
+
+def _hex(h):
+    h = str(h or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", h):
+        return h.lower()
+    if re.fullmatch(r"#[0-9a-fA-F]{3}", h):
+        return "#" + "".join(c * 2 for c in h[1:]).lower()
+    return None
+
+
+def _rgb(h):
+    return [int(h[i:i + 2], 16) for i in (1, 3, 5)]
+
+
+def _lum(c):
+    a = [v / 255 for v in c]
+    a = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in a]
+    return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]
+
+
+def _kontrast(a, b):
+    la, lb = _lum(_rgb(a)), _lum(_rgb(b))
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def _dorovnej(barva, pozadi, cil):
+    """Ztmav/zesvětli barvu, dokud nemá vůči pozadí kontrast `cil`."""
+    if _kontrast(barva, pozadi) >= cil:
+        return barva
+    tmavsi = _lum(_rgb(pozadi)) > 0.18
+    c = _rgb(barva)
+    for k in range(1, 21):
+        n = [round(v * (1 - k / 20)) if tmavsi else round(v + (255 - v) * k / 20) for v in c]
+        h = "#%02x%02x%02x" % tuple(n)
+        if _kontrast(h, pozadi) >= cil:
+            return h
+    return "#000000" if tmavsi else "#ffffff"
+
+
+def _norm_cit(s):
+    return re.sub(r"\s+", " ", re.sub(r"[„“\"'”]", "", s or "")).strip().lower()
+
+
+def _poznamky_o_designu(db_path: str, notes: list) -> list:
+    """Hansovy studijní poznámky o designu z JAKÉHOKOLI programu (dílo o hradech
+    má navrhovat podle toho, co se naučil o webu, ne podle poznámek o hradech).
+    Poznámky díla samotného jen tehdy, když jsou o designu."""
+    out, vid = [], set()
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
+        rows = con.execute("SELECT title, COALESCE(NULLIF(data,''),note) FROM diary "
+                           "WHERE event_type='study_note' ORDER BY ts DESC LIMIT 400").fetchall()
+        con.close()
+    except Exception:
+        rows = []
+    for title, text in rows:
+        sub = title.split("—", 1)[1].strip() if "—" in (title or "") else (title or "")
+        if _NAVRH_TEMATA.search(sub) and sub not in vid and (text or "").strip():
+            vid.add(sub); out.append({"sub": sub, "text": text.strip()})
+    for n in notes:
+        if _NAVRH_TEMATA.search(n.get("sub", "")) and n["sub"] not in vid:
+            vid.add(n["sub"]); out.append(n)
+    return out
+
+
+def navrh_system(config: dict, topic: str, notes: list, db_path: str = "",
+                 obsah: str = "") -> Optional[dict]:
+    vyber = _poznamky_o_designu(db_path, notes) if db_path else \
+        [n for n in notes if _NAVRH_TEMATA.search(n.get("sub", ""))]
+    if not vyber:
+        _log.info("webdilo: návrhový systém — žádné poznámky o designu, vynechávám")
+        return None
+    text = "\n\n".join("## %s\n%s" % (n["sub"], n["text"]) for n in vyber)[:14000]
+    sablona = json.dumps({
+        "zakladni_barva": "#rrggbb", "proc_barva_cz": "<1 česká věta>",
+        "citace_barva": "<doslovná věta z poznámek>",
+        "paleta": {r: "#rrggbb" for r in _ROLE},
+        "proc_paleta_cz": "<1 česká věta>", "citace_paleta": "<doslovná věta z poznámek>",
+        "pismo_nadpisy": "|".join(_PISMA), "pismo_text": "|".join(_PISMA),
+        "zaklad_px": 17, "pomer_skaly": 1.25, "proc_typografie_cz": "<1 česká věta>",
+        "citace_typografie": "<doslovná věta z poznámek>",
+        "mezera_rem": 1.25, "zaobleni_px": 6}, ensure_ascii=False)
+    model = _cfg(config).get("plan_model", "qwen3:30b")
+    for pokus in range(2):
+        j = _json(_gen(config, model, "Website topic: %s\nWhat the site is about "
+                       "(the base colour and mood must suit THIS):\n%s\n\nMY NOTES ON "
+                       "DESIGN (Czech):\n%s\n\nAnswer ONLY this JSON (replace every "
+                       "<...>, choose one font family name from the list):\n%s"
+                       % (topic, obsah or topic, text, sablona),
+                       _NAVRH_SYSTEM, schema="json", num_predict=1500, temperature=0.4,
+                       num_gpu=None, timeout=1200))
+        ds = _over_navrh(j, text)
+        if ds:
+            return ds
+        _log.warning("webdilo: návrhový systém pokus %d nepoužitelný", pokus + 1)
+    return None
+
+
+def _over_navrh(j, poznamky: str) -> Optional[dict]:
+    if not isinstance(j, dict):
+        return None
+    pal = {r: _hex((j.get("paleta") or {}).get(r)) for r in _ROLE}
+    if not all(pal[r] for r in ("pozadi", "text", "primarni")):
+        return None
+    pal["povrch"] = pal["povrch"] or pal["pozadi"]
+    pal["akcent"] = pal["akcent"] or pal["primarni"]
+    pal["text_tlumeny"] = pal["text_tlumeny"] or pal["text"]
+    # kontrast hlídá kód (WCAG 4,5:1), ne model
+    for r, cil in (("text", 7.0), ("text_tlumeny", 4.5), ("primarni", 4.5)):
+        pal[r] = _dorovnej(pal[r], pal["pozadi"], cil)
+        pal[r] = _dorovnej(pal[r], pal["povrch"], 4.5)
+    pn = _norm_cit(poznamky)
+    opory = {}
+    for k in ("barva", "paleta", "typografie"):
+        c = str(j.get("citace_" + k) or "").strip()
+        opory[k] = {"proc": str(j.get("proc_%s_cz" % k) or "").strip()[:300],
+                    "citace": c if len(_norm_cit(c)) >= 25 and _norm_cit(c)[:60] in pn else ""}
+    try:
+        zaklad = min(20.0, max(16.0, float(j.get("zaklad_px") or 17)))
+        pomer = min(1.414, max(1.125, float(j.get("pomer_skaly") or 1.25)))
+        mezera = min(2.0, max(0.75, float(j.get("mezera_rem") or 1.25)))
+        zaobl = min(16, max(0, int(float(j.get("zaobleni_px") or 6))))
+    except Exception:
+        zaklad, pomer, mezera, zaobl = 17.0, 1.25, 1.25, 6
+    ph = str(j.get("pismo_nadpisy") or "").strip().lower()
+    pt = str(j.get("pismo_text") or "").strip().lower()
+    return {"paleta": pal, "zakladni_barva": _hex(j.get("zakladni_barva")) or pal["primarni"],
+            "pismo_nadpisy": ph if ph in _PISMA else "bezpatkove",
+            "pismo_text": pt if pt in _PISMA else "bezpatkove",
+            "skala": [round(zaklad * pomer ** i, 1) for i in range(-1, 6)],
+            "zaklad_px": zaklad, "pomer": pomer, "mezera_rem": mezera, "zaobleni_px": zaobl,
+            "opory": opory}
+
+
+def _fs_jmeno(i: int) -> str:
+    return "fs-s" if i == 0 else "fs-%d" % (i - 1)
+
+
+def navrh_css(ds: dict) -> str:
+    p, s = ds["paleta"], ds["skala"]
+    v = ["--barva-%s:%s" % (r.replace("_", "-"), p[r]) for r in _ROLE]
+    # v rem (Hansovo pravidlo: velikost písma v relativních jednotkách)
+    v += ["--%s:%.3frem" % (_fs_jmeno(i), x / 16.0) for i, x in enumerate(s)]
+    v += ["--pismo-nadpisy:%s" % _PISMA[ds["pismo_nadpisy"]],
+          "--pismo-text:%s" % _PISMA[ds["pismo_text"]],
+          "--mezera:%grem" % ds["mezera_rem"], "--zaobleni:%dpx" % ds["zaobleni_px"]]
+    return (":root{%s}\n"
+            "body{background:var(--barva-pozadi);color:var(--barva-text);"
+            "font-family:var(--pismo-text);font-size:var(--fs-0);line-height:1.6}\n"
+            "h1,h2,h3{font-family:var(--pismo-nadpisy);line-height:1.2}"
+            "h1{font-size:var(--fs-4)}h2{font-size:var(--fs-2)}h3{font-size:var(--fs-1)}\n"
+            "a{color:var(--barva-primarni)}"
+            "code{font-family:%s;font-size:.92em;background:var(--barva-povrch);"
+            "padding:.1em .35em;border-radius:4px}\n"
+            ".hans-osa{list-style:none;margin:calc(var(--mezera)*1.5) 0;padding:0 0 0 1.25rem;"
+            "border-left:3px solid var(--barva-akcent)}"
+            ".hans-osa li{margin:0 0 var(--mezera);position:relative}"
+            ".hans-osa li::before{content:'';position:absolute;left:-1.72rem;top:.45em;"
+            "width:.7rem;height:.7rem;border-radius:50%%;background:var(--barva-akcent)}"
+            ".hans-osa .rok{display:block;font-weight:700;color:var(--barva-primarni)}"
+            % (";".join(v), _PISMA["strojopisne"]))
+
+
+def navrh_pro_kodera(ds: dict) -> str:
+    p = ds["paleta"]
+    return ("HANS'S DESIGN SYSTEM (derived from his own study notes — follow it):\n"
+            "Colours (use ONLY these, through the CSS variables): "
+            + ", ".join("--barva-%s %s" % (r.replace("_", "-"), p[r]) for r in _ROLE)
+            + ".\nType scale (use ONLY these font sizes): "
+            + ", ".join("--" + _fs_jmeno(i) for i in range(len(ds["skala"])))
+            + " = " + ", ".join("%gpx" % x for x in ds["skala"])
+            + ".\nFonts: headings var(--pismo-nadpisy), text var(--pismo-text). Spacing "
+            "unit var(--mezera), corner radius var(--zaobleni). The :root block with "
+            "these variables is already in every page — do not redefine them, do not "
+            "add other colours or font sizes. Make the base colour visible (headers, "
+            "links, accents) and use generous whitespace.")
+
+
+def navrh_cz(ds: dict) -> str:
+    """Věta do kritiky díla: co Hans zvolil a o kterou svou poznámku se opřel."""
+    out = []
+    for k, co in (("barva", "Hlavní barvu %s jsem zvolil" % ds["paleta"]["primarni"]),
+                  ("typografie", "Typografickou škálu %g × %g px jsem zvolil"
+                   % (ds["pomer"], ds["zaklad_px"]))):
+        o = ds["opory"].get(k) or {}
+        if o.get("citace"):
+            out.append("%s podle své poznámky: „%s“" % (co, o["citace"][:200]))
+        elif o.get("proc"):
+            out.append("%s, protože %s (doslovnou oporu v poznámkách jsem nenašel)"
+                       % (co, o["proc"][:200].rstrip(".").lower()))
+    return (". ".join(out) + ".") if out else ""
 
 
 # ── 3) VOLBA NÁSTROJŮ ─────────────────────────────────────────────────────
@@ -626,7 +866,8 @@ addEventListener('load',function(){setTimeout(function(){
  var fl={};all.forEach(function(e){var r=e.getBoundingClientRect();if(!(r.width>0&&r.right>innerWidth+2))return;var q=e.parentElement;for(var i=0;i<4&&q&&q!==document.body;i++,q=q.parentElement){var cs=getComputedStyle(q);if(/flex/.test(cs.display)&&/^row/.test(cs.flexDirection)&&cs.flexWrap==='nowrap'&&q.children.length>=3){fl[sel(q)]=q.children.length;break}}});
  var pw=ps.map(function(p){return p.getBoundingClientRect().width}),gq='';
  if(ps.length){var q=ps[0].parentElement;for(var i=0;i<6&&q&&q!==document.body;i++,q=q.parentElement){var cs=getComputedStyle(q);if(cs.display==='grid'&&cs.gridTemplateColumns.split(' ').length>1){gq=sel(q)+' ('+cs.gridTemplateColumns.split(' ').length+' columns, '+q.children.length+' children)';break}}}
- document.title='SONDA PW='+(pw.length?med(pw).toFixed(0):-1)+' GQ='+enc(gq)+' FL='+enc(JSON.stringify(Object.keys(fl).slice(0,3).map(function(k){return [k,fl[k]]})))+' MQ='+mq+' RP='+rp+' FG='+fg+' FI='+fi+' NA='+na+' LG='+lg+' SEM='+sem+' PM='+pm+' BX='+bx+' MO='+(mo.length?med(mo).toFixed(2):-1)+' DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
+ var cols={};all.forEach(function(e){var r=e.getBoundingClientRect();if(!r.width||!r.height)return;var cs=getComputedStyle(e);if(cs.visibility==='hidden')return;var tx=[].slice.call(e.childNodes).some(function(n){return n.nodeType===3&&n.textContent.trim().length>1});var f=rgb(cs.color),b=rgb(cs.backgroundColor);if(tx&&f)cols[f.slice(0,3).join(',')]=1;if(b&&(b.length<4||b[3]>0.5))cols[b.slice(0,3).join(',')]=1});
+ document.title='SONDA COL='+enc(Object.keys(cols).slice(0,40).join(';'))+' FSL='+Object.keys(sizes).join(',')+' PW='+(pw.length?med(pw).toFixed(0):-1)+' GQ='+enc(gq)+' FL='+enc(JSON.stringify(Object.keys(fl).slice(0,3).map(function(k){return [k,fl[k]]})))+' MQ='+mq+' RP='+rp+' FG='+fg+' FI='+fi+' NA='+na+' LG='+lg+' SEM='+sem+' PM='+pm+' BX='+bx+' MO='+(mo.length?med(mo).toFixed(2):-1)+' DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
 },1500)});
 </script>"""
 
@@ -648,7 +889,9 @@ class _Server:
 
 _ZAKLAD_CSS = ("<style>*,*::before,*::after{box-sizing:border-box}"
                "img,video,svg{max-width:100%;height:auto}</style>")
-_VYPLN = re.compile(r"V[áa][šs] n[áa]zev|lorem ipsum|example\.com|your (site|name|title)|Tesslate|Vytvo[řr]eno (s|pomoc[íi])", re.I)
+_VYPLN = re.compile(r"V[áa][šs] n[áa]zev|lorem ipsum|example\.com|your (site|name|title)|Tesslate|Vytvo[řr]eno (s|pomoc[íi])"
+                    r"|and so on for|repeat (the above|for each)|(more|other) (cards|articles) here"
+                    r"|\{\{[^}]{1,60}\}\}", re.I)   # HANS_WEB_NAVRH_V1
 
 _CHROM = ["chromium", "--headless=new", "--no-sandbox", "--disable-gpu",
           "--hide-scrollbars", "--disable-extensions", "--no-first-run"]
@@ -683,6 +926,8 @@ def _sonda(url: str, w: int) -> dict:
             "zpravy": unquote(d.get("M", "")), "pretece": unquote(d.get("O", "")),
             "flex_radky": _json_list(unquote(d.get("FL", "") or "[]")),   # HANS_WEB_PRETECENI_V1
             "sirka_odstavce": int(float(d.get("PW", -1))),           # HANS_WEB_UZKY_SLOUPEC_V1
+            "barvy": [x for x in unquote(d.get("COL", "")).split(";") if x],   # HANS_WEB_NAVRH_V1
+            "velikosti": [float(x) for x in (d.get("FSL") or "").split(",") if x],
             "mrizka": unquote(d.get("GQ", "")),
             "kontrast": int(d.get("K", 0)), "kontrast_ukazky": unquote(d.get("KM", "")),
             "velikosti_pisma": int(d.get("F", 0)),
@@ -806,7 +1051,10 @@ def _doplnit_karty(idx: str, stranky: list) -> str:
         if not chybi:
             return idx
         karta = odkazy[0]
-        while (karta.parent is not None and karta.parent.name not in ("body", "main", "html")
+        def _je_karta(x):
+            return x.name in ("article", "li") or "card" in " ".join(x.get("class") or []).lower()
+        while (not _je_karta(karta) and karta.parent is not None
+               and karta.parent.name not in ("body", "main", "html", "section", "ul", "ol")
                and len(karta.parent.find_all("a", href=det)) <= 1):
             karta = karta.parent
         posledni = karta
@@ -847,6 +1095,7 @@ def problemy(kontrola: dict) -> dict:
     """Deterministické problémy → {"index": [...], "sablona": [...]}."""
     out = {"index": [], "sablona": []}
     pretek = {}
+    uzky = {}
     # HANS_WEB_KARTY_V1 (21. 10.) — opravné kolo 21. 10. přepsalo úvod na 3 kB
     # s odkazem na 1 ze 14 podstránek a to kolo vyhrálo jako „bez vad“
     _det = sorted(n for n in kontrola["stranky"] if n != "index.html")
@@ -881,11 +1130,10 @@ def problemy(kontrola: dict) -> dict:
             # o 3 sloupcích na <main> s jediným článkem); hlídala se jen horní mez
             _pw = d.get("sirka_odstavce") or -1
             if rez == "desktop" and 0 < _pw < 0.4 * min(d.get("okno") or 1280, 1100):
-                out[cil].append("article text squeezed into a narrow column on desktop "
-                                "(paragraphs ~%dpx wide in a %dpx window)%s — let the "
-                                "article use the full content width"
-                                % (_pw, d.get("okno") or 0,
-                                   ("; CAUSE: grid on %s" % d["mrizka"]) if d.get("mrizka") else ""))
+                uz = uzky.setdefault(cil, {"n": 0, "min": 9999, "max": 0, "okno": d.get("okno") or 0,
+                                           "pricina": ""})
+                uz["n"] += 1; uz["min"] = min(uz["min"], _pw); uz["max"] = max(uz["max"], _pw)
+                uz["pricina"] = uz["pricina"] or d.get("mrizka") or ""
             if not d.get("h1"):
                 out[cil].append("page has no <h1> heading")
             if d.get("kontrast"):
@@ -900,6 +1148,34 @@ def problemy(kontrola: dict) -> dict:
         m = _VYPLN.search(re.sub(r"<[^>]+>", " ", v.get("_html", "")))
         if m:
             out[cil].append("template filler text on the page: \u201e%s\u201c" % m.group(0))
+    ds = kontrola.get("navrh")                                   # HANS_WEB_NAVRH_V1
+    if ds:
+        pal = [_rgb(h) for h in ds["paleta"].values()] + [[255, 255, 255], [0, 0, 0]]
+        for name, v in kontrola["stranky"].items():
+            cil = "index" if name == "index.html" else "sablona"
+            d = v.get("desktop") or {}
+            mimo = []
+            for c in d.get("barvy") or []:
+                try:
+                    rgb = [int(x) for x in c.split(",")]
+                except Exception:
+                    continue
+                if min(sum((a_ - b_) ** 2 for a_, b_ in zip(rgb, q)) for q in pal) > 40 ** 2:
+                    mimo.append("rgb(%s)" % c)
+            if len(mimo) > 2:
+                out[cil].append("%d colours outside Hans's palette (%s) — use only the "
+                                "--barva-* variables" % (len(mimo), ", ".join(mimo[:5])))
+            mimo_s = sorted({x for x in d.get("velikosti") or []
+                             if min(abs(x - y) for y in ds["skala"]) > 1.5})
+            if len(mimo_s) > 1:
+                out[cil].append("font sizes outside Hans's type scale (%s px) — use only "
+                                "the --fs-* variables" % ", ".join("%g" % x for x in mimo_s[:6]))
+    for cil, uz in uzky.items():
+        out[cil].append("article text squeezed into a narrow column on desktop on %d page(s) "
+                        "(paragraphs %d–%dpx wide in a %dpx window)%s — let the article use "
+                        "the full content width" % (uz["n"], uz["min"], uz["max"], uz["okno"],
+                                                     ("; CAUSE: grid on %s" % uz["pricina"])
+                                                     if uz["pricina"] else ""))
     for (cil, okno), pr in pretek.items():
         msg = ("horizontal overflow at %dpx width on %d page(s) (content up to %dpx); "
                "elements sticking out: %s" % (okno, pr["n"], pr["max"], pr["vzor"]))
@@ -1155,6 +1431,24 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
     if not plan:
         _log.warning("webdilo: volba nástrojů selhala"); return None
     vyrazeno = zkontroluj_volbu(plan, inv)
+    # HANS_WEB_NAVRH_V1 — návrhový systém z vlastních poznámek (mezipaměť u díla)
+    navrh_p = dest_dir / "_navrh.json"
+    try:
+        ds = json.loads(navrh_p.read_text(encoding="utf-8"))
+    except Exception:
+        ds = None
+    if not ds and _cfg(config).get("navrh_system", True):
+        ds = navrh_system(config, topic, notes, db_path,
+                          "; ".join("%s: %s" % (s["sub"], (s["text"].get("perex") or "")[:160])
+                                    for s in stranky[:8]))
+        if ds:
+            navrh_p.write_text(json.dumps(ds, ensure_ascii=False, indent=1), encoding="utf-8")
+    if ds:
+        plan["typography_colors"] = navrh_pro_kodera(ds)
+        _log.info("webdilo: návrhový systém — základ %s, paleta %s, písmo %s/%s, škála %s, "
+                  "opora %s", ds["zakladni_barva"], list(ds["paleta"].values()),
+                  ds["pismo_nadpisy"], ds["pismo_text"], ds["skala"],
+                  {k: bool(v.get("citace")) for k, v in ds["opory"].items()})
     libs, lib_chyby = stahni_knihovny(plan.get("libraries") or [], dest_dir)
     _log.info("webdilo: volba — %s | knihovny %s | vyřazeno %s | chyby %s",
               (plan.get("concept") or "")[:120], [l["npm"] for l in libs],
@@ -1203,6 +1497,16 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
             h = re.sub(r"GEN:[^\"')]+", "", h)
             # základ, který má každý profesionální web (a coder ho vynechává):
             # bez box-sizing přetekla patička `width:100%` + padding o 32 px
+            if ds and 'id="hans-navrh"' not in h:          # HANS_WEB_NAVRH_V1
+                _blok = '<style id="hans-navrh">%s</style>' % navrh_css(ds)
+                h = (h.replace("<head>", "<head>\n" + _blok, 1) if "<head>" in h
+                     else _blok + h)
+            if ds and 'id="hans-navrh-promenne"' not in h and "</head>" in h:
+                # coder 21. 10. :root předefinoval (Arial/Georgia) — Hansovy
+                # proměnné až za jeho CSS a s !important
+                _pv = re.search(r":root\{([^}]*)\}", navrh_css(ds)).group(1)
+                h = h.replace("</head>", '<style id="hans-navrh-promenne">:root{%s}</style>\n</head>'
+                              % ";".join(x + "!important" for x in _pv.split(";") if x), 1)
             if _ZAKLAD_CSS not in h:
                 h = (h.replace("<head>", "<head>\n" + _ZAKLAD_CSS, 1)
                      if "<head>" in h else _ZAKLAD_CSS + h)
@@ -1219,6 +1523,7 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
             (dest_dir / name).write_text(h, encoding="utf-8")
         kon = zkontroluj(config, pages, dest_dir, dest_dir / "_kontrola" / ("kolo%d" % kolo),
                          prahy=_prahy_kontrastu(db_path))
+        kon["navrh"] = ds                                   # HANS_WEB_NAVRH_V1
         pr = problemy(kon)
         kritika = _porusena_pravidla(db_path, kon)      # HANS_PRIRUCKA_V1
         for cil, vs in kritika.items():
@@ -1298,11 +1603,13 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
         "kola": [{k: v for k, v in h.items() if k not in ("idx", "sab")} for h in historie],
         "vybrane_kolo": best["kolo"], "zbyle_vady": zbyle,
         "prirucka_pravidel": len(_hp_pravidla(db_path)),
+        "navrh": ds,                                            # HANS_WEB_NAVRH_V1
         "vymahano": vymahano,
         "kritika": ((("Při kontrole jsem porušil svá pravidla (%s) a opravil jsem to podle "
                       "nich. " % ", ".join(_POPIS_METRIKY.get(m, m) for m in opraveno))
                      if opraveno else "")
-                    + _kritika_cz(best.get("kritika") or {}, len(_hp_pravidla(db_path)))).strip(),
+                    + _kritika_cz(best.get("kritika") or {}, len(_hp_pravidla(db_path)))
+                    + ((" " + navrh_cz(ds)) if ds else "")).strip(),
         "obrazky": [rendered, total], "sekund": round(time.time() - t0)}
     (dest_dir / "dilo.json").write_text(json.dumps(zaznam, ensure_ascii=False, indent=1),
                                         encoding="utf-8")
