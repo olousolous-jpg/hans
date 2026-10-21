@@ -747,6 +747,7 @@ def _post_with_retry(url: str, payload: dict, timeout: int,
     ⚠️ Nesmí změnit chování: měření je v `try/except` a výsledek se vrací
     beze změny, výjimka se propaguje dál."""
     _sjednot_okno(payload)            # HANS_OLLAMA_RESIDENT_CTX_V1
+    _na_gpu_v_davce(payload)          # HANS_BASE_BATCH_GPU_V1
     try:   # HANS_BASE_SLOT_RENEW_V1 — dva pokusy po `timeout` + rezerva
         prodluz_base_slot(2 * float(timeout or 300) + 300)
     except Exception:
@@ -762,6 +763,43 @@ def _post_with_retry(url: str, payload: dict, timeout: int,
         finally:
             _VELKY_LOCK.release()
     return _post_with_retry_merene(url, payload, timeout, extractor)
+
+
+# HANS_BASE_BATCH_GPU_V1 (21. 10.) — studijní model (OpenEuroLLM) má v Modelfile
+# `num_gpu 1` a studium, příručka ani večerní analytika mu `num_gpu` nepředávají
+# → běžel skoro celý v RAM procesoru (8 GB, ~6× pomaleji; paměť
+# ollama-num-gpu-cpu-fallback). V noci 20.→21. 10. tak RAM držel vedle qwen3
+# a PC zamrzlo. Uvnitř base dávky (`base_model_batch`: toto vlákno drží slot,
+# keepalive je pozastavený a hans-czech uvolněný) je grafika volná → num_gpu 99.
+# Mimo dávku se nemění nic (přes den by vyhodil hans-czech). Seznam modelů:
+# `ollama_gpu_v_davce.modely` v configu.
+_GPU_V_DAVCE = None
+
+
+def _na_gpu_v_davce(payload: dict) -> None:
+    global _GPU_V_DAVCE
+    try:
+        if _GPU_V_DAVCE is None:
+            try:
+                from scripts import config_io
+                _GPU_V_DAVCE = tuple((config_io.load().get("ollama_gpu_v_davce", {}) or {})
+                                     .get("modely") or ("jobautomation/OpenEuroLLM-Czech",))
+            except Exception:
+                _GPU_V_DAVCE = ("jobautomation/OpenEuroLLM-Czech",)
+        model = str((payload or {}).get("model") or "")
+        if not any(model.startswith(m) for m in _GPU_V_DAVCE):
+            return
+        o = payload.get("options")
+        if isinstance(o, dict) and "num_gpu" in o:
+            return                       # volající rozhodl sám
+        with _warmup_state_lock:
+            drzim = (_base_slot_thread == threading.get_ident()
+                     and time.time() < _base_slot_until)
+        if not (drzim and warmup_paused()):
+            return
+        payload["options"] = dict(o or {}, num_gpu=99)
+    except Exception:
+        pass
 
 
 # HANS_VELKY_MODEL_V1 (21. 10.) — qwen3:30b (~19,5 GB RAM) smí v jednu chvíli

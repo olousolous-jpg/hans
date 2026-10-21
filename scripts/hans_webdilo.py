@@ -604,7 +604,20 @@ addEventListener('load',function(){setTimeout(function(){
  function med(a){if(!a.length)return -1;a=a.slice().sort(function(x,y){return x-y});return a[Math.floor(a.length/2)]}
  var cile=[].slice.call(document.querySelectorAll('button,nav a,header a,[role=button],a.btn,a.button')).map(function(e){var r=e.getBoundingClientRect();return Math.min(r.width,r.height)}).filter(function(v){return v>0});
  var ff=getComputedStyle(document.body).fontFamily.toLowerCase(),gen=/(serif|sans-serif|monospace|system-ui|cursive|fantasy)\s*$/.test(ff)?1:0;
- document.title='SONDA DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
+ var css='';[].slice.call(document.styleSheets).forEach(function(s){try{[].slice.call(s.cssRules).forEach(function(r){css+=r.cssText+'\n'})}catch(x){}});
+ [].slice.call(document.querySelectorAll('[style]')).forEach(function(e){css+=e.getAttribute('style')+';\n'});
+ var mq=/@media[^{]*\((min|max)-width/i.test(css)?1:0;
+ var fsd=(css.match(/font-size\s*:\s*[^;}]+/gi)||[]),frel=fsd.filter(function(x){return /(rem|em|vw|vh|%|clamp|calc)/i.test(x)}).length,rp=(!fsd.length||frel/fsd.length>=0.8)?1:0;
+ var fg=all.some(function(e){return /^(inline-)?(flex|grid)$/.test(getComputedStyle(e).display)})?1:0;
+ var imgs=[].slice.call(document.images),fi=imgs.every(function(i){return getComputedStyle(i).maxWidth==='100%'})?1:0,na=imgs.filter(function(i){return !i.hasAttribute('alt')}).length;
+ var lg=(document.documentElement.getAttribute('lang')||'').trim()?1:0;
+ var sem=['header','nav','main','footer'].filter(function(t){return document.querySelector(t)}).length;
+ var anim=/@keyframes|animation(-name)?\s*:\s*(?!none)|transition(-property)?\s*:\s*(?!none)/i.test(css),pm=anim?(/prefers-reduced-motion/i.test(css)?1:0):1;
+ var BOXP=/^(width|height|top|left|right|bottom|margin|padding)/i,bx=0;
+ [].slice.call(document.styleSheets).forEach(function(s){try{[].slice.call(s.cssRules).forEach(function(r){if(r.type===7)[].slice.call(r.cssRules).forEach(function(k){for(var i=0;i<k.style.length;i++)if(BOXP.test(k.style[i]))bx++})})}catch(x){}});
+ all.forEach(function(e){var cs=getComputedStyle(e);if(cs.transitionDuration&&cs.transitionDuration.split(',').some(function(d){return parseFloat(d)>0})&&cs.transitionProperty.split(',').some(function(p){return BOXP.test(p.trim())}))bx++});
+ var mo=[];ps.forEach(function(p){var cs=getComputedStyle(p),lh=parseFloat(cs.lineHeight)||parseFloat(cs.fontSize)*1.2,n=p.nextElementSibling,mt=n?parseFloat(getComputedStyle(n).marginTop)||0:0;if(n&&n.tagName==='P')mo.push(Math.max(parseFloat(cs.marginBottom)||0,mt)/lh)});
+ document.title='SONDA MQ='+mq+' RP='+rp+' FG='+fg+' FI='+fi+' NA='+na+' LG='+lg+' SEM='+sem+' PM='+pm+' BX='+bx+' MO='+(mo.length?med(mo).toFixed(2):-1)+' DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
 },1500)});
 </script>"""
 
@@ -667,7 +680,13 @@ def _sonda(url: str, w: int) -> dict:
                   for k, z in (("delka_radku", "DL"), ("radkovani", "RH"),
                                ("velikost_pisma_textu", "PF"), ("velikost_cilu", "TS"),
                                ("polozky_navigace", "NV"), ("obecne_pismo", "GF"),
-                               ("kontrast", "KN"), ("kontrast_velky", "KV"))}}
+                               ("kontrast", "KN"), ("kontrast_velky", "KV"),
+                               # HANS_PRIRUCKA_METRIKY_V2
+                               ("media_dotazy", "MQ"), ("relativni_pismo", "RP"),
+                               ("flex_grid", "FG"), ("fluidni_obrazky", "FI"),
+                               ("lang", "LG"), ("semanticke_znacky", "SEM"),
+                               ("omezeny_pohyb", "PM"), ("mezera_odstavcu", "MO"))},
+            "chybi_alt": int(d.get("NA", 0)), "animace_box": int(d.get("BX", 0))}
 
 
 def _snimek(url: str, w: int, path: str):
@@ -817,10 +836,16 @@ def _porusena_pravidla(db_path: str, kon: dict) -> dict:
                 if x is None:
                     continue
                 horsi_min = k in ("kontrast", "kontrast_velky", "radkovani",
-                                  "velikost_cilu", "velikost_pisma_textu", "obecne_pismo")
+                                  "velikost_cilu", "velikost_pisma_textu", "obecne_pismo",
+                                  "mezera_odstavcu", "semanticke_znacky") or k in _hp.ANO_NE
                 vals[k] = x if k not in vals else (min(vals[k], x) if horsi_min else max(vals[k], x))
             if d.get("velikosti_pisma"):
                 vals["velikosti_pisma"] = max(vals.get("velikosti_pisma", 0), d["velikosti_pisma"])
+            # HANS_PRIRUCKA_METRIKY_V2 — počty převedené na ano/ne (nejhorší stránka)
+            for k, x in (("alt_obrazku", 0 if d.get("chybi_alt") else 1),
+                         ("bez_animace_box_modelu", 0 if d.get("animace_box") else 1)):
+                if "m" in d:
+                    vals[k] = min(vals.get(k, 1), x)
         # kontrastní pravidlo pod 4,5 je pravidlo pro VELKÝ text
         porus = []
         for p in _hp.zkontroluj(db_path, {k: vals.get(k) for k in _hp.METRIKY if k != "kontrast"}):
@@ -846,7 +871,13 @@ _POPIS_METRIKY = {"kontrast": "kontrast", "delka_radku": "délka řádku",
                   "radkovani": "řádkování", "velikost_cilu": "velikost ovládacích prvků",
                   "velikost_pisma_textu": "velikost písma", "obecne_pismo": "záložní písmo",
                   "polozky_navigace": "počet položek navigace",
-                  "velikosti_pisma": "počet velikostí písma"}
+                  "velikosti_pisma": "počet velikostí písma",
+                  "media_dotazy": "breakpointy", "relativni_pismo": "relativní velikost písma",
+                  "flex_grid": "flexbox/grid", "fluidni_obrazky": "pružné obrázky",
+                  "alt_obrazku": "popisky obrázků", "lang": "jazyk stránky",
+                  "semanticke_znacky": "sémantické značky", "omezeny_pohyb": "omezený pohyb",
+                  "bez_animace_box_modelu": "animace bez přepočtu rozvržení",
+                  "mezera_odstavcu": "mezera mezi odstavci"}
 
 
 def _prahy_kontrastu(db_path: str) -> tuple:
@@ -882,6 +913,12 @@ def _vymahani_css(db_path: str, kon: dict, kritika: dict) -> dict:
                 radky.append("p,li{line-height:%g!important}" % prah)
             elif m == "velikost_pisma_textu" and prah:
                 radky.append("p,li{font-size:max(%gpx,1rem)!important}" % prah)
+            elif m == "omezeny_pohyb":      # HANS_PRIRUCKA_METRIKY_V2
+                radky.append("@media (prefers-reduced-motion:reduce){*,*::before,*::after"
+                             "{animation-duration:.01ms!important;animation-iteration-count:1!important;"
+                             "transition-duration:.01ms!important;scroll-behavior:auto!important}}")
+            elif m == "mezera_odstavcu" and prah:
+                radky.append("p{margin-bottom:%gem!important}" % round(prah * 1.6, 2))
             elif m == "velikost_cilu" and prah:
                 radky.append("nav a,header a,button,[role=button]{min-height:%dpx;"
                              "display:inline-flex;align-items:center}" % prah)
@@ -903,6 +940,10 @@ def _kritika_cz(kritika: dict, n_pravidel: int) -> str:
     for cil, vs in kritika.items():
         kde = "na úvodní stránce" if cil == "index" else "na podstránkách"
         for v in vs:
+            if v["prah"] is None:       # HANS_PRIRUCKA_METRIKY_V2 — ano/ne pravidlo
+                vety.append("Porušil jsem své pravidlo „%s“ %s (zdroj %s)."
+                            % (v["pravidlo"], kde, v.get("zdroj") or "?"))
+                continue
             vety.append("Porušil jsem své pravidlo „%s“ %s (naměřeno %s, hranice %s; zdroj %s)."
                         % (v["pravidlo"], kde, _cislo(v["namereno"]), _cislo(v["prah"]),
                            v.get("zdroj") or "?"))
@@ -1046,8 +1087,11 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
         pr = problemy(kon)
         kritika = _porusena_pravidla(db_path, kon)      # HANS_PRIRUCKA_V1
         for cil, vs in kritika.items():
-            pr[cil] += ["breaks Hans's own handbook rule „%s“ (measured %s, limit %s)"
-                        % (v["pravidlo"], _cislo(v["namereno"]), _cislo(v["prah"])) for v in vs]
+            pr[cil] += [("breaks Hans's own handbook rule „%s“ (measured %s, limit %s)"
+                         % (v["pravidlo"], _cislo(v["namereno"]), _cislo(v["prah"])))
+                        if v["prah"] is not None else
+                        ("breaks Hans's own handbook rule „%s“ (not met on the page)" % v["pravidlo"])
+                        for v in vs]
         vl = kon.get("vady_vl") or {}
         # opravuje se jen podle DETERMINISTICKÝCH vad; výtky modelu na obrázky
         # byly v testech 26. 9. z velké části nepravdivé a opravy podle nich

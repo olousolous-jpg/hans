@@ -35,6 +35,18 @@ METRIKY = {
     "polozky_navigace": "počet odkazů v navigaci (max)",
     "obecne_pismo": "seznam písem končí obecnou rodinou (serif/sans-serif…), 1 = ano",
     "velikost_pisma_textu": "velikost písma odstavců v px (min)",
+    # HANS_PRIRUCKA_METRIKY_V2 (21. 10.) — z 24 pravidel se měřilo jen 5; tyhle
+    # umí sonda v `hans_webdilo` taky. Ano/ne metriky (1 = splněno) nepotřebují práh.
+    "media_dotazy": "stránka má @media dotazy na šířku okna (breakpointy), 1 = ano",
+    "relativni_pismo": "velikosti písma v CSS jsou v relativních jednotkách (rem/em/%/vw), 1 = ano",
+    "flex_grid": "rozvržení používá flexbox nebo CSS Grid, 1 = ano",
+    "fluidni_obrazky": "obrázky mají max-width 100 % (nepřetečou kontejner), 1 = ano",
+    "alt_obrazku": "každý obrázek má atribut alt, 1 = ano",
+    "lang": "dokument má jazyk v <html lang>, 1 = ano",
+    "semanticke_znacky": "stránka používá sémantické značky header/nav/main/footer, 1 = ano",
+    "omezeny_pohyb": "animace respektují prefers-reduced-motion, 1 = ano",
+    "bez_animace_box_modelu": "animace nemění width/height/top/left/margin/padding, 1 = ano",
+    "mezera_odstavcu": "mezera mezi odstavci jako násobek řádkování (min)",
     "zadna": "neměřitelné — jen pokyn",
 }
 
@@ -63,6 +75,12 @@ _SYSTEM = (
     "jinak 'zadna'. 'prah' = číslo z citace (např. 4.5), jinak null; 'smer' = "
     "min/max/rovno/zadny. Obecné rady bez opory v materiálu nevypisuj. Nabídka "
     "metrik: " + "; ".join("%s = %s" % kv for kv in METRIKY.items()))
+
+
+# ano/ne metriky: porušené, když sonda naměří 0 (práh není potřeba)
+ANO_NE = {"obecne_pismo", "media_dotazy", "relativni_pismo", "flex_grid",
+          "fluidni_obrazky", "alt_obrazku", "lang", "omezeny_pohyb",
+          "bez_animace_box_modelu", "semanticke_znacky"}
 
 
 def _db(db_path: str):
@@ -110,7 +128,7 @@ def over(pravidla: list, material: str) -> tuple:
         m = p.get("metrika") if p.get("metrika") in METRIKY else "zadna"
         if m != "zadna" and p.get("prah") is not None and not _cislo_v(p["prah"], p["citace"]):
             pryc.append((p, "práh %s není v citaci" % p.get("prah"))); continue
-        if m != "zadna" and p.get("prah") is None and m != "obecne_pismo":
+        if m != "zadna" and p.get("prah") is None and m not in ANO_NE:
             m = "zadna"            # měřitelné bez čísla → jen pokyn
         ok.append({**p, "metrika": m})
     return ok, pryc
@@ -191,7 +209,7 @@ def pravidla(db_path: str) -> list:
             for r in rows]
 
 
-def pro_stavbu(db_path: str, limit: int = 25) -> str:
+def pro_stavbu(db_path: str, limit: int = 40) -> str:   # HANS_PRIRUCKA_METRIKY_V2: 28 pravidel po čistce 21. 10.
     """Příručka jako pokyn pro coder (anglicky stručně, pravidla česky)."""
     pr = pravidla(db_path)[:limit]
     if not pr:
@@ -210,7 +228,7 @@ def zkontroluj(db_path: str, mereni: dict) -> list:
             continue
         v, prah, smer = mereni[m], p["prah"], p["smer"]
         spatne = False
-        if m == "obecne_pismo":
+        if m in ANO_NE:
             spatne = not v
         elif prah is not None and smer == "min":
             spatne = v < prah
