@@ -546,8 +546,17 @@ def _render_site_images(config: dict, pages: dict, dest_dir: Path, cap: int):
                 img_dir = dest_dir / "images"
                 img_dir.mkdir(parents=True, exist_ok=True)
                 _ollama_unload(config, _ollama_loaded(config))
-                try:
-                    for i, desc in enumerate(all_gens):
+                # HANS_WEB_OBRAZKY_V1 (21. 10.) — 18. 10. vypršel 8. obrázek a výjimka
+                # ukončila celou smyčku: 6/11 obrázků, zbytek prázdné src. Teď má
+                # každý obrázek vlastní try a selhané se zkusí ještě jednou.
+                def _jeden(i, desc):
+                    try:
+                        _jeden_impl(i, desc)
+                    except Exception as _je:
+                        _log.warning("maker site: obrázek %d '%s' selhal: %s",
+                                     i + 1, desc[:40], _je)
+
+                def _jeden_impl(i, desc):
                         try:   # HANS_BASE_SLOT_RENEW_V1 — obrázek jde mimo Ollamu
                             from scripts.ollama_client import prodluz_base_slot
                             prodluz_base_slot(600)
@@ -572,6 +581,12 @@ def _render_site_images(config: dict, pages: dict, dest_dir: Path, cap: int):
                             mapping[desc] = "images/" + fn
                             _log.info("maker site: obrázek %d/%d '%s'",
                                       i + 1, len(all_gens), desc[:40])
+                try:
+                    for i, desc in enumerate(all_gens):
+                        _jeden(i, desc)
+                    for i, desc in enumerate(all_gens):
+                        if desc not in mapping:
+                            _jeden(i, desc)
                 finally:
                     _comfy_free(config)
         except Exception as e:

@@ -574,7 +574,7 @@ def vypln(sablona: str, topic: str, stranky: list) -> dict:
 # ── 5) KONTROLA ───────────────────────────────────────────────────────────
 
 _SONDA = r"""<script>
-window.__E=[];addEventListener('error',function(e){__E.push(String(e.message||e.type))},true);
+window.__E=[];addEventListener('error',function(e){if(e.target&&e.target!==window&&e.target.tagName)return;__E.push(String(e.message||e.type))},true);
 addEventListener('load',function(){setTimeout(function(){
  var all=[].slice.call(document.querySelectorAll('body *'));
  var bad=[].slice.call(document.images).filter(function(i){return !i.naturalWidth}).length;
@@ -1066,6 +1066,12 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
         for name, h in pages.items():
             for d, tgt in obr.items():
                 h = h.replace("GEN:" + d, tgt)
+            # HANS_WEB_OBRAZKY_V1 — nevyrenderovaný obrázek pryč celý (dřív
+            # src="" = rozbitý obrázek a k tomu „JS chyba“ v sondě)
+            h = re.sub(r"<img\b[^>]*\bsrc\s*=\s*[\"']GEN:[^\"']*[\"'][^>]*>", "", h)
+            h = re.sub(r"<figure\b[^>]*>\s*(<figcaption\b[^>]*>[\s\S]*?</figcaption>\s*)?</figure>",
+                       "", h)
+            h = re.sub(r"url\(\s*[\"']?GEN:[^\"')]+[\"']?\s*\)", "none", h)
             h = re.sub(r"GEN:[^\"')]+", "", h)
             # základ, který má každý profesionální web (a coder ho vynechává):
             # bez box-sizing přetekla patička `width:100%` + padding o 32 px
