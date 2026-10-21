@@ -52,7 +52,6 @@ class NocMixin:
             ('offline_windows', self._nt_offline_windows),
             ('self_insight', self._nt_self_insight),
             ('verify_findings', self._nt_verify_findings),
-            ('book_summary', self._nt_book_summary),   # HANS_BOOK_SUMMARY_V1
             ('anomaly', self._nt_anomaly),
             ('night_summary', self._nt_night_summary),
             ('dream', self._nt_dream),
@@ -79,6 +78,7 @@ class NocMixin:
             ('facts', self._nt_facts),
             ('entity_images', self._nt_entity_images),   # HANS_ENTITY_IMAGE_V1
             ('creation_reflection', self._nt_creation_reflection),
+            ('book_summary', self._nt_book_summary),   # HANS_BOOK_SUMMARY_V1, LAST_V1: poslední
         )
 
     def _synthesis_due(self, today: str) -> bool:
@@ -221,6 +221,12 @@ class NocMixin:
         # HANS_BOOK_SUMMARY_V1 (16. 10.) — souhrn děje přečtených knih z celých
         # úseků (qwen3 na CPU Ollamě), po dočtení souhrn knihy a úvaha z něj.
         # Po kouscích s časovým rozpočtem; mozek dole → 'deferred'.
+        # HANS_BOOK_SUMMARY_LAST_V1 (21. 10., uživatel: „souhrny knih by neměly
+        # mít přednost před studiem, mají se spouštět jako poslední věc“) —
+        # v seznamu nočních úloh jsou poslední a dokud dnešní studium neproběhlo,
+        # nespustí se vůbec (studium má ve 3:00 PC jako první).
+        if self._last_study_date != ctx.today and self._in_night_window():
+            return
         try:
             from scripts.hans_book_summary import run_night as _bs_run
             _bs = _bs_run(self.config, self._diary_path,

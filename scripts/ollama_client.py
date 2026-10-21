@@ -751,6 +751,79 @@ def _post_with_retry(url: str, payload: dict, timeout: int,
         prodluz_base_slot(2 * float(timeout or 300) + 300)
     except Exception:
         pass
+    if _je_velky((payload or {}).get("model")):     # HANS_VELKY_MODEL_V1
+        if not _VELKY_LOCK.acquire(timeout=2 * float(timeout or 300) + 300):
+            _log.warning("HANS_VELKY_MODEL_V1: %s se nedočkal (velký model běží "
+                         "jinde) — vzdávám", payload.get("model"))
+            return None
+        try:
+            _uvolni_velky_jinde(url)
+            return _post_with_retry_merene(url, payload, timeout, extractor)
+        finally:
+            _VELKY_LOCK.release()
+    return _post_with_retry_merene(url, payload, timeout, extractor)
+
+
+# HANS_VELKY_MODEL_V1 (21. 10.) — qwen3:30b (~19,5 GB RAM) smí v jednu chvíli
+# běžet jen na JEDNÉ Ollamě PC (hlavní :11434 s num_gpu 0 pro úsudky, nebo CPU
+# :11435 pro souhrny knih). Dvě kopie = 39 GB na 32 GB RAM → swap a zamrzlé PC
+# (16.→17. 10.). Volání velkého modelu se v procesu řadí za sebe a před
+# voláním se velký model nečinně visící na DRUHÉ Ollamě (keep_alive) uvolní.
+# Seznam: `ollama_velke.modely` v configu (výchozí qwen3:30b).
+_VELKY_LOCK = threading.RLock()
+_VELKE = None
+
+
+def _velke_modely() -> tuple:
+    global _VELKE
+    if _VELKE is None:
+        try:
+            from scripts import config_io
+            _c = config_io.load()
+            _VELKE = (tuple((_c.get("ollama_velke", {}) or {}).get("modely") or ("qwen3:30b",)),
+                      str((_c.get("openwebui_chat", {}) or {}).get("base_url") or "").rstrip("/"))
+        except Exception:
+            _VELKE = (("qwen3:30b",), "")
+    return _VELKE
+
+
+def _je_velky(model) -> bool:
+    try:
+        return bool(model) and any(str(model).startswith(p) for p in _velke_modely()[0])
+    except Exception:
+        return False
+
+
+def _uvolni_velky_jinde(url: str) -> None:
+    """Na druhé Ollamě PC uvolni nečinný velký model (držíme zámek → nikdo
+    z Hanse ho právě nepoužívá). Fail-safe: chyba = nic."""
+    try:
+        import re as _re
+        base = url.split("/api/", 1)[0].rstrip("/")
+        hlavni = _velke_modely()[1]
+        if not hlavni:
+            return
+        cpu = _re.sub(r":\d+$", ":11435", hlavni)
+        jinde = cpu if base == hlavni else (hlavni if base == cpu else "")
+        if not jinde:
+            return
+        r = requests.get(jinde + "/api/ps", timeout=(CONNECT_TIMEOUT, 5))
+        if not r.ok:
+            return
+        for m in (r.json().get("models") or []):
+            jm = str(m.get("name") or m.get("model") or "")
+            if _je_velky(jm):
+                _log.info("HANS_VELKY_MODEL_V1: uvolňuji %s na %s — velký model "
+                          "se načítá na %s", jm, jinde, base)
+                requests.post(jinde + "/api/generate",
+                              json={"model": jm, "keep_alive": 0},
+                              timeout=(CONNECT_TIMEOUT, 60))
+    except Exception as e:
+        _log.debug("velky model jinde: %s", e)
+
+
+def _post_with_retry_merene(url: str, payload: dict, timeout: int,
+                            extractor) -> Optional[str]:
     _t0 = time.time()
     try:
         _out = _post_with_retry_impl(url, payload, timeout, extractor)

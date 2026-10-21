@@ -971,29 +971,13 @@ class StudyStore:
         title = f"Studium: {topic} — {sub}"
         self._write_diary("study_note", title, note, diary_writer)
 
-        # 3a) HANS_STUDY_SOURCES_KEEP_V1 — ulož celý materiál i odkaz
-        self._save_source(prog, idx, topic, sub, _main, source_url, material)
-        # 3a2) HANS_STUDY_FACTS_V1 — výpis faktů z materiálu jako běžné čtení
-        try:
-            self._write_facts(config, prog, idx, sub, _main, source_url,
-                              material, knowledge)
-        except Exception as e:
-            _log.warning("study: výpis faktů '%s' selhal: %s", sub, e)
-        # HANS_PRIRUCKA_V1 — u webového tématu si z nastudovaného vytáhni pravidla
-        if _je_web_tema(sub, topic) and _cfg(config).get("prirucka_enabled", True):
-            try:
-                from scripts import hans_prirucka as _hp
-                _hp.vytahni(config, topic, sub, material, source_url, self._diary_path)
-            except Exception as e:
-                _log.warning("study: příručka '%s' selhala: %s", sub, e)
-
-        # 3b) per-práce výpisky z odborných prací (HANS_RESEARCH_PAPER_TAKEAWAY_V1)
-        try:
-            self._record_paper_takeaways(config, topic, research_papers,
-                                         knowledge, diary_writer)
-        except Exception as e:
-            _log.debug("record_paper_takeaways: %s", e)
-
+        # HANS_STUDY_ADVANCE_EARLY_V1 (21. 10.) — posun pod-tématu HNED po zápisu
+        # poznámky (a jejím nahrání do RAG), teprve pak zdroj, fakta, příručka
+        # a výpisky. Dřív byl posun až za nimi (minuty volání modelu): 21. 10.
+        # restart Pi v 6:21 přerušil studium mezi poznámkou a posunem a po
+        # startu se totéž pod-téma nastudovalo podruhé (dvě poznámky, dva
+        # výpisy faktů). Kroky za posunem selhání tiše snesou, takže je posun
+        # nepotřebuje.
         # 4) RAG upload (čtenářská kolekce)
         if knowledge is not None and getattr(knowledge, "enabled", False):
             try:
@@ -1028,6 +1012,29 @@ class StudyStore:
             return None
         _log.info("study: session [%d] '%s' — pod-téma %d/%d: %s",
                   prog["id"], topic, new_idx, len(curriculum), sub)
+
+        # 3a) HANS_STUDY_SOURCES_KEEP_V1 — ulož celý materiál i odkaz
+        self._save_source(prog, idx, topic, sub, _main, source_url, material)
+        # 3a2) HANS_STUDY_FACTS_V1 — výpis faktů z materiálu jako běžné čtení
+        try:
+            self._write_facts(config, prog, idx, sub, _main, source_url,
+                              material, knowledge)
+        except Exception as e:
+            _log.warning("study: výpis faktů '%s' selhal: %s", sub, e)
+        # HANS_PRIRUCKA_V1 — u webového tématu si z nastudovaného vytáhni pravidla
+        if _je_web_tema(sub, topic) and _cfg(config).get("prirucka_enabled", True):
+            try:
+                from scripts import hans_prirucka as _hp
+                _hp.vytahni(config, topic, sub, material, source_url, self._diary_path)
+            except Exception as e:
+                _log.warning("study: příručka '%s' selhala: %s", sub, e)
+
+        # 3b) per-práce výpisky z odborných prací (HANS_RESEARCH_PAPER_TAKEAWAY_V1)
+        try:
+            self._record_paper_takeaways(config, topic, research_papers,
+                                         knowledge, diary_writer)
+        except Exception as e:
+            _log.debug("record_paper_takeaways: %s", e)
 
         # 5a) HANS_STUDY_ARTICLE_REST_V1 — dočti zbytek dlouhého článku po
         # částech (až po posunu: selže-li dočítání, pod-téma se neopakuje)

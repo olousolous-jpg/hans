@@ -252,9 +252,55 @@ def _oprav_starou_uvahu(config: dict, db, title: str, nova_id: Optional[int]) ->
         kdb.close()
 
 
+# HANS_BOOK_SUMMARY_SLOT_V1 (21. 10.) — noc 20.→21. 10.: PC probuzené ve 3:01,
+# souhrny knih prošly pojistkou RAM (prázdná hlavní Ollama, volná RAM) a hned
+# po nich se načetlo studium (OpenEuroLLM), hans-czech a qwen2.5 → PC zamrzlo
+# do ranního ručního restartu (stejně jako 16.→17. 10.). Pojistka RAM se ptá
+# jen v okamžiku startu, na pozdější příchozí nevidí. Proto souhrny drží
+# po celý běh sdílený slot velkého modelu (studium se při obsazeném slotu
+# odloží, reflexe a Koláč ustoupí) a po běhu qwen3 z RAM uvolní, ať se
+# další úloha nenačítá vedle něj (keep_alive 10 min).
 def run_night(config: dict, diary_path: str, reflection=None,
               budget_s: Optional[float] = None) -> str:
     """Jeden noční krok. Vrací 'idle' | 'deferred' | popis práce."""
+    c = _cfg(config)
+    if not c.get("enabled", True):
+        return "idle"
+    _h = time.localtime().tm_hour
+    if not (int(c.get("od_hodiny", 2)) <= _h < 12):
+        return "deferred"
+    from scripts import ollama_client as _oc
+    if _oc.base_slot_busy():
+        if time.time() - _slot_hlaseno[0] > 3600:
+            _slot_hlaseno[0] = time.time()
+            _log.info("HANS_BOOK_SUMMARY_SLOT_V1: odkládám — slot drží '%s'",
+                      _oc.base_slot_label())
+        return "deferred"
+    budget = float(budget_s if budget_s is not None else c.get("budget_s", 1500))
+    _tok = _oc.acquire_base_slot("souhrny knih",
+                                 budget + 2 * float(c.get("timeout_s", 600)) + 300,
+                                 wait_s=0)
+    if _tok is None:
+        return "deferred"
+    try:
+        return _run_night_body(config, diary_path, reflection, budget_s)
+    finally:
+        _oc.release_base_slot(_tok)
+        try:
+            _cpu = _cpu_url(config)
+            if _cpu and _ps(_cpu):
+                _n = _oc.ollama_unload_all(_cpu, config)
+                _log.info("HANS_BOOK_SUMMARY_SLOT_V1: konec běhu — z CPU Ollamy "
+                          "uvolněno %d modelů", _n)
+        except Exception as _ue:
+            _log.debug("book_summary unload: %s", _ue)
+
+
+_slot_hlaseno = [0.0]
+
+
+def _run_night_body(config: dict, diary_path: str, reflection=None,
+                    budget_s: Optional[float] = None) -> str:
     c = _cfg(config)
     if not c.get("enabled", True):
         return "idle"
