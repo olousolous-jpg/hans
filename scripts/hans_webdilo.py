@@ -473,7 +473,7 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
     if prirucka:           # HANS_PRIRUCKA_V1 — co se Hans sám naučil
         spolecne += "\n" + prirucka + "\n"
     karty = json.dumps([{"href": "detail-%s.html" % s["slug"], "title": s["sub"],
-                         "teaser": (s["text"].get("perex") or "")[:160],
+                         "teaser": _zkrat((s["text"].get("perex") or ""), 160),
                          "image": "GEN:%s" % s["img"]} for s in stranky],
                        ensure_ascii=False, indent=1)
     def jedna(co, zadani, stare=None, vady=None):
@@ -530,6 +530,12 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
         idx = idx or stary[0]
         sab = sab or stary[1]
     return idx, sab
+
+
+def _zkrat(t: str, n: int) -> str:
+    """HANS_WEB_UZKY_SLOUPEC_V1 — zkrácení na celé slovo s „…“ (karty končily „rozl.“)."""
+    t = (t or "").strip()
+    return t if len(t) <= n else t[:n].rsplit(" ", 1)[0].rstrip(",;:–-") + "…"
 
 
 def _stitek(sub: str, maxlen: int = 32) -> str:
@@ -609,7 +615,7 @@ addEventListener('load',function(){setTimeout(function(){
  var mq=/@media[^{]*\((min|max)-width/i.test(css)?1:0;
  var fsd=(css.match(/font-size\s*:\s*[^;}]+/gi)||[]),frel=fsd.filter(function(x){return /(rem|em|vw|vh|%|clamp|calc)/i.test(x)}).length,rp=(!fsd.length||frel/fsd.length>=0.8)?1:0;
  var fg=all.some(function(e){return /^(inline-)?(flex|grid)$/.test(getComputedStyle(e).display)})?1:0;
- var imgs=[].slice.call(document.images),fi=imgs.every(function(i){return getComputedStyle(i).maxWidth==='100%'})?1:0,na=imgs.filter(function(i){return !i.hasAttribute('alt')}).length;
+ var imgs=[].slice.call(document.images),fi=imgs.every(function(i){var r=i.getBoundingClientRect(),q=i.parentElement;return getComputedStyle(i).maxWidth!=='none'&&(!r.width||!q||r.width<=q.getBoundingClientRect().width+1)})?1:0,na=imgs.filter(function(i){return !i.hasAttribute('alt')}).length;
  var lg=(document.documentElement.getAttribute('lang')||'').trim()?1:0;
  var sem=['header','nav','main','footer'].filter(function(t){return document.querySelector(t)}).length;
  var anim=/@keyframes|animation(-name)?\s*:\s*(?!none)|transition(-property)?\s*:\s*(?!none)/i.test(css),pm=anim?(/prefers-reduced-motion/i.test(css)?1:0):1;
@@ -617,7 +623,10 @@ addEventListener('load',function(){setTimeout(function(){
  [].slice.call(document.styleSheets).forEach(function(s){try{[].slice.call(s.cssRules).forEach(function(r){if(r.type===7)[].slice.call(r.cssRules).forEach(function(k){for(var i=0;i<k.style.length;i++)if(BOXP.test(k.style[i]))bx++})})}catch(x){}});
  all.forEach(function(e){var cs=getComputedStyle(e);if(cs.transitionDuration&&cs.transitionDuration.split(',').some(function(d){return parseFloat(d)>0})&&cs.transitionProperty.split(',').some(function(p){return BOXP.test(p.trim())}))bx++});
  var mo=[];ps.forEach(function(p){var cs=getComputedStyle(p),lh=parseFloat(cs.lineHeight)||parseFloat(cs.fontSize)*1.2,n=p.nextElementSibling,mt=n?parseFloat(getComputedStyle(n).marginTop)||0:0;if(n&&n.tagName==='P')mo.push(Math.max(parseFloat(cs.marginBottom)||0,mt)/lh)});
- document.title='SONDA MQ='+mq+' RP='+rp+' FG='+fg+' FI='+fi+' NA='+na+' LG='+lg+' SEM='+sem+' PM='+pm+' BX='+bx+' MO='+(mo.length?med(mo).toFixed(2):-1)+' DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
+ var fl={};all.forEach(function(e){var r=e.getBoundingClientRect();if(!(r.width>0&&r.right>innerWidth+2))return;var q=e.parentElement;for(var i=0;i<4&&q&&q!==document.body;i++,q=q.parentElement){var cs=getComputedStyle(q);if(/flex/.test(cs.display)&&/^row/.test(cs.flexDirection)&&cs.flexWrap==='nowrap'&&q.children.length>=3){fl[sel(q)]=q.children.length;break}}});
+ var pw=ps.map(function(p){return p.getBoundingClientRect().width}),gq='';
+ if(ps.length){var q=ps[0].parentElement;for(var i=0;i<6&&q&&q!==document.body;i++,q=q.parentElement){var cs=getComputedStyle(q);if(cs.display==='grid'&&cs.gridTemplateColumns.split(' ').length>1){gq=sel(q)+' ('+cs.gridTemplateColumns.split(' ').length+' columns, '+q.children.length+' children)';break}}}
+ document.title='SONDA PW='+(pw.length?med(pw).toFixed(0):-1)+' GQ='+enc(gq)+' FL='+enc(JSON.stringify(Object.keys(fl).slice(0,3).map(function(k){return [k,fl[k]]})))+' MQ='+mq+' RP='+rp+' FG='+fg+' FI='+fi+' NA='+na+' LG='+lg+' SEM='+sem+' PM='+pm+' BX='+bx+' MO='+(mo.length?med(mo).toFixed(2):-1)+' DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
 },1500)});
 </script>"""
 
@@ -672,6 +681,9 @@ def _sonda(url: str, w: int) -> dict:
             "okno": int(d.get("IW", 0)), "rozbite_obr": int(d.get("IMG", 0)),
             "h1": int(d.get("H1", 0)), "text": int(d.get("TXT", 0)),
             "zpravy": unquote(d.get("M", "")), "pretece": unquote(d.get("O", "")),
+            "flex_radky": _json_list(unquote(d.get("FL", "") or "[]")),   # HANS_WEB_PRETECENI_V1
+            "sirka_odstavce": int(float(d.get("PW", -1))),           # HANS_WEB_UZKY_SLOUPEC_V1
+            "mrizka": unquote(d.get("GQ", "")),
             "kontrast": int(d.get("K", 0)), "kontrast_ukazky": unquote(d.get("KM", "")),
             "velikosti_pisma": int(d.get("F", 0)),
             "fixy": _json_list(unquote(d.get("FX", "") or "[]")),
@@ -770,9 +782,81 @@ def _odkazy(html: str, soubory: set) -> list:
     return out
 
 
+def _podstranky_v(html: str) -> set:
+    """HANS_WEB_KARTY_V1 — na které podstránky (detail-*.html) úvod odkazuje."""
+    return set(re.findall(r"""href\s*=\s*["'](detail-[^"'#?]+\.html)""", html or "", re.I))
+
+
+def _doplnit_karty(idx: str, stranky: list) -> str:
+    """HANS_WEB_KARTY_V1 — coder 21. 10. napsal jednu kartu a zbytek nahradil
+    komentářem „Repeat the above article structure for each page“. Chybějící
+    karty se naklonují z té první (odkaz, nadpis, perex, obrázek ze stránky)."""
+    try:
+        import copy
+        from bs4 import BeautifulSoup, Comment
+        if not idx or not stranky:
+            return idx
+        soup = BeautifulSoup(idx, "html.parser")
+        det = re.compile(r"^detail-.*\.html$")
+        odkazy = soup.find_all("a", href=det)
+        if not odkazy:
+            return idx
+        mam = {a.get("href") for a in odkazy}
+        chybi = [s for s in stranky if "detail-%s.html" % s["slug"] not in mam]
+        if not chybi:
+            return idx
+        karta = odkazy[0]
+        while (karta.parent is not None and karta.parent.name not in ("body", "main", "html")
+               and len(karta.parent.find_all("a", href=det)) <= 1):
+            karta = karta.parent
+        posledni = karta
+        for o in odkazy[1:]:              # vkládej za poslední existující kartu
+            k = o
+            while (k.parent is not None and k.parent is not karta.parent
+                   and k.parent.name not in ("body", "html")):
+                k = k.parent
+            if k.parent is karta.parent:
+                posledni = k
+        for s in chybi:
+            k = copy.copy(karta)
+            for a_ in k.find_all("a", href=det) + ([k] if k.name == "a" else []):
+                a_["href"] = "detail-%s.html" % s["slug"]
+            for im in k.find_all("img"):
+                im["src"] = "GEN:%s" % s["img"]
+                im["alt"] = s["sub"]
+            h = k.find(re.compile(r"^h[1-6]$"))
+            if h is not None:
+                h.string = s["sub"]
+            pp = k.find("p")
+            if pp is not None:
+                _pe = (s["text"].get("perex") or "").strip()
+                pp.string = _pe if len(_pe) <= 160 else _pe[:160].rsplit(" ", 1)[0] + "…"
+            posledni.insert_after(k)
+            posledni = k
+        for c in soup.find_all(string=lambda x: isinstance(x, Comment)
+                               and re.search(r"repeat|for each", x, re.I)):
+            c.extract()
+        _log.info("webdilo: HANS_WEB_KARTY_V1 doplněno %d karet na úvod", len(chybi))
+        return str(soup)
+    except Exception as e:
+        _log.warning("webdilo: doplnění karet selhalo: %s", e)
+        return idx
+
+
 def problemy(kontrola: dict) -> dict:
     """Deterministické problémy → {"index": [...], "sablona": [...]}."""
     out = {"index": [], "sablona": []}
+    pretek = {}
+    # HANS_WEB_KARTY_V1 (21. 10.) — opravné kolo 21. 10. přepsalo úvod na 3 kB
+    # s odkazem na 1 ze 14 podstránek a to kolo vyhrálo jako „bez vad“
+    _det = sorted(n for n in kontrola["stranky"] if n != "index.html")
+    _ix = (kontrola["stranky"].get("index.html") or {}).get("_html")
+    if _det and _ix is not None:
+        _chybi = [n for n in _det if n not in _podstranky_v(_ix)]
+        if _chybi:
+            out["index"].append("the landing page links to only %d of %d subpages — add a "
+                                "card with a link for EVERY page; missing: %s"
+                                % (len(_det) - len(_chybi), len(_det), ", ".join(_chybi[:6])))
     for name, v in kontrola["stranky"].items():
         cil = "index" if name == "index.html" else "sablona"
         for rez, d in (("desktop", v.get("desktop") or {}), ("úzké okno", v.get("uzke") or {})):
@@ -782,11 +866,26 @@ def problemy(kontrola: dict) -> dict:
             if d.get("js_chyby"):
                 out[cil].append("JavaScript errors (%s): %s" % (rez, d.get("zpravy")))
             if d.get("sirka", 0) > d.get("okno", 0) + 2:
-                out[cil].append("horizontal overflow at %dpx width (content %dpx); "
-                                "elements sticking out: %s"
-                                % (d["okno"], d["sirka"], d.get("pretece") or "?"))
+                # HANS_WEB_PRETECENI_V1 (21. 10.) — dřív 1 hláška za stránku (14×
+                # totéž ze šablony) a bez příčiny → coder šablonu nezměnil
+                pr = pretek.setdefault((cil, d["okno"]), {"n": 0, "max": 0, "vzor": "",
+                                                          "flex": {}})
+                pr["n"] += 1
+                pr["max"] = max(pr["max"], d["sirka"])
+                pr["vzor"] = pr["vzor"] or (d.get("pretece") or "?")
+                for s_, k_ in (d.get("flex_radky") or []):
+                    pr["flex"][s_] = max(pr["flex"].get(s_, 0), k_)
             if d.get("rozbite_obr"):
                 out[cil].append("%d broken images" % d["rozbite_obr"])
+            # HANS_WEB_UZKY_SLOUPEC_V1 (21. 10.) — článek ve třetině šířky (mřížka
+            # o 3 sloupcích na <main> s jediným článkem); hlídala se jen horní mez
+            _pw = d.get("sirka_odstavce") or -1
+            if rez == "desktop" and 0 < _pw < 0.4 * min(d.get("okno") or 1280, 1100):
+                out[cil].append("article text squeezed into a narrow column on desktop "
+                                "(paragraphs ~%dpx wide in a %dpx window)%s — let the "
+                                "article use the full content width"
+                                % (_pw, d.get("okno") or 0,
+                                   ("; CAUSE: grid on %s" % d["mrizka"]) if d.get("mrizka") else ""))
             if not d.get("h1"):
                 out[cil].append("page has no <h1> heading")
             if d.get("kontrast"):
@@ -801,8 +900,36 @@ def problemy(kontrola: dict) -> dict:
         m = _VYPLN.search(re.sub(r"<[^>]+>", " ", v.get("_html", "")))
         if m:
             out[cil].append("template filler text on the page: \u201e%s\u201c" % m.group(0))
+    for (cil, okno), pr in pretek.items():
+        msg = ("horizontal overflow at %dpx width on %d page(s) (content up to %dpx); "
+               "elements sticking out: %s" % (okno, pr["n"], pr["max"], pr["vzor"]))
+        if pr["flex"]:
+            msg += ("; CAUSE: %s — display:flex in a row without wrapping, children "
+                    "squeezed side by side; stack them (flex-direction: column) or "
+                    "flex-wrap: wrap" % ", ".join("%s (%d children)" % kv
+                                                  for kv in pr["flex"].items()))
+        out[cil].append(msg)
     for k in out:
         out[k] = sorted(set(out[k]))
+    return out
+
+
+def _flex_css(kon: dict) -> dict:
+    """HANS_WEB_PRETECENI_V1 — přetečení z flexu v řádku opraví Hans sám
+    (coder 21. 10. šablonu se 7 oddíly vedle sebe dvakrát vrátil beze změny)."""
+    out = {"index": "", "sablona": ""}
+    for name, st in kon["stranky"].items():
+        cil = "index" if name == "index.html" else "sablona"
+        _d = st.get("desktop") or {}                     # HANS_WEB_UZKY_SLOUPEC_V1
+        _pw = _d.get("sirka_odstavce") or -1
+        if _d.get("mrizka") and 0 < _pw < 0.4 * min(_d.get("okno") or 1280, 1100):
+            _g = _d["mrizka"].split(" (")[0]
+            if re.fullmatch(r"[\w\s.-]+", _g) and _g not in out[cil]:
+                out[cil] += "%s{grid-template-columns:1fr!important}\n" % _g
+        for rez in ("desktop", "uzke"):
+            for s_, _k in ((st.get(rez) or {}).get("flex_radky") or []):
+                if re.fullmatch(r"[\w\s.-]+", s_ or "") and s_ not in out[cil]:
+                    out[cil] += "%s{flex-wrap:wrap}%s>*{flex:1 1 100%%;min-width:0}\n" % (s_, s_)
     return out
 
 
@@ -877,7 +1004,8 @@ _POPIS_METRIKY = {"kontrast": "kontrast", "delka_radku": "délka řádku",
                   "alt_obrazku": "popisky obrázků", "lang": "jazyk stránky",
                   "semanticke_znacky": "sémantické značky", "omezeny_pohyb": "omezený pohyb",
                   "bez_animace_box_modelu": "animace bez přepočtu rozvržení",
-                  "mezera_odstavcu": "mezera mezi odstavci"}
+                  "mezera_odstavcu": "mezera mezi odstavci",
+                  "pretekani": "přetékání obsahu do strany"}
 
 
 def _prahy_kontrastu(db_path: str) -> tuple:
@@ -1085,6 +1213,7 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
     kolo = 0
     vymahano = []
     while True:
+        idx = _doplnit_karty(idx, stranky)               # HANS_WEB_KARTY_V1
         pages = dosad({"index.html": idx, **vypln(sab, topic, stranky)})
         for name, h in pages.items():
             (dest_dir / name).write_text(h, encoding="utf-8")
@@ -1113,11 +1242,15 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
         # HANS_PRIRUCKA_VYMAHANI_V1 — měřitelná pravidla vymáhá Hans SÁM:
         # coder 26. 9. vadu neopravil ani přepisem, ani doplňkem CSS
         # (kontrast 1,68, řádek 96 zn zůstaly). Sonda zná prvek i barvy.
-        if not vymahano and (kritika.get("index") or kritika.get("sablona")):
+        _fx = _flex_css(kon)                              # HANS_WEB_PRETECENI_V1
+        if not vymahano and (kritika.get("index") or kritika.get("sablona")
+                             or _fx["index"] or _fx["sablona"]):
             css = _vymahani_css(db_path, kon, kritika)
+            css = {k: (css.get(k, "") + "\n" + _fx[k]).strip() for k in ("index", "sablona")}
             if css["index"] or css["sablona"]:
                 idx, sab = _vloz_css(idx, css["index"]), _vloz_css(sab, css["sablona"])
-                vymahano = sorted({v["metrika"] for vs in kritika.values() for v in vs})
+                vymahano = sorted({v["metrika"] for vs in kritika.values() for v in vs}
+                                  | ({"pretekani"} if (_fx["index"] or _fx["sablona"]) else set()))
                 _log.info("webdilo: vymáhám svá pravidla %s", vymahano)
                 kolo += 1
                 continue
@@ -1135,6 +1268,11 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
                                         else " BEZ %s → zahozena" % _chybi_placeholdery(n_sab))))
         if not n_sab or _chybi_placeholdery(n_sab):
             n_sab = sab
+        # HANS_WEB_KARTY_V1 — oprava úvodu nesmí ubrat odkazy na podstránky
+        if n_idx and len(_podstranky_v(n_idx)) < len(_podstranky_v(idx)):
+            _log.info("webdilo: oprava úvodu ubrala odkazy (%d → %d) — zahozena",
+                      len(_podstranky_v(idx)), len(_podstranky_v(n_idx)))
+            n_idx = idx
         idx, sab = (n_idx or idx), n_sab
     # nejlepší kolo = nejméně deterministických problémů, pak vad VL
     def cena(h):
@@ -1148,7 +1286,9 @@ def make_site(config: dict, db_path: str, topic: str, notes: list,
     zbyle = sorted(set(sum(best["problemy"].values(), [])
                        + sum(best["vady_vl"].values(), [])))
     zbyva = {v["metrika"] for vs in (best.get("kritika") or {}).values() for v in vs}
-    opraveno = [m for m in vymahano if m not in zbyva]
+    opraveno = [m for m in vymahano if m not in zbyva and not (   # HANS_WEB_PRETECENI_V1
+        m == "pretekani" and any("horizontal overflow" in x
+                                 for x in sum(best["problemy"].values(), [])))]
     zaznam = {
         "tema": topic, "kolo_prohloubeni": deepen_round, "plan": plan,
         "vyrazeno_z_volby": vyrazeno, "knihovny": [l["npm"] + "@" + l["version"] for l in libs],
