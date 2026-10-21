@@ -222,7 +222,7 @@ def _obsah_html(t: dict) -> str:
     for o in t.get("oddily", []):
         out.append("<section>")
         if o.get("nadpis"):
-            out.append("<h2>%s</h2>" % _h.escape(o["nadpis"]))
+            out.append('<h2 id="oddil-%d">%s</h2>' % (len(out), _h.escape(o["nadpis"])))
         out += ["<p>%s</p>" % _kod(_h.escape(p)) for p in o["odstavce"]]
         out.append("</section>")
     # HANS_WEB_NAVRH_V1 — datované události jako časová osa (dřív jen JSON,
@@ -689,6 +689,71 @@ _PLACEHOLDERY = (
     "render nothing when the list is empty.")
 
 
+# HANS_WEB_ZADANI_V2 (21. 10.) — uživatel: „není možnost, že náš prompt není
+# dostatečný?“ Staré zadání = hlavně zákazy + strohý výčet částí → coder sáhl po
+# nejprůměrnějším rozvržení. Nové po vzoru veřejných zadání proti „AI vzhledu“
+# (Anthropic Cookbook „frontend aesthetics“, UI prompt pack): pozitivní vzor
+# redakčního webu, konkrétní povinné prvky, seznam vzorů, kterým se vyhnout.
+# Barvy a písma NEURČUJE — ty má Hansův návrhový systém (HANS_WEB_NAVRH_V1).
+_STAVBA_SYSTEM_V2 = (
+    "You are a senior front-end designer-developer. Build a polished EDITORIAL "
+    "website (think a quality online magazine or a well-made documentation site), "
+    "not a generic template. Implement the art director's plan.\n"
+    "DESIGN RULES:\n"
+    "- Colours, fonts and font sizes come ONLY from the CSS variables of the design "
+    "system (--barva-*, --pismo-*, --fs-*, --mezera, --zaobleni); never invent "
+    "others and never redefine :root.\n"
+    "- Clear hierarchy: one focal point per screen; a big confident headline, "
+    "supporting text smaller and in --barva-text-tlumeny; small uppercase labels "
+    "with letter-spacing for categories and metadata.\n"
+    "- Generous, consistent whitespace in multiples of var(--mezera); align "
+    "everything to one grid; reading text max-width 68ch, line-height 1.6.\n"
+    "- Accent colour sparingly: links, one button style, thin rules, labels. Page "
+    "background --barva-pozadi, cards and panels --barva-povrch.\n"
+    "- AVOID typical AI-template patterns: everything centred, a lone row of three "
+    "identical cards as the only structure, gradient blobs, emoji icons, "
+    "'Welcome to…' filler, giant empty heroes, tall vertical link lists at the top.\n"
+    "- Motion only subtle transform/opacity transitions on hover, disabled under "
+    "prefers-reduced-motion.\n"
+    "TECH: semantic HTML (header, nav, main, article, aside, footer); responsive, "
+    "no horizontal scroll at 390px; contrast ≥ 4.5:1; images max-width:100%; only "
+    "the listed local libraries, no other external URLs; no lorem ipsum or "
+    "placeholder text; the art director's plan is internal — never show it. All "
+    "visible text in Czech. Output ONLY the complete HTML document, no explanation.")
+
+_INDEX_V2 = (
+    "Build index.html — the landing page of the site „%s“ (Czech). Required:\n"
+    "1) compact header: site name on the left, a short nav on the right;\n"
+    "2) asymmetric hero with ONE featured article (the first page below): text column "
+    "with a small label, big title, teaser and a clear button „Číst článek“, next to a "
+    "large image GEN:%s;\n"
+    "3) an editorial grid of ALL the other pages — write every card out in full (no "
+    "comments like 'repeat'); vary card sizes (the first two larger, then smaller); "
+    "each card: image, small label, title, 1–2 line teaser, link;\n"
+    "4) footer with the site name and a compact list of all articles.\n"
+    "Pages:\n%s")
+
+_SABLONA_V2 = (
+    "Build the ARTICLE PAGE TEMPLATE shared by all subpages. Required:\n"
+    "1) compact header: site name linking to index.html and the site navigation "
+    "{{NAV}} as a horizontal wrapped list (or a <details> menu on narrow screens) — "
+    "never a tall vertical list;\n"
+    "2) breadcrumb: <a href=\"index.html\">Domů</a> › {{NAZEV}};\n"
+    "3) the article: h1 {{NAZEV}}, image {{OBRAZ}} the full width of the text column, "
+    "then {{OBSAH}} in a centred column max 68ch (it already contains the perex, the "
+    "sections, code and a timeline — do NOT render the timeline again);\n"
+    "4) a side block (aside on wide screens, below the article on narrow ones) titled "
+    "„V tomto článku“ containing exactly <nav id=\"obsah-clanku\"></nav> (the system "
+    "fills it);\n"
+    "5) previous / next as two clearly styled link buttons: <a href=\"{{PREDCHOZI}}\">"
+    "← Předchozí</a> and <a href=\"{{DALSI}}\">Další →</a>;\n"
+    "6) footer with the site name {{TEMA}}.\n"
+    "Use these placeholders literally (the system fills them per page): {{TEMA}} "
+    "{{NAZEV}} {{OBSAH}} {{OBRAZ}} {{OBRAZ_ALT}} {{PREDCHOZI}} {{DALSI}} {{NAV}} "
+    "{{DATA}}; put {{DATA}} EXACTLY as <script type=\"application/json\" "
+    "id=\"data-stranky\">{{DATA}}</script> and do not render it.")
+
+
 def _lib_tagy(libs: list) -> str:
     # HANS_WEB_LIB_TAGY_V1 (21. 10.) — join dostával seznamy (TypeError při první
     # skutečné knihovně, dřív byl seznam vždy prázdný)
@@ -710,6 +775,8 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
     "stary": (index, sablona)} → opravné kolo nad předchozí verzí."""
     from scripts import hans_maker as hm
     model = hm._coder_model(config)
+    v2 = int(_cfg(config).get("zadani_verze", 1)) >= 2         # HANS_WEB_ZADANI_V2
+    _system = _STAVBA_SYSTEM_V2 if v2 else _STAVBA_SYSTEM
     spolecne = ("ART DIRECTOR PLAN:\n%s\n\nLOCAL LIBRARIES (include exactly):\n%s\n"
                 % (json.dumps(plan, ensure_ascii=False, indent=1),
                    _lib_tagy(libs) or "(none)"))
@@ -732,7 +799,7 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
                        "<style> block with CSS overrides that fix them (use selectors "
                        "that exist in the page; e.g. darker text colour for low "
                        "contrast). No other text.\n\nPAGE:\n" + stare,
-                       _STAVBA_SYSTEM, num_predict=1200, temperature=0.2,
+                       _system, num_predict=1200, temperature=0.2,
                        num_gpu=_cfg(config).get("coder_num_gpu", 99))
             m = re.search(r"<style[^>]*>[\s\S]*?</style>", raw or "", re.I)
             if m and "</head>" in stare:
@@ -743,7 +810,8 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
             # ⚠️ U šablony MUSÍ opravné zadání nést i placeholdery: bez nich
             # model {{OBSAH}} a spol. „dovyplnil“ nebo vyhodil a všech 8 oprav
             # 26. 9. skončilo v koši (web zůstal v původní verzi).
-            drz = ("\n\nThis is a TEMPLATE. " + _PLACEHOLDERY + "\nKeep EVERY "
+            drz = ("\n\nThis is a TEMPLATE. " + (_SABLONA_V2.split("Use these placeholders", 1)[-1]
+                                                 if v2 else _PLACEHOLDERY) + "\nKeep EVERY "
                    "{{PLACEHOLDER}} exactly as it is in the current version."
                    if co == "template" else "")
             p = (spolecne + "\nFIX these defects found by the review, keep "
@@ -751,7 +819,7 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
                  + "\n\nCURRENT %s:\n%s" % (co, stare))
         else:
             p = spolecne + "\n" + zadani
-        raw = _gen(config, model, p, _STAVBA_SYSTEM, num_predict=7000, temperature=0.3,
+        raw = _gen(config, model, p, _system, num_predict=7000, temperature=0.3,
                    num_gpu=_cfg(config).get("coder_num_gpu", 99))   # None = Ollama sama
         h = _html_z(raw)
         if not h:
@@ -759,13 +827,16 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
                          co, len(raw or ""), (raw or "")[-120:])
         return h
     stary = (oprava or {}).get("stary") or (None, None)
+    _img0 = stranky[0]["img"] if stranky else topic
     idx = jedna("index.html",
+                (_INDEX_V2 % (topic, _img0, karty)) if v2 else
                 "Build index.html — landing page of the site „%s“ (Czech). Hero "
                 "with a heading and the image GEN:%s, a short intro, then one card "
                 "per page (image, title, teaser, link), footer. Pages:\n%s"
-                % (topic, stranky[0]["img"] if stranky else topic, karty),
+                % (topic, _img0, karty),
                 stary[0], (oprava or {}).get("index"))
     sab = jedna("template",
+                _SABLONA_V2 if v2 else
                 "Build the article page TEMPLATE shared by all subpages (link to "
                 "index.html, site navigation, article with image, prev/next).\n"
                 + _PLACEHOLDERY, stary[1], (oprava or {}).get("sablona"))
@@ -816,6 +887,12 @@ def vypln(sablona: str, topic: str, stranky: list) -> dict:
                      ("{{PREDCHOZI}}", pred), ("{{DALSI}}", dal),
                      ("{{NAV}}", nav), ("{{DATA}}", data)):
             h = h.replace(k, v)
+        # HANS_WEB_ZADANI_V2 — „V tomto článku“ z nadpisů oddílů (kódem)
+        if '<nav id="obsah-clanku"></nav>' in h:
+            pol = re.findall(r'<h2 id="(oddil-\d+)">(.*?)</h2>', _obsah_html(s["text"]))
+            h = h.replace('<nav id="obsah-clanku"></nav>',
+                          '<nav id="obsah-clanku"><ol>%s</ol></nav>'
+                          % "".join('<li><a href="#%s">%s</a></li>' % kv for kv in pol), 1)
         out["detail-%s.html" % s["slug"]] = h
     return out
 
@@ -856,7 +933,7 @@ addEventListener('load',function(){setTimeout(function(){
  var css='';[].slice.call(document.styleSheets).forEach(function(s){try{[].slice.call(s.cssRules).forEach(function(r){css+=r.cssText+'\n'})}catch(x){}});
  [].slice.call(document.querySelectorAll('[style]')).forEach(function(e){css+=e.getAttribute('style')+';\n'});
  var mq=/@media[^{]*\((min|max)-width/i.test(css)?1:0;
- var fsd=(css.match(/font-size\s*:\s*[^;}]+/gi)||[]),frel=fsd.filter(function(x){return /(rem|em|vw|vh|%|clamp|calc)/i.test(x)}).length,rp=(!fsd.length||frel/fsd.length>=0.8)?1:0;
+ var fsd=(css.match(/font-size\s*:\s*[^;}]+/gi)||[]),frel=fsd.filter(function(x){return /(rem|em|vw|vh|%|clamp|calc|var\()/i.test(x)}).length,rp=(!fsd.length||frel/fsd.length>=0.8)?1:0;
  var fg=all.some(function(e){return /^(inline-)?(flex|grid)$/.test(getComputedStyle(e).display)})?1:0;
  var imgs=[].slice.call(document.images),fi=imgs.every(function(i){var r=i.getBoundingClientRect(),q=i.parentElement;return getComputedStyle(i).maxWidth!=='none'&&(!r.width||!q||r.width<=q.getBoundingClientRect().width+1)})?1:0,na=imgs.filter(function(i){return !i.hasAttribute('alt')}).length;
  var lg=(document.documentElement.getAttribute('lang')||'').trim()?1:0;
@@ -870,7 +947,7 @@ addEventListener('load',function(){setTimeout(function(){
  var pw=ps.map(function(p){return p.getBoundingClientRect().width}),gq='';
  if(ps.length){var q=ps[0].parentElement;for(var i=0;i<6&&q&&q!==document.body;i++,q=q.parentElement){var cs=getComputedStyle(q);if(cs.display==='grid'&&cs.gridTemplateColumns.split(' ').length>1){gq=sel(q)+' ('+cs.gridTemplateColumns.split(' ').length+' columns, '+q.children.length+' children)';break}}}
  var cols={};all.forEach(function(e){var r=e.getBoundingClientRect();if(!r.width||!r.height)return;var cs=getComputedStyle(e);if(cs.visibility==='hidden')return;var tx=[].slice.call(e.childNodes).some(function(n){return n.nodeType===3&&n.textContent.trim().length>1});var f=rgb(cs.color),b=rgb(cs.backgroundColor);if(tx&&f)cols[f.slice(0,3).join(',')]=1;if(b&&(b.length<4||b[3]>0.5))cols[b.slice(0,3).join(',')]=1});
- var nh='';[].slice.call(document.querySelectorAll('nav,header ul,aside ul')).forEach(function(n){var a=n.querySelectorAll('a').length,r=n.getBoundingClientRect();if(!nh&&a>=8&&r.height>innerHeight*0.5)nh=sel(n)+'|'+Math.round(r.height)+'|'+a});
+ var nh='';[].slice.call(document.querySelectorAll('nav,header ul,aside ul')).forEach(function(n){var a=n.querySelectorAll('a').length,r=n.getBoundingClientRect();if(!nh&&a>=8&&r.height>innerHeight*0.4)nh=sel(n)+'|'+Math.round(r.height)+'|'+a});
  document.title='SONDA NH='+enc(nh)+' COL='+enc(Object.keys(cols).slice(0,40).join(';'))+' FSL='+Object.keys(sizes).join(',')+' PW='+(pw.length?med(pw).toFixed(0):-1)+' GQ='+enc(gq)+' FL='+enc(JSON.stringify(Object.keys(fl).slice(0,3).map(function(k){return [k,fl[k]]})))+' MQ='+mq+' RP='+rp+' FG='+fg+' FI='+fi+' NA='+na+' LG='+lg+' SEM='+sem+' PM='+pm+' BX='+bx+' MO='+(mo.length?med(mo).toFixed(2):-1)+' DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
 },1500)});
 </script>"""
