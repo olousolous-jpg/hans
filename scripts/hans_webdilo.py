@@ -972,7 +972,8 @@ _ZAKLAD_CSS = ("<style>*,*::before,*::after{box-sizing:border-box}"
                "img,video,svg{max-width:100%;height:auto}</style>")
 _VYPLN = re.compile(r"V[áa][šs] n[áa]zev|lorem ipsum|example\.com|your (site|name|title)|Tesslate|Vytvo[řr]eno (s|pomoc[íi])"
                     r"|and so on for|repeat (the above|for each)|(more|other) (cards|articles) here"
-                    r"|\{\{[^}]{1,60}\}\}", re.I)   # HANS_WEB_NAVRH_V1
+                    r"|\{\{[^}]{1,60}\}\}"
+                    r"|\b(?:index|detail-[\w-]+)\.html\b", re.I)   # HANS_WEB_NAVRH_V1, viditelný název souboru
 
 _CHROM = ["chromium", "--headless=new", "--no-sandbox", "--disable-gpu",
           "--hide-scrollbars", "--disable-extensions", "--no-first-run"]
@@ -1235,7 +1236,13 @@ def problemy(kontrola: dict) -> dict:
                                                          _KONTROLA.get("max_velikosti_pisma", 7)))
         for vada in _odkazy(v.get("_html", ""), v.get("_soubory") or set()):
             out[cil].append(vada)
-        m = _VYPLN.search(re.sub(r"<[^>]+>", " ", v.get("_html", "")))
+        # HANS_WEB_OSA_JEDNOU_V1 (21. 10.) — časovou osu kreslí Hans; devstral ji
+        # dokreslil podruhé vlastním JS
+        _hh = v.get("_html", "")
+        if "hans-osa" in _hh and re.search(r"<script(?![^>]*application/json)[^>]*>[\s\S]*?timeline[\s\S]*?</script>", _hh, re.I):
+            out[cil].append("the timeline is already rendered by the system inside the article — "
+                            "remove the JavaScript that renders it a second time")
+        m = _VYPLN.search(re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>|<[^>]+>", " ", _hh))
         if m:
             out[cil].append("template filler text on the page: \u201e%s\u201c" % m.group(0))
     ds = kontrola.get("navrh")                                   # HANS_WEB_NAVRH_V1
