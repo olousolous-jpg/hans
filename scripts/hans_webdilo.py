@@ -690,10 +690,13 @@ _PLACEHOLDERY = (
 
 
 def _lib_tagy(libs: list) -> str:
+    # HANS_WEB_LIB_TAGY_V1 (21. 10.) — join dostával seznamy (TypeError při první
+    # skutečné knihovně, dřív byl seznam vždy prázdný)
     return "\n".join(
-        (['<link rel="stylesheet" href="%s">' % l["css"]] if l.get("css") else [])
-        + (['<script src="%s" defer></script>' % l["js"]] if l.get("js") else [])
-        for l in libs) if libs else ""
+        t for l in libs
+        for t in ((['<link rel="stylesheet" href="%s">' % l["css"]] if l.get("css") else [])
+                  + (['<script src="%s" defer></script>' % l["js"]] if l.get("js") else []))
+    ) if libs else ""
 
 
 def _html_z(raw: str) -> str:
@@ -867,7 +870,8 @@ addEventListener('load',function(){setTimeout(function(){
  var pw=ps.map(function(p){return p.getBoundingClientRect().width}),gq='';
  if(ps.length){var q=ps[0].parentElement;for(var i=0;i<6&&q&&q!==document.body;i++,q=q.parentElement){var cs=getComputedStyle(q);if(cs.display==='grid'&&cs.gridTemplateColumns.split(' ').length>1){gq=sel(q)+' ('+cs.gridTemplateColumns.split(' ').length+' columns, '+q.children.length+' children)';break}}}
  var cols={};all.forEach(function(e){var r=e.getBoundingClientRect();if(!r.width||!r.height)return;var cs=getComputedStyle(e);if(cs.visibility==='hidden')return;var tx=[].slice.call(e.childNodes).some(function(n){return n.nodeType===3&&n.textContent.trim().length>1});var f=rgb(cs.color),b=rgb(cs.backgroundColor);if(tx&&f)cols[f.slice(0,3).join(',')]=1;if(b&&(b.length<4||b[3]>0.5))cols[b.slice(0,3).join(',')]=1});
- document.title='SONDA COL='+enc(Object.keys(cols).slice(0,40).join(';'))+' FSL='+Object.keys(sizes).join(',')+' PW='+(pw.length?med(pw).toFixed(0):-1)+' GQ='+enc(gq)+' FL='+enc(JSON.stringify(Object.keys(fl).slice(0,3).map(function(k){return [k,fl[k]]})))+' MQ='+mq+' RP='+rp+' FG='+fg+' FI='+fi+' NA='+na+' LG='+lg+' SEM='+sem+' PM='+pm+' BX='+bx+' MO='+(mo.length?med(mo).toFixed(2):-1)+' DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
+ var nh='';[].slice.call(document.querySelectorAll('nav,header ul,aside ul')).forEach(function(n){var a=n.querySelectorAll('a').length,r=n.getBoundingClientRect();if(!nh&&a>=8&&r.height>innerHeight*0.5)nh=sel(n)+'|'+Math.round(r.height)+'|'+a});
+ document.title='SONDA NH='+enc(nh)+' COL='+enc(Object.keys(cols).slice(0,40).join(';'))+' FSL='+Object.keys(sizes).join(',')+' PW='+(pw.length?med(pw).toFixed(0):-1)+' GQ='+enc(gq)+' FL='+enc(JSON.stringify(Object.keys(fl).slice(0,3).map(function(k){return [k,fl[k]]})))+' MQ='+mq+' RP='+rp+' FG='+fg+' FI='+fi+' NA='+na+' LG='+lg+' SEM='+sem+' PM='+pm+' BX='+bx+' MO='+(mo.length?med(mo).toFixed(2):-1)+' DL='+med(dl).toFixed(0)+' RH='+med(rh).toFixed(2)+' PF='+(pf.length?Math.min.apply(null,pf):-1)+' TS='+(cile.length?Math.min.apply(null,cile).toFixed(0):-1)+' NV='+document.querySelectorAll('nav a').length+' GF='+gen+' KN='+kn.toFixed(2)+' KV='+kv.toFixed(2)+' E='+__E.length+' SW='+document.documentElement.scrollWidth+' IW='+innerWidth+' IMG='+bad+' H1='+document.querySelectorAll('h1').length+' TXT='+document.body.innerText.length+' M='+enc(__E.slice(0,3).join('|'))+' O='+enc(over.join(','))+' K='+low.length+' KM='+enc(low.slice(0,3).join(' | '))+' F='+Object.keys(sizes).length+' FX='+enc(JSON.stringify(Object.keys(fx).slice(0,25).map(function(k){return [k,fx[k]]})));
 },1500)});
 </script>"""
 
@@ -927,6 +931,7 @@ def _sonda(url: str, w: int) -> dict:
             "flex_radky": _json_list(unquote(d.get("FL", "") or "[]")),   # HANS_WEB_PRETECENI_V1
             "sirka_odstavce": int(float(d.get("PW", -1))),           # HANS_WEB_UZKY_SLOUPEC_V1
             "barvy": [x for x in unquote(d.get("COL", "")).split(";") if x],   # HANS_WEB_NAVRH_V1
+            "navigace": unquote(d.get("NH", "")),             # HANS_WEB_NAVIGACE_V1
             "velikosti": [float(x) for x in (d.get("FSL") or "").split(",") if x],
             "mrizka": unquote(d.get("GQ", "")),
             "kontrast": int(d.get("K", 0)), "kontrast_ukazky": unquote(d.get("KM", "")),
@@ -1126,10 +1131,18 @@ def problemy(kontrola: dict) -> dict:
                     pr["flex"][s_] = max(pr["flex"].get(s_, 0), k_)
             if d.get("rozbite_obr"):
                 out[cil].append("%d broken images" % d["rozbite_obr"])
+            # HANS_WEB_NAVIGACE_V1 (21. 10.) — 14 odkazů pod sebou zabralo celou
+            # první obrazovku podstránky (qwen2.5-coder i devstral)
+            if rez == "desktop" and d.get("navigace"):
+                _s, _v, _n = (d["navigace"].split("|") + ["", "", ""])[:3]
+                out[cil].append("navigation %s with %s links is %spx tall and fills the first "
+                                "screen — lay the links out in wrapped rows or a compact menu"
+                                % (_s, _n, _v))
             # HANS_WEB_UZKY_SLOUPEC_V1 (21. 10.) — článek ve třetině šířky (mřížka
             # o 3 sloupcích na <main> s jediným článkem); hlídala se jen horní mez
             _pw = d.get("sirka_odstavce") or -1
-            if rez == "desktop" and 0 < _pw < 0.4 * min(d.get("okno") or 1280, 1100):
+            if (rez == "desktop" and cil == "sablona"          # karty na úvodu úzké být smějí
+                    and 0 < _pw < 0.4 * min(d.get("okno") or 1280, 1100)):
                 uz = uzky.setdefault(cil, {"n": 0, "min": 9999, "max": 0, "okno": d.get("okno") or 0,
                                            "pricina": ""})
                 uz["n"] += 1; uz["min"] = min(uz["min"], _pw); uz["max"] = max(uz["max"], _pw)
@@ -1202,6 +1215,11 @@ def _flex_css(kon: dict) -> dict:
             _g = _d["mrizka"].split(" (")[0]
             if re.fullmatch(r"[\w\s.-]+", _g) and _g not in out[cil]:
                 out[cil] += "%s{grid-template-columns:1fr!important}\n" % _g
+        _nv = (_d.get("navigace") or "").split("|")[0]       # HANS_WEB_NAVIGACE_V1
+        if _nv and re.fullmatch(r"[\w\s.-]+", _nv) and _nv not in out[cil]:
+            out[cil] += ("%s ul{display:flex!important;flex-wrap:wrap;gap:.35rem 1.1rem;"
+                         "list-style:none;padding:0;margin:.5rem 0}%s li{margin:0!important}\n"
+                         % (_nv, _nv))
         for rez in ("desktop", "uzke"):
             for s_, _k in ((st.get(rez) or {}).get("flex_radky") or []):
                 if re.fullmatch(r"[\w\s.-]+", s_ or "") and s_ not in out[cil]:
