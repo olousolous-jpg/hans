@@ -1254,7 +1254,7 @@
     },
     "maker": {
         "enabled": true,
-        "coder_model": "",
+        "coder_model": "qwen3.8:27b",
         "num_gpu": 99,
         "num_ctx": 8192,
         "num_predict": 4096,
@@ -1269,7 +1269,11 @@
             "plan_model": "qwen3:30b",
             "vision_model": "qwen2.5vl:7b",
             "opravna_kola": 2,
-            "_note": "HANS_WEB_DILO_V1 (26. 9.): text ze zdrojů studia → obrázky k textu → Hans volí nástroje (plan_model) → stavba (maker.coder_model/auto) → kontrola v Chromiu (JS, přetečení, kontrast WCAG, mrtvé odkazy, výplň) → opravná kola jen podle deterministických vad. Hudba zůstává na staré cestě; selhání → stará cesta."
+            "_note": "HANS_WEB_DILO_V1 (26. 9.): text ze zdrojů studia → obrázky k textu → Hans volí nástroje (plan_model) → stavba (maker.coder_model/auto) → kontrola v Chromiu (JS, přetečení, kontrast WCAG, mrtvé odkazy, výplň) → opravná kola jen podle deterministických vad. Hudba zůstává na staré cestě; selhání → stará cesta.",
+            "coder_num_predict": 16000,
+            "coder_num_ctx": 32768,
+            "coder_num_gpu": null,
+            "_note_coder": "HANS_WEB_CODER_DELKA_V1 (21. 10.): coder qwen3.8:27b (uživatel) — podrobné HTML, strop 16000 tokenů, kontext 32k, rozložení GPU/RAM nechá na Ollamě (num_gpu None)."
         }
     },
     "guard": {
