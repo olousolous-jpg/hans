@@ -819,7 +819,11 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
                  + "\n\nCURRENT %s:\n%s" % (co, stare))
         else:
             p = spolecne + "\n" + zadani
-        raw = _gen(config, model, p, _system, num_predict=7000, temperature=0.3,
+        # HANS_WEB_CODER_DELKA_V1 (21. 10.) — Qwen3.8 píše podrobnější HTML a úvod
+        # se do 7000 tokenů nevešel (useknut na ~20 000 zn); strop a okno z configu
+        raw = _gen(config, model, p, _system,
+                   num_predict=int(_cfg(config).get("coder_num_predict", 7000)),
+                   num_ctx=int(_cfg(config).get("coder_num_ctx", 16384)), temperature=0.3,
                    num_gpu=_cfg(config).get("coder_num_gpu", 99))   # None = Ollama sama
         h = _html_z(raw)
         if not h:
