@@ -236,8 +236,12 @@ class _Sber(logging.Handler):
 
 
 def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
-          druh="chat", **kwargs):
-    """Zavolá `bound_method(*args, **kwargs)` a uloží stopu. Výsledek vrací beze změny."""
+          druh="chat", adresar=None, **kwargs):
+    """Zavolá `bound_method(*args, **kwargs)` a uloží stopu. Výsledek vrací beze změny.
+
+    HANS_STOPA_ZKUSEBNI_V1 (22. 10.) — `adresar`: stopa zkušebního běhu
+    (měřicí skript, `postav_handler`) jde jinam než provozní `data/stopy`
+    (nepřepíše živý pohled web adminu ani 200 posledních provozních stop)."""
     try:
         func = bound_method.__func__
         kroky, konec_fn = _mapa(func, DRUHY[druh]["model"])
@@ -287,6 +291,8 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
                     pass
         elif event == "return":
             stav["navrat"] = _v(frame.f_lineno)
+            if "ctx" in frame.f_locals:          # HANS_STOPA_PODKLAD_V1
+                stav["_ctx"] = frame.f_locals.get("ctx")
             if pod and (code, frame.f_lineno) in pod["ret_r"] and stav.get("_pod_navrat"):
                 stav["navrat"] = stav["_pod_navrat"]      # odpověď vznikla v podmetodě
             _cmd_z(frame)
@@ -358,7 +364,8 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
                 _zapis_atomicky(DIR / "zive.json", d)
             except Exception:
                 pass
-    threading.Thread(target=_zive, name="stopa-zive", daemon=True).start()
+    if adresar is None:                          # HANS_STOPA_ZKUSEBNI_V1
+        threading.Thread(target=_zive, name="stopa-zive", daemon=True).start()
     sys.settrace(_globalni)
     vysledek, chyba = None, None
     try:
@@ -373,12 +380,20 @@ def spust(bound_method, *args, rid=None, kanal="", osoba="", zprava="",
         _h = getattr(bound_method, "__self__", None)
         stav["podklad"] = {"vysledek": getattr(_h, "_grounding_outcome", None),
                            "cesta": getattr(_h, "_grounding_cesta", None)}
+        # HANS_STOPA_PODKLAD_V1 (22. 10.) — i TEXT podkladu a přepis F1: u
+        # přikrášlení s oporou rozhodovací kroky proběhnou správně a výmysl
+        # přidá až model — bez textu podkladu strom neukázal, co model dostal.
+        _g = getattr(stav.pop("_ctx", None), "_grounding", "")
+        stav["podklad"]["text"] = _g[:20000] if isinstance(_g, str) else ""
+        stav["podklad"]["f1"] = getattr(_h, "_f1_query", None)
     except Exception:
         stav["podklad"] = None
     try:
         _uloz(rid_z, kanal, osoba, zprava, vysledek, chyba, stav, provedeno,
-              kroky, konec_fn, sber.zaznamy, realne=pod["realne"] if pod else None)
-        _uloz_strom(func, [(_realny(v, pod["realne"]), z) for v, z in kroky]
+              kroky, konec_fn, sber.zaznamy, realne=pod["realne"] if pod else None,
+              adresar=adresar)
+        if adresar is None:
+            _uloz_strom(func, [(_realny(v, pod["realne"]), z) for v, z in kroky]
                     if pod else kroky, druh)
     except Exception as e:
         logging.getLogger("hans_stopa").debug("stopa neuložena: %s", e)
@@ -457,9 +472,14 @@ def _sestav(rid, kanal, osoba, zprava, vysledek, chyba, stav, provedeno, kroky,
 
 
 def _uloz(rid, kanal, osoba, zprava, vysledek, chyba, stav, provedeno, kroky,
-          konec_fn, zaznamy, realne=None):
+          konec_fn, zaznamy, realne=None, adresar=None):
     data = _sestav(rid, kanal, osoba, zprava, vysledek, chyba, stav, provedeno,
                    kroky, konec_fn, zaznamy, realne=realne)
+    if adresar is not None:                      # HANS_STOPA_ZKUSEBNI_V1
+        d = Path(adresar); d.mkdir(parents=True, exist_ok=True)
+        (d / (re.sub(r"[^A-Za-z0-9_-]", "", str(data["id"])) + ".json")).write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return
     DIR.mkdir(parents=True, exist_ok=True)
     p = DIR / (re.sub(r"[^A-Za-z0-9_-]", "", str(data["id"])) + ".json")
     p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
