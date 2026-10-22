@@ -519,6 +519,32 @@ def _ft_nacti(db_path: str) -> tuple:
     return vypisy, tituly
 
 
+# HANS_FACTS_TITLE_PADY_V1 (22. 10.) — záloha, když přesná shoda kmenů nevyjde:
+# „Limonádového Joea“ × titul „Limonádový Joe aneb Koňská opera“ (věta nemá
+# podtitul, „joea“ ≠ kmen „joe“), „Sedmi samurajích“ × „Sedm samurajů“,
+# „Českém ráji“, „Kipa Thorna“. Bez výpisu faktů a Wikidat model herce
+# vymyslel (Limonádový Joe „Jan Tříska“, „Josef Kemr“). Stačí hlavní název
+# před „aneb“; slovo titulu sedí na slovo věty, které začíná jeho kmenem
+# (krátké slovo celé) a je nejvýš o 3 znaky delší; aspoň jedno slovo titulu
+# má 5+ znaků („Sám doma“ chytal „domácnost“); číslo dílu musí ve větě být.
+# 📏 3 463 vět: 38 změn, sporná 1 („Hudební forma“ u věty o hudbě).
+def _ft_volne(t: str, slova_v: set) -> bool:
+    hl = re.split(r"\s+aneb\s+", t, maxsplit=1, flags=re.IGNORECASE)[0]
+    sl = re.findall(r"[^\W_]+", _hr._fold(_ft_norm(hl)).lower())
+    tw = [w for w in sl if len(w) >= 3 and w not in _FAKTA_TITUL_STOP]
+    if not tw or max(len(w) for w in tw) < 5:
+        return False
+    cis = [w for w in re.findall(r"[^\W_]+", _hr._fold(_ft_norm(t)).lower())
+           if w.isdigit() or _FT_RIMSKA.match(w)]
+    if not all(c in slova_v for c in cis):
+        return False
+    for w in tw:
+        k = w[:max(4, len(w) - 2)] if len(w) >= 5 else w
+        if not any(x.startswith(k) and len(x) - len(w) <= 3 for x in slova_v):
+            return False
+    return True
+
+
 def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
     """Tituly článků s výpisem faktů, které věta jmenuje: všechna slova titulu
     jsou ve větě (kmenem); jednoslovný titul musí ve větě začínat slovo; delší
@@ -541,7 +567,7 @@ def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
     out = []
     _slova_v = set(re.findall(r"[^\W_]+", fv))
     for t, kt in tituly.items():
-        if not kt or not kt <= kv:
+        if not kt or not (kt <= kv or _ft_volne(t, _slova_v)):
             continue
         # HANS_FACTS_TITLE_RIMSKA_V1 (22. 10.) — kmeny berou slova od 3 znaků,
         # takže z titulu „Václav II.“ zbyl jen „vacla“ a výpis faktů o otci

@@ -880,8 +880,12 @@ _WD_POPIS = [("P571", "založení / začátek"), ("P569", "narození"), ("P570",
              ("P57", "režie"), ("P22", "otec"), ("P25", "matka"), ("P19", "místo narození"),
              ("P20", "místo úmrtí"), ("P112", "zakladatel"), ("P86", "skladatel"),
              ("P800", "nejznámější díla"), ("P26", "manžel / manželka"), ("P551", "bydliště"),
-             ("P40", "děti"), ("P3373", "sourozenci")]   # HANS_LOOKUP_PRIBUZNI_V1
-_WD_STROP = {"P40": 14, "P3373": 8, "P26": 6}   # HANS_LOOKUP_PRIBUZNI_V1 — panovník má 10+ dětí
+             ("P40", "děti"), ("P3373", "sourozenci"),   # HANS_LOOKUP_PRIBUZNI_V1
+             # HANS_LOOKUP_WD_OBSAZENI_V1 (22. 10.) — český článek o filmu obsazení
+             # často nemá (Sedm samurajů 920 zn) a model pak spletl režii s rolí;
+             # z paměti „Limonádového Joea hrál Jan Tříska“
+             ("P161", "hrají")]
+_WD_STROP = {"P40": 14, "P3373": 8, "P26": 6, "P161": 8}   # HANS_LOOKUP_PRIBUZNI_V1 — panovník má 10+ dětí
 
 
 # ── HANS_LOOKUP_PRIBUZNI_V1 (20. 10.) — otázka na příbuzné ──────────────────

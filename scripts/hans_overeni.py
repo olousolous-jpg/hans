@@ -197,7 +197,10 @@ _VSE_P = sorted({p for ps in _DATA_P.values() for p in ps} | {p for _, ps in _VZ
                 | {"P800", "P551"}
                 # HANS_LOOKUP_PRIBUZNI_V1 (20. 10.) — děti a sourozenci do podkladu
                 # dohledání (otázka na příbuzné; stín je nepoužívá)
-                | {"P40", "P3373"})
+                | {"P40", "P3373"}
+                # HANS_LOOKUP_WD_OBSAZENI_V1 (22. 10.) — obsazení filmu do podkladu
+                # („kdo hrál…“: Sedm samurajů → „hlavní roli režíroval Kurosawa“)
+                | {"P161"})
 _MISTA_P = ("P131", "P19", "P20")
 _cache = None
 
@@ -219,7 +222,7 @@ def _c() -> dict:
     return _cache
 
 
-_CACHE_V = 4   # 20. 10.: P40, P3373 (HANS_LOOKUP_PRIBUZNI_V1) · HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
+_CACHE_V = 5   # 22. 10.: P161 (HANS_LOOKUP_WD_OBSAZENI_V1) · 20. 10.: P40, P3373 (HANS_LOOKUP_PRIBUZNI_V1) · HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
 
 
 def _uloz():
