@@ -376,6 +376,18 @@ def navrh_system(config: dict, topic: str, notes: list, db_path: str = "",
     return None
 
 
+# HANS_WEB_CITACE_OBLAST_V1 (22. 10.) — citace musí být doslovná I O TOM, co
+# zdůvodňuje: noc 22. 10. model doložil typografickou škálu větou o tom, že
+# webdesignu chybí formální vzdělání (a dřív větou o WCAG obecně), ačkoli
+# poznámky o písmu Hans má. Kritika pak tvrdila nepravdivý důvod volby.
+_CITACE_OBLAST = {
+    "barva": re.compile(r"barv|odstín|kontrast|palet", re.I),
+    "paleta": re.compile(r"barv|odstín|kontrast|palet", re.I),
+    "typografie": re.compile(r"písm|font|typograf|řádkován|proklad|nadpis|čitelnost"
+                             r"|kerning|leading|tracking|škál|velikost\w* text", re.I),
+}
+
+
 def _over_navrh(j, poznamky: str) -> Optional[dict]:
     if not isinstance(j, dict):
         return None
@@ -394,7 +406,8 @@ def _over_navrh(j, poznamky: str) -> Optional[dict]:
     for k in ("barva", "paleta", "typografie"):
         c = str(j.get("citace_" + k) or "").strip()
         opory[k] = {"proc": str(j.get("proc_%s_cz" % k) or "").strip()[:300],
-                    "citace": c if len(_norm_cit(c)) >= 25 and _norm_cit(c)[:60] in pn else ""}
+                    "citace": c if len(_norm_cit(c)) >= 25 and _norm_cit(c)[:60] in pn
+                    and _CITACE_OBLAST[k].search(c) else ""}
     try:
         zaklad = min(20.0, max(16.0, float(j.get("zaklad_px") or 17)))
         pomer = min(1.414, max(1.125, float(j.get("pomer_skaly") or 1.25)))

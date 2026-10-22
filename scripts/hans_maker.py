@@ -41,6 +41,19 @@ def _cfg(config: dict) -> dict:
     return (config or {}).get("maker", {}) or {}
 
 
+# HANS_MAKER_CODER_GPU_V1 (22. 10.) — popisky obrázků a starší cesty webu volají
+# TÝŽ coder jako stavba webu, ale braly pevné num_gpu 99. qwen3.8:27b se celý do
+# grafiky nevejde → noc 22. 10. „cudaMalloc failed“ (500) a všech 15 obrázků
+# dostalo náhradní zadání „historical illustration, <název>“. Rozložení coderu
+# platí jedno: maker.web_v2.coder_num_gpu (None = rozhodne Ollama), jinak num_gpu.
+def _coder_gpu(config: dict) -> dict:
+    web = _cfg(config).get("web_v2", {}) or {}
+    if "coder_num_gpu" in web:
+        n = web.get("coder_num_gpu")
+        return {} if n is None else {"num_gpu": int(n)}
+    return {"num_gpu": int(_cfg(config).get("num_gpu", 99))}
+
+
 def enabled(config: dict) -> bool:
     return bool(_cfg(config).get("enabled", True))
 
@@ -495,7 +508,7 @@ def _image_prompts_for(config: dict, subs: list, podklady: list = None,
             system="You output only the numbered list of English image prompts.",
             config=config, timeout=int(_cfg(config).get("llm_timeout", 600)),
             keep_alive=0, options={"temperature": 0.4, "num_predict": 1000,
-                                   "num_gpu": int(_cfg(config).get("num_gpu", 99))})
+                                   **_coder_gpu(config)})
         lines = [re.sub(r"^\s*\d+[.)]\s*", "", l).strip()
                  for l in (raw or "").splitlines() if l.strip()]
         if len(lines) >= len(subs):
@@ -708,7 +721,7 @@ def _repair_principles(config: dict, model: str, prompt: str, system: str,
             options={"temperature": float(_cfg(config).get("temperature", 0.3)),
                      "num_ctx": int(_cfg(config).get("num_ctx", 8192)),
                      "num_predict": int(_cfg(config).get("num_predict", 4096)),
-                     "num_gpu": int(_cfg(config).get("num_gpu", 99))})
+                     **_coder_gpu(config)})
         fixed = _extract_html(raw) if (raw and raw.strip()) else ""
         if fixed and len(fixed) >= 120:
             after = principle_gaps(brief, fixed)
@@ -769,7 +782,7 @@ def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
             options={"temperature": float(_cfg(config).get("temperature", 0.3)),
                      "num_ctx": int(_cfg(config).get("num_ctx", 8192)),
                      "num_predict": int(_cfg(config).get("num_predict", 4096)),
-                     "num_gpu": int(_cfg(config).get("num_gpu", 99))})
+                     **_coder_gpu(config)})
         landing = _extract_html(raw) if (raw and raw.strip()) else ""
         if not landing or len(landing) < 120:
             return {"status": "deferred", "reason": "landing prázdný"}
@@ -871,7 +884,7 @@ def make_coder_artifact(config: dict, topic: str, brief: str,
             options={"temperature": float(_cfg(config).get("temperature", 0.3)),
                      "num_ctx": int(_cfg(config).get("num_ctx", 8192)),
                      "num_predict": int(_cfg(config).get("num_predict", 4096)),
-                     "num_gpu": int(_cfg(config).get("num_gpu", 99))})
+                     **_coder_gpu(config)})
         html = _extract_html(raw) if (raw and raw.strip()) else ""
         if not html or len(html) < 120:
             result = {"status": "deferred",
