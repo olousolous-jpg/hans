@@ -118,7 +118,14 @@ _PADY_PODSTATNA = (("ovi", ""), ("em", ""), ("ii", "ie"), ("ií", "ie"), ("ie", 
                    ("la", "el"), ("lu", "el"), ("lovi", "el"), ("ra", "er"), ("ru", "er"),
                    ("ka", "ek"), ("ku", "ek"),
                    ("y", "a"), ("i", "a"), ("u", "a"), ("ou", "a"), ("e", "a"), ("ě", "a"),
-                   ("a", ""), ("u", ""), ("e", ""), ("ě", ""), ("i", ""))
+                   ("a", ""), ("u", ""), ("e", ""), ("ě", ""), ("i", ""),
+                   # HANS_WIKI_PADY_A_E_V1 (22. 10.) — cizí příjmení na -e mají
+                   # 2. pád na -a: „Tomáše Garrigua Masaryka“ → „Garrigu“, takže
+                   # přesný titul chyběl, hledání sklouzlo na „Řád Tomáše
+                   # Garrigua Masaryka“, dohledání se nespustilo a odpověď byla
+                   # z hlavy („Charlotte Jeřábková“); „Kipa Thorna“ → nic.
+                   # 📏 153 kotev z korpusu: 2 změny (Masaryk, Kip Thorne), jinak 0.
+                   ("a", "e"))
 _PREDLOZKY = {"z", "ze", "na", "nad", "pod", "u", "v", "ve", "von", "van", "de", "da", "di",
               "of", "the", "a", "aneb", "and"}
 
