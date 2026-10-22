@@ -481,6 +481,10 @@ _FT_ZAVORKA = re.compile(r"\s*\([^)]*\)")
 _FT_ZKRATKA = re.compile(r"(?<!\w)((?:\w\.){2,}\w?)(?!\w)")
 
 
+_FT_RIMSKA = re.compile(r"^(?:ii|iii|iv|vi|vii|viii|ix|xi|xii|xiii|xiv|xv"
+                        r"|xvi|xvii|xviii|xix|xx)$")   # HANS_FACTS_TITLE_RIMSKA_V1
+
+
 def _ft_norm(s: str) -> str:
     s = _FT_ZAVORKA.sub("", s or "")
     return _FT_ZKRATKA.sub(lambda m: m.group(1).replace(".", ""), s)
@@ -535,8 +539,18 @@ def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
             if _w.endswith(_a) and len(_w) >= 5:
                 kv.add((_w[:-len(_a)] + _b)[:5])
     out = []
+    _slova_v = set(re.findall(r"[^\W_]+", fv))
     for t, kt in tituly.items():
         if not kt or not kt <= kv:
+            continue
+        # HANS_FACTS_TITLE_RIMSKA_V1 (22. 10.) — kmeny berou slova od 3 znaků,
+        # takže z titulu „Václav II.“ zbyl jen „vacla“ a výpis faktů o otci
+        # dostala otázka „Jak zemřel Václav III.?“ (odpověď pak přisoudila
+        # synovi otcovu smrt). Řadová číslice titulu musí ve větě být jako
+        # celé slovo. Táž vada jako HANS_ENTITY_RIMSKA_V1. 📏 3 463 vět: 1 změna.
+        if not all(w in _slova_v for w in
+                   re.findall(r"[^\W_]+", _hr._fold(_ft_norm(t)).lower())
+                   if _FT_RIMSKA.match(w)):
             continue
         ft = _hr._fold(_ft_norm(t)).lower().strip()
         if len(kt) == 1:

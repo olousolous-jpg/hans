@@ -372,6 +372,10 @@ def _classify(gloss: str) -> str:
 _ADJ_KONCOVKA_Q = re.compile(r"(em|ych|eho|emu|ou|ym|ymi)$")
 
 
+# HANS_ENTITY_RIMSKA_V1 — řadová číslice ve složeném tvaru (bez tečky)
+_RIMSKA_TOK = re.compile(r'^(?:ii|iii|iv|vi|vii|viii|ix|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx)$')
+
+
 class EntityStore:
     def __init__(self, config: dict, db_path: Optional[str] = None):
         self.config = config or {}
@@ -613,6 +617,19 @@ class EntityStore:
                     kt = [t for t in _vse if len(t) >= 3]
                 if not kt:
                     continue  # jen krátké tokeny → moc nejednoznačné
+                # HANS_ENTITY_RIMSKA_V1 (22. 10.) — ŘADOVÁ ČÍSLICE PATŘÍ KE JMÉNU.
+                # „ii“ je pod 3 znaky, filtr ji zahodil a klíč „Václav II.“ se
+                # scvrkl na „vaclav“ → sedl na „Václav III.“, „Václav IV.“,
+                # „Václava Havla“; „Karel IV.“ na Karla Čapka, „Alžběta II.“ na
+                # holé jméno. Podklad pak byl o jiné osobě a model si přizpůsobil
+                # údaje (Václav III. „zemřel ve Vratislavi“). Klíč s číslicí se
+                # trefí jen, když dotaz nese TUTÉŽ číslici. Jen ≥2 znaky — „v“
+                # a „i“ jsou v klíčích předložka a spojka. Navazuje na
+                # HANS_ANCHOR_RIMSKE_V1 (kotva). 📏 3 463 vět: 8 změn, všechny
+                # falešné shody (Čapek, Havel, Alžběta), ztráta 0.
+                _rim = [t for t in _vse if _RIMSKA_TOK.match(t)]
+                if _rim and not all(t in q_tokens for t in _rim):
+                    continue
                 # HANS_ENTITY_COLLAPSED_KEY_V1 — víceslovný klíč scvrklý na JEDNO
                 # slovo („dr. strange“ → strange) nemá oporu v dalším tokenu, takže
                 # volný prefix chytal „stránek/strana“. Slovo dotazu musí začínat
