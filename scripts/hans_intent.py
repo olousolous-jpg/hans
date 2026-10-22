@@ -1008,8 +1008,21 @@ _ZADA_DOHLEDANI = re.compile(
     re.IGNORECASE)
 
 
+# HANS_LOOKUP_ON_REQUEST_BUDOUCI_V1 (22. 10.) — žádost jako otázka v budoucím
+# čase („Zjistíte mi prosím, kde všude trénoval Johan Cruijff?“) nesepnula →
+# odpověď z paměti s vymyšlenými kluby. Tvar „zjistíte“ bývá i oznamovací
+# („…narazíte na rozpory nebo zjistíte, že…“) → jen na začátku věty / za
+# „a, prosím, čárkou“ a ve větě, která je otázkou.
+# 📏 2 093 vět (deník + přepisy): nově 0 (jediný výskyt tvaru je oznamovací).
+_ZADA_DOHLEDANI_BUDOUCI = re.compile(
+    r"(?:^|[.!?]\s+|,\s*|\b(?:a|prosím|prosim)\s+)(?:[^\W\d_]+\s+se\s+ptá:\s*)?"
+    r"(?:zjist[íi][šs]|zjist[íi]te|dohled[áa][šs]|dohled[áa]te|vyhled[áa][šs]|"
+    r"vyhled[áa]te|najde[šs]|najdete)\b(?=[^?]*\?)", re.IGNORECASE)
+
+
 def zada_dohledani(text: str) -> bool:
-    return bool(_ZADA_DOHLEDANI.search(text or ""))
+    return bool(_ZADA_DOHLEDANI.search(text or "")
+                or _ZADA_DOHLEDANI_BUDOUCI.search(text or ""))
 
 
 # HANS_LOOKUP_QUESTION_SUMMARY_V1 (15. 10.) — ptá se věta na KONKRÉTNÍ údaj
