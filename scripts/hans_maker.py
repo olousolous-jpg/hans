@@ -54,6 +54,14 @@ def _coder_gpu(config: dict) -> dict:
     return {"num_gpu": int(_cfg(config).get("num_gpu", 99))}
 
 
+# HANS_MAKER_CODER_THINK_V1 (22. 10.) — qwen3.8 je model s uvažováním: popisky
+# 15 obrázků s podklady se se stropem 1000 tokenů nevešly za úvahy → prázdná
+# odpověď a náhradní „historical illustration“ i při druhé stavbě. Stejné
+# pravidlo jako stavba webu (`hans_webdilo._gen`, HANS_WEB_QWEN3_NOTHINK_V1).
+def _coder_think(config: dict):
+    return False if re.search(r"qwen3|uigen-x", _coder_model(config) or "", re.I) else None
+
+
 def enabled(config: dict) -> bool:
     return bool(_cfg(config).get("enabled", True))
 
@@ -507,10 +515,14 @@ def _image_prompts_for(config: dict, subs: list, podklady: list = None,
             % (len(subs), len(subs), len(subs), lst),
             system="You output only the numbered list of English image prompts.",
             config=config, timeout=int(_cfg(config).get("llm_timeout", 600)),
-            keep_alive=0, options={"temperature": 0.4, "num_predict": 1000,
+            keep_alive=0, think=_coder_think(config),
+            options={"temperature": 0.4, "num_predict": 1000,
                                    **_coder_gpu(config)})
         lines = [re.sub(r"^\s*\d+[.)]\s*", "", l).strip()
                  for l in (raw or "").splitlines() if l.strip()]
+        if len(lines) < len(subs):
+            _log.warning("maker image prompts: %d řádků na %d témat (%d zn odpovědi) "
+                         "→ náhradní popisky", len(lines), len(subs), len(raw or ""))
         if len(lines) >= len(subs):
             for s, p in zip(subs, lines[:len(subs)]):
                 # HANS_MAKER_IMAGE_FACTS_V1 — ověřená fakta se PŘIPOJÍ, ne
@@ -522,7 +534,7 @@ def _image_prompts_for(config: dict, subs: list, podklady: list = None,
                 fk = _fakta_k_podtematu(db_path, s) if db_path else ""
                 out[s] = ("%s, %s" % (p.rstrip(" .,"), fk)) if fk else p
     except Exception as e:
-        _log.debug("maker image prompts: %s", e)
+        _log.warning("maker image prompts selhaly: %s", e)
     return out
 
 
@@ -718,7 +730,7 @@ def _repair_principles(config: dict, model: str, prompt: str, system: str,
             "zachovej. Vrať POUZE kompletní kód.",
             system=system, config=config,
             timeout=int(_cfg(config).get("llm_timeout", 600)), keep_alive=0,
-            options={"temperature": float(_cfg(config).get("temperature", 0.3)),
+            think=_coder_think(config), options={"temperature": float(_cfg(config).get("temperature", 0.3)),
                      "num_ctx": int(_cfg(config).get("num_ctx", 8192)),
                      "num_predict": int(_cfg(config).get("num_predict", 4096)),
                      **_coder_gpu(config)})
@@ -779,7 +791,7 @@ def make_coder_site(config: dict, db_path: str, topic: str, brief: str,
             "podstránky):\n%s\n\nVrať index.html:" % (topic, brief, cards),
             system=_LANDING_SYSTEM, config=config,
             timeout=int(_cfg(config).get("llm_timeout", 600)), keep_alive=0,
-            options={"temperature": float(_cfg(config).get("temperature", 0.3)),
+            think=_coder_think(config), options={"temperature": float(_cfg(config).get("temperature", 0.3)),
                      "num_ctx": int(_cfg(config).get("num_ctx", 8192)),
                      "num_predict": int(_cfg(config).get("num_predict", 4096)),
                      **_coder_gpu(config)})
@@ -881,7 +893,7 @@ def make_coder_artifact(config: dict, topic: str, brief: str,
             model, "DESIGN BRIEF:\n%s\n\nVrať kompletní index.html:" % brief,
             system=system, config=config,
             timeout=int(_cfg(config).get("llm_timeout", 600)), keep_alive=0,
-            options={"temperature": float(_cfg(config).get("temperature", 0.3)),
+            think=_coder_think(config), options={"temperature": float(_cfg(config).get("temperature", 0.3)),
                      "num_ctx": int(_cfg(config).get("num_ctx", 8192)),
                      "num_predict": int(_cfg(config).get("num_predict", 4096)),
                      **_coder_gpu(config)})
