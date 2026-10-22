@@ -681,3 +681,35 @@ def stin(h, ctx) -> None:
     threading.Thread(target=_beh, args=(h, str(getattr(ctx, "name", "") or ""), otazka,
                                         prepis, odpoved, cesta),
                      daemon=True, name="overeni_stin").start()
+
+
+# ── HANS_ROKY_VYCTU_V1 (22. 10.) — rok v závorce u položky výčtu mimo podklad ──
+# Na podložené cestě model rozšiřuje výčet o údaje, které podklad nemá: děti
+# Karla IV. dostaly vymyšlené roky („Václav IV. (1350 – 1419)“, nar. 1361),
+# Cruijffova angažmá vymyšlená léta. 📏 Dvě sady po 40 otázkách (backlog
+# VYMYSLENI_22_10): údaj mimo podklad obecně 15 výmyslů : 16 pravd (škrt
+# nejde), ověření celým článkem neodděluje; ROK V ZÁVORCE U POLOŽKY VÝČTU
+# 12 : 1. Odstraní se jen rok / rozsah let, položka i zbytek závorky zůstane.
+# Výpisy příkazů (soubory „Film (1996).mkv“) sem nejdou — vracejí se dřív.
+_RV_POLOZKA = re.compile(r"^\s*(?:[*\-•–]|\d{1,2}[.)])\s+")
+_RV_ZAVORKA = re.compile(r"\s*\(([^()]*\b\d{3,4}\b[^()]*)\)")
+_RV_ROK = re.compile(r"(?<!\d)(\d{3,4})(?!\d)")
+_RV_ROZSAH = re.compile(r",?\s*(?<!\d)\d{3,4}\s*(?:[–—-]\s*\d{2,4})?(?!\d)")
+
+
+def roky_vyctu_mimo_podklad(text: str, podklad: str):
+    """(nový text, [odstraněné závorky]) — HANS_ROKY_VYCTU_V1."""
+    pod = re.sub(r"(?<=\d)[\s.](?=\d)", "", podklad or "")
+    pryc, out = [], []
+    for radek in (text or "").split("\n"):
+        if _RV_POLOZKA.match(radek):
+            def _z(m):
+                roky = _RV_ROK.findall(m.group(1))
+                if not roky or all(r in pod for r in roky):
+                    return m.group(0)
+                pryc.append(m.group(0).strip())
+                zbytek = _RV_ROZSAH.sub("", m.group(1)).strip(" ,;–—-")
+                return " (%s)" % zbytek if re.search(r"[^\W\d_]", zbytek) else ""
+            radek = _RV_ZAVORKA.sub(_z, radek)
+        out.append(radek)
+    return "\n".join(out), pryc

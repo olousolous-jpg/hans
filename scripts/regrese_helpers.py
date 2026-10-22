@@ -1496,3 +1496,9 @@ def f1_ztratil_predmet(veta: str, novy: str, posledni_otazka: str = "",
     hist = ([{"role": "user", "content": posledni_otazka},
              {"role": "assistant", "content": posledni_odpoved}] if posledni_otazka else [])
     return bool(h._f1_ztratil_predmet(veta, novy, hist, "Marek"))
+
+
+def roky_vyctu(text: str, podklad: str) -> str:
+    """HANS_ROKY_VYCTU_V1 — text odpovědi po odstranění roků výčtu mimo podklad."""
+    from scripts.hans_overeni import roky_vyctu_mimo_podklad
+    return roky_vyctu_mimo_podklad(text, podklad)[0]

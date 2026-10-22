@@ -2446,6 +2446,19 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         ctx.response = _r
                 except Exception as _uge:
                     logging.getLogger(__name__).debug("url podklad guard: %s", _uge)
+                # HANS_ROKY_VYCTU_V1 (22. 10.) — rok v závorce u položky výčtu,
+                # který podklad nemá, pryč (viz hans_overeni)
+                try:
+                    if getattr(self, "_grounding_outcome", "") == "grounded":
+                        from scripts.hans_overeni import roky_vyctu_mimo_podklad
+                        _rv, _rvp = roky_vyctu_mimo_podklad(ctx.response, _sys)
+                        if _rvp:
+                            logging.getLogger(__name__).info(
+                                "HANS_ROKY_VYCTU_V1: odstraněno %d roků mimo podklad %s",
+                                len(_rvp), ", ".join(_rvp)[:160])
+                            ctx.response = _rv
+                except Exception as _rve:
+                    logging.getLogger(__name__).debug("roky výčtu: %s", _rve)
             # HANS_NO_FALSE_MEMORY_CLAIM_V1 (7. 10.) — na cestě BEZ FAKT (v zápiscích
             # nic nebylo) odpověď začínala „V paměti mám záznamy o…“ a pokračovala
             # obecnou znalostí; jednou i „vytvořil jsem si k tomu obraz“ (v deníku
