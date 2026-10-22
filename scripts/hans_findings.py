@@ -1117,6 +1117,101 @@ def _wikidata_blok(titul: str) -> str:
         return ""
 
 
+
+# ── HANS_LOOKUP_EN_V1 (22. 10.) — anglický článek, když český odpověď nemá ────
+# Nápad uživatele. Krátká česká hesla nemají údaje, na které se lidé ptají, a
+# model je pak dovymýšlí (Cruijff cs 2 221 zn / en 119 405 — trenérská kariéra
+# jen v en; Sedm samurajů 920 / 45 964 — obsazení; Ligeti — filmy s jeho hudbou;
+# Platini 1 359 / 31 199). Anglický titul z Wikidat, text ze sítě (lokálně jen
+# cs), výběr sekcí modelem podle nadpisů jako u češtiny. Vypínač
+# `instant_lookup.en_clanek`, práh `en_prah_zn`.
+_EN_CACHE: dict = {}
+_EN_NENI = re.compile(r"(?:nen[íi]|nejsou)\s+(?:v\s+(?:článku|textu)\s+)?uveden|"
+                      r"v\s+(?:článku|textu)\s+(?:to\s+)?nen[íi]|text\s+neobsahuje|"
+                      r"článek\s+neobsahuje", re.IGNORECASE)
+
+
+# HANS_LOOKUP_EN_KLICE_V1 (22. 10.) — anglické nadpisy × česká otázka: výběr
+# modelem u Cruijffa („kde trénoval“) vzal „Club career“ a „Early life“ místo
+# „Managerial career“. Kmen slova otázky → anglická slova do zadání výběru
+# a sekce s takovým nadpisem mají přednost (jako slova u české cesty).
+_EN_KLICE = [
+    (r"tren", ("manager", "managerial", "coach")),
+    (r"hral\w* za\b|klub", ("club career", "career")),
+    (r"zemrel|zemrel|smrt|umrel|zahynul|pohrb|zavrazd", ("death", "burial", "later life", "assassination")),
+    (r"narodil|detstv|mlad", ("early life", "birth", "childhood")),
+    (r"deti|potom|syn|dcer|manzel|rodin|pribuz", ("family", "issue", "marriage", "personal life", "children")),
+    (r"studoval|vzdel|skol", ("education", "early life")),
+    (r"postavil|zalozil|vznik|stavb|historie", ("history", "construction", "founding")),
+    (r"hudb|skladb|slozil", ("music", "compositions", "soundtrack")),
+    (r"^(?!.*klub).*(?:film|\broli\b|postav|hral\w* ve?\b|obsazen|hraje)", ("cast", "film", "filmography", "in popular culture")),
+    (r"cen[ay]|ocenen|nobel", ("awards", "honours", "recognition")),
+    (r"dila|knih|napsal|tvorb", ("works", "bibliography", "career")),
+]
+# druhá šance po „není“ jen u otázky na výčet / souvislosti (Pelíšky „kdo hrál
+# Elišku“ — postava, která ve filmu není: česky poctivé „není“, s en vymyšlený herec)
+_EN_VYCET = re.compile(r"\b(?:kter[ýy]ch|kter[ée]|kte[řr][íi]|jak[ée]|jak[ýy]ch|jac[íi]|"
+                       r"vyjmenuj\w*|v[šs]echn\w*|ve\s+kter\w+|za\s+kter\w+)\b", re.IGNORECASE)
+
+
+def _en_klice(otazka: str) -> list:
+    f = _fold_cs(otazka)
+    out = []
+    for vz, kl in _EN_KLICE:
+        if re.search(vz, f):
+            out += [k for k in kl if k not in out]
+    return out
+
+
+def _en_podklad(config: dict, titul: str, otazka: str, strop: int = 4000) -> tuple:
+    """(anglický titul, úvod + sekce vybrané podle otázky) nebo (None, '')."""
+    try:
+        from scripts import hans_overeni as O
+        from scripts.hans_facts import sitelinky
+        try:
+            from scripts import hans_wiki_offline as _wo
+            _r = _wo._cil(titul)
+            if _r:
+                titul = _r[1]
+        except Exception:
+            pass
+        if titul not in _EN_CACHE:
+            O._nacti_wd([titul])
+            q = (O._c().get(titul) or {}).get("qid")
+            en = (sitelinky(q, ("enwiki",)) if q else {}).get("enwiki")
+            txt = ""
+            if en:
+                from scripts.web_reader import WebReader
+                txt = WebReader(config)._wiki_extract(en, "en") or ""
+            _EN_CACHE[titul] = (en, txt)
+        en, txt = _EN_CACHE[titul]
+        if not en or len(txt) < 300:
+            return None, ""
+        casti = re.split(r"\n+== ([^=\n]+?) ==\n?", txt)
+        sek = [("", casti[0])] + [(casti[i].strip(), casti[i + 1].strip())
+                                  for i in range(1, len(casti) - 1, 2)]
+        out = sek[0][1][:1500]
+        _kl = _en_klice(otazka)                    # HANS_LOOKUP_EN_KLICE_V1
+        _m = _vyber_modelem(config, en, otazka + (" (anglicky: %s)" % ", ".join(_kl)
+                                                   if _kl else ""), sek, "")
+        _nad = [i for i, (h, b) in enumerate(sek) if i and b
+                and any(k in h.lower() for k in _kl)]
+        poradi = list(dict.fromkeys(_nad[:2] + list(_m[0] if _m else [])))
+        vyb = []
+        for i in poradi:
+            zbyva = strop - len(out)
+            if zbyva < 300:
+                break
+            h, b = sek[i]
+            out += "\n\n== %s ==\n%s" % (h, b[:min(1800, zbyva)])
+            vyb.append(h)
+        _log.info("HANS_LOOKUP_EN_V1: %r → en %r (%d zn), sekce %s", titul, en, len(txt), vyb)
+        return en, out
+    except Exception as e:
+        _log.debug("HANS_LOOKUP_EN_V1: %s", e)
+        return None, ""
+
+
 def _summarize_for_user(config: dict, topic: str, art: dict,
                         otazka: Optional[str] = None) -> Optional[str]:
     """Shrnutí článku HANS-CZECH modelem (rezidentní, žádný VRAM handoff).
@@ -1135,6 +1230,7 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
     text = (art.get("text") or "")[:_strop]
     _rok_t = bool(re.fullmatch(r"\d{3,4}", str(topic or "").strip()))
     # HANS_LOOKUP_VYBER_V1 — u konkrétní otázky podklad podle otázky
+    _vyb = ""
     if (otazka and not _rok_t and c.get("vyber_podle_otazky", True)
             and _konkretni_otazka(config, otazka)):
         _vyb = _podklad_podle_otazky(str(art.get("title") or topic), str(otazka), config)
@@ -1152,6 +1248,21 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             text = "ÚDAJE Z INFOBOXU ČLÁNKU (příbuzní):\n" + _ibp + "\n\n" + text
             _log.info("HANS_LOOKUP_PRIBUZNI_V1: %r → infobox %d zn", art.get("title") or topic,
                       len(_ibp))
+    # HANS_LOOKUP_EN_V1 — krátký český článek / výběr nic nenašel → i anglický
+    _en_t, _en_txt = None, ""
+    _en_zap = bool(c.get("en_clanek", False)) and bool(otazka) and not _rok_t \
+        and _konkretni_otazka(config, otazka)
+    if _en_zap:
+        try:
+            from scripts import hans_wiki_offline as _wo
+            _cs_len = len((_wo.extrakt(str(art.get("title") or topic))[0]) or "")
+        except Exception:
+            _cs_len = len(art.get("text") or "")
+        if _cs_len < int(c.get("en_prah_zn", 8000)) or not _vyb:
+            _en_t, _en_txt = _en_podklad(config, str(art.get("title") or topic), str(otazka))
+            if _en_txt:
+                text = text + ("\n\nZ ANGLICKÉ WIKIPEDIE (článek „%s“; odpovídej česky, "
+                               "anglické názvy přelož):\n%s" % (_en_t, _en_txt))
     if _rok_t and otazka:
         # HANS_YEAR_EVENTS_V1 — článek o roce (česky + anglicky): vyber události
         # k tomu, na co se člověk ptá (země, vládce, války), česky a s daty
@@ -1206,13 +1317,31 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             timeout=int(c.get("llm_timeout", 45)),
             options={"num_predict": (380 if (_rok_t or _pta_na_pribuzne(otazka))   # HANS_LOOKUP_PRIBUZNI_V1
                                      else int(c.get("num_predict", 220))),
-                     "num_ctx": (8192 if _rok_t else int(c.get("num_ctx", 4096))),
+                     "num_ctx": (8192 if (_rok_t or _en_txt) else int(c.get("num_ctx", 4096))),
                      "temperature": 0.2},
         )
     except Exception as e:
         _log.debug("instant_lookup: summarize: %s", e)
         return None
     out = (out or "").strip()
+    # HANS_LOOKUP_EN_V1 — česky „v článku není“ → jednou znovu i s anglickým
+    if _en_zap and not _en_txt and out and _EN_NENI.search(out) \
+            and _EN_VYCET.search(str(otazka)):   # HANS_LOOKUP_EN_KLICE_V1
+        _en_t, _en_txt = _en_podklad(config, str(art.get("title") or topic), str(otazka))
+        if _en_txt and text in prompt:
+            try:
+                out2 = ollama_chat(
+                    model, [{"role": "user", "content": prompt.replace(
+                        text, text + "\n\nZ ANGLICKÉ WIKIPEDIE (článek „%s“; odpovídej česky, "
+                        "anglické názvy přelož):\n%s" % (_en_t, _en_txt), 1)}],
+                    config=config, timeout=int(c.get("llm_timeout", 45)),
+                    options={"num_predict": int(c.get("num_predict", 220)),
+                             "num_ctx": 8192, "temperature": 0.2})
+                if (out2 or "").strip():
+                    _log.info("HANS_LOOKUP_EN_V1: česky „není“ → odpověď i z en %r", _en_t)
+                    out = out2.strip()
+            except Exception as e:
+                _log.debug("HANS_LOOKUP_EN_V1 druhé shrnutí: %s", e)
     return out or None
 
 

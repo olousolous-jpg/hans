@@ -67,7 +67,7 @@ _CAPABILITIES = [
     # zapíral („nemám přístup k internetu“, tazatel 14. 10.).
     ("lookup", "Když na otázku o skutečném světě (osoba, místo, dílo, událost, pojem) "
      "nemám nic v paměti, nebo mě o to požádáte, umím si to HNED DOHLEDAT na Wikipedii "
-     "(česky, a když české heslo není, anglicky) a odpovědět z nalezeného článku. "
+     "(česky; když české heslo není nebo je krátké a odpověď v něm nenajdu, i v anglické Wikipedii) a odpovědět z nalezeného článku. "
      "Nehledám po celém internetu, jen na Wikipedii; dohledaný údaj je provizorní — "
      "do paměti si ho zapíšu až po nočním ověření. Pošlete-li mi ODKAZ se slovy "
      "„přečti si…“, stránku si přečtu a zapamatuji si ji",
