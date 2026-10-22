@@ -802,8 +802,14 @@ def postav(config: dict, plan: dict, libs: list, topic: str, stranky: list,
     def jedna(co, zadani, stare=None, vady=None):
         if oprava is not None and not vady:
             return stare           # opravné kolo: bez vad se nesahá
-        if stare and vady and (oprava or {}).get("css_nejdriv") and all(
-                _CSS_VADA.search(v) for v in vady):
+        # HANS_WEB_INDEX_CSS_ONLY_V1 (22. 10., uživatel) — úvod se v opravných
+        # kolech opravuje JEN doplňkem CSS: qwen3.8 (část vrstev na CPU) celý úvod
+        # nepřepsal do 900 s ani na 2 pokusy → 2× 30 min naprázdno; doplněk
+        # navíc nemůže úvod rozbít. `oprava_indexu: "prepis"` = staré chování.
+        _jen_css = (co == "index.html" and str(_cfg(config).get(
+            "oprava_indexu", "css")).lower() == "css")
+        if stare and vady and (_jen_css or ((oprava or {}).get("css_nejdriv") and all(
+                _CSS_VADA.search(v) for v in vady))):
             # HANS_WEB_CSS_REPAIR_V1 — vzhledové vady opravuj DOPLŇKEM CSS:
             # 26. 9. coder vracel celý dokument beze změny (kontrast 4,13 u
             # patičky zůstal 2 kola); krátký blok CSS nemůže rozbít placeholdery.
