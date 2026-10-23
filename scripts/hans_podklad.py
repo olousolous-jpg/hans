@@ -375,6 +375,22 @@ def posbirej(h, druh, nazev, ent, dotaz, veta, zpravy=""):
         kusy["entita"] = h._entity_store().fact_block(ent) if ent else ""
     except Exception:
         kusy["entita"] = ""
+    # HANS_PODKLAD_ENTITA_WD_V1 (23. 10.) — údaje z Wikidat i k entitě, když je
+    # nemá výpis faktů (HANS_FACTS_WIKIDATA_V1 je jen u něj): „prý Karlštejn
+    # stavěl nějaký Francouz“ → podklad entita + článek bez stavitele → model
+    # „Ulrico Aostalli z Itálie“ (16. stol.); Wikidata: architekt Matyáš z Arrasu.
+    try:
+        if (kusy["entita"] and druh in ("titul", "entita") and nazev
+                and "Ověřené údaje" not in kusy["fakta"]
+                and bool((h.config.get("grounding", {}) or {}).get("facts_wikidata", True))):
+            from scripts.hans_findings import _wikidata_blok
+            _t = re.sub(r"\s*\([^)]*\)$", "", nazev) if druh == "entita" else nazev
+            _b = _wikidata_blok(_t)
+            if _b:
+                kusy["entita"] += ("\nOvěřené údaje k „%s“:\n" % _t
+                                   + "\n".join("- " + r for r in _b.split("\n")[1:]))
+    except Exception as _we:
+        _log.debug("HANS_PODKLAD_ENTITA_WD_V1: %s", _we)
     z = ""
     # zápisky podle PŘEDMĚTU: hledání chce všechna slova, „Co vím o Českém
     # ráji?“ nenajde nic, „Český ráj“ ano
