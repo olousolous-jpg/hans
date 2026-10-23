@@ -258,9 +258,59 @@ def _cmd_vzpominka(handler, name, args) -> str:
     return out or "Nepodařilo se mi teď nahlédnout do deníku, pane."
 
 
+# HANS_CETL_NAVAZUJICI_V1 (23. 10.) — „a o čem to bylo?“ hned po výpisu četby
+# (/cetl). Skutečně 14. 9.: „co jsi dneska četl?“ → výpis 4 položek → „a o čem
+# to bylo?“ → „K tomuhle nemám spolehlivý záznam“ (zápisky přitom byly);
+# 23. 10. (test) F1 „O čem to bylo?“ bez předmětu → vymyšlený obsah („Zahrada
+# na Opyši vypráví o lásce a ztrátě“). Odpověď = Hansovy zápisky ke každé
+# vypsané položce (`reading_answer` podle názvu). Jinde (po filmu…) prázdno
+# → běžná cesta (HANS_CMD_EMPTY_FALLTHROUGH_V1). 📏 deník: 2 holé „o čem to
+# bylo?“ z 1 742 zpráv, z toho 1 po výpisu četby.
+_CETL_NAVAZ = re.compile(
+    r"^\s*(?:a\s+)?(?:o\s+[čc]em|co\s+(?:je|bylo|stalo)?\s*v\s+(?:tom|nich|n[ií]))\b"
+    r"(?:\s+(?:to|ty|ta|ten|tom|jsi|jste|tam|vlastn[eě]))*\s*"
+    r"(?:bylo|byly|byla|byl|je|jsou|psal\w*|[čc]etl\w*)?\s*\??\s*$", re.IGNORECASE)
+_CETL_VYPIS = re.compile(r"^\s*[–-]\s*\d{1,2}\.\s*\w+\s*\([^)]*\):\s*(.+?)\s*$", re.M)
+
+
+def _cetl_navazujici(handler, name, q) -> str:
+    if not _CETL_NAVAZ.search(q or ""):
+        return None
+    try:
+        from scripts.hans_thread import recent_turns as _rt
+        from scripts.hans_recall import reading_answer
+        posl = next((t for r, t in reversed(_rt(handler, name)[-4:]) if r == "assistant"), "")
+        if "jsem naposledy četl" not in posl:
+            return ""
+        polozky = _CETL_VYPIS.findall(posl)[:5]
+        radky = []
+        for pol in polozky:
+            nazev = re.sub(r"\s+—\s+kap\..*$", "", pol).strip()
+            ra = reading_answer(_cc._recall_db(handler), "četl jsi " + nazev, asker=name) or ""
+            m = re.search(r"^[–-]\s*[^:]+:\s*(.+)$", ra, re.M)
+            if m and "—" in m.group(1):
+                txt = m.group(1).split("—", 1)[1].strip() if m.group(1).count("—") else m.group(1)
+                txt = txt.split(" — ", 1)[-1].strip()
+                txt = txt[:260]
+                _k = max(txt.rfind(". "), txt.rfind("! "), txt.rfind("? "))
+                if not txt.rstrip().endswith((".", "!", "?")):
+                    txt = txt[:_k + 1] if _k >= 60 else txt.rstrip(" ,;") + "…"
+                radky.append("– %s: %s" % (nazev, txt.strip()))
+        if not radky:
+            return ""
+        _cc._log.info("HANS_CETL_NAVAZUJICI_V1: zápisky k %d položkám výpisu", len(radky))
+        return "Tohle jsem si k tomu zapsal:\n" + "\n".join(radky)
+    except Exception as e:
+        _cc._log.debug("HANS_CETL_NAVAZUJICI_V1: %s", e)
+        return ""
+
+
 def _cmd_cetl(handler, name, args) -> str:
     from scripts.hans_recall import reading_answer
     q = (args or "").strip()
+    _nav = _cetl_navazujici(handler, name, q or (getattr(handler, "_thread_ctx", None) or [""])[0])
+    if _nav is not None:      # HANS_CETL_NAVAZUJICI_V1 — "" = propadni dál
+        return _nav
     # HANS_LLM_ROUTE_ARGS_V2 — LLM router předává args="" (záměrná pojistka proti
     # mutujícím podpříkazům), takže routovaný dotaz by ztratil TÉMA a spadl na
     # „poslední čtení". Příkaz je čistě ČTECÍ → původní věta se dá vzít z vlákna.

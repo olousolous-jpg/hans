@@ -600,6 +600,11 @@ def zaregistruj(_cc):
         nl_patterns=[
             # HANS_BOOK_PROGRESS_ANSWER_V1 — vzor na průběh čtení (viz výš).
             _cc._PRUBEH_CTENI_PAT.pattern,
+            # HANS_CETL_NAVAZUJICI_V1 (23. 10.) — „a o čem to bylo?“; obsluha
+            # odpoví jen po výpisu četby, jinak prázdno → běžná cesta
+            r"^\s*(?:a\s+)?(?:o\s+[čc]em|co\s+(?:je|bylo|stalo)?\s*v\s+(?:tom|nich|n[ií]))\b"
+            r"(?:\s+(?:to|ty|ta|ten|tom|jsi|jste|tam|vlastn[eě]))*\s*"
+            r"(?:bylo|byly|byla|byl|je|jsou|psal\w*|[čc]etl\w*)?\s*\??\s*$",
             # HANS_COUNT_FILMS_BOOKS_V1 (14. 9.) — pocet prectenych knih (tykani
             # i vykani, bez diakritiky). Na 2 248 realnych vetach 0 zasahu.
             r"\bkolik\s+(?:\w+\s+){0,3}kn[i\u00ed](?:h|\u017eek|zek)\w*[^.?!]{0,30}(?:[\u010dc]etl|p[\u0159r]e[\u010dc]ten)",
