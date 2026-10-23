@@ -1311,14 +1311,39 @@ _ZP_JMENO = re.compile(r"(?<![.!?…:—–-]\s)(?<![„\"'‚(])(?<!^)\b([A-ZÁ
 _ZP_NEJMENO = ("vas", "vam", "vase", "vasi", "vami", "hans", "kolac", "cesk", "evrop", "cech")
 
 
+# HANS_ZPRAVY_JMENO_DENI_V1 (23. 10.) — za 8.–23. 10. pravidlo jména sepnulo
+# 11× a ani jednou u dění: Kolumbus × „Amerika“ 5×, „Titanicu“ → ponorka Titan
+# („kapitán Titanicu = Stockton Rush“), Einstein × letošní Nobelovy ceny,
+# Messi, režie Avengers. Jméno teď pustí jen otázka na DĚNÍ (vzor z 8. 10.:
+# „co se děje s popravou Pikeové?“) a jméno musí v titulku sedět celým kmenem
+# (dřív stačilo prvních 5 písmen: „titan“ ⊂ „Titanicu“).
+_ZP_DENI = re.compile(r"\b(?:deje|dejou|stalo|stane|novink\w*|noveho|aktualn\w*|ted|dnes|dneska|"
+                      r"vcera|letos|zprav[ayeu]?|zpravach|pise|pisou|psali|hlasi|probiha|vyviji|"
+                      r"dopadlo|dopadne|resi|chystaj\w*)\b")
+
+
+def _zp_deni(dotaz: str) -> bool:
+    return bool(_ZP_DENI.search(_bez_diakritiky(dotaz or "").lower()))
+
+
+def _zp_jmeno_v(jmeno: str, text: str) -> bool:
+    """Celé jméno z dotazu (kmen ± pádová koncovka) jako slovo titulku."""
+    p = jmeno[:5] if len(jmeno) > 5 else jmeno[:4]
+    for w in re.findall(r"(?<![a-z0-9])" + re.escape(p) + r"[a-z0-9]*", text):
+        s = len(os.path.commonprefix([jmeno, w]))
+        if len(jmeno) - s <= 2 and len(w) - s <= 3:
+            return True
+    return False
+
+
 def _zp_jmena(dotaz: str) -> list:
     out = []
     for veta in re.split(r"(?<=[.!?…])\s+", dotaz or ""):
         for m in _ZP_JMENO.finditer(veta.strip()):
             k = _bez_diakritiky(m.group(1))
             if not k.startswith(_ZP_NEJMENO) and not k.startswith(_ZP_NETEMA):
-                out.append(k[:5] if len(k) > 5 else k[:4])
-    return out
+                out.append(k.lower())
+    return out if _zp_deni(dotaz) else []
 
 
 def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: int = 4,
@@ -1395,7 +1420,7 @@ def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: i
                     else:
                         f = _bez_diakritiky(" ".join(z.get("titulek") or ""
                                                      for z in casova_osa(u, path)))
-                    return any(re.search(r"(?<![a-z0-9])" + re.escape(j), f) for j in jmena)
+                    return any(_zp_jmeno_v(j, f) for j in jmena)   # HANS_ZPRAVY_JMENO_DENI_V1
                 _podle_jmena = set()
                 kand = []
                 for u in nej:
@@ -1708,7 +1733,7 @@ def zpravy_podklad(dotaz: str, config: dict, path: str = DB, jmeno: bool = True)
         _tit = _bez_diakritiky(" ".join(z.get("titulek") or "" for z in casova_osa(top["id"], path))
                                if top["id"] > 0 else top["titulek"])
         if not (_j and top["skore"] >= ZPRAVY_PRAH_SLOVA
-                and any(re.search(r"(?<![a-z0-9])" + re.escape(x), _tit) for x in _j)):
+                and any(_zp_jmeno_v(x, _tit) for x in _j)):   # HANS_ZPRAVY_JMENO_DENI_V1
             return None
         _log.info("HANS_ZPRAVY_JMENO_V1: podklad při shodě %.2f podle jména %s", top["skore"], _j)
     uid = top["id"]
