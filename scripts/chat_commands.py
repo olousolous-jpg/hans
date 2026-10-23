@@ -2200,6 +2200,12 @@ _ROUTE_CUE = {
     # → nejstarsi zaznam deniku. Vypis jen kdyz veta mluvi o pameti ci vzniku.
     "vzpominka": re.compile(r"vzpomin|pamatuj|pamet|zapamat|existuj|vznik|"
                             r"narodi|zaznam|denik", re.I),
+    # HANS_NALEZ_CUE_V1 (23. 10.) — za ~4 týdny logu 9 voleb /nalez routerem,
+    # všech 9 mimo („a kdy ho potvrdili?“, „už jsi něco zjistil?“, „jak jsi to
+    # spočítal?“) → cizímu „jen pro domácnost“. Výpis jen když věta mluví
+    # o nálezech, zkoušení nebo Koláčovi; oslovení „Zkouško“ (testovací
+    # identita) se nepočítá.
+    "nalez": re.compile(r"nalez|zkousen|zkousk[yuae]|zkousc|kolac", re.I),
 }
 
 # HANS_STUDIUM_NOT_WHY_V1 (6. 10.) — opak pojistky tematu: /studium je vypis

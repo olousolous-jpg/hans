@@ -198,6 +198,8 @@ _VSE_P = sorted({p for ps in _DATA_P.values() for p in ps} | {p for _, ps in _VZ
                 # HANS_LOOKUP_PRIBUZNI_V1 (20. 10.) — děti a sourozenci do podkladu
                 # dohledání (otázka na příbuzné; stín je nepoužívá)
                 | {"P40", "P3373"}
+                # HANS_OVERENI_POHLAVI_V1 (23. 10.) — pohlaví osoby článku
+                | {"P21"}
                 # HANS_LOOKUP_WD_OBSAZENI_V1 (22. 10.) — obsazení filmu do podkladu
                 # („kdo hrál…“: Sedm samurajů → „hlavní roli režíroval Kurosawa“)
                 | {"P161"})
@@ -222,7 +224,7 @@ def _c() -> dict:
     return _cache
 
 
-_CACHE_V = 5   # 22. 10.: P161 (HANS_LOOKUP_WD_OBSAZENI_V1) · 20. 10.: P40, P3373 (HANS_LOOKUP_PRIBUZNI_V1) · HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
+_CACHE_V = 6   # 23. 10.: P21 (HANS_OVERENI_POHLAVI_V1) · 22. 10.: P161 (HANS_LOOKUP_WD_OBSAZENI_V1) · 20. 10.: P40, P3373 (HANS_LOOKUP_PRIBUZNI_V1) · HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
 
 
 def _uloz():
@@ -502,6 +504,33 @@ _TRIGGER = re.compile("|".join([v for v, _ in _VZTAHY] + [v for v, _, _ in _MNOZ
 _UVOZ = re.compile(r"[„\"]([^“\"]{3,90})[“\"]")
 
 
+# HANS_OVERENI_POHLAVI_V1 (23. 10.) — „Narodila se roku 1878 a zemřela 1923“
+# (otázka na manželku T. G. Masaryka) se porovnávala s článkem o NĚM a stín
+# navrhl opravu „rok úmrtí 1937“ — 2 z 15 návrhů oprav v logu 17.–22. 10.
+# Věta s životní událostí jen v ženském (mužském) tvaru, která osobu článku
+# nejmenuje, se s článkem o muži (ženě) podle Wikidat P21 neporovnává.
+# Jen slovesa životních událostí: „stavba byla zahájena“ má taky ženský tvar.
+_ROD_F = re.compile(r"\b(narodila|zemřela|zesnula|vdala|provdala|ovdověla|porodila|pokřtěna)\b", re.I)
+_ROD_M = re.compile(r"\b(narodil|zemřel|zesnul|oženil|ovdověl|pokřtěn)\b", re.I)
+_P21 = {"Q6581072": "f", "Q1052281": "f", "Q6581097": "m", "Q2449503": "m"}
+
+
+def _rod_vety(veta: str) -> str:
+    f, m = bool(_ROD_F.search(veta or "")), bool(_ROD_M.search(veta or ""))
+    return "f" if f and not m else "m" if m and not f else ""
+
+
+def _jiny_rod(kan: str, veta: str) -> bool:
+    rod = _rod_vety(veta)
+    if not rod:
+        return False
+    rc = {_P21.get(q) for q in (((_c().get(kan) or {}).get("p") or {}).get("P21") or [])} - {None}
+    if len(rc) != 1 or rod in rc:
+        return False
+    sl = re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", kan).split(",")[0]))
+    return not (sl and 2 * sum(w[:5] in _fold(veta) for w in sl) > len(sl))
+
+
 def _overit(h, otazka, prepis, odpoved) -> list:
     from scripts import hans_wiki_offline as wo
     from scripts import hans_podklad as P
@@ -577,6 +606,7 @@ def _overit(h, otazka, prepis, odpoved) -> list:
             _zav = re.findall(r"\w{4,}", _fold(" ".join(re.findall(r"\((.*?)\)", kan))))
             if any(w not in _DRUH_ZAVORKA and w[:5] not in _kontext for w in _zav):
                 cizi.add(kan)
+        cizi |= {kan for kan, _ in r["cl"] if _jiny_rod(kan, r["veta"])}   # HANS_OVERENI_POHLAVI_V1
         _dat = lambda x: not isinstance(x.get("p"), list)      # datum/číslo, ne jméno
         txt = [x for x in txt if not (x["verdikt"] == "rozpor" and (
             x["clanek"] in cizi or x["clanek"] + "\x00datum" in cizi))]
