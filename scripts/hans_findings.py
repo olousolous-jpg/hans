@@ -70,6 +70,15 @@ _PROVISIONAL_TMPL_ZAPISKY = (
     "Udělám to v noci a kdyby to nesedělo, ráno se ozvu."
 )
 
+# HANS_LOOKUP_OPAKOVANE_V1 — totéž heslo téže osobě znovu
+_PROVISIONAL_TMPL_OPAK = (
+    "K tomu jsem se už díval, %(oslov)s. "
+    "Podle toho, co jsem našel (%(source)s):\n\n%(summary)s\n\n"
+    "Berte to zatím s rezervou — ještě jsem si to neověřil a nezapsal do paměti. "
+    "Udělám to v noci a kdyby to nesedělo, ráno se ozvu."
+)
+_NEDAVNO: dict = {}
+
 _CORRECTION_TMPL = (
     "%(oslov)s, ještě k tomu, na co jste se ptal — „%(topic)s\". "
     "Odpověděl jsem tehdy z toho, co jsem narychlo našel, ale při nočním "
@@ -775,6 +784,15 @@ def _render_provisional(row: dict, asker: Optional[str],
                     "nejbližší nález „%s\" — může jít o něco úplně jiného.)"
                     % (row.get("topic") or "", src))
     _tmpl = _PROVISIONAL_TMPL_ZAPISKY if mel_zapisky else _PROVISIONAL_TMPL
+    # HANS_LOOKUP_OPAKOVANE_V1 (23. 10.) — totéž heslo téže osobě před chvílí
+    # („kdo objevil Higgsův boson“ → „a kdy ho potvrdili?“): „V paměti jsem
+    # o tom nic neměl“ byla nepravda. Testovací identity nález neukládají,
+    # proto paměť procesu (3 h), ne čekárna.
+    _klic = ((asker or "").strip().lower(), src)
+    _nyni = time.time()
+    if _nyni - _NEDAVNO.get(_klic, 0.0) < 3 * 3600:
+        _tmpl = _PROVISIONAL_TMPL_OPAK
+    _NEDAVNO[_klic] = _nyni
     if _je_test_osoba(asker, config):   # HANS_FINDINGS_TEST_NO_QUEUE_V1 — nic nesliby
         _tmpl = _tmpl.replace(
             "Berte to zatím s rezervou — ještě jsem si to neověřil a nezapsal do paměti. "
@@ -850,7 +868,45 @@ def _titles_align(topic: str, title: str) -> bool:
         return False
     if not tt or not qt:
         return False
-    return all(any(_sklonovany_tvar(q, x) for q in qt) for x in tt)
+    if all(any(_sklonovany_tvar(q, x) for q in qt) for x in tt):
+        return True
+    return _kmen_sedi(topic, title)   # HANS_LOOKUP_ALIGN_KMEN_V1
+
+
+# HANS_LOOKUP_ALIGN_KMEN_V1 (23. 10.) — poznámka „heslo přesně na X jsem
+# nenašel, může jít o něco úplně jiného“ u správného hesla ve skloněném
+# tvaru: „Nikola Teslův“ → Nikola Tesla, „Tristana a Isoldu“, „Spartakovi“,
+# „Napoleon Bonapartovy“ (rozhovor 23. 10.; v historii 38 poznámek, 11
+# planých). Každé slovo dotazu po odtržení pádové koncovky = slovo titulu
+# s nejvýš koncovkou 1. pádu. S diakritikou („Jana“ ≠ „Ján“) a bez „-o“
+# („Julia Caesara“ → fotbalista Julio Caesar musí varování dostat, proto
+# zůstává planá poznámka u „Leonarda da Vinciho“). 📏 38 párů: 27 → 31
+# správně, ztráta 0.
+_KMEN_KONC = sorted(["ovi", "ovy", "ova", "ové", "ovu", "ův", "em", "ou", "ům", "ech",
+                     "ích", "ami", "emi", "ími", "ho", "mu", "ím", "a", "e", "ě", "i",
+                     "í", "u", "y", "o"], key=len, reverse=True)
+_KMEN_NOM = ("", "a", "e", "us", "s")
+_KMEN_STOP = {"a", "z", "ze", "da", "de", "do", "na", "von", "van", "of", "the"}
+
+
+def _kmen(w: str) -> str:
+    for k in _KMEN_KONC:
+        if w.endswith(k) and len(w) - len(k) >= 3:
+            return w[:-len(k)]
+    return w
+
+
+def _kmen_sedi(topic: str, title: str) -> bool:
+    tt = [w for w in re.findall(r"\w+", re.sub(r"\(.*?\)", "", title or "").lower())
+          if w not in _KMEN_STOP]
+    qt = [w for w in re.findall(r"\w+", (topic or "").lower()) if w not in _KMEN_STOP]
+    if not tt or not qt:
+        return False
+    for w in qt:
+        k = _kmen(w)
+        if not any(t == w or (t.startswith(k) and t[len(k):] in _KMEN_NOM) for t in tt):
+            return False
+    return True
 
 
 def _shrnuti_podle_otazky(config: dict, otazka) -> bool:
