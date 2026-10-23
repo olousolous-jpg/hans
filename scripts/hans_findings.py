@@ -1154,11 +1154,29 @@ def _wikidata_blok(titul: str) -> str:
             if dat:
                 y, m, d = (list(min(dat)) + [0, 0])[:3]
                 hod.append("%s. %s. %s" % (d, m, y) if d and m and (d, m) != (1, 1) else str(y))
-            for v in [v for v in vals if isinstance(v, str)][:_WD_STROP.get(p, 4)]:
+            def _jmeno(v):
+                if O._c().get("LC:" + v):     # HANS_WD_DETI_MATKY_V1 — český štítek
+                    return O._c()["LC:" + v]
                 j = O._c().get("L:" + v) or []
                 cz = [x for x in j if re.search(r"[áčďéěíňóřšťúůýž]", x, re.I)
                       and len(x.split()) > 1]
-                jm = (cz or O._jm(v) or [None])[0]
+                return (cz or O._jm(v) or [None])[0]
+            _qs = [v for v in vals if isinstance(v, str)][:_WD_STROP.get(p, 4)]
+            # HANS_WD_DETI_MATKY_V1 — děti seskupené podle matky, když ji
+            # Wikidata uvádí u každého z nich
+            if p == "P40" and _qs and all(O._c().get("M:" + v) for v in _qs):
+                skup = {}
+                for v in _qs:
+                    m = O._c()["M:" + v][0]
+                    if _jmeno(v):
+                        skup.setdefault(m, []).append(_jmeno(v))
+                if skup and all(_jmeno(m) for m in skup):
+                    out.append("děti (podle matky): " + "; ".join(
+                        "matka %s — %s" % (_jmeno(m), ", ".join(dict.fromkeys(d)))
+                        for m, d in skup.items()))
+                    continue
+            for v in _qs:
+                jm = _jmeno(v)
                 if jm:
                     hod.append(jm)
             if hod:

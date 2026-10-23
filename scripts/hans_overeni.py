@@ -307,6 +307,21 @@ def _nacti_wd(tituly: list) -> None:
             odkazy |= set(C["A:" + q])
         for q in predlohy:
             C.setdefault("A:" + q, [])
+    # HANS_WD_DETI_MATKY_V1 (23. 10.) — matka každého dítěte (P25 dítěte), aby
+    # podklad uvedl, s kterou manželkou které dítě bylo; model je dřív
+    # k matkám přiřazoval sám (Karel IV., Jiří z Poděbrad — vymyšleno)
+    deti = [q for t in tituly for q in ((C.get(t) or {}).get("p") or {}).get("P40", [])
+            if isinstance(q, str) and "M:" + q not in C][:45]
+    if deti:
+        d = _wd(API + "?action=wbgetentities&props=claims&format=json&ids=" + "|".join(deti))
+        if isinstance(d, dict) and "entities" in d:
+            for q, e in (d.get("entities") or {}).items():
+                C["M:" + q] = [x for x in (
+                    ((cl.get("mainsnak") or {}).get("datavalue") or {}).get("value", {}).get("id")
+                    for cl in (e.get("claims") or {}).get("P25", [])
+                    if isinstance(((cl.get("mainsnak") or {}).get("datavalue") or {}).get("value"), dict))
+                    if x]
+                odkazy |= set(C["M:" + q])
     mista = {q for t in tituly for p in _MISTA_P
              for q in ((C.get(t) or {}).get("p") or {}).get(p, []) if isinstance(q, str)}
     for _ in range(4):
@@ -327,7 +342,17 @@ def _nacti_wd(tituly: list) -> None:
             for q in ((C.get(t) or {}).get("p") or {}).get(p, []):
                 if isinstance(q, str):
                     odkazy |= set(_predci(q))
-    odkazy = [q for q in odkazy if "L:" + q not in C]
+    # HANS_WD_DETI_MATKY_V1 — „LC:“ = český štítek zvlášť („Blanka z Valois“
+    # prohrávala s přezdívkou „Markéta z Valois“, protože nemá diakritiku);
+    # starší záznamy bez něj se načtou znovu (jen štítky)
+    for t in tituly:
+        for p, vals in ((C.get(t) or {}).get("p") or {}).items():
+            for v in vals:
+                if isinstance(v, str) and v.startswith("Q"):
+                    odkazy.add(v)
+                    if p == "P40":
+                        odkazy |= set(C.get("M:" + v) or [])
+    odkazy = [q for q in odkazy if "L:" + q not in C or "LC:" + q not in C]
     for i in range(0, len(odkazy), 45):
         d = _wd(API + "?action=wbgetentities&props=labels|aliases&languages=cs|en"
                 "&format=json&ids=" + "|".join(odkazy[i:i + 45]))
@@ -336,6 +361,7 @@ def _nacti_wd(tituly: list) -> None:
             for al in (e.get("aliases") or {}).values():
                 jm += [x.get("value") for x in al]
             C["L:" + q] = [j for j in jm if j]
+            C["LC:" + q] = ((e.get("labels") or {}).get("cs") or {}).get("value") or ""
     _uloz()
 
 

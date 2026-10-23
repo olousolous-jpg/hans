@@ -107,6 +107,44 @@ def person_card(db_path: str, query: str, config: dict,
     return ""
 
 
+_MES = ("ledna", "února", "března", "dubna", "května", "června", "července",
+        "srpna", "září", "října", "listopadu", "prosince")
+_JEDN = ["", "prvního", "druhého", "třetího", "čtvrtého", "pátého", "šestého", "sedmého",
+         "osmého", "devátého"]
+_NAST = ["desátého", "jedenáctého", "dvanáctého", "třináctého", "čtrnáctého", "patnáctého",
+         "šestnáctého", "sedmnáctého", "osmnáctého", "devatenáctého"]
+_PRED = ["", "jedna", "dva", "tři", "čtyři", "pět", "šest", "sedm", "osm", "devět"]
+
+
+def _den_slovy(d: int) -> set:
+    """Řadové číslovky dne v 2. pádě („třiadvacátého“, „dvacátého třetího“)."""
+    if d < 10:
+        return {_JEDN[d]}
+    if d < 20:
+        return {_NAST[d - 10]}
+    des = "dvacátého" if d < 30 else "třicátého"
+    j = d % 10
+    if not j:
+        return {des}
+    return {des + " " + _JEDN[j], _PRED[j] + "a" + des}
+
+
+def _dny_sedi(card: str, txt: str) -> bool:
+    """HANS_PERSON_CARD_VOICE_DEN_V1 — každé „D. měsíce“ z karty je v textu
+    hlasu jako „D. měsíce“ / „D. M.“ nebo řadovým slovem před tímtéž měsícem."""
+    import re as _re
+    low = (txt or "").lower()
+    for m in _re.finditer(r"\b(\d{1,2})\.\s*(" + "|".join(_MES) + r")\b", card or "", _re.I):
+        d, mes = int(m.group(1)), m.group(2).lower()
+        if _re.search(r"\b%d\.\s*(?:%s|%d\.)" % (d, mes, _MES.index(mes) + 1), low):
+            continue
+        if any(_re.search(r"\b%s\s+%s\b" % (_re.escape(w), mes), low) for w in _den_slovy(d)):
+            continue
+        if _re.search(r"\b%s\b" % mes, low):
+            return False      # měsíc zmínil, den nesedí
+    return True
+
+
 def person_card_voiced(db_path: str, query: str, config: dict,
                        asker: str = "") -> str:
     """HANS_PERSON_CARD_VOICE_V1 (18.8.) — táž fakta, ale Hansovým hlasem.
@@ -159,8 +197,23 @@ def person_card_voiced(db_path: str, query: str, config: dict,
             # „(zdroj neuváděn)“ — pro uživatele je to šum o vnitřku.
             "nepiš NIC, ani že chybí. Žádný nadpis, žádné odrážky, "
             "žádné uvozovky kolem celé odpovědi.")
+        # HANS_PERSON_CARD_WD_V1 (23. 10.) — karta je první věta článku se
+        # závorkou „(23. dubna 1420 – 22. března 1471, Praha)“ a hlas ji četl
+        # nejednoznačně („narodil se v Praze“, „vláda začala 1316“). Strukturované
+        # údaje z Wikidat k článku karty (narození, místa, rodiče…). 📏 Karel IV.
+        # + Jiří × 3 běhy: bez 1 chyba / 6, s blokem 0 / 6.
+        _wd = ""
+        try:
+            import re as _re_wd, urllib.parse as _up
+            _m = _re_wd.search(r"wikipedia\.org/wiki/([^)\s]+)", card)
+            if _m:
+                from scripts.hans_findings import _wikidata_blok
+                _wd = _wikidata_blok(_up.unquote(_m.group(1)).replace("_", " "))
+        except Exception:
+            _wd = ""
         out = ollama_generate(
-            model, "FAKTA O OSOBĚ:\n" + card + "\n\nOdpověz na dotaz: " + (query or ""),
+            model, "FAKTA O OSOBĚ:\n" + card + ("\n" + _wd if _wd else "")
+            + "\n\nOdpověz na dotaz: " + (query or ""),
             system=system, config=config, timeout=60)
         txt = (out or "").strip().strip('"')
         # HANS_PERSON_CARD_VOICE_V1 — DETERMINISTICKÁ KONTROLA MÍSTO DŮVĚRY.
@@ -176,6 +229,12 @@ def person_card_voiced(db_path: str, query: str, config: dict,
             _hr._log.info("person_card_voiced: hlas ztratil letopočet %s → karta",
                       sorted(years - set(_re.findall(
                           r"\b(1[89]\d\d|20\d\d)\b", txt))))
+            return card
+        # HANS_PERSON_CARD_VOICE_DEN_V1 (23. 10.) — den data taky: z „23. dubna
+        # 1420“ udělal hlas „dvaatřicetého dubna“ (rok zůstal, kontrola výš
+        # prošla). Den z karty musí zůstat číslicí nebo správným řadovým slovem.
+        if not _dny_sedi(card, txt):
+            _hr._log.info("person_card_voiced: hlas změnil den data → karta")
             return card
         # Krátká odpověď = model se nechytil → radši fakta než pahýl.
         if len(txt) >= 40:
