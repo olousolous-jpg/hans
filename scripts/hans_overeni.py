@@ -157,6 +157,17 @@ def porovnej(ud, U, text):
         return "nevim", None
     roky = {r for r, _, _ in U[druh]}
     if rok in roky:
+        # HANS_OVERENI_DEN_V1 — i v článku: rok sedí, den ne → rozpor
+        if druh != "premiera" and len(ud) > 3 and ud[2] and ud[3]:
+            import datetime as _dt
+            _pl = [(r, d, m) for r, d, m in U[druh] if r == rok and d and m]
+            try:
+                _d0 = _dt.date(rok, ud[3], ud[2])
+                if _pl and not any(abs((_dt.date(r, m, d) - _d0).days) in (0, 10, 11, 12, 13)
+                                   for r, d, m in _pl):
+                    return "rozpor", sorted("%d. %d. %d" % (d, m, r) for r, d, m in _pl)
+            except (ValueError, TypeError):
+                pass
         return "doloženo", None
     if re.search(r"\b%d\b" % rok, text):
         return "nevim", sorted(roky)
@@ -398,9 +409,28 @@ def over_wd(veta, udaje, tituly) -> list:
             for p in _DATA_P.get(u[0] or "", []):
                 if p in P:
                     roky = {x[0] for x in P[p]}
+                    vd = "doloženo" if u[1] in roky else "rozpor"
+                    # HANS_OVERENI_DEN_V1 (23. 10.) — rok sedí, ale den ne:
+                    # Dostojevskij „zemřel 22. ledna 1881“ (28. 1. / 9. 2.), Marie
+                    # Terezie „29. prosince“ (listopadu). Shoda jen na den přesně
+                    # nebo o 10–13 dní (juliánský × gregoriánský kalendář). Premiéra
+                    # ne (liší se podle země). 📏 log stínu: 90 porovnání, 4 nové
+                    # rozpory, všechny skutečné.
+                    if vd == "doloženo" and u[0] != "premiera" and u[2] and u[3]:
+                        _pl = [x for x in P[p] if isinstance(x, list) and x[0] == u[1]
+                               and x[1] and x[2]]
+                        if _pl:
+                            import datetime as _dt
+                            try:
+                                _d0 = _dt.date(u[1], u[3], u[2])
+                                if not any(abs((_dt.date(*x) - _d0).days) in (0, 10, 11, 12, 13)
+                                           for x in _pl):
+                                    vd = "rozpor"
+                                    roky = {"%d. %d. %d" % (x[2], x[1], x[0]) for x in _pl}
+                            except ValueError:
+                                pass
                     det.append({"clanek": t, "p": p, "udaj": u[4],
-                                "verdikt": "doloženo" if u[1] in roky else "rozpor",
-                                "wd": sorted(roky)})
+                                "verdikt": vd, "wd": sorted(roky)})
                     break
         for vzor, props in _VZTAHY:
             for m in re.finditer(vzor, veta, re.I):
@@ -656,7 +686,9 @@ def _overit(h, otazka, prepis, odpoved) -> list:
                 oprava = {"p": _p, "clanek": _hl, "udaj": str(x["udaj"]).strip(" .,"),
                           "spravne": str(x["wd"][0]),
                           "text": "Ještě oprava: podle Wikidat je u „%s“ %s %s, ne %s." % (
-                              _hl, _OPRAVA_POPIS[_p], x["wd"][0], str(x["udaj"]).strip(" .,"))}
+                              _hl, (_OPRAVA_POPIS[_p].replace("uveden rok", "uvedeno datum")   # HANS_OVERENI_DEN_V1
+                                     if ". " in str(x["wd"][0]) else _OPRAVA_POPIS[_p]),
+                              x["wd"][0], str(x["udaj"]).strip(" .,"))}
                 break
         out.append({"veta": r["veta"], "kandidati": r["kand"], "clanky": [c[0] for c in r["cl"]],
                     "oprava": oprava,
