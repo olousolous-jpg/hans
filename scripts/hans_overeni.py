@@ -65,7 +65,8 @@ _DRUHY = {
 _DR = {k: re.compile(v, re.I) for k, v in _DRUHY.items()}
 _MESICE = ["ledna", "února", "března", "dubna", "května", "června", "července",
            "srpna", "září", "října", "listopadu", "prosince"]
-_DATUM = re.compile(r"(?:(\d{1,2})\.\s*(" + "|".join(_MESICE) + r")\s+)?\b(1\d{3}|20\d\d|[5-9]\d\d)\b")
+_DATUM = re.compile(r"(?:(\d{1,2})\.\s*(" + "|".join(_MESICE) + r")\s+(?:(?:roku|léta)\s+)?)?"   # HANS_OVERENI_DEN_SLOVY_V1 — „9. ledna roku 1881“
+                    r"\b(1\d{3}|20\d\d|[5-9]\d\d)\b")
 
 
 def _vety(text: str) -> list:
@@ -85,10 +86,50 @@ def _druh(okoli: str):
 _VEK = re.compile(r"(?:dožil\w*\s+se\s+(?:\w+\s+){0,2}?|ve\s+věku\s+|v\s+)(\d{1,3})\s+let", re.I)
 
 
+# HANS_OVERENI_DEN_SLOVY_V1 (23. 10.) — „zemřel devět ledna roku 1881“ (ověření
+# 23. 10.; 28. 1. / 9. 2.) stín bral jen rokem → „doloženo“. Den slovem
+# (řadová v 2. pádě i základní číslovka) před měsícem → číslice.
+_JEDN_R = ["", "prvního", "druhého", "třetího", "čtvrtého", "pátého", "šestého", "sedmého",
+           "osmého", "devátého"]
+_NAST_R = ["desátého", "jedenáctého", "dvanáctého", "třináctého", "čtrnáctého", "patnáctého",
+           "šestnáctého", "sedmnáctého", "osmnáctého", "devatenáctého"]
+_JEDN_Z = ["", "jeden", "dva", "tři", "čtyři", "pět", "šest", "sedm", "osm", "devět"]
+_NAST_Z = ["deset", "jedenáct", "dvanáct", "třináct", "čtrnáct", "patnáct", "šestnáct",
+           "sedmnáct", "osmnáct", "devatenáct"]
+_PRED_R = ["", "jedna", "dva", "tři", "čtyři", "pět", "šest", "sedm", "osm", "devět"]
+
+
+def _dny_slov() -> dict:
+    d = {}
+    for n in range(1, 32):
+        if n < 10:
+            f = [_JEDN_R[n], _JEDN_Z[n]]
+        elif n < 20:
+            f = [_NAST_R[n - 10], _NAST_Z[n - 10]]
+        else:
+            des_r, des_z = ("dvacátého", "dvacet") if n < 30 else ("třicátého", "třicet")
+            j = n % 10
+            f = [des_r, des_z] if not j else [des_r + " " + _JEDN_R[j], _PRED_R[j] + "a" + des_r,
+                                               des_z + " " + _JEDN_Z[j], _PRED_R[j] + "a" + des_z]
+        for x in f:
+            d[x] = n
+    return d
+
+
+_DNY_SLOV = _dny_slov()
+_DEN_SLOVEM = re.compile(r"\b(" + "|".join(sorted(map(re.escape, _DNY_SLOV), key=len, reverse=True))
+                         + r")(?:\s+dne)?\s+(" + "|".join(_MESICE) + r")\b", re.I)
+
+
+def _den_slovem_cislem(veta: str) -> str:
+    return _DEN_SLOVEM.sub(lambda m: "%d. %s" % (_DNY_SLOV[m.group(1).lower()], m.group(2)), veta or "")
+
+
 def udaje_vety(veta: str, otazka: str = "") -> list:
     """[(druh, rok, den|None, měsíc|None, kus)] — druh z ±60 zn před číslem;
     věta bez druhu s jediným datem bere druh z otázky („Kdy se narodil X?“ →
     „X jsme přivítali na světě 2. března 1820“). Věk → („vek“, N, …)."""
+    veta = _den_slovem_cislem(veta)   # HANS_OVERENI_DEN_SLOVY_V1
     out = []
     for m in _VEK.finditer(veta):
         if re.search(r"zemřel|dožil|zesnul|skonal|věku", veta, re.I):
@@ -583,8 +624,16 @@ def _jiny_rod(kan: str, veta: str) -> bool:
     rc = {_P21.get(q) for q in (((_c().get(kan) or {}).get("p") or {}).get("P21") or [])} - {None}
     if len(rc) != 1 or rod in rc:
         return False
+    # „Manželka Tomáše Garrigua Masaryka … narodila se 1878“ osobu článku
+    # jmenuje, ale jen jako příbuzného — podmět je někdo jiný (ověření 23. 10.)
+    if _VZTAH_OSOBY.search(veta or ""):
+        return True
     sl = re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", kan).split(",")[0]))
     return not (sl and 2 * sum(w[:5] in _fold(veta) for w in sl) > len(sl))
+
+
+_VZTAH_OSOBY = re.compile(r"\b(?:manžel\w*|chot\w*|choť|žen[auyo]u?\b|dcer\w*|matk\w*|"
+                          r"sestr\w*|syn\w*|otc\w*|otec|bratr\w*|vdov\w*|snach\w*|zeť\w*)", re.I)
 
 
 def _overit(h, otazka, prepis, odpoved) -> list:
