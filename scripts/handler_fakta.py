@@ -1078,6 +1078,19 @@ class FaktaMixin:
                     'HANS_WIKI_TITUL_Z_VETY_V1: téma dohledání %r → %r', tema, _pz)
                 tema = _pz
             if not tema:
+                # HANS_LOOKUP_NAVAZ_HESLO_V1 (23. 10.) — doptávka na heslo, které
+                # se téže osobě právě dohledalo („kdo objevil Higgsův boson“ →
+                # „a kdy ho potvrdili?“; přepis F1 bez háčků → kotva nic → A1
+                # „nemám spolehlivý záznam“)
+                try:
+                    from scripts.hans_findings import posledni_heslo
+                    tema = posledni_heslo(name or "", veta or "", _prepis or "") or None
+                    if tema:
+                        logging.getLogger(_h.__name__).info(
+                            'HANS_LOOKUP_NAVAZ_HESLO_V1: doptávka → heslo %r', tema)
+                except Exception:
+                    tema = None
+            if not tema:
                 return None
             _dbp = (self.config.get("hans_idle", {}) or {}).get(
                 "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"

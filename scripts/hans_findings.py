@@ -79,6 +79,30 @@ _PROVISIONAL_TMPL_OPAK = (
 )
 _NEDAVNO: dict = {}
 
+
+def posledni_heslo(asker: str, veta: str, prepis: str = "", max_s: float = 1800) -> str:
+    """HANS_LOOKUP_NAVAZ_HESLO_V1 (23. 10.) — heslo, které Hans téže osobě
+    dohledal v posledních `max_s` s, když na něj krátká doptávka odkazuje
+    zájmenem („a kdy ho potvrdili?“) nebo ho přepis F1 nese bez háčků
+    („Kdy byl higgsuv boson potvrzen?“ → kotva nic). Jinak ''."""
+    import unicodedata as _ud
+    f = lambda s: "".join(c for c in _ud.normalize("NFD", (s or "").lower())
+                          if _ud.category(c) != "Mn")
+    kdo = (asker or "").strip().lower()
+    kand = sorted(((ts, src) for (a, src), ts in _NEDAVNO.items()
+                   if a == kdo and time.time() - ts < max_s), reverse=True)
+    if not kand:
+        return ""
+    src = kand[0][1]
+    slova = [w for w in re.findall(r"\w{4,}", f(re.sub(r"\(.*?\)", "", src)))]
+    v, p = f(veta), f(prepis)
+    if slova and all(w[:5] in p or w[:5] in v for w in slova):
+        return src
+    if (not p and len(re.findall(r"\w+", v)) <= 8
+            and re.search(r"\b(?:ho|ji|je|jej|jeho|jeji|nej|nem|nim|ni|to|tom|toho|tam|ten|ta|ty)\b", v)):
+        return src
+    return ""
+
 _CORRECTION_TMPL = (
     "%(oslov)s, ještě k tomu, na co jste se ptal — „%(topic)s\". "
     "Odpověděl jsem tehdy z toho, co jsem narychlo našel, ale při nočním "
