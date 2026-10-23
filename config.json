@@ -1788,6 +1788,9 @@
         "enabled": true
     },
     "overeni": {
-        "stin": true
+        "stin": true,
+        "opravy": true,
+        "oprava_limit_s": 4,
+        "_opravy_note": "HANS_OVERENI_OPRAVA_V2 (23. 10.): jasný rozpor s Wikidaty se připíše k odpovědi („Ještě oprava: …“), čeká se nejvýš oprava_limit_s; false = jen stín do logu."
     }
 }

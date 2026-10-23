@@ -1128,6 +1128,13 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         self._sc_a1(ctx)
         self._sc_pojistky(ctx)
         self._sc_overeni_tvrzeni(ctx)
+        # HANS_OVERENI_OPRAVA_V2 (23. 10.) — jasný rozpor s Wikidaty připsat
+        # k odpovědi (≤ 4 s čekání), PŘED uložením do historie
+        try:
+            from scripts import hans_overeni as _ovr
+            _ovr.opravit(self, ctx)
+        except Exception as _ope:
+            logging.getLogger(__name__).debug('HANS_OVERENI_OPRAVA_V2: %s', _ope)
         self._sc_ulozeni(ctx)
         # HANS_OVERENI_STIN_V1 (17. 10.) — ověření údajů kódem (lokální
         # Wikipedie + Wikidata) na pozadí, jen záznam; odpověď beze změny.
@@ -1621,6 +1628,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     print(f"[Chat] instant lookup error: {_ile}")
                 if _bypass_kind == "knowledge_check":
                     print("[Chat] HANS_KNOWLEDGE_CHECK_V1 → deterministic bypass")
+                # HANS_OVERENI_OPRAVA_V2 — i u shrnutí z okamžitého dohledání
+                # (Masaryková „narodila se 1878“ bylo dohledání)
+                if _bypass_kind == "instant_lookup":
+                    try:
+                        from scripts import hans_overeni as _ovr
+                        ctx.response = _kb
+                        _ovr.opravit(self, ctx)
+                        _kb = ctx.response or _kb
+                    except Exception as _ope:
+                        logging.getLogger(__name__).debug('HANS_OVERENI_OPRAVA_V2: %s', _ope)
                 try:
                     self.conv_store.add_exchange(ctx.name, ctx.user_message, _kb, channel=ctx.channel)
                 except Exception:

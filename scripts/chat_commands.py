@@ -2206,6 +2206,11 @@ _ROUTE_CUE = {
     # o nálezech, zkoušení nebo Koláčovi; oslovení „Zkouško“ (testovací
     # identita) se nepočítá.
     "nalez": re.compile(r"nalez|zkousen|zkousk[yuae]|zkousc|kolac", re.I),
+    # HANS_ZDRAVI_CUE_V1 (23. 10.) — „ověřuješ si, co říkáš?“ → /zdravi →
+    # cizímu „jen pro domácnost“. Z 12 voleb routerem za ~4 týdny ty správné
+    # nesou stav / počítač / hardware / fungování / „daří“ / „bolí“.
+    "zdravi": re.compile(r"zdrav|pocitac|\bpc\b|hardwar|funguj|bezi|\bstav|disk|ollam|kodi|"
+                         r"\bbol[ií]|fyzick|dari|mozek|server|pamet\w*\s+(?:ram|gpu)|gpu|grafick", re.I),
 }
 
 # HANS_STUDIUM_NOT_WHY_V1 (6. 10.) — opak pojistky tematu: /studium je vypis

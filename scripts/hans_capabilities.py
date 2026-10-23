@@ -72,6 +72,12 @@ _CAPABILITIES = [
      "do paměti si ho zapíšu až po nočním ověření. Pošlete-li mi ODKAZ se slovy "
      "„přečti si…“, stránku si přečtu a zapamatuji si ji",
      "„dohledej si …“, „podívej se, kdo byl …“; „přečti si tohle: <odkaz>“; /read <odkaz>"),
+    # HANS_OVERENI_OPRAVA_V2 (23. 10.) — kontrola údajů po odpovědi
+    ("fact_check", "Když v odpovědi uvedu datum, autora, režiséra nebo podobný údaj o skutečném "
+     "světě, hned ho porovnám s Wikidaty a lokální Wikipedií; když jasně nesedí, připíšu "
+     "na konec odpovědi „Ještě oprava: …“. Kontroluji jen některé druhy údajů (data narození, "
+     "úmrtí a založení, autor, režie, místa), ne všechno, co řeknu",
+     "děje se samo; na otázku „ověřuješ si, co říkáš?“"),
     ("study", "Umím STUDOVAT téma do hloubky přes týdny (Wikipedie, akademický "
      "výzkum, primární texty, knihy) a psát si poznámky; když mi dojde "
      "fronta témat, navrhnu další podle svého směru a zeptám se",

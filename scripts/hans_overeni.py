@@ -815,6 +815,10 @@ def _beh(h, kdo, otazka, prepis, odpoved, cesta):
         except Exception as e:
             _log.debug("HANS_OVERENI_STIN_V1: selhalo: %s", e)
             return
+    _zaloguj(h, kdo, otazka, prepis, cesta, vysl, t0)
+
+
+def _zaloguj(h, kdo, otazka, prepis, cesta, vysl, t0, pripojeno=False):
     if not vysl:
         return
     testy = {str(x).lower() for x in (h.config.get("test_persons") or [])}
@@ -826,7 +830,8 @@ def _beh(h, kdo, otazka, prepis, odpoved, cesta):
     # 19. a 16. 10.: 5 návrhů, všech 5 u skutečné chyby, 0 u pravdy
     for v in vysl:
         if v.get("oprava"):
-            _log.info("HANS_OVERENI_OPRAVA_V1 [%s, jen log]: %s", trida, v["oprava"]["text"])
+            _log.info("HANS_OVERENI_OPRAVA_V1 [%s, %s]: %s", trida,
+                      "připojeno k odpovědi" if pripojeno else "jen log", v["oprava"]["text"])
     _log.info("HANS_OVERENI_STIN_V1: %d vět, rozpor %d, doloženo %d (%s, %.1f s)%s",
               len(vysl), len(roz), sum(v["obe"] == "doloženo" for v in vysl), cesta,
               time.time() - t0, (" — " + roz[0]["veta"][:80]) if roz else "")
@@ -839,9 +844,71 @@ def _beh(h, kdo, otazka, prepis, odpoved, cesta):
         _log.debug("HANS_OVERENI_STIN_V1: zápis: %s", e)
 
 
+# HANS_OVERENI_OPRAVA_V2 (23. 10., rozhodnutí uživatele „dáme A“) — jasný
+# rozpor s Wikidaty se připíše k odpovědi („Ještě oprava: podle Wikidat …“).
+# Ověření se čeká nejvýš `overeni.oprava_limit_s` (výchozí 4 s; 📏 medián
+# 1,9 s, p90 5 s); nestihne-li se, odpověď jde beze změny a výsledek se jen
+# zaloguje. 📏 odečet 23. 10. (`data/mereni/odecet_opravy_23_10/`): po
+# HANS_OVERENI_PLANE_V1 5 návrhů z 360 vět, 5/5 u skutečné chyby. Vypínač
+# `overeni.opravy`. Volá se PŘED uložením odpovědi do historie.
+def opravit(h, ctx) -> None:
+    c = (h.config.get("overeni", {}) or {})
+    if not (bool(c.get("stin", True)) and bool(c.get("opravy", True))):
+        return
+    odpoved = str(getattr(ctx, "response", "") or "")
+    if not odpoved or "Ještě oprava:" in odpoved:
+        return
+    try:
+        from scripts import hans_wiki_offline as wo
+        if not wo.dostupna():
+            return
+    except Exception:
+        return
+    otazka = str(getattr(ctx, "_raw_message", "") or getattr(ctx, "user_message", "") or "")
+    prepis = str(getattr(h, "_f1_query", None) or "")
+    cesta = "%s<%s" % (getattr(h, "_grounding_outcome", "") or "",
+                       getattr(h, "_grounding_cesta", "") or "")
+    kdo = str(getattr(ctx, "name", "") or "")
+    vys = {}
+    t0 = time.time()
+    _vlastnik = threading.Lock()        # kdo zapíše výsledek: vlákno, nebo odpověď
+
+    def _prace():
+        with _zamek:
+            try:
+                v = _overit(h, otazka, prepis, odpoved)
+            except Exception as e:
+                _log.debug("HANS_OVERENI_OPRAVA_V2: %s", e)
+                v = []
+        with _vlastnik:
+            vys["v"] = v
+            pozde = vys.get("pozde")
+        if pozde:                     # odpověď už odešla → jen zápis jako stín
+            _zaloguj(h, kdo, otazka, prepis, cesta, v, t0)
+    th = threading.Thread(target=_prace, daemon=True, name="overeni_oprava")
+    th.start()
+    th.join(float(c.get("oprava_limit_s", 4)))
+    ctx._overeni_hotovo = True          # stín už nespouštět znovu
+    with _vlastnik:
+        hotovo = "v" in vys
+        if not hotovo:
+            vys["pozde"] = True
+    if not hotovo:
+        _log.info("HANS_OVERENI_OPRAVA_V2: ověření nestihlo %.0f s → odpověď beze změny",
+                  float(c.get("oprava_limit_s", 4)))
+        return
+    vysl = vys.get("v") or []
+    opr = list(dict.fromkeys(v["oprava"]["text"] for v in vysl if v.get("oprava")))[:2]
+    if opr:
+        ctx.response = odpoved.rstrip() + "\n\n" + " ".join(opr)
+    _zaloguj(h, kdo, otazka, prepis, cesta, vysl, t0, pripojeno=bool(opr))
+
+
 def stin(h, ctx) -> None:
     """Spusť ověření odpovědi na pozadí; odpověď ani rozhovor nijak nemění."""
     if not bool((h.config.get("overeni", {}) or {}).get("stin", True)):
+        return
+    if getattr(ctx, "_overeni_hotovo", False):   # HANS_OVERENI_OPRAVA_V2 — už ověřeno
         return
     odpoved = str(getattr(ctx, "response", "") or "")
     if not odpoved:
