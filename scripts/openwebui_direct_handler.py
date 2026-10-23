@@ -2006,7 +2006,11 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     from scripts.hans_intent import zada_dohledani as _zd2
                     if _zd2(ctx._raw_message):
                         from scripts.hans_podklad import otazkova_cast as _oc2
-                        _dz = self._dohledej_kotvu(_oc2(ctx._raw_message), ctx.name)
+                        # HANS_LOOKUP_V2_ZAPISKY_V1 (23. 10.) — na podložené cestě
+                        # (zápisky/entita) úvod „V paměti jsem o tom nic neměl“
+                        # nebyl pravda → úvod „v zápiscích jsem neměl dost“
+                        _dz = self._dohledej_kotvu(_oc2(ctx._raw_message), ctx.name,
+                                                   mel_zapisky=(_g_out == 'grounded'))
                         if _dz:
                             ctx._a1_abstain = True
                             ctx._predem_dohledano = _dz

@@ -111,8 +111,22 @@ def _odloz_pro_pamet(config: dict) -> bool:
     return True
 
 
+# HANS_BOOK_SUMMARY_ODSTAVEC_V1 (23. 10.) — qwen3 i s think=False občas
+# uvažuje UVNITŘ pole summary: za souhrnem prázdný řádek a „The key points
+# are: …“ / „I need to condense this…“ / „Let me check…“. Když se to vejde do
+# num_predict, uložil se souhrn i s úvahou (31 z 695 úseků); když ne, JSON
+# zůstal neuzavřený a úsek se zahodil (noc 22.→23. 10.: 16×). Souhrn úseku
+# má 2–3 věty → bere se jen první odstavec, a z neuzavřeného JSON se zachrání,
+# pokud první odstavec skončil. Souhrny celé knihy odstavce mít smějí.
+_UNIK_RE = re.compile(r'^\s*\{\s*"summary"\s*:\s*"(.*?)\\n\s*\\n', re.S)
+
+
+def _prvni_odstavec(s: str) -> str:
+    return re.split(r"\n\s*\n", str(s or "").strip(), maxsplit=1)[0].strip()
+
+
 def _qwen(config: dict, prompt: str, system: str = _KAP_SYS,
-          num_predict: int = 600) -> Optional[str]:
+          num_predict: int = 600, jen_odstavec: bool = False) -> Optional[str]:
     from scripts.ollama_client import ollama_generate
     c = _cfg(config)
     raw = ollama_generate(
@@ -124,12 +138,28 @@ def _qwen(config: dict, prompt: str, system: str = _KAP_SYS,
         format=_SCHEMA, think=False)
     if not raw:
         return None
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S)
     try:
-        s = json.loads(re.sub(r"<think>.*?</think>", "", raw, flags=re.S)).get("summary")
+        s = json.loads(raw).get("summary")
     except Exception:
-        _log.warning("HANS_BOOK_SUMMARY_V1: nečitelný výstup %.120r", raw)
-        return None
+        m = _UNIK_RE.match(raw) if jen_odstavec else None
+        try:
+            s = json.loads('"%s"' % m.group(1)) if m else None
+        except Exception:
+            s = None
+        if not s:
+            _log.warning("HANS_BOOK_SUMMARY_V1: nečitelný výstup (%d zn) %.120r … %.80r",
+                         len(raw), raw, raw[-80:])
+            return None
+        _log.info("HANS_BOOK_SUMMARY_ODSTAVEC_V1: neuzavřený JSON (%d zn), zachráněn "
+                  "první odstavec", len(raw))
     s = str(s or "").strip()
+    if jen_odstavec and s:
+        p = _prvni_odstavec(s)
+        if p != s:
+            _log.info("HANS_BOOK_SUMMARY_ODSTAVEC_V1: úvaha za souhrnem useknuta "
+                      "(%d → %d zn)", len(s), len(p))
+        s = p
     return s or None
 
 
@@ -333,7 +363,8 @@ def _run_night_body(config: dict, diary_path: str, reflection=None,
                     continue
                 if _odloz_pro_pamet(config):
                     return "deferred" if not hotovo_useku else "úseků %d, pak málo RAM" % hotovo_useku
-                s = _qwen(config, _KAP_P.format(b=title, i=n, n=total, t=t[:24000]))
+                s = _qwen(config, _KAP_P.format(b=title, i=n, n=total, t=t[:24000]),
+                          jen_odstavec=True)
                 if not s:
                     return "deferred" if not hotovo_useku else "úseků %d, pak mozek dole" % hotovo_useku
                 _uloz_usek(db, book_id, n, s)

@@ -319,7 +319,25 @@ class ZdraviMixin:
                               '(fronty po renderu)')
             except Exception as _ge:
                 _rt._log.debug('health: reclaim GPU: %s', _ge)
-            if self._stop.wait(self._health_interval):
+            # HANS_OLLAMA_STUCK_FLAG_NOW_V1 (23. 10.) — značku „model se
+            # nenačetl“ (ollama_client) si hlídač vyzvedával až v dalším kole
+            # (check_interval_s 600): 23. 10. značka 10:32:40, restart 10:38:38,
+            # mezitím prázdná odpověď v chatu. Čeká se po 30 s a se značkou se
+            # kolo spustí hned.
+            import os as _os_zn
+            from scripts.ollama_client import STUCK_FLAG as _zn
+            _zac = time.time()
+            _konec = _zac + self._health_interval
+            _stop = False
+            while time.time() < _konec:
+                if self._stop.wait(min(30.0, max(0.0, _konec - time.time()))):
+                    _stop = True
+                    break
+                if _os_zn.path.exists(_zn) and _os_zn.path.getmtime(_zn) > _zac:
+                    _rt._log.info("HANS_OLLAMA_STUCK_FLAG_NOW_V1: značka zásek modelu "
+                                  "→ kontrola zdraví hned")
+                    break
+            if _stop:
                 break
 
     def _sched_notified_load(self) -> tuple:

@@ -916,8 +916,87 @@ def _poznac_nenacteny_model(url: str, payload: dict, timeout: int, pokusu: int) 
         _log.debug("model stuck check: %s", e)
 
 
+# HANS_OLLAMA_STUCK_EARLY_V1 (23. 10.) — zásek plánovače Ollamy (výš) se
+# poznal až po všech pokusech: u qwen3 2× 900 s = 30 min (noc 23. 10.:
+# 02:27 požadavek, žurnál PC 02:22 „evicting“ a pak 38 min nic, postoje
+# ke knize ztraceny). Teď hlídač na pozadí dlouhého volání na HLAVNÍ Ollamu:
+# od 300 s á 60 s /api/ps — když požadovaný model dvakrát po sobě v paměti
+# NENÍ a žádné jiné volání tohoto procesu na tutéž Ollamu neběží déle než
+# 60 s (to by bylo legitimní čekání ve frontě), zapíše značku hned. Hlídač
+# zdraví (≤ 2 min) Ollamu restartuje, spojení spadne a volání se jednou
+# zopakuje na čerstvé Ollamě.
+_CASNY_PO_S = 300
+_CASNY_KROK_S = 60
+_inflight = {}                 # id → (base, model, t0)
+_inflight_lock = threading.Lock()
+_casny_vypalil = set()
+
+
+def _model_jmeno(m: str) -> str:
+    m = str(m or "")
+    return m if ":" in m else m + ":latest"
+
+
+def _casny_hlidac(rid: int, base: str, model: str, konec: float) -> None:
+    cil = _model_jmeno(model)
+    time.sleep(_CASNY_PO_S)
+    zaseknuto = 0
+    while time.time() < konec:
+        with _inflight_lock:
+            if rid not in _inflight:
+                return
+            t0 = _inflight[rid][2]
+            jine = [v for k, v in _inflight.items() if k != rid and v[0] == base
+                    and _model_jmeno(v[1]) != cil and time.time() - v[2] > 60]
+        try:
+            r = requests.get(base + "/api/ps", timeout=(CONNECT_TIMEOUT, 5))
+            nactene = {_model_jmeno(m.get("name") or m.get("model"))
+                       for m in ((r.json().get("models") or []) if r.ok else [])}
+        except Exception:
+            return
+        if cil in nactene or jine:
+            zaseknuto = 0
+        else:
+            zaseknuto += 1
+        if zaseknuto >= 2:
+            try:
+                import json as _json
+                with open(STUCK_FLAG, "w", encoding="utf-8") as f:
+                    _json.dump({"ts": time.time(), "model": model, "casny": True,
+                                "nactene": sorted(x for x in nactene if x)}, f)
+                with _inflight_lock:
+                    _casny_vypalil.add(rid)
+                _log.warning("HANS_OLLAMA_STUCK_EARLY_V1: %s se za %d s ani nenačetl "
+                             "(v paměti %s, nic jiného neběží) → značka pro hlídač",
+                             model, time.time() - t0, sorted(nactene) or "nic")
+            except Exception as e:
+                _log.debug("casny zasek: %s", e)
+            return
+        time.sleep(_CASNY_KROK_S)
+
+
 def _post_with_retry_impl(url: str, payload: dict, timeout: int,
                           extractor) -> Optional[str]:
+    base = url.split("/api/", 1)[0].rstrip("/")
+    rid = id(threading.current_thread()) ^ int(time.time() * 1e6)
+    with _inflight_lock:
+        _inflight[rid] = (base, str((payload or {}).get("model") or ""), time.time())
+    try:
+        hlavni = _velke_modely()[1]
+        if (hlavni and base == hlavni and float(timeout or 0) * (MAX_RETRIES + 1)
+                > _CASNY_PO_S + 2 * _CASNY_KROK_S and (payload or {}).get("model")):
+            threading.Thread(target=_casny_hlidac, daemon=True, args=(
+                rid, base, payload["model"],
+                time.time() + float(timeout) * (MAX_RETRIES + 1))).start()
+        return _post_with_retry_impl0(url, payload, timeout, extractor, rid)
+    finally:
+        with _inflight_lock:
+            _inflight.pop(rid, None)
+            _casny_vypalil.discard(rid)
+
+
+def _post_with_retry_impl0(url: str, payload: dict, timeout: int,
+                           extractor, rid: int = 0) -> Optional[str]:
     """POST s retry při timeout. LOG_CIRCUIT_V1: potlač spam z mrtvého endpointu."""
     br = _breaker_for(url)
     last_exc = None
@@ -960,6 +1039,14 @@ def _post_with_retry_impl(url: str, payload: dict, timeout: int,
                            timeout, attempt, url)
                 _poznac_nenacteny_model(url, payload, timeout, attempt)
         except requests.exceptions.ConnectionError as exc:
+            with _inflight_lock:     # HANS_OLLAMA_STUCK_EARLY_V1 — po restartu znovu
+                znovu = rid in _casny_vypalil
+                _casny_vypalil.discard(rid)
+            if znovu and attempt <= MAX_RETRIES:
+                _log.info("HANS_OLLAMA_STUCK_EARLY_V1: Ollama restartována, "
+                          "zkouším znovu: %s", url)
+                time.sleep(20)
+                continue
             if br.should_log(exc):
                 _log.error("Ollama connection error: %s — %s", url, exc)
             return None
