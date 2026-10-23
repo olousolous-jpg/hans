@@ -55,7 +55,16 @@ def jmena(veta: str) -> list:
 _DRUHY = {
     "narozeni": r"narodil|narozen|rodák|datum narození|světlo světa|přišel na svět|přišla na svět",
     "umrti": r"zemřel|zesnul|úmrtí|datum úmrtí|smrt|skonal|zahynul|naposledy vydechl",
-    "zalozeni": r"založen|zbudován|postaven|vznik|stavb[ay]|zahájen|položen základní",
+    # HANS_OVERENI_PLANE_V1 (23. 10.) — „zahájen“ jen se stavbou (nádraží „bylo
+    # zahájeno 1936“ = provoz); konec a první zmínka mají vlastní druh bez
+    # vlastnosti Wikidat (NDR „zanikla 1990“ bralo „založena“ o pár slov dřív,
+    # Kost „poprvé se psal 1346“ bralo „založení“)
+    "zalozeni": r"stavb\w*[^.]{0,40}zahájen|zahájen\w*\s+stavb|založen|zbudován|postaven|vznik|"
+                r"stavb[ay]|položen základní",
+    "konec": r"zanikl|zánik|rozpuštěn|zrušen|dokončen|dostavěn|ukončen|zahájen\w*\s+provoz|provoz",
+    "provoz": r"zahájen",     # bez stavby = provoz (Žižkov „zahájeno 1936“)
+    "zminka": r"poprvé\s+(?:se\s+)?(?:psal|zmiňov|uváděn|připomín)|první\s+(?:písemn\w+\s+)?zmínk|"
+              r"psal\s+(?:se\s+)?(?:jako|z\b)",
     "otevreni": r"otevřen|zprovozněn|slavnostně",
     "nataceni": r"natáčení|natáčel|natočen",
     "premiera": r"premiér|uveden do kin|měl premiéru",
@@ -140,12 +149,31 @@ def udaje_vety(veta: str, otazka: str = "") -> list:
                 ("umrti", int(m2.group(2)), None, None, m2.group(0))]
     cisla = [m for m in _DATUM.finditer(veta)
              if not (m2 and m2.start() <= m.start() < m2.end())]
+    # HANS_OVERENI_PLANE_V1 — (a) rozsah let („v letech 1921–1923“, „do let 1300
+    # a 1350“) není jeden údaj → oba roky bez druhu; (b) trojmístné číslo je rok
+    # jen s „roku / v roce / kolem“ („více než 500 knih“ → „narození 1902, ne
+    # 500“); (c) číslo s počítaným slovem za ním není rok („1300 metrů“)
+    _rozsah = set()
+    for _r in re.finditer(r"(?<!\d)(\d{3,4})\s*(?:[–—-]|až|a)\s*(\d{2,4})(?!\d)", veta):
+        _rozsah |= {_r.start(1), _r.start(2)}
+    cisla = [m for m in cisla if m.start(3) not in _rozsah
+             and not (len(m.group(3)) == 3 and not m.group(1) and not re.search(
+                 r"(?:roku|roce|r\.|letech|lety|léta|kolem|okolo|asi|století)\s*$",
+                 veta[max(0, m.start() - 15): m.start()], re.I))
+             and not re.match(r"\s+(?:kn\w+|lid\w*|vojá\w*|obyvatel\w*|metr\w*|km\b|kilometr\w*|"
+                              r"kus\w*|stran\w*|osob\w*|děl\b|obraz\w*|film\w*|písní|skladeb|"
+                              r"členů|mil\w*|tis\w*|korun\w*|dolar\w*|eur\b|zápas\w*|gól\w*|"
+                              r"stup\w*|hekt\w*|tun\w*)", veta[m.end():], re.I)]
     for m in cisla:
         okoli = veta[max(0, m.start() - 60): m.start()]
         # celá věta jako záloha jen u jediného údaje (jinak by všechny roky
         # dostaly druh jednoho slova: „narodil … 1543 … 1642“)
         d = _druh(okoli) or (_druh(veta) if len(cisla) == 1 else None)
-        if not d and len(cisla) == 1 and otazka:
+        # HANS_OVERENI_PLANE_V1 — druh z otázky jen u otázky NA DATUM („Kde
+        # zemřel Napoleon?“ → rok 1815 sta dnů dostal „úmrtí“)
+        if not d and len(cisla) == 1 and otazka and re.search(
+                r"\bkdy\b|kter[éý]ho\s+roku|v\s+(?:jak|kter)\w+\s+roce|datum|\brok[ua]?\b",
+                otazka, re.I):
             d = _druh(otazka)
         out.append((d, int(m.group(3)), int(m.group(1)) if m.group(1) else None,
                     _MESICE.index(m.group(2)) + 1 if m.group(2) else None, m.group(0)))
@@ -500,6 +528,10 @@ def over_wd(veta, udaje, tituly) -> list:
                                 "verdikt": vd, "wd": sorted(roky)})
                     break
         for vzor, props in _VZTAHY:
+            # HANS_OVERENI_PLANE_V1 — libreto / scénář / text písně není autor
+            # díla (Carmen: „libreto napsali Meilhac a Halévy“ → „autor Bizet“)
+            if props == ["P50"] and re.search(r"libret|scénář|text\w*\s+(?:k|písn)|slov[ay]\s+k", veta, re.I):
+                continue
             for m in re.finditer(vzor, veta, re.I):
                 if not any(p in P for p in props):
                     continue

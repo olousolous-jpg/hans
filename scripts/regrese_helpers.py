@@ -1502,3 +1502,9 @@ def roky_vyctu(text: str, podklad: str) -> str:
     """HANS_ROKY_VYCTU_V1 — text odpovědi po odstranění roků výčtu mimo podklad."""
     from scripts.hans_overeni import roky_vyctu_mimo_podklad
     return roky_vyctu_mimo_podklad(text, podklad)[0]
+
+
+def udaje_druhy(veta, otazka=""):
+    """HANS_OVERENI_PLANE_V1 — [druh, rok] údajů věty (regrese stínu)."""
+    from scripts.hans_overeni import udaje_vety
+    return [[u[0], u[1]] for u in udaje_vety(veta, otazka) if u[0] != "vek"]
