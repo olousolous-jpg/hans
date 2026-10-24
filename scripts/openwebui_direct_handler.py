@@ -2117,6 +2117,26 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             ctx._predem_dohledano = _dz
             except Exception as _lpb:
                 logging.getLogger(__name__).debug('HANS_LOOKUP_PRIBUZNY_V1: %s', _lpb)
+            # HANS_LOOKUP_OBSAZENI_V1 (24. 10.) — obsazení mimo knihovnu Kodi
+            try:
+                if (getattr(self, '_grounding_outcome', '') in ('grounded', 'factual_nofacts')
+                        and getattr(self, '_grounding_cesta', '') not in ('obsazeni_kodi', 'film_kodi')
+                        and not getattr(ctx, '_predem_dohledano', None)):
+                    _ft = self._obsazeni_film(ctx._raw_message, ctx.name)
+                    if _ft:
+                        self._presny_z_vety = _ft
+                        self._pribuzny_otazka = ("Kdo hrají ve filmu %s (hrají, obsazení, role)? "
+                                                 "Vyjmenuj herce jen podle textu." % re.sub(r"\s*\(.*$", "", _ft))
+                        _dz = self._dohledej_kotvu(ctx._raw_message, ctx.name, mel_zapisky=True)
+                        logging.getLogger(__name__).info(
+                            'HANS_LOOKUP_OBSAZENI_V1: obsazení (cesta %s) → heslo %r → %s',
+                            getattr(self, '_grounding_cesta', ''), _ft,
+                            'dohledáno' if _dz else 'nic')
+                        if _dz:
+                            ctx._a1_abstain = True
+                            ctx._predem_dohledano = _dz
+            except Exception as _lob:
+                logging.getLogger(__name__).debug('HANS_LOOKUP_OBSAZENI_V1: %s', _lob)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
                 # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
                 # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale

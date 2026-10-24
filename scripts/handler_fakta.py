@@ -1203,6 +1203,56 @@ class FaktaMixin:
             logging.getLogger(__name__).debug("HANS_FILM_NEVIDEL_V1: %s", _e)
             return None
 
+    # HANS_LOOKUP_OBSAZENI_V1 (24. 10.) — „a kdo v tom hrál?“ mimo knihovnu Kodi
+    # (cesta zápisků z četby o filmu): obsazení v podkladu není a model si ho
+    # vymyslel a připsal Wikipedii (Markéta Lazarová: „Jelena Matušková, Ivan
+    # Plevěc…“). Film z přepisu / vlákna / předchozí otázky → jeho článek
+    # (lokální Wikipedie má od 24. 10. seznamy obsazení).
+    def _obsazeni_film(self, veta: str, name: str = None):
+        try:
+            # jen herci (režie se dohledává dobře i dnes)
+            _q = (veta or "") + " " + (getattr(self, '_f1_query', None) or "")
+            if not re.search(r"\bhr(?:á|a)l\w*|\bhraj\w*|\bherc\w*|\bherečk\w*|\bherack\w*|"
+                             r"\bobsazen\w*|\bhlavn\w+\s+rol", _q, re.I):
+                return None
+            from scripts.hans_convindex import kotva_tematu
+            from scripts import hans_wiki_offline as _wo
+            from scripts.web_reader import WebReader
+            from scripts.hans_overeni import _jen_lokalne
+            _wr = WebReader(self.config)
+            _wr._get = _jen_lokalne
+            kand = [getattr(self, '_f1_query', None) or "", veta or ""]
+            _tc = getattr(self, '_thread_ctx', None)
+            if _tc:
+                kand += [str(x) for x in list(_tc)[1:3] if x]
+            try:
+                _hist = self.conv_store.get_history(name) or []
+                kand += [str(m.get("content") or "") for m in reversed(_hist)
+                         if m.get("role") == "user"][:2]
+            except Exception:
+                pass
+            for k0 in kand:
+                k0 = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", k0)
+                try:
+                    _tz = _wo.titul_z_vety(k0)     # i malými a bez háčků
+                    if _tz and "film" in (_wo.infobox(_tz)[0] or "").lower():
+                        return _tz
+                except Exception:
+                    pass
+                k = kotva_tematu(k0) or ""
+                if not k:
+                    continue
+                m = re.match(r"(?:film\w*|seri[aá]l\w*|sn[ií]mk\w*)\s+(.+)$", k, re.I)
+                for dotaz in ([("film " + m.group(1)), m.group(1)] if m else [k]):
+                    _t = _wr._wikipedia_search(dotaz)
+                    if _t and not _wo.extrakt(_t)[1] and \
+                            "film" in (_wo.infobox(_t)[0] or "").lower():
+                        return _t
+            return None
+        except Exception as _e:
+            logging.getLogger(__name__).debug("HANS_LOOKUP_OBSAZENI_V1: %s", _e)
+            return None
+
     @staticmethod
     def _podklad_kryje(titul: str, podklad: str) -> bool:
         """HANS_LOOKUP_PRESNY_PODKLAD_V1 — je podklad (entita C1 / titul z Kodi)
