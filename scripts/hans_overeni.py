@@ -660,8 +660,13 @@ _UVOZ = re.compile(r"[„\"]([^“\"]{3,90})[“\"]")
 # Věta s životní událostí jen v ženském (mužském) tvaru, která osobu článku
 # nejmenuje, se s článkem o muži (ženě) podle Wikidat P21 neporovnává.
 # Jen slovesa životních událostí: „stavba byla zahájena“ má taky ženský tvar.
-_ROD_F = re.compile(r"\b(narodila|zemřela|zesnula|vdala|provdala|ovdověla|porodila|pokřtěna)\b", re.I)
-_ROD_M = re.compile(r"\b(narodil|zemřel|zesnul|oženil|ovdověl|pokřtěn)\b", re.I)
+# HANS_OVERENI_JEJI_SMRT_V1 (24. 10.) — i přivlastňovací „její/jeho smrti, úmrtí,
+# narození“: „Dvořák se s manželkou znal … až do její smrti v roce 1931“ (pravda)
+# → dřív připojená oprava „u Antonína Dvořáka rok úmrtí 1904, ne 1931“
+_ROD_F = re.compile(r"\b(narodila|zemřela|zesnula|vdala|provdala|ovdověla|porodila|pokřtěna|"
+                    r"její\s+(?:smrt\w*|úmrtí|narození|narozením))\b", re.I)
+_ROD_M = re.compile(r"\b(narodil|zemřel|zesnul|oženil|ovdověl|pokřtěn|"
+                    r"jeho\s+(?:smrt\w*|úmrtí|narození|narozením))\b", re.I)
 _P21 = {"Q6581072": "f", "Q1052281": "f", "Q6581097": "m", "Q2449503": "m"}
 
 

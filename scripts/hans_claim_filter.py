@@ -112,6 +112,13 @@ def filtruj(odpoved: str, otazka: str, vzorky: list, osloveni: tuple = (),
             if any(sum(1 for a in low if t in a) < min_shoda for t in tv):
                 continue
             cast.append(v)
+        # HANS_CLAIM_VZOREK_KONEC_V1 (24. 10.) — vzorek A1 má krátký strop tokenů
+        # a končí uprostřed („Ludvík Josef Xavier (1781-1789“, /tazatel 24. 10.)
+        # → neukončený konec pryč (neuzavřená závorka, věta bez interpunkce)
+        while cast and (cast[-1].count("(") > cast[-1].count(")") or (
+                not re.match(r"[*•\-–]\s", cast[-1])
+                and not re.search(r"[.!?…:)\"“”»]\s*$", cast[-1]))):
+            cast.pop()
         text = ""
         for v in cast:          # odrážky na nový řádek, věty za sebou
             text += ("\n" if re.match(r"[*•\-–]\s", v) else " ") + v

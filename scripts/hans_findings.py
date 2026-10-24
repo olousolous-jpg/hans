@@ -1232,6 +1232,14 @@ def _wikidata_blok(titul: str) -> str:
                 if jm:
                     hod.append(jm)
             if hod:
+                if p == "P26":
+                    # HANS_WD_MANZEL_ROD_V1 (24. 10.) — model opisoval štítek
+                    # doslova („Manžel/manželka: Sarah Barnard“)
+                    _rod = {O._P21.get(q) for q in (P.get("P21") or [])} - {None}
+                    if _rod == {"m"}:
+                        popis = "manželka" if len(hod) == 1 else "manželky"
+                    elif _rod == {"f"}:
+                        popis = "manžel" if len(hod) == 1 else "manželé"
                 out.append("%s: %s" % (popis, ", ".join(dict.fromkeys(hod))))
         if not out:
             return ""
