@@ -2083,9 +2083,9 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         and not getattr(ctx, '_predem_dohledano', None)):
                     _pb = self._pribuzny_predmet(ctx._raw_message, ctx.name)
                     # víc příbuzných = článek osoby samé; když podklad už JE článek či
-                    # entita té osoby (Karel IV. „Potomci“), neměnit — jen zápisky a četba
+                    # s článkem té osoby (Karel IV. „Potomci“), neměnit
                     _cg = getattr(self, '_grounding_cesta', '') or ''
-                    if _pb and _pb[1].endswith(")") and re.search(r"clanek|fakta|entita_c1", _cg):
+                    if _pb and _pb[1].endswith(")") and "clanek" in _cg:
                         self._pribuzny_otazka = None
                         _pb = None
                     if _pb:

@@ -1136,6 +1136,16 @@ def _podklad_podle_otazky(titul: str, otazka: str, config: Optional[dict] = None
                 ibr.append(l.strip())
     else:
         poradi = poradi[:3]
+    # HANS_LOOKUP_RODINA_SEKCE_V1 (24. 10.) — otázka na děti, manželky, rodiče:
+    # sekce „Potomci“ / „Rodina“ jde první (Karel IV. „děti s Annou Falckou“ →
+    # výběr modelem ji vynechal a Václav 1350–1351 v podkladu chyběl)
+    if re.search(r"\bdet[ietm]?\b|\bdetmi\b|\bpotom|\bmanzel|\brodin|\bsyn|\bdcer|\bmatk|\botc",
+                 _fold_cs(otazka)):
+        _rod = [i for i, (h, b) in enumerate(sek[1:], 1)
+                if b and re.match(r"(?:potomci|potomstvo|rodina|deti|manzelstvi|rodinny|osobni\s+zivot|"
+                                  r"soukromy|soukromi)", _fold_cs(h))]
+        if _rod:
+            poradi = _rod[:1] + [i for i in poradi if i not in _rod[:1]]
     if not poradi and not ibr:
         return ""   # nic nesedí → dnešní prvních 3000 zn
     out = txt[:_VYB_UVOD].strip()
@@ -1221,9 +1231,8 @@ def _wikidata_blok(titul: str) -> str:
                     for m in _por:
                         if m in skup:
                             _cast.append("matka %s — %s" % (_hol(m), ", ".join(dict.fromkeys(skup[m]))))
-                        elif _jmeno(m):
-                            _cast.append("manželka %s — děti u ní Wikidata neuvádějí "
-                                         "(neznamená to, že žádné neměla)" % _hol(m))
+                        # manželka bez dětí ve WD se NEUVÁDÍ: poznámku „Wikidata u ní
+                        # děti neuvádějí“ model 2× ze 3 četl jako „žádné děti“ (24. 10.)
                     out.append("děti (podle matky): " + "; ".join(_cast)
                                + " (výčet nemusí být úplný)")
                     continue

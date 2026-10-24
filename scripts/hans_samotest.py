@@ -154,7 +154,18 @@ def _otazky(titul: str, druh: str) -> list:
             if mista:
                 out.append((sablona % (a, jm), p, mista))
     else:
-        for p, sablona in (("P50", "Kdo napsal dílo „%s“?"), ("P57", "Kdo režíroval film „%s“?"),
+        # HANS_SAMOTEST_DRUH_V1 (24. 10.) — „Kdo režíroval film „Draci v hrnci“?“
+        # u televizního pořadu; druh z infoboxu lokálního článku
+        _ib = ""
+        try:
+            from scripts import hans_wiki_offline as _wo
+            _ib = (_wo.infobox(titul)[0] or "").lower()
+        except Exception:
+            pass
+        _rez = ("Kdo režíroval film „%s“?" if _ib == "film" else
+                "Kdo režíroval pořad „%s“?" if "pořad" in _ib else
+                "Kdo režíroval díl „%s“?" if "díl seriálu" in _ib else "Kdo režíroval „%s“?")
+        for p, sablona in (("P50", "Kdo napsal dílo „%s“?"), ("P57", _rez),
                            ("P84", "Kdo navrhl stavbu „%s“?"), ("P86", "Kdo složil hudbu k dílu „%s“?")):
             jmena = [_jmeno(O, q) for q in P.get(p) or [] if isinstance(q, str)]
             jmena = [j for j in jmena if j]

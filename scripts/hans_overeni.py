@@ -735,10 +735,28 @@ def _pribuzni(veta: str, kany: list) -> list:
                     za = veta[mj[-1].end():]
                     m = re.match(r"\s*\((\d{3,4})\s*[–—-]\s*(\d{3,4})\)", za)
                     pary = []
+                    m1 = re.match(r"\s*\((\d{3,4})\)", za)
                     if m:
                         pary = [("P569", int(m.group(1)), n), ("P570", int(m.group(2)), u)]
+                    elif m1:
+                        # jediný rok za jménem („S Annou Svídnickou (1362):“) — narození
+                        # nebo úmrtí; jen doloží / patří příbuznému, rozpor nedá
+                        rok = int(m1.group(1))
+                        for pp, wd in (("P570", u), ("P569", n)):
+                            if wd and abs(rok - wd) <= 1:
+                                out.append({"clanek": kan, "osoba": jm, "p": pp, "udaj": rok,
+                                            "wd": wd, "verdikt": "doloženo"})
+                                break
+                        else:
+                            out.append({"clanek": kan, "osoba": jm, "p": "P569", "udaj": rok,
+                                        "wd": n or u, "verdikt": "nevim"})
                     else:
-                        for mm in re.finditer(r"\b(narodil\w*|zemřel\w*)\b[^.\d]{0,25}?\b(1\d{3}|20\d\d)\b", za):
+                        # jen v téže části věty („Annou Svídnickou: … chlapec beze
+                        # jména (narodil se a zemřel 1362)“ = jiná osoba)
+                        for mm in re.finditer(r"\b(narodil\w*|zemřel\w*)\b[^.\d]{0,25}?\b(1\d{3}|20\d\d)\b",
+                                              re.split(r"[:;()\n]|,(?!\s*(?:kter|jenž|jež))"
+                                                       # další jméno = sloveso patří jemu
+                                                       r"|(?<=\s)(?=[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])", za)[0][:80]):
                             pary.append(("P569" if mm.group(1).startswith("narod") else "P570",
                                          int(mm.group(2)), n if mm.group(1).startswith("narod") else u))
                     for pp, rok, wd in pary:
@@ -878,6 +896,13 @@ def _overit(h, otazka, prepis, odpoved) -> list:
                 _jm = re.findall(r"[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž]+", str(x["udaj"]))
                 if (not _slt or 2 * sum(w[:5] in _vv for w in _slt) <= len(_slt)
                         or len(_jm) < 2):
+                    continue
+            # HANS_OVERENI_VZTAH_PRED_DATEM_V1 (24. 10.) — „…porodila syna Václava,
+            # který zemřel 28. prosince 1351“ → dřív oprava „u Karla IV. úmrtí 1378“;
+            # vztah (syn, manželka…) před datem = datum nejspíš patří příbuznému
+            if _p in ("P569", "P570"):
+                _i = r["veta"].find(str(x["udaj"]).strip(" .,"))
+                if _i > 0 and _VZTAH_OSOBY.search(r["veta"][:_i]):
                     continue
             if _p in _OPRAVA_POPIS and len(x.get("wd") or []) == 1:
                 oprava = {"p": _p, "clanek": _hl, "udaj": str(x["udaj"]).strip(" .,"),

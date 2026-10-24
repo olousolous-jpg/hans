@@ -949,11 +949,13 @@ class FaktaMixin:
         (r"\botc(?:e|i|em)\b|\botec\b|\btatin\w*", "P22", None),
         (r"\bsyn(?:a|ovi|em|ove|u|ech|y|u|um)?\b", "P40", "m"),
         (r"\bdcer\w*", "P40", "f"),
+        (r"\bdet[ietm]?\b|\bdetmi\b|\bdetech\b|\bpotom\w*", "P40", None),   # „děti s Annou Falckou“
     ]
 
     def _pribuzny_predmet(self, veta: str, name: str = None):
         """(téma k dohledání, popis) nebo None."""
         import unicodedata as _ud
+        self._pribuzny_otazka = None
 
         def _f(x):
             return "".join(c for c in _ud.normalize("NFD", (x or "").lower())
@@ -986,8 +988,7 @@ class FaktaMixin:
                 for rx, prop, rod in self._PRIBUZNY_VZTAH:
                     # „Jaké děti měl X a s kterými manželkami?“ se ptá na děti,
                     # manželka je jen upřesnění (živě 24. 10.: vyjmenoval manželky)
-                    if prop == "P26" and re.search(r"\bdet[ietm]\w*|\bpotom\w*", tf):
-                        continue
+                    _deti_q = prop == "P26" and re.search(r"\bdet[ietm]\w*|\bpotom\w*", tf)
                     for m in re.finditer(rx, tf):
                         # vztah patří osobě z kotvy: za ním buď její jméno
                         # („manželka Karla IV.“), nebo žádné jméno („…Mozarta
@@ -997,11 +998,15 @@ class FaktaMixin:
                         _za = text[m.end():m.end() + 40] if len(text) == len(tf) else ""
                         _cap = re.search(r"\b([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž]+)",
                                          re.split(r"[?.!;]", _za)[0])
+                        # „děti s Annou Falckou“ — jméno za „s/se“ je partner
+                        if _cap and re.match(r"\s*(?:s|se)\s+$", _za[:_cap.start()]):
+                            _cap = None
                         if _cap and not _f(_cap.group(1)).startswith(k0):
                             continue
                         if not _cap and k0 not in tf[:m.start()]:
                             continue
-                        if re.search(r"\b(?:moj|tv|vas|nas|sv)\w*\s+$|\bma\s+$", tf[:m.start()]):
+                        if re.search(r"\b(?:moj|tv|vas|nas|sv)\w*\s+$|\bma\s+$"
+                                     r"|\bma(?:m|me|s|te)\b[^.?!]{0,15}$", tf[:m.start()]):
                             continue
                         from scripts.web_reader import WebReader
                         _wr = WebReader(self.config)
@@ -1018,6 +1023,8 @@ class FaktaMixin:
                             return None          # není osoba
                         kand = [q for q in (P.get(prop) or []) if isinstance(q, str)
                                 and (prop != "P40" or rod is None or C.get("R:" + q) == rod)]
+                        if _deti_q and len(kand) != 1:
+                            break        # víc manželek → ptá se na děti (níž P40)
                         if not kand:
                             return None
                         # zadání shrnutí: o kom článek je a v jakém je vztahu
@@ -1048,10 +1055,11 @@ class FaktaMixin:
                                 "jmenovali" if _vzm == "manželé" else "jmenoval" if _vzm in ("otec", "syn", "manžel")
                                 else "jmenovala" if _vzm in ("matka", "dcera", "manželka") else "jmenovaly",
                                 _vzm, titul)
-                        self._pribuzny_otazka = (
+                        # děti: seznam Wikidat bývá neúplný (Karel IV. bez Václava
+                        # 1350) → bez pokynu, ať výběr sekcí najde „Potomci“
+                        self._pribuzny_otazka = (_q if prop == "P40" else
                             "%s (Odpověz podle řádku „%s“ v ověřených údajích.)"
-                            % (_q, "děti (podle matky)" if prop == "P40" else
-                               _vzm if prop == "P26" else _vz))
+                            % (_q, _vzm if prop == "P26" else _vz))
                         return titul, "%s osoby %s (%d)" % (prop, titul, len(kand))
             return None
         except Exception as _e:
