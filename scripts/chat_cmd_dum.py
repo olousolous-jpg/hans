@@ -416,6 +416,16 @@ def _cmd_film(handler, name, args) -> str:  # HANS_RECALL_FILM_V1
     # HANS_STRANGER_HOUSEHOLD_V1 — co se doma sledovalo (výpis i počet) je
     # chod domácnosti. Názor na filmy a doporučení výš zůstávají otevřené.
     if not _znamy:
+        # HANS_FILM_CIZI_POSLEDNI_V1 (24. 10., rozhodnutí uživatele) — co Hans
+        # viděl, je jeho zážitek (16. 10.): cizímu jeden poslední film, bez času
+        # (čas by prozradil, kdo je doma); výpis a počet dál jen domácnosti
+        if re.search(r"naposled|posledn", _cc._fold_diacritics(str(args or "")).lower()):
+            from scripts.hans_recall_filmy import films_watched_answer as _fwa
+            _jeden = _fwa(_cc._recall_db(handler), "", limit=1) or ""
+            _jeden = re.sub(r"\s*\([^()]*\d{1,2}:\d{2}[^()]*\)", "", _jeden.split(" Předtím:")[0]).strip()
+            if _jeden.startswith("Naposledy"):
+                _cc._log.info("HANS_FILM_CIZI_POSLEDNI_V1: neznámému (%s) jen poslední film", name)
+                return _jeden
         _cc._log.info("HANS_STRANGER_HOUSEHOLD_V1: výpis filmů od neznámého (%s) "
                   "odmítnut", name)
         return "O tom mluvím jen se svou domácností."

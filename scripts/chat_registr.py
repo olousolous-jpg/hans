@@ -941,7 +941,10 @@ def zaregistruj(_cc):
             # („jaký film jsi viděl / vás zaujal / sis dal“). Holé „jaký film je
             # Indiana Jones…?“ je otázka na svět; /film ji cizímu odmítl („O tom
             # mluvím jen se svou domácností“). 📏 3 484 vět: 5 shod, všech 5 drží.
-            r"\bjak[ýy].{0,10}film(?=[^?.!]{0,40}\b(?:jsi|jste|sis|ses|vas|v[aá]s|v[aá]m|t[eě]|tebe|ti|naposled\w*|ned[aá]vno)\b)",
+            # HANS_FILM_VYKANI_V2 (24. 10.) — i „jaké filmy“ (é) a vykání
+            # („Jaké filmy jste viděl tento týden?“ → volný hovor „jsem jen jazykový model“)
+            r"\bjak[ýyée].{0,10}film(?=[^?.!]{0,40}\b(?:jsi|jste|sis|ses|vas|v[aá]s|v[aá]m|t[eě]|tebe|ti|naposled\w*|ned[aá]vno)\b)",
+            r"\bvid[ěe]l[ai]?\s+(?:jsi|jste)\b[^?.!]{0,25}\b(?:n[eě]jak|jak)\w*\s+(?:\w+\s+)?film",
             # HANS_VIDEL_UPRESNI_V1 (23. 9.) — + vykani (`jste`); "videl"
             # s kamerovym dovetkem ("kamerou", "venku", "z okna") uz neni film
             # (driv i "co jsi videl kamerou?" vratilo vypis filmu).
@@ -949,7 +952,7 @@ def zaregistruj(_cc):
             r"(vid[ěe]l(?!\w*\s+(?:kamer|venku|z\s+okna|za\s+oknem|na\s+ulic))"
             r"|koukal|sledoval|d[íi]val)",
             r"co\s+jsem?\s+(dnes\w*\s+)?(vid[ěe]l|koukal|sledoval)",
-            r"\bfilm\w*\s+(jsi|sis)\s+(vid|koukal|sledoval)",
+            r"\bfilm\w*\s+(jsi|sis|jste|jste\s+si)\s+(vid|koukal|sledoval)",
         ],
         handler=_cc._cmd_film,
         help_text="Jaký film/pořad jsem viděl (přímo z deníku kodi_playing)",
