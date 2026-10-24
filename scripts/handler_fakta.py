@@ -806,6 +806,13 @@ class FaktaMixin:
         blok = [hlava] + radky
         if rez:
             blok.append("Režie: %s" % ", ".join(rez[:3]))
+        # HANS_KODI_CAST_DEJ_V1 (24. 10.) — „a o čem je?“ po obsazení: děj z hlavy
+        # („ikonická scéna v obytném voze na mostě“ u Hitchcocka); knihovna ho má
+        _plot = str(polozka.get("plot") or "").strip()
+        if _plot and re.search(r"o\s+(?:čem|cem)\b|děj|dej\b|příběh|pribeh|obsah|vypráv|vyprav|"
+                                r"pojednáv|pojednav|zápletk|zapletk", " ".join([t] + kandidati), re.I):
+            blok.append("Děj (z knihovny): %s" % _plot[:900])
+            pata = pata.replace("co tu není", "o ději jen to, co stojí v popisu; co tu není")
         if len(herci) > 10:
             blok.append("(v seznamu je celkem %d jmen, tohle je prvních %d)"
                         % (len(herci), len(radky)))
