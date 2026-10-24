@@ -1022,6 +1022,12 @@ class FaktaMixin:
                             _cap = None
                         if _cap and not _f(_cap.group(1)).startswith(k0):
                             continue
+                        # přístavek „jeho druhá manželka, Žofie Bavorská“ = vztah
+                        # POPISUJE osobu z kotvy, ptá se na ni → bez skoku (živě
+                        # 24. 10.: data Václava IV. místo Žofie). Za čárkou, nebo
+                        # jméno přesně v 1. pádě jako kotva (genitiv „Karla“ ≠ „Karel“).
+                        _appo_carka = bool(_cap and re.match(r"\s*,", _za))
+                        _appo_txt = _za[_cap.start():] if _cap else ""
                         if not _cap and k0 not in tf[:m.start()]:
                             continue
                         if re.search(r"\b(?:moj|tv|vas|nas|sv)\w*\s+$|\bma\s+$"
@@ -1035,6 +1041,9 @@ class FaktaMixin:
                             return None
                         _r = _wo._cil(titul)          # přesměrování („Lenin“)
                         titul = _r[1] if _r else titul
+                        if _appo_carka or (_appo_txt and _f(_appo_txt).startswith(
+                                _f(re.sub(r"\s*\(.*$", "", titul)))):
+                            return None      # přístavek: vztah popisuje osobu z kotvy
                         _O._nacti_wd([titul])
                         C = _O._c()
                         P = (C.get(titul) or {}).get("p") or {}
@@ -1095,6 +1104,7 @@ class FaktaMixin:
                              re.I)
 
     def _film_nevidel(self, veta: str, name: str = None):
+        self._film_videl = None        # HANS_FILM_VIDEL_ZAZNAM_V1 — jen pro tento tah
         try:
             _prepis = getattr(self, '_f1_query', None) or ""
             text = _prepis or re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "")
@@ -1102,6 +1112,35 @@ class FaktaMixin:
                 return None
             if re.search(r"kamer|venku|z\s+okna|za\s+oknem|na\s+ulic", text + " " + (veta or ""), re.I):
                 return None
+            # HANS_FILM_VIDEL_ZAZNAM_V1 (24. 10.) — film v deníku JE („Takže jsi četl
+            # Hobita… a koukal jsi i na film?“ → „nemám možnost sledovat filmy“,
+            # ačkoli ho Hans týž den viděl): záznam z deníku do podkladu
+            try:
+                import unicodedata as _ud0
+                _f0 = lambda s: "".join(ch for ch in _ud0.normalize("NFD", str(s or "").lower())
+                                        if _ud0.category(ch) != "Mn")
+                from scripts.hans_recall import _ro as _ro0
+                _db0 = ((self.config.get("hans_idle", {}) or {}).get("diary_db") or "data/hans_diary.db")
+                _c0 = _ro0(_db0)
+                try:
+                    _rows0 = _c0.execute(
+                        "SELECT title, max(ts) FROM diary WHERE event_type='kodi_playing' "
+                        "AND length(title) >= 3 GROUP BY title ORDER BY 2 DESC LIMIT 400").fetchall()
+                finally:
+                    _c0.close()
+                # jen vlastní jména (velké písmeno uvnitř věty), ne „filmy“, „poslední“
+                _caps0 = set()
+                for _tx in (text, re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "")):
+                    for _mm in re.finditer(r"(?<![.!?—–-]\s)(?<!^)\b([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]{3,})", _tx):
+                        _caps0.add(_f0(_mm.group(1))[:5])
+                _slova0 = _caps0 - {"dobry", "dekuj", "rozum", "chapu", "prosi", "zajim"}
+                _shoda0 = [(ti, ts) for ti, ts in _rows0
+                           if any(w[:5] in _slova0 for w in re.findall(r"\w{4,}", _f0(str(ti).split(":")[0]))
+                                  if w not in ("film", "filmu", "serial"))]
+                if _shoda0:
+                    self._film_videl = _shoda0[:4]
+            except Exception as _e0:
+                logging.getLogger(__name__).debug("HANS_FILM_VIDEL_ZAZNAM_V1: %s", _e0)
             from scripts.hans_convindex import kotva_tematu
             from scripts import hans_wiki_offline as _wo
             k = kotva_tematu(text) or ""
@@ -1154,6 +1193,8 @@ class FaktaMixin:
                     nazev = re.sub(r"\s*\(.*$", "", _t)
             except Exception:
                 pass
+            if self._film_videl:
+                return None          # podobný titul v deníku je → rozhodne model se záznamem
             logging.getLogger(__name__).info(
                 "HANS_FILM_NEVIDEL_V1: %r v deníku není → poctivě: neviděl", nazev)
             return ("Film „%s“ jsem podle svého deníku neviděl%s — nemám o tom, že bych ho "

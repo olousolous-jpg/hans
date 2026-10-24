@@ -774,6 +774,42 @@ def _jmeno_1_pad(slovo: str) -> str:
     return s
 
 
+_CARKA_NAZVY = None
+
+
+def _nazev_s_carkou(veta: str, prvni: str) -> bool:
+    """Začíná ve větě od slova `prvni` název entity / článku, který má čárku?"""
+    global _CARKA_NAZVY
+    if _CARKA_NAZVY is None:
+        _CARKA_NAZVY = {}
+        try:
+            import sqlite3 as _sq
+            _db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "data", "hans_diary.db")
+            _c = _sq.connect("file:%s?mode=ro" % _db, uri=True, timeout=3)
+            try:
+                _rows = [r[0] for r in _c.execute(
+                    "SELECT name FROM entities WHERE name LIKE '%, %'").fetchall()]
+            finally:
+                _c.close()
+            try:
+                from scripts import hans_wiki_offline as _wo
+                if _wo.dostupna():
+                    _rows += [r[0] for r in _wo._db().execute(
+                        "SELECT titul FROM clanek WHERE titul LIKE '%, %'").fetchall()]
+            except Exception:
+                pass
+            for n in _rows:
+                _CARKA_NAZVY.setdefault(_fold(str(n).split()[0]).strip(",."), []).append(_fold(str(n)))
+        except Exception:
+            pass
+    k = _fold(prvni or "").strip(",.")
+    if not k or k not in _CARKA_NAZVY:
+        return False
+    f = _fold(veta or "")
+    return any(n in f for n in _CARKA_NAZVY[k])
+
+
 def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
     """HANS_ANCHOR_LOOKUP_V1 — předmět dotazu jako téma k DOHLEDÁNÍ.
 
@@ -846,7 +882,13 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
             #      (jednopísmenná spojka ve `words` NENÍ, proto pohled do věty:
             #       „Karlovi A Josefovi" jsou dvě témata, ne jedno)
             #  (b) kotva až za anglickými funkčními slovy → „Icon of the Seas"
-            if j in idx and not _mezi_slovy(veta, words[j - 1], words[j]):
+            # HANS_ANCHOR_JOIN_CARKA_V1 (24. 10.) — čárka mezi kotvami = výčet
+            # („Mozarta, Beethovena“ → „Mozarta Beethovena“ → 1. symfonie), ledaže
+            # fráze s čárkou je název entity či článku („Ready, Set, And Don't Go“)
+            if (j in idx and not _mezi_slovy(veta, words[j - 1], words[j])
+                    and not (re.search(re.escape(words[j - 1]) + r"\s*[,;–]\s*"
+                                       + re.escape(words[j]) + r"\b", veta or "")
+                             and not _nazev_s_carkou(veta, jmeno[0]))):
                 jmeno.append(words[j]); j += 1
                 continue
             # HANS_ANCHOR_Z_JMENO_V1 (24. 10.) — šlechtické a místní přídomky

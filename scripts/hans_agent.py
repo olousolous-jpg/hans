@@ -1034,6 +1034,19 @@ def _run_person_info(handler, args) -> Optional[str]:
     _ar = getattr(handler, "_agent_inst", None) or getattr(handler, "_agent", None)
     raw = getattr(_ar, "_raw_message", "") or ""
     _who = getattr(_ar, "_raw_name", "") or ""   # HANS_HOUSEHOLD_PRIVACY_V1
+    # HANS_PERSON_ARG_NOT_NAME_V1 (24. 10.) — „A kdo v tom hrál? Znáš herce
+    # odtud?“ → router: jmeno „herce odtud“ → dohledáno heslo „Hercynská
+    # podprovincie“. Argument celý malým písmem, který není člověk z domácnosti
+    # ani nemá lokální článek, není jméno → běžná cesta (vlákno filmu).
+    try:
+        if q and q == q.lower():
+            from scripts.cz_names import is_known_person as _ikp
+            from scripts import hans_wiki_offline as _wo
+            if not _ikp(q, cfg) and not (_wo.dostupna() and _wo._cil(q)):
+                log.info("HANS_PERSON_ARG_NOT_NAME_V1: %r není jméno → běžná cesta", q)
+                return None
+    except Exception as _pe:
+        log.debug("HANS_PERSON_ARG_NOT_NAME_V1: %s", _pe)
     try:
         # HANS_PERSON_CARD_VOICE_V1 — hlasový krok; bez mozku spadne na kartu
         from scripts.hans_recall import person_card_voiced

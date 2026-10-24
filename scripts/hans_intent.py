@@ -1170,6 +1170,13 @@ def rok_udalosti(text: str) -> str:
     for v in reversed(vety):
         if "?" in v or re.search(r"^\s*(?:a\s+)?(?:co|kdo|jak[éáý]|kdy)\b", v, re.IGNORECASE):
             m = _ROK_HIST.search(v)
+            # HANS_ROK_DILA_V1 (24. 10.) — rok u díla („ve filmu Metropolis z roku
+            # 1927 … významné osobnosti“) není otázka na události roku (/tazatel
+            # 24. 10.: dohledán článek „1927“ místo filmu)
+            if m and re.search(r"\b(?:film|knih|román|roman|seriál|serial|oper|alb|desk|hr[auyo]\b|"
+                               r"obraz|písn|pisn|snímk|snimk|symfoni|sonát|sonat|dílo|dila|díla)\w*"
+                               r"[^?.!]{0,50}\b(?:z\s+roku|z\s+r\.|\()\s*" + m.group(1), v, re.IGNORECASE):
+                return ""
             if m and _ROK_UDALOST.search(v):
                 return m.group(1)
             return ""

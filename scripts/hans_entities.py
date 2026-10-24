@@ -567,6 +567,8 @@ class EntityStore:
         _ratio = float(self.cfg.get("proper_noun_prefix_ratio",
                                     _PROPER_RATIO_DEFAULT))
 
+        _stav = {"osoba": False}
+
         def _match_q(key_tok: str, q_tok: str) -> bool:
             # HANS_ENTITY_SHORT_TOKEN_KEY_V1 — kratky token jen na PRESNOU
             # shodu. `_tok_match` konci na `n >= 4`, takze tokeny pod 4 znaky
@@ -588,13 +590,17 @@ class EntityStore:
                         and len(dl) - len(kr) <= 2)
             if not _tok_match(key_tok, q_tok):
                 return False
-            if key_tok == q_tok or q_tok not in _q_upper:
+            # HANS_ENTITY_OSOBA_MALE_V1 (24. 10.) — u OSOBY ani slovo psané malým
+            # nestačí volným prefixem: „románu Lva Tolstého“ → osoba „Romário“
+            # (roma 4/7) → karta fotbalisty na otázku o Vojně a míru (/tazatel 24. 10.)
+            if key_tok == q_tok or (q_tok not in _q_upper and not _stav["osoba"]):
                 return True     # presna shoda / obecne jmeno → jako dosud
             return (_prefix_len(key_tok, q_tok)
                     >= _ratio * max(len(key_tok), len(q_tok)))
         best_id, best_score = None, 0
         _etypy = self._etypes()   # HANS_ENTITY_RESOLVE_ONE_QUERY_V1
         for _id, keys in self._all_keys():
+            _stav["osoba"] = _etypy.get(_id) == "osoba"   # HANS_ENTITY_OSOBA_MALE_V1
             for k in keys:
                 # HANS_ENTITY_SHORT_TOKEN_KEY_V1 (11. 9.) — VICESLOVNY KLIC
                 # SE NESMI SCVRKNOUT NA JEDNO SLOVO. Filtr >=4 zahodil kratke

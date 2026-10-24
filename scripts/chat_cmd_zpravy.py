@@ -5,6 +5,7 @@ volání. Registrace příkazů (`register(...)`) zůstává v původním modulu
 Import původního modulu je na KONCI souboru (kruhový import oběma směry).
 """
 from __future__ import annotations
+import re  # HANS_ZPRAVY_HISTORICKY_ROK_V1
 
 
 
@@ -18,6 +19,14 @@ def _cmd_zpravy(handler, name, args) -> str:
     Dřív Hans ke zprávám přístup neměl a přehled si vymýšlel (/tazatel 3. 10.)."""
     from datetime import datetime as _dt
     from scripts.hans_zpravy import zpravy_hledej
+    # HANS_ZPRAVY_HISTORICKY_ROK_V1 (24. 10.) — „co se stalo v Evropě v roce
+    # 1381?“ → „ve zprávách za poslední tři dny nic“ (/tazatel 24. 10.). Rok
+    # starší než loňský = dějiny → běžná cesta (článek o roce, HANS_YEAR_EVENTS_V1)
+    _ry = [int(x) for x in re.findall(r"\b(\d{3,4})\b", str(args or ""))
+           if re.search(r"(?:roku|roce|rok)\s+" + x + r"\b", str(args or ""))]
+    if _ry and max(_ry) < _dt.now().year - 1:
+        _cc._log.info("HANS_ZPRAVY_HISTORICKY_ROK_V1: rok %d → ne zprávy, běžná cesta", max(_ry))
+        return ""
     if _cc.dotaz_hlavni_zprava(args):       # HANS_HLAVNI_ZPRAVA_V1 — vybraná, je-li nějaká
         try:
             from scripts.hans_hlavni_zprava import posledni as _hz_posledni

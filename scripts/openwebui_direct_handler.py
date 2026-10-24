@@ -1585,6 +1585,23 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
     def _sc_znalosti(self, ctx):
         try:
             _kb, _pcard, _dbp_kb = self._sc_znalosti_volba(ctx)
+            # HANS_ZNALOST_TEMA_NE_JMENO_V1 (24. 10.) — „a kdo v tom hrál? znáš
+            # herce odtud?“ → téma „herce odtud“ → heslo „Hercynská podprovincie“.
+            # Téma celé malým, které není článkem ani osobou z deníku, je obecná
+            # fráze s odkazem na vlákno → běžná cesta (přepis F1 doplní předmět).
+            if _kb and not _pcard:
+                try:
+                    from scripts.hans_recall import _extract_knowledge_topic as _ekt
+                    from scripts import hans_wiki_offline as _wo_z
+                    _tz = (_ekt(ctx.user_message) or "").strip()
+                    if (_tz and _tz == _tz.lower() and _wo_z.dostupna() and not _wo_z._cil(_tz)
+                            and re.search(r"\bv\s+tom\b|\btam\b|\bodtud\b|\btoho\b|\bnich\b",
+                                          ctx.user_message or "", re.I)):
+                        logging.getLogger(__name__).info(
+                            'HANS_ZNALOST_TEMA_NE_JMENO_V1: téma %r odkazuje na vlákno → běžná cesta', _tz)
+                        _kb = None
+                except Exception as _zte:
+                    logging.getLogger(__name__).debug('HANS_ZNALOST_TEMA_NE_JMENO_V1: %s', _zte)
             if _kb:
                 # HANS_INSTANT_LOOKUP_V1 (4.8.) — „nemám záznam" už není konec:
                 # zkus téma DOHLEDAT HNED a odpovědět PROVIZORNĚ. Do paměti se
@@ -2289,6 +2306,18 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         _zada = True
                         ctx._a1_abstain = True
                         ctx._predem_dohledano = _fn
+                    elif getattr(self, '_film_videl', None):
+                        # HANS_FILM_VIDEL_ZAZNAM_V1 — záznam z deníku do podkladu, A1 ne
+                        import datetime as _dtv
+                        _zn = "; ".join("„%s“ (%s)" % (ti, _dtv.datetime.fromtimestamp(ts).strftime("%-d. %-m."))
+                                        for ti, ts in self._film_videl)
+                        ctx.system += ("\n\nZÁZNAM Z MÉHO DENÍKU — tyto filmy jsem v televizi viděl: %s. "
+                                       "Na otázku, zda jsem film viděl, odpověz podle toho; netvrď, že "
+                                       "filmy sledovat nemohu." % _zn)
+                        _zada = True
+                        logging.getLogger(__name__).info(
+                            'HANS_FILM_VIDEL_ZAZNAM_V1: v deníku %d filmů ke zhlédnutí → do podkladu',
+                            len(self._film_videl))
                 if not _skip_a1 and not _zada:
                     _pb = self._pribuzny_predmet(ctx._raw_message, ctx.name)   # HANS_LOOKUP_PRIBUZNY_V1
                     if _pb:
