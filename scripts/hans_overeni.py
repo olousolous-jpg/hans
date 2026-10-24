@@ -391,6 +391,27 @@ def _nacti_wd(tituly: list) -> None:
                     if isinstance(((cl.get("mainsnak") or {}).get("datavalue") or {}).get("value"), dict))
                     if x]
                 odkazy |= set(C["M:" + q])
+    # HANS_WD_ROKY_PRIBUZNYCH_V1 (24. 10.) — roky života manželů a dětí (P569/P570
+    # odkazované osoby): „kdy se narodila manželka TGM?“ bral model rok svatby
+    # 1878 z článku o TGM; WD u odkazu jen jméno, data manželky neměl nikde
+    pribuzni = [q for t in tituly for p in ("P26", "P40")
+                for q in ((C.get(t) or {}).get("p") or {}).get(p, [])
+                if isinstance(q, str) and "Z:" + q not in C][:45]
+    if pribuzni:
+        d = _wd(API + "?action=wbgetentities&props=claims&format=json&ids=" + "|".join(pribuzni))
+        if isinstance(d, dict) and "entities" in d:
+            for q, e in (d.get("entities") or {}).items():
+                roky = []
+                for p in ("P569", "P570"):
+                    r = None
+                    for cl in (e.get("claims") or {}).get(p, []):
+                        v = ((cl.get("mainsnak") or {}).get("datavalue") or {}).get("value")
+                        m = re.match(r"[+-]0*(\d+)-", (v or {}).get("time", "")) if isinstance(v, dict) else None
+                        if m:
+                            r = int(m.group(1))
+                            break
+                    roky.append(r)
+                C["Z:" + q] = roky
     mista = {q for t in tituly for p in _MISTA_P
              for q in ((C.get(t) or {}).get("p") or {}).get(p, []) if isinstance(q, str)}
     for _ in range(4):
@@ -668,6 +689,63 @@ _VZTAH_OSOBY = re.compile(r"\b(?:manžel\w*|chot\w*|choť|žen[auyo]u?\b|dcer\w*
                           r"sestr\w*|syn\w*|otc\w*|otec|bratr\w*|vdov\w*|snach\w*|zeť\w*)", re.I)
 
 
+# HANS_OVERENI_PRIBUZNI_V1 (24. 10.) — roky života příbuzného (manžel/ka,
+# dítě článku věty) proti Wikidatům TÉ osoby („Z:“ z HANS_WD_ROKY_PRIBUZNYCH_V1).
+# „Charlotta Garrigue Masaryková (1878–1923)“ / „… a narodila se roku 1878“:
+# rozsah let za jménem se obecně nekontroluje (HANS_OVERENI_PLANE_V1 — díla),
+# a s článkem o TGM ho pojistka pohlaví správně vyřadí → nikdo ho neověřil.
+# Jen jméno, které Wikidata u článku jako manžela/dítě uvádějí, všemi slovy;
+# tolerance 1 rok („1346/1347“).
+def _pribuzni(veta: str, kany: list) -> list:
+    C = _c()
+    vf = _fold(veta)
+    out = []
+    for kan in kany:
+        P = (C.get(kan) or {}).get("p") or {}
+        for p in ("P26", "P40"):
+            for q in P.get(p) or []:
+                if not isinstance(q, str) or not C.get("Z:" + q):
+                    continue
+                n, u = (C["Z:" + q] + [None, None])[:2]
+                for jm in dict.fromkeys(([C["LC:" + q]] if C.get("LC:" + q) else []) + _jm(q)):
+                    # všechna slova jména po sobě; delší slovo i ve skloněném tvaru
+                    # (kmen bez 2 posledních písmen, nejméně 3: Anna → Annou) — „Jan Garrigue
+                    # Masaryk“ se jinak chytal na „Garrigua Masaryka“
+                    sl = re.findall(r"\w+", _fold(jm))
+                    if len(sl) < 2 or not any(len(w) >= 4 for w in sl):
+                        continue
+                    rx = r"\b" + r"\W+".join(
+                        re.escape(w[:max(3, len(w) - 2)]) + r"\w*" if len(w) >= 4
+                        else re.escape(w) + (r"\w{0,2}\b" if w.isalpha() else r"\b") for w in sl)
+                    mj = list(re.finditer(rx, vf))
+                    if not mj:
+                        continue
+                    za = veta[mj[-1].end():]
+                    m = re.match(r"\s*\((\d{3,4})\s*[–—-]\s*(\d{3,4})\)", za)
+                    pary = []
+                    if m:
+                        pary = [("P569", int(m.group(1)), n), ("P570", int(m.group(2)), u)]
+                    else:
+                        for mm in re.finditer(r"\b(narodil\w*|zemřel\w*)\b[^.\d]{0,25}?\b(1\d{3}|20\d\d)\b", za):
+                            pary.append(("P569" if mm.group(1).startswith("narod") else "P570",
+                                         int(mm.group(2)), n if mm.group(1).startswith("narod") else u))
+                    for pp, rok, wd in pary:
+                        if wd:
+                            out.append({"clanek": kan, "osoba": jm, "p": pp, "udaj": rok, "wd": wd,
+                                        "verdikt": "doloženo" if abs(rok - wd) <= 1 else "rozpor"})
+                    break
+    # stejné jméno u víc příbuzných (dvě dcery Markéta Lucemburská, 1335 a 1373)
+    # → rozpor jen, když nesedí ani jedna
+    dobre = {(x["osoba"], x["p"], x["udaj"]) for x in out if x["verdikt"] == "doloženo"}
+    vys = {}
+    for x in out:
+        k = (x["osoba"], x["p"], x["udaj"])
+        if k in dobre:
+            x = dict(x, verdikt="doloženo")
+        vys.setdefault(k, x)
+    return list(vys.values())
+
+
 def _overit(h, otazka, prepis, odpoved) -> list:
     from scripts import hans_wiki_offline as wo
     from scripts import hans_podklad as P
@@ -797,6 +875,26 @@ def _overit(h, otazka, prepis, odpoved) -> list:
                                      if ". " in str(x["wd"][0]) else _OPRAVA_POPIS[_p]),
                               x["wd"][0], str(x["udaj"]).strip(" .,"))}
                 break
+        _pr = _pribuzni(r["veta"], [c[0] for c in r["cl"]])   # HANS_OVERENI_PRIBUZNI_V1
+        if _pr:
+            # rok, který věta dává příbuznému, nepatří osobě článku („syna Jana
+            # Masaryka, který se narodil roku 1880“ → dřív oprava „u TGM 1850“)
+            _roky = {str(x["udaj"]) for x in _pr}
+            _cizi_rok = lambda x: x["verdikt"] == "rozpor" and re.sub(r"\D", "", str(x["udaj"])) in _roky
+            txt = [x for x in txt if not _cizi_rok(x)]
+            wd = [x for x in wd if not _cizi_rok(x)]
+            if oprava and oprava.get("udaj") in _roky:
+                oprava = None
+            wd = wd + [{"clanek": x["clanek"], "udaj": "%s %s" % (x["osoba"], x["udaj"]),
+                        "druh": x["p"], "verdikt": x["verdikt"], "pramen": x["wd"]} for x in _pr]
+            if not oprava:
+                for x in _pr:
+                    if x["verdikt"] == "rozpor":
+                        oprava = {"p": x["p"], "clanek": x["osoba"], "udaj": str(x["udaj"]),
+                                  "spravne": str(x["wd"]),
+                                  "text": "Ještě oprava: podle Wikidat je u „%s“ %s %s, ne %s." % (
+                                      x["osoba"], _OPRAVA_POPIS[x["p"]], x["wd"], x["udaj"])}
+                        break
         out.append({"veta": r["veta"], "kandidati": r["kand"], "clanky": [c[0] for c in r["cl"]],
                     "oprava": oprava,
                     "text": _v(txt), "wikidata": _v(wd), "obe": _v(txt + wd),
@@ -856,8 +954,18 @@ def opravit(h, ctx) -> None:
     if not (bool(c.get("stin", True)) and bool(c.get("opravy", True))):
         return
     odpoved = str(getattr(ctx, "response", "") or "")
-    if not odpoved or "Ještě oprava:" in odpoved:
+    if not odpoved or getattr(ctx, "_overeni_hotovo", False):
         return
+    # HANS_OVERENI_FALESNA_OPRAVA_V1 (24. 10.) — „Ještě oprava:“ píše jen tenhle
+    # kód; model ji opisuje z historie a řádku schopností („Ještě oprava: Wikidata
+    # neuvádí…“, „…v článku je také Jitka Lucemburská“ = sestra) a dřív tím
+    # skutečnou opravu zablokoval. Odstavec od modelu pryč, zmínka v uvozovkách zůstává.
+    _bez = re.sub(r"(?m)^[ \t*_]*Ještě oprava:[^\n]*(?:\n(?![ \t]*\n)[^\n]*)*\n?", "", odpoved)
+    if _bez != odpoved:
+        _log.info("HANS_OVERENI_FALESNA_OPRAVA_V1: odstavec „Ještě oprava“ od modelu odstraněn: %r",
+                  odpoved[len(_bez.rstrip()):][:160] if odpoved.startswith(_bez.rstrip()) else "")
+        odpoved = _bez.rstrip()
+        ctx.response = odpoved
     try:
         from scripts import hans_wiki_offline as wo
         if not wo.dostupna():

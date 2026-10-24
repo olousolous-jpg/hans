@@ -1180,11 +1180,24 @@ def _wikidata_blok(titul: str) -> str:
                 hod.append("%s. %s. %s" % (d, m, y) if d and m and (d, m) != (1, 1) else str(y))
             def _jmeno(v):
                 if O._c().get("LC:" + v):     # HANS_WD_DETI_MATKY_V1 — český štítek
-                    return O._c()["LC:" + v]
+                    return _s_roky(v, O._c()["LC:" + v])
                 j = O._c().get("L:" + v) or []
                 cz = [x for x in j if re.search(r"[áčďéěíňóřšťúůýž]", x, re.I)
                       and len(x.split()) > 1]
-                return (cz or O._jm(v) or [None])[0]
+                return _s_roky(v, (cz or O._jm(v) or [None])[0])
+
+            def _s_roky(v, jm):
+                # HANS_WD_ROKY_PRIBUZNYCH_V1 — „Charlotta Garrigue Masaryková (1850–1923)“
+                if not jm or p not in ("P26", "P40"):
+                    return jm
+                n, u = (O._c().get("Z:" + v) or [None, None])[:2]
+                if n and u:
+                    return "%s (%s–%s)" % (jm, n, u)
+                if n:
+                    return "%s (nar. %s)" % (jm, n)
+                if u:
+                    return "%s (zemř. %s)" % (jm, u)
+                return jm
             _qs = [v for v in vals if isinstance(v, str)][:_WD_STROP.get(p, 4)]
             # HANS_WD_DETI_MATKY_V1 — děti seskupené podle matky, když ji
             # Wikidata uvádí u každého z nich
@@ -1195,9 +1208,24 @@ def _wikidata_blok(titul: str) -> str:
                     if _jmeno(v):
                         skup.setdefault(m, []).append(_jmeno(v))
                 if skup and all(_jmeno(m) for m in skup):
-                    out.append("děti (podle matky): " + "; ".join(
-                        "matka %s — %s" % (_jmeno(m), ", ".join(dict.fromkeys(d)))
-                        for m, d in skup.items()))
+                    # HANS_WD_DETI_NEUPLNE_V1 (24. 10.) — Karel IV.: Wikidata nemají
+                    # Václava (syn Anny Falcké, 1350–1351) → model z bloku „má
+                    # přednost“ vyvodil „s Annou Falckou žádné děti“. Skupiny
+                    # v pořadí manželek a manželka bez dětí na svém místě — s poznámkou
+                    # na konci řádku model děti posunul o jednu matku (živě 24. 10.)
+                    _por = [m for m in (P.get("P26") or [])[:_WD_STROP["P26"]]
+                            if isinstance(m, str)]
+                    _por = _por + [m for m in skup if m not in _por]
+                    _hol = lambda m: re.sub(r" \([^()]*\)$", "", _jmeno(m) or "")
+                    _cast = []
+                    for m in _por:
+                        if m in skup:
+                            _cast.append("matka %s — %s" % (_hol(m), ", ".join(dict.fromkeys(skup[m]))))
+                        elif _jmeno(m):
+                            _cast.append("manželka %s — děti u ní Wikidata neuvádějí "
+                                         "(neznamená to, že žádné neměla)" % _hol(m))
+                    out.append("děti (podle matky): " + "; ".join(_cast)
+                               + " (výčet nemusí být úplný)")
                     continue
             for v in _qs:
                 jm = _jmeno(v)

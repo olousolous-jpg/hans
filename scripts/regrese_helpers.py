@@ -1508,3 +1508,21 @@ def udaje_druhy(veta, otazka=""):
     """HANS_OVERENI_PLANE_V1 — [druh, rok] údajů věty (regrese stínu)."""
     from scripts.hans_overeni import udaje_vety
     return [[u[0], u[1]] for u in udaje_vety(veta, otazka) if u[0] != "vek"]
+
+
+def pribuzni_verdikty(veta: str) -> str:
+    """HANS_OVERENI_PRIBUZNI_V1 — roky příbuzných nad pevnou vzorovou
+    mezipamětí Wikidat (bez sítě): „osoba rok verdikt; …“."""
+    from scripts import hans_overeni as O
+    stara = O._cache
+    O._cache = {"_v": O._CACHE_V,
+                "TGM": {"qid": "Q1", "p": {"P26": ["Q2"], "P40": ["Q3", "Q4", "Q5"]}},
+                "LC:Q2": "Charlotta Garrigue Masaryková", "Z:Q2": [1850, 1923],
+                "LC:Q3": "Jan Masaryk", "Z:Q3": [1886, 1948],
+                "LC:Q4": "Markéta Lucemburská", "Z:Q4": [1335, 1349],
+                "LC:Q5": "Markéta Lucemburská", "Z:Q5": [1373, 1410]}
+    try:
+        return "; ".join("%s %s %s" % (x["osoba"], x["udaj"], x["verdikt"])
+                         for x in O._pribuzni(veta, ["TGM"]))
+    finally:
+        O._cache = stara
