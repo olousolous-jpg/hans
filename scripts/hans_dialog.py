@@ -854,6 +854,19 @@ class HansDialog:
                 _log.debug("dialog: přeskočeno (mozek dolů) — nepočítám ani "
                            "pořadí, aby zkoušení nepropadalo naprázdno")
                 return
+            # HANS_SAMOTEST_V1 (23. 10.) — v nočních hodinách místo dialogu
+            # jedna otázka samotestu (Wikidata jako klíč), dokud není splněn
+            # denní počet (`samotest.pocet`)
+            try:
+                from scripts import hans_samotest as _st
+                if _st.je_na_rade(self.config):
+                    _h = getattr(getattr(self, "_hans_idle", None), "chat", None)
+                    if (_h is not None and hasattr(_h, "send_chat_message")
+                            and _st.proved(self.config, _h, self._diary_path)):
+                        self._last_dialog = time.time()
+                        return
+            except Exception as _ste:
+                _log.warning("HANS_SAMOTEST_V1 selhal (vedu běžný rozhovor): %s", _ste)
             _log.info("Generating Hans+Kolač dialog...")
 
             # Co Hans nedávno četl — může ovlivnit téma

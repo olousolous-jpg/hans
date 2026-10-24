@@ -1792,5 +1792,12 @@
         "opravy": true,
         "oprava_limit_s": 4,
         "_opravy_note": "HANS_OVERENI_OPRAVA_V2 (23. 10.): jasný rozpor s Wikidaty se připíše k odpovědi („Ještě oprava: …“), čeká se nejvýš oprava_limit_s; false = jen stín do logu."
+    },
+    "samotest": {
+        "enabled": true,
+        "pocet": 12,
+        "od": 10,
+        "do": 12,
+        "_note": "HANS_SAMOTEST_V1 (23. 10.): přes den (od–do, mimo :13–:26) místo Koláčova dialogu otázka na osobu/dílo/stavbu s klíčem z Wikidat (polovina z Hansovy četby, polovina náhodná hesla); výsledky data/mereni/samotest/<datum>.jsonl, souhrn python3 -m scripts.hans_samotest souhrn"
     }
 }
