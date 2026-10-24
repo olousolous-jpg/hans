@@ -492,11 +492,21 @@ def _shoda_jmena(ve_vete, jmena_wd, misto: bool = False) -> bool:
         if misto:
             j = re.split(r"\s+(?:u|nad|pod|na|v|ve)\s+|\s*\(", j)[0]
         jw = [w for w in re.findall(r"\w+", _fold(j)) if len(w) >= 3]
+        # HANS_OVERENI_JMENA_PADY_V1 (24. 10.) — samotné křestní jméno („Emma“ ×
+        # Emma Darwin) se porovná s prvním slovem jména
+        _krestni = (not misto and len(sv) == 1 and len(jw) > 1
+                    and sv[0][:min(5, len(sv[0]), len(jw[0]))] == jw[0][:min(5, len(sv[0]), len(jw[0]))])
+        if _krestni:
+            return True
         jw = jw if misto else jw[-1:]
         for a in sv:
             for b in jw:
                 n = min(5, len(a), len(b))
                 if a[:n] == b[:n] and not (a.endswith("ova") and not b.endswith("ova")):
+                    return True
+                # pohyblivé „e“ (Havel × „Havla“, Karel × „Karla“, Němec × „Němce“)
+                _bz = re.sub(r"e([lrkcn])$", r"\1", b)
+                if _bz != b and len(_bz) >= 4 and a.startswith(_bz):
                     return True
                 # HANS_OVERENI_ODECET_V1 (19. 10.) — místo v jiném pádě
                 # („Praze“ × Praha, „Vídni“ × Vídeň, „Woli“ × Wola) a překlep
@@ -555,7 +565,21 @@ def over_wd(veta, udaje, tituly) -> list:
                     det.append({"clanek": t, "p": p, "udaj": u[4],
                                 "verdikt": vd, "wd": sorted(roky)})
                     break
+        # HANS_OVERENI_JMENA_PADY_V1 — věta, jejímž podmětem je PŘÍBUZNÝ článku
+        # („Mina byla dcera vynálezce Lewise Millera“ v odpovědi o Edisonovi),
+        # mluví o jeho vztazích; jméno příbuzného není místo („zemřel v dětství.
+        # S Annou Svídnickou…“ × místo úmrtí Karla IV.)
+        _pr_jm = [j for p in ("P26", "P40", "P22", "P25") for q in P.get(p, [])
+                  if isinstance(q, str) for j in ([_c().get("LC:" + q)] + _jm(q)) if j]
+        _vb = veta or ""
+        _uvd = _UVOD_DOHL.search(_vb)
+        _vb = _vb[_uvd.end():] if _uvd else _vb
+        _prvni = re.match(r"\W*([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž]+)", _vb)
+        _podmet_pribuzny = bool(_prvni and not _fold(t)[:4] in _fold(_prvni.group(1)) and any(
+            _fold(_prvni.group(1))[:4] == _fold(j.split()[0])[:4] for j in _pr_jm))
         for vzor, props in _VZTAHY:
+            if _podmet_pribuzny:
+                break
             # HANS_OVERENI_PLANE_V1 — libreto / scénář / text písně není autor
             # díla (Carmen: „libreto napsali Meilhac a Halévy“ → „autor Bizet“)
             if props == ["P50"] and re.search(r"libret|scénář|text\w*\s+(?:k|písn)|slov[ay]\s+k", veta, re.I):
@@ -586,6 +610,8 @@ def over_wd(veta, udaje, tituly) -> list:
                 if not hodnoty:
                     continue
                 _misto = any(p in _MISTA_P for p in props)
+                if _misto and _pr_jm and _shoda_jmena(ve_vete, _pr_jm):
+                    continue        # jméno příbuzného, ne místo
                 _sh = _shoda_jmena(ve_vete, hodnoty, _misto)
                 # HANS_OVERENI_ODECET_V1 — správní celek (P131) neodliší pohoří,
                 # geopark ani přívlastek → u něj jen doložení, rozpor ne
@@ -652,7 +678,7 @@ def _jen_lokalne(url, params=None, **kw):
 _OPRAVA_POPIS = {"P569": "uveden rok narození", "P570": "uveden rok úmrtí",
                  "P571": "uveden rok založení či začátku stavby", "P50": "uveden autor",
                  "P57": "uvedena režie"}
-_UVOD_DOHL = re.compile(r"Podle toho, co jsem te\u010f na\u0161el \(Wikipedie \u2014 heslo "
+_UVOD_DOHL = re.compile(r"Podle toho, co jsem (?:te\u010f )?na\u0161el \(Wikipedie \u2014 heslo "   # i „K tomu jsem se už díval…“
                         r"[\u201e\"]([^\u201c\"]{2,90})[\u201c\"]\):?")
 _DRUH_ZAVORKA = {"film", "kniha", "roman", "serial", "novela", "povidka", "album", "pisen",
                  "opera", "hrad", "zamek", "mesto", "obec", "hora", "reka", "hudebnik",
