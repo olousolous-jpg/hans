@@ -19,8 +19,10 @@ REDIR = os.path.join(W, "presmerovani.tsv")
 INFO = os.path.join(W, "infobox.jsonl")
 META = os.path.join(W, "meta.jsonl")
 _ROZCESTNIK = re.compile(r"\{\{\s*(Rozcestník|Rozcestnik|Disambig)", re.I)
-EXTR = os.path.join(W, "extrakt")
-DB = os.path.join(W, "cswiki.db")
+# WIKI_SEZNAMY_V1 (24. 10.) — přestavba vedle běžící DB: WIKI_EXTR / WIKI_DB
+EXTR = os.environ.get("WIKI_EXTR") or os.path.join(W, "extrakt")
+DB = os.environ.get("WIKI_DB") or os.path.join(W, "cswiki.db")
+STARA_DB = os.path.join(W, "cswiki.db")
 
 
 def norm(s: str) -> str:
@@ -150,7 +152,8 @@ def pruchod():
 
 def extrahuj():
     t0 = time.time()
-    subprocess.run([sys.executable, "-m", "wikiextractor.WikiExtractor",
+    # WIKI_SEZNAMY_V1 — obal, který nezahazuje odrážkové seznamy
+    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "wiki_extrakt_seznamy.py"),
                     "--json", "-o", EXTR, "-b", "100M", "--processes", "2",
                     "-q", DUMP], check=True)
     print(f"extrahuj: {time.time()-t0:.0f} s", flush=True)
@@ -197,10 +200,19 @@ def index():
                        rows)
         n += len(rows)
     db.execute("CREATE INDEX ix_titul ON clanek(titul_norm)")
-    with open(REDIR, encoding="utf-8") as f:
-        db.executemany("INSERT OR IGNORE INTO presmerovani VALUES (?,?,?)",
-                       ((norm(a), a, b) for a, b in
-                        (l.rstrip("\n").split("\t", 1) for l in f if "\t" in l)))
+    if os.path.exists(REDIR):
+        with open(REDIR, encoding="utf-8") as f:
+            db.executemany("INSERT OR IGNORE INTO presmerovani VALUES (?,?,?)",
+                           ((norm(a), a, b) for a, b in
+                            (l.rstrip("\n").split("\t", 1) for l in f if "\t" in l)))
+    elif os.path.abspath(DB) != os.path.abspath(STARA_DB) and os.path.exists(STARA_DB):
+        # WIKI_SEZNAMY_V1 — TSV smazáno; přesměrování z téhož výpisu ve staré DB
+        db.execute("ATTACH DATABASE ? AS st", (STARA_DB,))
+        db.execute("INSERT OR IGNORE INTO presmerovani SELECT * FROM st.presmerovani")
+        db.commit()
+        db.execute("DETACH DATABASE st")
+    else:
+        sys.exit("chybí %s" % REDIR)
     db.executescript("""
       CREATE VIRTUAL TABLE clanek_fts USING fts5(titul, text, content='clanek',
           content_rowid='id', tokenize='unicode61 remove_diacritics 2');

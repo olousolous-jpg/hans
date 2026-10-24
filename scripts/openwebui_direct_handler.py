@@ -2082,6 +2082,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 if (getattr(self, '_grounding_outcome', '') == 'grounded'
                         and not getattr(ctx, '_predem_dohledano', None)):
                     _pb = self._pribuzny_predmet(ctx._raw_message, ctx.name)
+                    # víc příbuzných = článek osoby samé; když podklad už JE článek či
+                    # entita té osoby (Karel IV. „Potomci“), neměnit — jen zápisky a četba
+                    _cg = getattr(self, '_grounding_cesta', '') or ''
+                    if _pb and _pb[1].endswith(")") and re.search(r"clanek|fakta|entita_c1", _cg):
+                        self._pribuzny_otazka = None
+                        _pb = None
                     if _pb:
                         self._presny_z_vety = _pb[0]
                         _dz = self._dohledej_kotvu(ctx._raw_message, ctx.name, mel_zapisky=True)

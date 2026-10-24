@@ -984,6 +984,10 @@ class FaktaMixin:
                 tf = _f(text)
                 k0 = _f(tema).split()[0][:3]      # „Karel“ × „Karla“
                 for rx, prop, rod in self._PRIBUZNY_VZTAH:
+                    # „Jaké děti měl X a s kterými manželkami?“ se ptá na děti,
+                    # manželka je jen upřesnění (živě 24. 10.: vyjmenoval manželky)
+                    if prop == "P26" and re.search(r"\bdet[ietm]\w*|\bpotom\w*", tf):
+                        continue
                     for m in re.finditer(rx, tf):
                         # vztah patří osobě z kotvy: za ním buď její jméno
                         # („manželka Karla IV.“), nebo žádné jméno („…Mozarta
