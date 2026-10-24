@@ -394,13 +394,20 @@ def _nacti_wd(tituly: list) -> None:
     # HANS_WD_ROKY_PRIBUZNYCH_V1 (24. 10.) — roky života manželů a dětí (P569/P570
     # odkazované osoby): „kdy se narodila manželka TGM?“ bral model rok svatby
     # 1878 z článku o TGM; WD u odkazu jen jméno, data manželky neměl nikde
-    pribuzni = [q for t in tituly for p in ("P26", "P40")
+    # HANS_LOOKUP_PRIBUZNY_V1 (24. 10.) — i rodiče, český článek („S:“) a pohlaví
+    # („R:“) příbuzného: otázka na manželku/matku/syna X se dohledá v JEHO článku
+    pribuzni = [q for t in tituly for p in ("P26", "P40", "P22", "P25")
                 for q in ((C.get(t) or {}).get("p") or {}).get(p, [])
-                if isinstance(q, str) and "Z:" + q not in C][:45]
+                if isinstance(q, str) and "S:" + q not in C][:45]
     if pribuzni:
-        d = _wd(API + "?action=wbgetentities&props=claims&format=json&ids=" + "|".join(pribuzni))
+        d = _wd(API + "?action=wbgetentities&props=claims|sitelinks&sitefilter=cswiki"
+                "&format=json&ids=" + "|".join(pribuzni))
         if isinstance(d, dict) and "entities" in d:
             for q, e in (d.get("entities") or {}).items():
+                C["S:" + q] = ((e.get("sitelinks") or {}).get("cswiki") or {}).get("title") or ""
+                C["R:" + q] = next((_P21.get(((cl.get("mainsnak") or {}).get("datavalue") or {})
+                                             .get("value", {}).get("id"))
+                                    for cl in (e.get("claims") or {}).get("P21", [])), None)
                 roky = []
                 for p in ("P569", "P570"):
                     r = None

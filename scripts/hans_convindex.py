@@ -890,6 +890,13 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
                 and not _po_svatem):
             jmeno.append(words[j])
             j += 1
+        # HANS_ANCHOR_STARSI_V1 (24. 10.) — „Alexandra Dumase staršího“ → kotva
+        # „Alexandra Dumase“ → heslo o stanici metra (/tazatel 24. 10.); přívlastek
+        # starší/mladší patří ke jménu (Plinius starší, Pieter Bruegel starší)
+        if (j < len(words) and re.fullmatch(r"(?:starsi|mladsi)(?:ho|mu|m)?", _fold(words[j]))
+                and not re.search(re.escape(words[j - 1]) + r"\s*[,;:–-]", veta or "")):
+            jmeno.append(words[j])
+            j += 1
         preskoc_do = j
         if any(_je_vyloucene(x) for x in jmeno):
             continue

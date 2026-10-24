@@ -935,6 +935,125 @@ class FaktaMixin:
             logging.getLogger(__name__).debug("HANS_LOOKUP_PRESNY_V1: %s", _e)
             return None
 
+    # HANS_LOOKUP_PRIBUZNY_V1 (24. 10.) — otázka na PŘÍBUZNÉHO osoby („co víš
+    # o manželce Karla IV.?“, „kdy se narodila manželka TGM?“, „jak se jmenovala
+    # Mozartova matka?“): podklad bývá o osobě samé (zápisky, četba, entita) a
+    # model si příbuzného domyslí (/tazatel 24. 10.: Blanka „Lucemburská“ †1349,
+    # Mozartova matka „Nannerl“ *1734, Masaryková *1878). Wikidata osoby
+    # příbuzného znají → jediný s českým článkem = dohledá se JEHO článek, víc
+    # (4 manželky Karla IV.) = článek osoby s blokem Wikidat, kde jsou všichni.
+    _PRIBUZNY_VZTAH = [
+        (r"\bmanzel(?:ka|ky|ce|ku|kou|kami|kach)\b|\bchot\w*", "P26", "f"),
+        (r"\bmanzel(?:a|e|i|em|ove|u)?\b", "P26", "m"),
+        (r"\bmat(?:ka|ky|ce|ku|kou)\b|\bmaminc\w*", "P25", None),
+        (r"\botc(?:e|i|em)\b|\botec\b|\btatin\w*", "P22", None),
+        (r"\bsyn(?:a|ovi|em|ove|u|ech|y|u|um)?\b", "P40", "m"),
+        (r"\bdcer\w*", "P40", "f"),
+    ]
+
+    def _pribuzny_predmet(self, veta: str, name: str = None):
+        """(téma k dohledání, popis) nebo None."""
+        import unicodedata as _ud
+
+        def _f(x):
+            return "".join(c for c in _ud.normalize("NFD", (x or "").lower())
+                           if _ud.category(c) != "Mn")
+        try:
+            if not bool((self.config.get("instant_lookup", {}) or {}).get("pribuzny", True)):
+                return None
+            from scripts.hans_intent import pta_se_na_zazitek_hanse
+            from scripts.hans_convindex import kotva_tematu
+            from scripts import hans_wiki_offline as _wo
+            from scripts import hans_overeni as _O
+            if not _wo.dostupna() or pta_se_na_zazitek_hanse(veta):
+                return None
+            _kp = self.config.get("known_persons", {}) or {}
+            _known = tuple(_kp.keys()) + tuple(str(v.get("nom", "")) for v in _kp.values())
+            try:
+                from scripts.hans_persona import persona_name as _pn
+                _known += (str(_pn(self.config) or ""),)
+            except Exception:
+                pass
+            if name:
+                _known += (str(name),)
+            _prepis = getattr(self, '_f1_query', None)
+            for text in [x for x in (_prepis, re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "")) if x]:
+                tema = kotva_tematu(text, vynech=_known)
+                if not tema:
+                    continue
+                tf = _f(text)
+                k0 = _f(tema).split()[0][:3]      # „Karel“ × „Karla“
+                for rx, prop, rod in self._PRIBUZNY_VZTAH:
+                    for m in re.finditer(rx, tf):
+                        # vztah patří osobě z kotvy: za ním buď její jméno
+                        # („manželka Karla IV.“), nebo žádné jméno („…Mozarta
+                        # a jak se jmenovala jeho matka?“); JINÉ jméno za vztahem
+                        # = vztah jiné osoby („Blanka z Valois, manželka Karla IV.“);
+                        # „moje / vaše matka“ není o osobě z otázky
+                        _za = text[m.end():m.end() + 40] if len(text) == len(tf) else ""
+                        _cap = re.search(r"\b([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž]+)",
+                                         re.split(r"[?.!;]", _za)[0])
+                        if _cap and not _f(_cap.group(1)).startswith(k0):
+                            continue
+                        if not _cap and k0 not in tf[:m.start()]:
+                            continue
+                        if re.search(r"\b(?:moj|tv|vas|nas|sv)\w*\s+$|\bma\s+$", tf[:m.start()]):
+                            continue
+                        from scripts.web_reader import WebReader
+                        _wr = WebReader(self.config)
+                        _wr._get = _O._jen_lokalne
+                        titul = _wr._wikipedia_search(tema)
+                        if not titul or _wo.extrakt(titul)[1]:
+                            return None
+                        _r = _wo._cil(titul)          # přesměrování („Lenin“)
+                        titul = _r[1] if _r else titul
+                        _O._nacti_wd([titul])
+                        C = _O._c()
+                        P = (C.get(titul) or {}).get("p") or {}
+                        if not P.get("P21"):
+                            return None          # není osoba
+                        kand = [q for q in (P.get(prop) or []) if isinstance(q, str)
+                                and (prop != "P40" or rod is None or C.get("R:" + q) == rod)]
+                        if not kand:
+                            return None
+                        # zadání shrnutí: o kom článek je a v jakém je vztahu
+                        # (živě 24. 10.: „Kdo byl otcem Karla IV.?“ nad článkem
+                        # o Janu Lucemburském → „Jindřich VII.“ = otec Jana)
+                        _vz = {"P26": "manželka" if rod == "f" else "manžel", "P25": "matka",
+                               "P22": "otec", "P40": "syn" if rod == "m" else "dcera"}[prop]
+                        _vzm = {"P26": "manželky" if rod == "f" else "manželé", "P25": "matka",
+                                "P22": "otec", "P40": "děti"}[prop]
+                        _q = (_prepis or re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "")).strip()
+                        # jen KDO ten příbuzný je („kdo byl otcem X“, „jak se
+                        # jmenovala manželka X“) → stačí článek X s řádkem Wikidat;
+                        # v článku příbuzného si model spletl role (otec otce)
+                        _jen_kdo = (re.search(r"\bkdo\s+(?:byl|byla|je|jsou|byli)\b|\bjak\s+se\s+"
+                                              r"jmenoval\w*|\bjak\w+\s+(?:manzel|otc|matk|syn|dcer)\w*", tf)
+                                    and not re.search(r"\bkdy\b|\bkde\b|\bnarod|\bzemr|\bcim\b|"
+                                                      r"\bco\s+vi|\bjaky\s+byl\w*\s+zivot|\bproc\b|\bkolik\b", tf))
+                        if len(kand) == 1 and C.get("S:" + kand[0]) and not _jen_kdo:
+                            self._pribuzny_otazka = (
+                                "%s (Článek je o osobě %s, která je %s osoby %s. Odpovídej o ní.)"
+                                % (_q, C["S:" + kand[0]], _vz, titul))
+                            return C["S:" + kand[0]], "%s osoby %s" % (prop, titul)
+                        from scripts.hans_findings import _konkretni_otazka
+                        if len(kand) == 1:
+                            _vzm = _vz
+                        if not _konkretni_otazka(self.config, _q):
+                            _q = "Jak se %s %s osoby %s?" % (
+                                "jmenovali" if _vzm == "manželé" else "jmenoval" if _vzm in ("otec", "syn", "manžel")
+                                else "jmenovala" if _vzm in ("matka", "dcera", "manželka") else "jmenovaly",
+                                _vzm, titul)
+                        self._pribuzny_otazka = (
+                            "%s (Odpověz podle řádku „%s“ v ověřených údajích.)"
+                            % (_q, "děti (podle matky)" if prop == "P40" else
+                               _vzm if prop == "P26" else _vz))
+                        return titul, "%s osoby %s (%d)" % (prop, titul, len(kand))
+            return None
+        except Exception as _e:
+            logging.getLogger(__name__).debug("HANS_LOOKUP_PRIBUZNY_V1: %s", _e)
+            return None
+
     @staticmethod
     def _podklad_kryje(titul: str, podklad: str) -> bool:
         """HANS_LOOKUP_PRESNY_PODKLAD_V1 — je podklad (entita C1 / titul z Kodi)
@@ -1094,8 +1213,10 @@ class FaktaMixin:
                 return None
             _dbp = (self.config.get("hans_idle", {}) or {}).get(
                 "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"
+            _pq = getattr(self, '_pribuzny_otazka', None)   # HANS_LOOKUP_PRIBUZNY_V1
+            self._pribuzny_otazka = None
             out = lookup_now(self.config, _dbp, tema, veta or "", asker=name,
-                             otazka=_prepis or veta,   # HANS_LOOKUP_QUESTION_SUMMARY_V1
+                             otazka=_pq or _prepis or veta,   # HANS_LOOKUP_QUESTION_SUMMARY_V1
                              mel_zapisky=mel_zapisky)
             logging.getLogger(_h.__name__).info(
                 "HANS_ANCHOR_LOOKUP_V1: téma %r → %s", tema,

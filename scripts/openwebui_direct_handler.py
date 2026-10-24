@@ -583,6 +583,8 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         if cesta == 'start':   # HANS_LOOKUP_PRESNY_PODKLAD_V1 — nic z minulého tahu
             self._c1_entita = None
             self._kodi_cast_titul = None
+            self._presny_z_vety = None   # HANS_LOOKUP_PRIBUZNY_V1 — heslo jen pro tento tah
+            self._pribuzny_otazka = None
         # GROUNDING_GUARD_ACTIVE_V2 (22.8.) — cesta se PAMATUJE, ne jen loguje:
         # guard smí zasáhnout jen u tenkého fallbacku (zápisky), ne u plného RAG.
         self._grounding_cesta = cesta
@@ -2073,6 +2075,25 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             ctx._predem_dohledano = _dz
             except Exception as _lpp:
                 logging.getLogger(__name__).debug('HANS_LOOKUP_PRESNY_PODKLAD_V1: %s', _lpp)
+            # HANS_LOOKUP_PRIBUZNY_V1 (24. 10.) — otázka na příbuzného osoby na
+            # podložené cestě: podklad (zápisky, četba, entita) je o osobě, ne
+            # o příbuzném → dohledat jeho článek (nebo osoby s blokem Wikidat)
+            try:
+                if (getattr(self, '_grounding_outcome', '') == 'grounded'
+                        and not getattr(ctx, '_predem_dohledano', None)):
+                    _pb = self._pribuzny_predmet(ctx._raw_message, ctx.name)
+                    if _pb:
+                        self._presny_z_vety = _pb[0]
+                        _dz = self._dohledej_kotvu(ctx._raw_message, ctx.name, mel_zapisky=True)
+                        logging.getLogger(__name__).info(
+                            'HANS_LOOKUP_PRIBUZNY_V1: %s (cesta %s) → heslo %r → %s', _pb[1],
+                            getattr(self, '_grounding_cesta', ''), _pb[0],
+                            'dohledáno' if _dz else 'nic, beze změny')
+                        if _dz:
+                            ctx._a1_abstain = True
+                            ctx._predem_dohledano = _dz
+            except Exception as _lpb:
+                logging.getLogger(__name__).debug('HANS_LOOKUP_PRIBUZNY_V1: %s', _lpb)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
                 # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
                 # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale
@@ -2256,6 +2277,15 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             'HANS_LOOKUP_ON_REQUEST_V1: %s', _zde)
                 # HANS_LOOKUP_PRESNY_V1 (17. 10.) — bez žádosti, ale předmět vede
                 # na článek přesně o něm → dohledat místo odpovědi z hlavy
+                if not _skip_a1 and not _zada:
+                    _pb = self._pribuzny_predmet(ctx._raw_message, ctx.name)   # HANS_LOOKUP_PRIBUZNY_V1
+                    if _pb:
+                        _zada = True
+                        ctx._a1_abstain = True
+                        self._presny_z_vety = _pb[0]
+                        logging.getLogger(__name__).info(
+                            'HANS_LOOKUP_PRIBUZNY_V1: %s (bez faktů) → dohledávám heslo %r',
+                            _pb[1], _pb[0])
                 if not _skip_a1 and not _zada:
                     _pp = self._presny_predmet(ctx._raw_message, ctx.name)
                     if _pp:
