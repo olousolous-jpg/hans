@@ -2283,6 +2283,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             'HANS_LOOKUP_ON_REQUEST_V1: %s', _zde)
                 # HANS_LOOKUP_PRESNY_V1 (17. 10.) — bez žádosti, ale předmět vede
                 # na článek přesně o něm → dohledat místo odpovědi z hlavy
+                if not _zada:
+                    _fn = self._film_nevidel(ctx._raw_message, ctx.name)   # HANS_FILM_NEVIDEL_V1
+                    if _fn:
+                        _zada = True
+                        ctx._a1_abstain = True
+                        ctx._predem_dohledano = _fn
                 if not _skip_a1 and not _zada:
                     _pb = self._pribuzny_predmet(ctx._raw_message, ctx.name)   # HANS_LOOKUP_PRIBUZNY_V1
                     if _pb:

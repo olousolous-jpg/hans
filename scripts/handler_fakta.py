@@ -1085,6 +1085,83 @@ class FaktaMixin:
             logging.getLogger(__name__).debug("HANS_LOOKUP_PRIBUZNY_V1: %s", _e)
             return None
 
+    # HANS_FILM_NEVIDEL_V1 (24. 10.) — „Viděl jste (také) film Titanic?“ u filmu,
+    # který Hans v deníku nemá: film_recall nic, cesta bez faktů, A1 „stabilní“
+    # → zmatek („nechápem, o koho se jedná“). Zhlédnutí je JEHO zážitek → poctivě
+    # z deníku: neviděl. Jen otázka na zhlédnutí + název filmu (kotva „film X“
+    # nebo článek s infoboxem filmu).
+    _NEVIDEL_RE = re.compile(r"\b(?:vid[eě]l|koukal|d[ií]val|sledoval|zhl[eé]dl)\w*\s+(?:jsi|jste|sis|ses)\b"
+                             r"|\b(?:jsi|jste|sis|ses)\s+(?:\w+\s+){0,2}(?:vid[eě]l|koukal|d[ií]val|sledoval|zhl[eé]dl)",
+                             re.I)
+
+    def _film_nevidel(self, veta: str, name: str = None):
+        try:
+            _prepis = getattr(self, '_f1_query', None) or ""
+            text = _prepis or re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "")
+            if not (self._NEVIDEL_RE.search(text) or self._NEVIDEL_RE.search(veta or "")):
+                return None
+            if re.search(r"kamer|venku|z\s+okna|za\s+oknem|na\s+ulic", text + " " + (veta or ""), re.I):
+                return None
+            from scripts.hans_convindex import kotva_tematu
+            from scripts import hans_wiki_offline as _wo
+            k = kotva_tematu(text) or ""
+            m = re.match(r"(?:film\w*|seri[aá]l\w*|sn[ií]mk\w*)\s+(.+)$", k, re.I)
+            nazev = m.group(1).strip() if m else None
+            if not nazev and k:
+                from scripts.web_reader import WebReader
+                from scripts.hans_overeni import _jen_lokalne
+                _wr = WebReader(self.config)
+                _wr._get = _jen_lokalne
+                _t = _wr._wikipedia_search(k)
+                # bez slova „film“ jen PŘESNÝ název článku („Paříži“ ↛ „Paříži, miluji tě“)
+                if (_t and (_wo.infobox(_t)[0] or "").lower() == "film"
+                        and re.sub(r"\s*\(.*$", "", _t).strip().lower() == k.strip().lower()):
+                    nazev = re.sub(r"\s*\(.*$", "", _t)
+            if not nazev:
+                return None
+            from scripts.hans_recall_filmy import _titul_po_slovech
+            from scripts.hans_recall import _ro
+            db = ((self.config.get("hans_idle", {}) or {}).get("diary_db") or "data/hans_diary.db")
+            c = _ro(db)
+            try:
+                tituly = [r[0] for r in c.execute(
+                    "SELECT DISTINCT title FROM diary WHERE event_type IN "
+                    "('movie_opinion','kodi_playing') AND length(title) >= 3").fetchall()]
+            finally:
+                c.close()
+            import unicodedata as _ud
+            _n = lambda s: "".join(ch for ch in _ud.normalize("NFD", str(s or "").lower())
+                                   if _ud.category(ch) != "Mn").strip(" .,:!?\"“„")
+            _var = set()
+            for x in tituly:
+                _var |= {_n(x), _n(re.sub(r"\s*\(.*$", "", x)), _n(x.split(":", 1)[-1])}
+            if (_n(nazev) in _var or _titul_po_slovech(text, tituly)
+                    or _titul_po_slovech("film " + nazev, tituly)):
+                return None          # záznam má → odpoví cesta vzpomínky
+            try:
+                from scripts.cz_names import vocative as _voc
+                osl = (", %s" % _voc(name)) if name else ""
+            except Exception:
+                osl = ""
+            # název ve skloněném tvaru z otázky („Titanicu“) → tvar z článku
+            try:
+                from scripts.web_reader import WebReader
+                from scripts.hans_overeni import _jen_lokalne
+                _wr = WebReader(self.config)
+                _wr._get = _jen_lokalne
+                _t = _wr._wikipedia_search("film " + nazev) or ""
+                if _t and (_wo.infobox(_t)[0] or "").lower() == "film":
+                    nazev = re.sub(r"\s*\(.*$", "", _t)
+            except Exception:
+                pass
+            logging.getLogger(__name__).info(
+                "HANS_FILM_NEVIDEL_V1: %r v deníku není → poctivě: neviděl", nazev)
+            return ("Film „%s“ jsem podle svého deníku neviděl%s — nemám o tom, že bych ho "
+                    "sledoval, žádný záznam." % (nazev, osl))
+        except Exception as _e:
+            logging.getLogger(__name__).debug("HANS_FILM_NEVIDEL_V1: %s", _e)
+            return None
+
     @staticmethod
     def _podklad_kryje(titul: str, podklad: str) -> bool:
         """HANS_LOOKUP_PRESNY_PODKLAD_V1 — je podklad (entita C1 / titul z Kodi)
