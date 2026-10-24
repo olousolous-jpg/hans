@@ -704,6 +704,8 @@ class HansDialog:
                         not _base_busy and
                         time.time() - self._last_dialog >= self._dialog_interval):
                     self._run_dialog_stopa()
+                elif not _base_busy and not self._idle_active:
+                    self._samotest_doma()
             except Exception as e:
                 _log.error("Dialog error: %s", e)
             self._stop.wait(30.0)
@@ -821,6 +823,46 @@ class HansDialog:
         if not self._movies_cache:
             return None
         return random.choice(self._movies_cache)
+
+    def _samotest_doma(self):
+        """HANS_SAMOTEST_DEN_V1 (24. 10., uživatel: „i když je někdo doma“) —
+        dialog s Koláčem běží jen v idle (prázdný dům), takže samotest přes den
+        neproběhl, když byl někdo doma (24. 10.: 0 otázek). Tady samostatně:
+        nejvýš jedna otázka za `samotest.interval_min`, ne do
+        `samotest.ticho_min` od poslední zprávy v chatu (rozhovor má přednost),
+        mozek musí být nahoře (herní mód, spící PC). Hlasem ani na displeji nic."""
+        c = self.config.get("samotest", {}) or {}
+        if not bool(c.get("enabled", False)):
+            return
+        if time.time() - getattr(self, "_last_samotest", 0) < float(c.get("interval_min", 7)) * 60:
+            return
+        try:
+            import os as _os
+            from scripts import hans_samotest as _st
+            from scripts.kolac_exam import identita as _identita
+            if not _st.je_na_rade(self.config):
+                return
+            _ticho = float(c.get("ticho_min", 5)) * 60
+            _ja = "%s.json" % _identita(self.config)
+            _adr = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                                 "data", "conversations")
+            _nej = max((e.stat().st_mtime for e in _os.scandir(_adr)
+                        if e.name.endswith(".json") and e.name != _ja), default=0)
+            if time.time() - _nej < _ticho:
+                return
+            if not self._brain_up_cached():
+                return
+            if not self._dialog_lock.acquire(blocking=False):
+                return
+            try:
+                self._last_samotest = time.time()
+                _h = getattr(getattr(self, "_hans_idle", None), "chat", None)
+                if _h is not None and hasattr(_h, "send_chat_message"):
+                    _st.proved(self.config, _h, self._diary_path)
+            finally:
+                self._dialog_lock.release()
+        except Exception as _e:
+            _log.warning("HANS_SAMOTEST_DEN_V1 selhal: %s", _e)
 
     def _run_dialog_stopa(self):
         """HANS_STOPA_KOLAC_V1 (27. 9.) — rozhovor s Koláčem přes stopu (živý

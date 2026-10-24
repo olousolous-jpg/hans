@@ -1798,6 +1798,9 @@
         "pocet": 12,
         "od": 10,
         "do": 12,
-        "_note": "HANS_SAMOTEST_V1 (23. 10.): přes den (od–do, mimo :13–:26) místo Koláčova dialogu otázka na osobu/dílo/stavbu s klíčem z Wikidat (polovina z Hansovy četby, polovina náhodná hesla); výsledky data/mereni/samotest/<datum>.jsonl, souhrn python3 -m scripts.hans_samotest souhrn"
+        "_note": "HANS_SAMOTEST_V1 (23. 10.): přes den (od–do, mimo :13–:26) místo Koláčova dialogu otázka na osobu/dílo/stavbu s klíčem z Wikidat (polovina z Hansovy četby, polovina náhodná hesla); výsledky data/mereni/samotest/<datum>.jsonl, souhrn python3 -m scripts.hans_samotest souhrn",
+        "interval_min": 7,
+        "ticho_min": 5,
+        "_note_doma": "HANS_SAMOTEST_DEN_V1 (24. 10.): i když je někdo doma — nejvýš 1 otázka za interval_min, ne do ticho_min od poslední zprávy v chatu (mimo identitu samotestu)"
     }
 }

@@ -849,6 +849,18 @@ def kotva_tematu(veta: str, vynech: tuple = ()) -> Optional[str]:
             if j in idx and not _mezi_slovy(veta, words[j - 1], words[j]):
                 jmeno.append(words[j]); j += 1
                 continue
+            # HANS_ANCHOR_Z_JMENO_V1 (24. 10.) — šlechtické a místní přídomky
+            # „Blanka z Valois“, „Matyáš z Arrasu“, „Anežka ze Šternberka“:
+            # jednopísmenné „z“ ve `words` není a bralo se jako hranice → kotva
+            # „Blanka“ → heslo o jméně (/tazatel 24. 10.)
+            if j in idx and [_fold(x) for x in _mezi_slovy(veta, words[j - 1], words[j])] == ["z"]:
+                jmeno += ["z", words[j]]; j += 1
+                continue
+            if (j + 1 < len(words) and _fold(words[j]) == "ze" and (j + 1) in idx
+                    and not _mezi_slovy(veta, words[j - 1], words[j])
+                    and not _mezi_slovy(veta, words[j], words[j + 1])):
+                jmeno += ["ze", words[j + 1]]; j += 2
+                continue
             k = j
             while k < len(words) and _fold(words[k]) in _ANG_SPOJKA:
                 k += 1
