@@ -676,10 +676,22 @@ class FaktaMixin:
             finally:
                 c.close()
             jiny = _titul_po_slovech(raw, tituly)
-            if not jiny:
-                return False
             n = lambda s: re.sub(r"\s*\(.*$", "", str(s or "")).strip().lower()
-            return n(jiny) != n(titul)
+            if jiny:
+                return n(jiny) != n(titul)
+            # HANS_KODI_FILM_FACT_OTHER_V2 (24. 10.) — i film, který Hans neviděl:
+            # „Večer jsme koukali na film o Titanicu“ po řeči o Casablance → blok
+            # faktů o Casablance. Kotva „film X“ (druh + název), jejíž název
+            # nesdílí kmen s `titul` = jiný film.
+            from scripts.hans_convindex import kotva_tematu
+            _k = kotva_tematu(raw or "") or ""
+            _m = re.match(r"(?:film\w*|seri[aá]l\w*|snímk\w*)\s+(.+)$", _k, re.I)
+            if _m:
+                _f = lambda s: re.findall(r"\w{3,}", re.sub(r"[^\w\s]", " ", n(s)))
+                _a, _b = _f(_m.group(1)), _f(titul)
+                if _a and not any(x[:4] == y[:4] for x in _a for y in _b):
+                    return True
+            return False
         except Exception:
             return False
 

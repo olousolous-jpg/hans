@@ -2211,6 +2211,11 @@ _ROUTE_CUE = {
     # nesou stav / počítač / hardware / fungování / „daří“ / „bolí“.
     "zdravi": re.compile(r"zdrav|pocitac|\bpc\b|hardwar|funguj|bezi|\bstav|disk|ollam|kodi|"
                          r"\bbol[ií]|fyzick|dari|mozek|server|pamet\w*\s+(?:ram|gpu)|gpu|grafick", re.I),
+    # HANS_VIDEL_CUE_V1 (24. 10.) — /videl = kdy Hans koho viděl (kamera). Za ~4
+    # týdny logu 14 voleb routerem, 7 mimo („Viděl jste ho taky?“ o filmu, „ještě
+    # jsem ho neviděl“, „Gordon Ramsay … viděl jsi“, „nikdo se nedívá?“) → cizímu
+    # „o lidech z domu jen se známými“. Výpis jen když věta mluví o osobách.
+    "videl": re.compile(r"\bme\b|\bmne\b|\bnas\b|\bkoho\b|\bkdo\b|potka|\blid[ie]\b|\bclen|domacn", re.I),
 }
 
 # HANS_STUDIUM_NOT_WHY_V1 (6. 10.) — opak pojistky tematu: /studium je vypis
