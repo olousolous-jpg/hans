@@ -2401,6 +2401,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # HANS_ANCHOR_LOOKUP_V1 — než odmítneš, zkus to dohledat.
             ctx.response = (getattr(ctx, '_predem_dohledano', None)   # HANS_LOOKUP_ON_REQUEST_V2
                             or self._dohledej_kotvu(ctx._raw_message, ctx.name)
+                            or self._dohledej_obsahem(ctx._raw_message, ctx.name)   # HANS_LOOKUP_OBSAHEM_V1
                             or A1_ABSTAIN_TEXT)
             ctx._dohledano = True
             # CLAIM_RETRACT_V1 — brzda umí ODMÍTNOUT, ale neuměla se OPRAVIT.

@@ -912,6 +912,115 @@ def _dotaz_chybi_v_titulu(topic: str, title: str) -> list:
     return [q for q in qt if not any(_sedi(q, t) for t in tt)]
 
 
+# HANS_LOOKUP_OBSAHEM_V1 (25. 10.) — obecná otázka bez vlastního jména („jak mě
+# uvidí pozorovatel, když se budu pohybovat rychlostí světla?“, „kdo vynalezl
+# mikrovlnnou troubu?“): kotva nic, A1 → „nemám spolehlivý záznam“. Fulltext nad
+# slovy otázky 0/13 (rychlost světla → Černá díra, Polárka, Keporkak); hlavní
+# model navrhne název článku (~1 s), ten se hledá PŘESNĚ v lokální Wikipedii
+# a článek musí obsahovat aspoň 2/3 obsahových slov otázky (odfiltruje
+# „dadština“ → Marcel Duchamp). Otázky vázané na čas se vynechají (model zná
+# jen starší olympiády). Uživatel 25. 10.: jen tam, kde není záznam.
+_OBSAHEM_P = ("Otázka: „{q}“\nNapiš až 3 přesné názvy článků české Wikipedie, ve kterých "
+              "je odpověď na tuto otázku. Jen názvy, každý na samostatný řádek, bez "
+              "číslování a bez komentáře.")
+_OBSAHEM_CAS = re.compile(
+    r"\b(?:posledn|letos|leto[sš]n|aktu[aá]ln|nejnov|sou[cč]asn|dnes|v[cč]era|z[ií]tra|"
+    r"te[dď]\b|nyn[ií]|minul[éeý]\w*\s+(?:t[ýy]d|m[eě]s[ií]c|rok)|tento\s+(?:t[ýy]den|rok))",
+    re.IGNORECASE)
+_OBSAHEM_JA = re.compile(
+    r"\b(?:m[aá][sš]|m[aá]te)\s+r[aá]d|\btv[ůu]j|\btvoj|\btv[ée]\b|\bv[aá][sš]\b|\bva[sš]e|"
+    r"\boblíben|\boblib|\bsv[ůu]j\b|\bsvoj", re.IGNORECASE)
+_OBSAHEM_STOP = {"kdo", "kdy", "kde", "jak", "proc", "co", "jaky", "jaka", "jake", "jaci",
+                 "ktery", "ktera", "ktere", "kteri", "kolik", "cim", "cem", "kam", "odkud",
+                 "muzes", "muzete", "mohl", "mohla", "byste", "bys", "prosim", "rict",
+                 "rekni", "reknete", "vis", "vite", "znas", "znate", "zajima", "zeptat",
+                 "chtel", "chtela", "bych", "dekuji", "jsem", "jsi", "jste", "nas", "vam",
+                 "tebe", "mne", "mohu", "zda", "jestli", "tom", "tim", "toho", "tomu",
+                 "neco", "nejaky", "nejake", "nejaka", "vlastne", "vubec", "tedy", "take",
+                 "taky", "hele", "schvalne", "nebo", "ale", "ani", "uz", "jeste", "tak",
+                 "byly", "bylo", "byli", "budu", "bude", "jej", "jeho", "jeji", "ten",
+                 "tato", "tuto", "tyto", "the", "ktery", "pane", "poradit", "vysvetlit",
+                 "vysvetli", "popsat", "popis", "mel", "mela", "melo", "ma", "maji",
+                 "ceho", "cemu", "dela", "delaji", "funguje", "funguji", "vznika"}
+
+
+def _obsahem_slova(otazka: str) -> list:
+    from scripts.web_reader import _title_tokens
+    q = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", otazka or "")
+    return [w for w in _title_tokens(q) if w not in _OBSAHEM_STOP]
+
+
+def _obsahem_pokryti(slova: list, text: str) -> float:
+    from scripts.web_reader import _title_tokens
+    tt = set(_title_tokens((text or "")[:20000]))
+
+    def _sedi(q, t):
+        if q == t:
+            return True
+        n = min(len(q), len(t))
+        if n < 4:
+            return False
+        p = 0
+        while p < n and q[p] == t[p]:
+            p += 1
+        return p >= max(4, len(q) - 3)
+    if not slova:
+        return 0.0
+    return sum(1 for q in slova if any(_sedi(q, t) for t in tt)) / len(slova)
+
+
+def clanek_obsahem(config: dict, otazka: str) -> Optional[str]:
+    """Název článku lokální Wikipedie k obecné otázce bez vlastního jména, nebo None."""
+    try:
+        if not (_cfg(config).get("obsahem", True)):
+            return None
+        q = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", otazka or "").strip()
+        if not q or _OBSAHEM_CAS.search(q) or _OBSAHEM_JA.search(q):
+            return None
+        slova = _obsahem_slova(q)
+        if not slova:
+            return None
+        from scripts import hans_wiki_offline as _wo
+        if not _wo.dostupna():
+            return None
+        from scripts.ollama_client import ollama_generate
+        model = str(((config or {}).get("hans_dialog", {}) or {}).get(
+            "ollama_model", "hans-czech:latest"))
+        out = ollama_generate(model, _OBSAHEM_P.format(q=q[:300]), config=config,
+                              timeout=30, options={"temperature": 0, "num_predict": 60,
+                                                   "num_ctx": 2048}) or ""
+        navrhy = [re.sub(r"^[\-\*\d\.\)\s]+", "", x).strip(" „“\"'*") for x in out.splitlines()]
+        navrhy = [x for x in navrhy if 2 <= len(x) <= 80][:3]
+        prah = float(_cfg(config).get("obsahem_prah", 0.66))
+        for n in navrhy:
+            r = _wo._cil(n)
+            if not r and " (" in n:      # „Symfonie (hudební skladba)“ → „Symfonie“
+                r = _wo._cil(re.sub(r"\s*\(.*$", "", n))
+            if not r:
+                continue
+            # „Sonet“ → „SONET“ (telekomunikace): přesměrování jen podle velikosti
+            # písmen na zkratku, kterou model nenavrhl
+            if r[1] != n and r[1].isupper() and not n.isupper():
+                continue
+            text, roz, kan = _wo.extrakt(r[1])
+            if roz or not text:
+                continue
+            pk = _obsahem_pokryti(slova, r[1] + " " + text)
+            # název článku sám je slovem otázky („Jak funguje očkování?“ →
+            # Očkování): slovesa a výplň v článku nebývají → stačí polovina
+            _vlastni = _obsahem_pokryti(_obsahem_slova(re.sub(r"\s*\(.*$", "", r[1])),
+                                        " ".join(slova)) >= 1.0
+            if pk >= (min(prah, 0.5) if _vlastni else prah):
+                _log.info("HANS_LOOKUP_OBSAHEM_V1: %r → návrhy %s → %r (pokrytí %.2f)",
+                          q[:80], navrhy, r[1], pk)
+                return r[1]
+        _log.info("HANS_LOOKUP_OBSAHEM_V1: %r → návrhy %s → nic nesedí", q[:80], navrhy)
+        return None
+    except Exception as e:
+        _log.debug("HANS_LOOKUP_OBSAHEM_V1: %s", e)
+        return None
+
+
 def _titles_align(topic: str, title: str) -> bool:
     """Sedí název hesla na dotaz aspoň hrubě? (jen pro varování v odpovědi —
     o platnosti nálezu rozhoduje až noční ověření, viz docstring modulu.)

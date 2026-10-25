@@ -1426,6 +1426,36 @@ class FaktaMixin:
                 "HANS_ANCHOR_LOOKUP_V1 selhalo: %s", e)
             return None
 
+    def _dohledej_obsahem(self, veta: str, name: str = None):
+        """HANS_LOOKUP_OBSAHEM_V1 (25. 10.) — obecná otázka bez vlastního jména,
+        kterou kotva nedohledala: článek podle obsahu (`clanek_obsahem`), pak
+        běžné dohledání. Jen místo „nemám spolehlivý záznam“ (uživatel 25. 10.).
+        📏 48 otázek z 20 oborů: dobrý článek 38, nepřesný 3 (největší planeta →
+        Slunce, sonet → Poezie, maraton → Atletika), nic 7; 8 kontrolních
+        (na Hanse, vázané na čas, nesmysl) bez dohledání."""
+        try:
+            from scripts.hans_intent import pta_se_na_zazitek_hanse
+            if pta_se_na_zazitek_hanse(veta):
+                return None
+            from scripts.hans_findings import clanek_obsahem, lookup_now
+            _prepis = getattr(self, '_f1_query', None)
+            titul = clanek_obsahem(self.config, _prepis or veta)
+            if not titul and _prepis:
+                titul = clanek_obsahem(self.config, veta)
+            if not titul:
+                return None
+            _dbp = (self.config.get("hans_idle", {}) or {}).get(
+                "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"
+            out = lookup_now(self.config, _dbp, titul, veta or "", asker=name,
+                             otazka=_prepis or veta)
+            logging.getLogger(_h.__name__).info(
+                "HANS_LOOKUP_OBSAHEM_V1: článek %r → %s", titul,
+                "dohledáno" if out else "nic (platí přiznání)")
+            return out
+        except Exception as e:
+            logging.getLogger(_h.__name__).warning("HANS_LOOKUP_OBSAHEM_V1 selhalo: %s", e)
+            return None
+
     def _capability_fact(self, text: str) -> str:
         """HANS_CAP_HOWTO_V1 (26.8.) — „kam/kde/jak" u KONKRÉTNÍ schopnosti.
 
