@@ -474,8 +474,15 @@ def _fold_db():
     return c
 
 
+# HANS_WIKI_ZAJMENO_V1 (25. 10., úspěšnost: „Kdo složil Mou vlast?“ → z hlavy
+# Beethoven) — přivlastňovací zájmeno na začátku názvu v jiném pádě
+_ZAJMENO_1P = {"mou": "ma", "moji": "ma", "meho": "muj", "memu": "muj", "mem": "muj",
+               "mym": "muj", "tvou": "tva", "tvoji": "tva", "tveho": "tvuj", "svou": "sva",
+               "svoji": "sva", "naseho": "nas", "nasi": "nase", "vaseho": "vas"}
+
+
 def _pady(w: str) -> list:
-    out = [w]
+    out = [w] + ([_ZAJMENO_1P[w]] if w in _ZAJMENO_1P else [])
     for a_, b_ in (("ku", "ka"), ("hu", "ha"), ("ou", "a"), ("u", "a"), ("y", "a"),
                    ("e", "a"), ("i", "e"), ("em", ""), ("a", ""), ("u", ""),
                    ("e", ""),    # „Spalovače“ → „Spalovač“ (sada 40 otázek 19. 10.)
@@ -582,7 +589,8 @@ def titul_z_vety(veta: str):
                     _d = _dilo_z_rozcestniku(" ".join(usek), druhy)   # HANS_WIKI_DILO_ROZCESTNIK_V1
                     if _d:
                         return _d
-                if usek[-1] in _TZV_DRUH_SLOVO or len(usek[0]) < 4 or len(usek[-1]) < 4:
+                if (usek[-1] in _TZV_DRUH_SLOVO or (len(usek[0]) < 4 and usek[0] not in _ZAJMENO_1P)
+                        or len(usek[-1]) < 4):
                     continue
                 cela = (n == len(fs))
                 # druh podle autorského slovesa („kdo napsal babicku“ → „Babička

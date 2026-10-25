@@ -928,6 +928,10 @@ class FaktaMixin:
                 _vf = re.findall(r"\w+", _f(veta))
                 _ve_vete = bool(_tv) and all(any(x[:4] == y[:4] for y in _vf) for x in _tv)
                 if (not tema or not _ve_vete
+                        # HANS_WIKI_ZAJMENO_V1 — kotva je tentýž název v jiném pádě
+                        # („Mou vlast“ × „Má vlast“) → přesný titul
+                        or (len(_tok(_tzv)) == len(_tv) >= 2 and _tok(_tzv)[1:] == _tv[1:]
+                            and _wo._ZAJMENO_1P.get(_tv[0]) == _tok(_tzv)[0])
                         or (len(_tok(_tzv)) > len(_tv) and _kryje(_tv, _tok(_tzv)))
                         # tatáž věc upřesněná druhem („Babičku“ → rozcestník,
                         # „Babička (kniha)“ → článek)
