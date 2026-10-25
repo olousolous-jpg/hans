@@ -478,10 +478,49 @@ def _pady(w: str) -> list:
     out = [w]
     for a_, b_ in (("ku", "ka"), ("hu", "ha"), ("ou", "a"), ("u", "a"), ("y", "a"),
                    ("e", "a"), ("i", "e"), ("em", ""), ("a", ""), ("u", ""),
-                   ("e", "")):   # „Spalovače“ → „Spalovač“ (sada 40 otázek 19. 10.)
+                   ("e", ""),    # „Spalovače“ → „Spalovač“ (sada 40 otázek 19. 10.)
+                   ("ea", "eo")):   # HANS_WIKI_DILO_ROZCESTNIK_V1 — „Romea“ → „Romeo“
         if w.endswith(a_) and len(w) > 4:
             out.append(w[:-len(a_)] + b_)
     return list(dict.fromkeys(out))
+
+
+# HANS_WIKI_DILO_ROZCESTNIK_V1 (25. 10., úspěšnost 104 otázek: „kdo napsal
+# maj?“ → „Máj (loď)“) — holý název díla je rozcestník a význam s upřesněním
+# není druhové slovo („Máj (Karel Hynek Mácha)“). Se slovesem díla se vezme
+# jediný význam, jehož první věta říká „je <…> báseň/román…“ (napsal),
+# infobox filmu (režíroval) nebo skladba (složil).
+_DILO_VETA = {"napsal": re.compile(r"\b(?:je|byl[aoy]?)\s+(?:[\w-]+\s+){0,2}?(?:básn(?!ík)|báseň|skladb|román|"
+                                   r"povíd|novel|sbírk|dram|epos|pohád|knih|hra\b|div[a-z]+ hra|komedi|tragédi)"),
+              "film": re.compile(r"\b(?:je|byl)\s+(?:[\w-]+\s+){0,3}?film"),
+              "slozil": re.compile(r"\b(?:je|byl[aoy]?)\s+(?:[\w-]+\s+){0,3}?(?:skladb|oper|symfon|píse|album)")}
+
+
+def _dilo_z_rozcestniku(klic_fold: str, druhy: list):
+    """Rozcestník s titulem `klic_fold` → jediný význam, který je dílem druhu
+    podle slovesa, jinak None."""
+    if "kniha" in druhy:
+        vz = _DILO_VETA["napsal"]
+    elif "film" in druhy:
+        vz = _DILO_VETA["film"]
+    elif "opera" in druhy:
+        vz = _DILO_VETA["slozil"]
+    else:
+        return None
+    fdb, db = _fold_db(), _db()
+    roz = [t for t, r in fdb.execute("SELECT titul, rozcestnik FROM t WHERE fold=?",
+                                     (klic_fold,)) if r]
+    if not roz:
+        return None
+    n = _norm(roz[0]) + " ("
+    kand = []
+    for tit, text in db.execute("SELECT titul, substr(text,1,400) FROM clanek WHERE titul_norm >= ? "
+                                "AND titul_norm < ? AND rozcestnik=0 LIMIT 30",
+                                (n, n + "\U0010ffff")):
+        prvni = re.split(r"(?<=[.!?])\s", re.sub(r"^\s*Možná hledáte:[^\n]*\n", "", text or "").strip(), maxsplit=1)[0]
+        if vz.search(prvni.lower()):
+            kand.append(tit)
+    return kand[0] if len(kand) == 1 else None
 
 
 def titul_z_vety(veta: str):
@@ -538,6 +577,11 @@ def titul_z_vety(veta: str):
                         if r3:
                             return r3[0]
                     continue
+                if (druhy and i > _sl_poz and n <= 3 and len(usek[0]) >= 3
+                        and len(usek[-1]) >= 3 and usek[-1] not in _TZV_DRUH_SLOVO):
+                    _d = _dilo_z_rozcestniku(" ".join(usek), druhy)   # HANS_WIKI_DILO_ROZCESTNIK_V1
+                    if _d:
+                        return _d
                 if usek[-1] in _TZV_DRUH_SLOVO or len(usek[0]) < 4 or len(usek[-1]) < 4:
                     continue
                 cela = (n == len(fs))
@@ -559,6 +603,11 @@ def titul_z_vety(veta: str):
                 # infoboxu jen s velkým písmenem („webove stranky“ ≠ téma)
                 klice = [" ".join([p] + usek[1:]) for p in _pady(usek[0])] + \
                         [" ".join(usek[:-1] + [p]) for p in _pady(usek[-1])[1:]]
+                # HANS_WIKI_DILO_ROZCESTNIK_V1 — víceslovný název s oběma kraji
+                # v jiném pádě („Romea a Julii“ → „Romeo a Julie“)
+                if n >= 3:
+                    klice += [" ".join([p] + usek[1:-1] + [q]) for p in _pady(usek[0])[1:]
+                              for q in _pady(usek[-1])[1:]]
                 for klic in dict.fromkeys(klice):
                     for titul, roz, ib in db.execute(
                             "SELECT titul, rozcestnik, infobox FROM t WHERE fold=?", (klic,)):

@@ -13,6 +13,29 @@ import re
 # sám (druh zápisku), ne jeho předmět
 _ZAPISKY_TITUL_OBAL = {"studium", "mistrovska", "reflexe", "zpravy", "kap"}
 
+# HANS_LOOKUP_OBSAHEM_F1_SLOVO_V1 — plnovýznamové slovo vstupu bez háčků, které
+# v přepisu F1 nemá protějšek (prvních 4 písmen bez diakritiky): „mena“ →
+# „jména“, „mloky“ → „mývaly“, „pelisky“ → „Markety Lazarové“
+_F1_SLOVO_STOP = set("""jaky jaka jake jakou jakem ktery ktera ktere kterou kolik proc
+kdyz jestli jsou bylo byla byli mate mame jsem jste jsme tvoje tvuj vase vas muzes muzete
+rekni reknete prosim nejaky nejaka nejake neco nekdo vlastne zrovna jeste hele tedy takze
+umis umite vis vite znas znate mohl mohla bych bys byste dneska dnes""".split())
+
+
+def _f1_ztratil_slovo(veta: str, prepis: str) -> bool:
+    import unicodedata as _ud
+
+    def _f(x):
+        return "".join(c for c in _ud.normalize("NFD", (x or "").lower())
+                       if _ud.category(c) != "Mn")
+    holy = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "")
+    if not holy or _f(holy) != holy.lower():
+        return False          # jen vstup bez diakritiky (F1 doplňuje háčky)
+    pf = [w for w in re.findall(r"\w+", _f(prepis))]
+    # delší slovo smí v přepisu být i se změněnou předponou („umrel“ → „zemřel“)
+    return any(not any(w[:4] == y[:4] or (len(w) >= 5 and w[1:5] in y) for y in pf)
+               for w in re.findall(r"[a-z]{4,}", holy.lower()) if w not in _F1_SLOVO_STOP)
+
 
 class FaktaMixin:
     """Část třídy `OpenWebUIDirectHandler` — viz hlavička modulu."""
@@ -928,6 +951,12 @@ class FaktaMixin:
             a, b = _tok(tema), _tok(titul)
             if not a or not b or not (_kryje(a, b) and _kryje(b, a)):
                 return None
+            # HANS_WIKI_DILO_ROZCESTNIK_V1 (25. 10.) — zkratka velkými („ROMEA“)
+            # není slovo psané normálně („Romea a Julii“ → sdružení ROMEA)
+            _hol = re.sub(r"\s*\(.*?\)", "", titul).strip()
+            if (len(_hol) >= 3 and _hol.isupper()
+                    and not re.sub(r"\s*\(.*?\)", "", tema).strip().isupper()):
+                return None
             # HANS_LOOKUP_PRESNY_JINY_DRUH_V1 (18. 10.) — „Karlova mostu“ →
             # „Muzeum Karlova mostu“: druhové slovo se z porovnání vynechá,
             # takže článek o JINÉ věci (muzeum, pomník, nádraží…) prošel.
@@ -940,7 +969,9 @@ class FaktaMixin:
             silny = len(a) >= 2 or any(w in self._PRESNY_DRUH for w in re.findall(r"\w{2,}", _f(tema)))
             # „kdo napsal Krakatit?“ — jednoslovný název díla s autorským
             # slovesem, jen když titul článku je PŘESNĚ to slovo (/tazatel 17. 10.)
-            if (not silny and _f(re.sub(r"\s*\(.*?\)", "", titul)) == _f(tema)
+            # HANS_WIKI_DILO_ROZCESTNIK_V1 — téma s upřesněním („Máj (Karel Hynek
+            # Mácha)“) se porovná bez závorky
+            if (not silny and _f(re.sub(r"\s*\(.*?\)", "", titul)) == _f(re.sub(r"\s*\(.*?\)", "", tema))
                     and re.search(r"\bkdo\s+(?:napsal|re[zž][ií]roval|slo[zž]il|nato[cč]il|"
                                   r"namaloval|zkomponoval|nazp[ií]val)\b"
                                   # HANS_LOOKUP_PRESNY_VYDANI_V1 (18. 10.) — „kdy vyšel
@@ -1441,6 +1472,15 @@ class FaktaMixin:
                 return None
             from scripts.hans_findings import clanek_obsahem, lookup_now
             _prepis = getattr(self, '_f1_query', None)
+            # HANS_LOOKUP_OBSAHEM_F1_SLOVO_V1 (25. 10., úspěšnost: „jaka je mena
+            # v japonsku?“ → F1 „Jaká jsou jména v Japonsku?“ → Japonské jméno) —
+            # přepis vstupu bez háčků, který ztratil plnovýznamové slovo věty,
+            # se pro hledání podle obsahu nebere
+            if _prepis and _f1_ztratil_slovo(veta, _prepis):
+                logging.getLogger(_h.__name__).info(
+                    "HANS_LOOKUP_OBSAHEM_F1_SLOVO_V1: přepis %r ztratil slovo věty %r → holá věta",
+                    _prepis, veta)
+                _prepis = None
             titul = clanek_obsahem(self.config, _prepis or veta)
             if not titul and _prepis:
                 titul = clanek_obsahem(self.config, veta)
