@@ -980,6 +980,16 @@ def clanek_obsahem(config: dict, otazka: str) -> Optional[str]:
         slova = _obsahem_slova(q)
         if not slova:
             return None
+        # HANS_LOOKUP_OBSAHEM_DOPTAVKA_V1 (25. 10.) — doptávka bez předmětu
+        # („a kdy se narodil?“, „Kolik mu bylo, když zemřel?“) nemá obsah, podle
+        # kterého článek hledat: model navrhl Mozarta (živě 25. 10. po otázce na
+        # Microsoft). Samá slovesa v minulém čase → nic; „co je to X“ vždy projde.
+        if (all(w in ("kdyz", "kdy", "potom", "pak") or re.search(r"l[aoiy]?$", w) and len(w) >= 5
+                for w in slova)
+                and not re.search(r"\bco\s+(?:je|jsou|znamen\w*)\b", _fold_cs(q))):
+            _log.info("HANS_LOOKUP_OBSAHEM_DOPTAVKA_V1: %r je doptávka bez předmětu → "
+                     "nehledám podle obsahu", q)
+            return None
         from scripts import hans_wiki_offline as _wo
         if not _wo.dostupna():
             return None
