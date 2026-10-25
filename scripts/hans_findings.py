@@ -1379,6 +1379,13 @@ def _wikidata_blok(titul: str) -> str:
         out = []
         for p, popis in _WD_POPIS:
             vals = P.get(p) or []
+            # HANS_WD_AUTOR_SKLADATEL_V1 (25. 10.) — u opery uvádí P50 „autor“
+            # libretistu i skladatele („autor: Karel Sabina, Bedřich Smetana“)
+            # a na „kdo složil Prodanou nevěstu?“ model z bloku s předností
+            # vzal libretistu. Se skladatelem (P86) zbývá v P50 autor textu.
+            if p == "P50" and P.get("P86"):
+                vals = [v for v in vals if v not in P["P86"]]
+                popis = "autor textu / libreta"
             hod = []
             dat = [v for v in vals if isinstance(v, (list, tuple)) and v]
             if dat:

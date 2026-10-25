@@ -37,6 +37,26 @@ def _f1_ztratil_slovo(veta: str, prepis: str) -> bool:
                for w in re.findall(r"[a-z]{4,}", holy.lower()) if w not in _F1_SLOVO_STOP)
 
 
+# HANS_LOOKUP_F1_SLOVESO_V1 (25. 10.) — přepis F1 nahradil sloveso otázky
+# „autorem“ („Kdo složil Prodanou nevěstu?“ → „Kdo je autorem divadelní hry
+# Prodaná nevěsta?“) a shrnutí podle přepisu vybralo libretistu. „napsal“ →
+# „autorem“ smysl nemění, proto se nehlídá. 📏 1 511 přepisů: ztracené sloveso
+# 17×, z toho jiné než „napsal“ 5× (složil, režíroval, hrálo, vydal, vymyslel).
+_F1_SLOVESA = re.compile(r"\b(slozil\w*|zkomponoval\w*|nazpival\w*|reziroval\w*|natocil\w*|"
+                         r"namaloval\w*|postavil\w*|navrhl\w*|zalozil\w*|objevil\w*|vynalezl\w*)\b")
+
+
+def _f1_ztratil_sloveso(veta: str, prepis: str) -> bool:
+    import unicodedata as _ud
+
+    def _f(x):
+        return "".join(c for c in _ud.normalize("NFD", (x or "").lower())
+                       if _ud.category(c) != "Mn")
+    holy = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "")
+    pf = re.findall(r"\w+", _f(prepis))
+    return any(not any(w[:4] in y for y in pf) for w in _F1_SLOVESA.findall(_f(holy)))
+
+
 class FaktaMixin:
     """Část třídy `OpenWebUIDirectHandler` — viz hlavička modulu."""
 
@@ -1449,6 +1469,11 @@ class FaktaMixin:
                 "diary_db") or self.config.get("diary_db") or "data/hans_diary.db"
             _pq = getattr(self, '_pribuzny_otazka', None)   # HANS_LOOKUP_PRIBUZNY_V1
             self._pribuzny_otazka = None
+            if _prepis and _f1_ztratil_sloveso(veta, _prepis):   # HANS_LOOKUP_F1_SLOVESO_V1
+                logging.getLogger(_h.__name__).info(
+                    "HANS_LOOKUP_F1_SLOVESO_V1: přepis %r ztratil sloveso věty %r → "
+                    "shrnutí podle holé věty", _prepis, veta)
+                _prepis = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "") or _prepis
             out = lookup_now(self.config, _dbp, tema, veta or "", asker=name,
                              otazka=_pq or _prepis or veta,   # HANS_LOOKUP_QUESTION_SUMMARY_V1
                              mel_zapisky=mel_zapisky)
