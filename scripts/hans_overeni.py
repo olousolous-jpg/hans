@@ -595,6 +595,16 @@ def over_wd(veta, udaje, tituly) -> list:
                 # podmět, ne předmět: entita jmenovaná ve vztahu se nekontroluje
                 if _fold(t.split(" (")[0])[:5] in _fold(ve_vete):
                     continue
+                # HANS_OVERENI_PREDMET_TITUL_V1 (25. 10.) — za slovesem stojí sám
+                # titul článku v jiném pádě („Smetana složil Mou vlast“ → „Mou“
+                # jako skladatel = planý rozpor): slova za slovesem odpovídají
+                # slovům titulu (dlouhá prvními 4 písmeny, krátká prvním)
+                _tw = re.findall(r"\w+", _fold(t.split(" (")[0]))
+                _za = re.findall(r"\w+", _fold(veta[m.end(): m.end() + 80]))[:len(_tw)]
+                if _tw and len(_za) == len(_tw) and all(
+                        (a[:4] == b[:4]) if min(len(a), len(b)) >= 4 else a[:1] == b[:1]
+                        for a, b in zip(_tw, _za)):
+                    continue
                 # HANS_OVERENI_ODECET_V1 — článek o jménu samém („Přemyslovců“ →
                 # Anežka Přemyslovna) není podmět věty
                 if any(w[:5] in _fold(ve_vete)

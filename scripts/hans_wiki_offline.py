@@ -503,16 +503,39 @@ _DILO_VETA = {"napsal": re.compile(r"\b(?:je|byl[aoy]?)\s+(?:[\w-]+\s+){0,2}?(?:
               "slozil": re.compile(r"\b(?:je|byl[aoy]?)\s+(?:[\w-]+\s+){0,3}?(?:skladb|oper|symfon|píse|album)")}
 
 
+def _dilo_vzor(druhy: list):
+    if "kniha" in druhy:
+        return _DILO_VETA["napsal"]
+    if "film" in druhy:
+        return _DILO_VETA["film"]
+    if "opera" in druhy:
+        return _DILO_VETA["slozil"]
+    return None
+
+
+def _prvni_veta_dilo(text: str, vz) -> bool:
+    prvni = re.split(r"(?<=[.!?])\s", re.sub(r"^\s*Možná hledáte:[^\n]*\n", "", text or "").strip(),
+                     maxsplit=1)[0]
+    return bool(vz.search(prvni.lower()))
+
+
+def _je_dilo(titul: str, druhy: list) -> bool:
+    """HANS_WIKI_DILO_HOLY_V1 (25. 10.) — článek bez infoboxu, jehož první věta
+    říká, že je dílem druhu podle slovesa („Má vlast je cyklus šesti
+    symfonických básní“ u „kdo slozil mou vlast?“)."""
+    vz = _dilo_vzor(druhy)
+    if not vz:
+        return False
+    r = _db().execute("SELECT substr(text,1,400) FROM clanek WHERE titul_norm=? AND rozcestnik=0",
+                      (_norm(titul),)).fetchone()
+    return bool(r and _prvni_veta_dilo(r[0], vz))
+
+
 def _dilo_z_rozcestniku(klic_fold: str, druhy: list):
     """Rozcestník s titulem `klic_fold` → jediný význam, který je dílem druhu
     podle slovesa, jinak None."""
-    if "kniha" in druhy:
-        vz = _DILO_VETA["napsal"]
-    elif "film" in druhy:
-        vz = _DILO_VETA["film"]
-    elif "opera" in druhy:
-        vz = _DILO_VETA["slozil"]
-    else:
+    vz = _dilo_vzor(druhy)
+    if not vz:
         return None
     fdb, db = _fold_db(), _db()
     roz = [t for t, r in fdb.execute("SELECT titul, rozcestnik FROM t WHERE fold=?",
@@ -524,8 +547,7 @@ def _dilo_z_rozcestniku(klic_fold: str, druhy: list):
     for tit, text in db.execute("SELECT titul, substr(text,1,400) FROM clanek WHERE titul_norm >= ? "
                                 "AND titul_norm < ? AND rozcestnik=0 LIMIT 30",
                                 (n, n + "\U0010ffff")):
-        prvni = re.split(r"(?<=[.!?])\s", re.sub(r"^\s*Možná hledáte:[^\n]*\n", "", text or "").strip(), maxsplit=1)[0]
-        if vz.search(prvni.lower()):
+        if _prvni_veta_dilo(text, vz):
             kand.append(tit)
     return kand[0] if len(kand) == 1 else None
 
@@ -621,7 +643,8 @@ def titul_z_vety(veta: str):
                             "SELECT titul, rozcestnik, infobox FROM t WHERE fold=?", (klic,)):
                         if roz or titul.startswith("Seznam "):
                             continue
-                        if ib or _velke(i, n):
+                        if ib or _velke(i, n) or (druhy and i > _sl_poz
+                                                  and _je_dilo(titul, druhy)):   # HANS_WIKI_DILO_HOLY_V1
                             return titul
         return None
     except Exception as e:
