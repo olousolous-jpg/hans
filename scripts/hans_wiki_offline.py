@@ -450,7 +450,10 @@ zajimave zajimavy krasne krasna pekne pekny vas vase vasi tvuj tvoje svuj sve mu
 _TZV_DRUH_SLOVO = {"roman": "román", "romanu": "román", "novela": "novela", "novelu": "novela",
                    "povidka": "povídka", "povidku": "povídka", "kniha": "kniha", "knihu": "kniha",
                    "film": "film", "filmu": "film", "serial": "seriál", "opera": "opera",
-                   "operu": "opera", "hrad": "hrad", "hora": "hora", "zamek": "zámek"}
+                   "operu": "opera", "hrad": "hrad", "hora": "hora", "zamek": "zámek",
+                   # HANS_WIKI_POHAD_SERIAL_V1 (25. 10., samotest: „pořad Hledání
+                   # ztraceného času“ → román) — televizní pořad má upřesnění „(seriál)“
+                   "porad": "seriál", "poradu": "seriál", "serialu": "seriál"}
 _TZV_DRUH = [(re.compile(r"\b(?:napsal\w*|autor\w*|vysl[aoiy]|vysel|vydal\w*)\b"),
               ("kniha", "román", "novela", "povídka")),
              (re.compile(r"\b(?:rezir\w*|natocil\w*)\b"), ("film",)),
@@ -504,6 +507,22 @@ def titul_z_vety(veta: str):
             # velké písmeno uprostřed věty = vlastní jméno
             return any(slova[j][:1].isupper() and j not in _zac for j in range(i, i + n))
 
+        # HANS_WIKI_TITUL_CISLO_V1 (25. 10., samotest: „hudbu k filmu Iron Man 2“
+        # → „Iron Man (film, 2008)“) — úsek končící číslem / římskou číslicí se
+        # dřív vůbec nezkusil (kraj kratší než 4 znaky) a vyhrál kratší „film
+        # Iron Man“. Přesný titul s číslem na konci (vlastní jméno velkým
+        # písmenem uvnitř) má přednost.
+        for n in range(min(6, len(fs)), 1, -1):
+            for i in range(0, len(fs) - n + 1):
+                usek = fs[i:i + n]
+                if not re.fullmatch(r"\d{1,3}|[ivx]{1,4}", usek[-1]) or not _velke(i, n - 1):
+                    continue
+                if usek[0] in _TZV_STOP or usek[0] in _TZV_DRUH_SLOVO:
+                    continue
+                r4 = db.execute("SELECT titul FROM t WHERE fold=? AND rozcestnik=0",
+                                (" ".join(usek),)).fetchone()
+                if r4:
+                    return r4[0]
         for n in range(min(6, len(fs)), 0, -1):
             for i in range(0, len(fs) - n + 1):
                 usek = fs[i:i + n]
