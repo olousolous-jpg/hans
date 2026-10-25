@@ -123,7 +123,12 @@ _REFLECTIVE_CHOICE_PAT = re.compile(
     r"|\bnep[řr][íi]pad[áa]\s+(?:ti|v[áa]m)\b|\bp[řr][íi]pad[áa]\s+(?:ti|v[áa]m),?\s+[žz]e\b"
     r"|\bkter[ýyáaéeo]\w*\b[^?]{0,50}\b(?:t[ěe]|v[áa]s)\s+(?:nejv[íi]c\s+|nejvice\s+)?"
     r"(?:l[áa]k[áa]|l[áa]kal|zaj[íi]m[áa]|bav[íi]|nal[áa]k[áa])\w*"
-    r"|\bkter[ýyáaéeo]\w*\b[^?]{0,60}\bnej(?:zaj[íi]mav|kr[áa]sn|obl[íi]ben|milej)\w*", re.I)
+    r"|\bkter[ýyáaéeo]\w*\b[^?]{0,60}\bnej(?:zaj[íi]mav|kr[áa]sn|obl[íi]ben|milej)\w*"
+    # HANS_REFLECTIVE_LIKE_V1 (25. 10., úspěšnost: „mas rad hrady?“ → „nemám
+    # spolehlivý záznam“) — otázka na Hansův vkus; 📏 1 395 chatových zpráv:
+    # 2 shody („máš mě rád?“, „baví tě vůbec malovat?“), obě na Hanse
+    r"|\bm[áa](?:[šs]|te)\s+(?:\w+\s+){0,2}?(?:r[áa]d[a]?\b|nejrad\w*)"
+    r"|\bl[íi]b[íi]\s+se\s+(?:ti|v[áa]m)\b|\bbav[íi]\s+(?:t[ěe]|v[áa]s)\b", re.I)
 _REFLECTIVE_CHOICE_EXC = re.compile(r"doporu[čc]|film|knih|seri[áa]l", re.I)
 
 
