@@ -752,6 +752,26 @@ def lookup_now(config: dict, db_path: str, topic: str, query: str,
     except Exception as e:
         _log.debug("HANS_WIKI_NAMESAKE_V1 preskocen: %s", e)
 
+    # HANS_LOOKUP_DOTAZ_V_TITULU_V1 (25. 10.) — slabý nález („heslo přesně na X
+    # jsem nenašel, tohle je nejbližší nález Y“) bez protějšku pro některé slovo
+    # DOTAZU v titulu je skoro vždy cizí heslo: „Le Modèle Rouge“ → Musket
+    # Model 1777, „Janovu starším“ → János Vas, „herce odtud“ → Hercynská
+    # podprovincie, „Schumannův efekt“ → Robert Schumann. 📏 82 varovaných
+    # nálezů z logů 8.–25. 10.: odmítnuto 61, z toho ~6 správných (překlad
+    # názvu: Flat design → Plochý design, Potsdam → Postupimská konference,
+    # Blanka Lucemburská → Blanka z Valois); záchrana přes úvod článku vrátila
+    # víc nesmyslů než správných → ne. Odmítnutý nález = None (poctivé „nemám“,
+    # u Koláče další podnět). Projde-li kontrolou, varování zůstává (Webasto,
+    # PikeOS). Vypínač `instant_lookup.dotaz_v_titulu`.
+    if (not _namesake and c.get("dotaz_v_titulu", True)
+            and not re.fullmatch(r"\d{3,4}", str(topic).strip())
+            and not _titles_align(topic, art.get("title") or "")):
+        _chybi = _dotaz_chybi_v_titulu(topic, art.get("title") or "")
+        if _chybi:
+            _log.info("HANS_LOOKUP_DOTAZ_V_TITULU_V1: %r → %r, v titulu chybí %s "
+                      "→ cizí heslo, nedohledávám", topic, art.get("title"), _chybi)
+            return None
+
     summary = _summarize_for_user(config, topic, art, otazka)
     if not summary:
         return None  # mozek mimo uprostřed → honest bypass
@@ -852,6 +872,44 @@ def _sklonovany_tvar(a: str, b: str, minlen: int = 4) -> bool:
     if len(kratsi) < minlen:
         return False
     return delsi.startswith(kratsi)
+
+
+# HANS_LOOKUP_DOTAZ_V_TITULU_V1 — druhová slova na ZAČÁTKU dotazu („film X“,
+# „skladatele X“, „s názvem X“) nejsou součástí názvu; uprostřed nebo na konci
+# ano („Hrabalův román“ → Ondřej Hrabal je cizí heslo)
+_DOTAZ_DRUH = {"film", "kniha", "knihu", "knize", "serial", "hrad", "hradu", "zamek",
+               "mesto", "reka", "hora", "jezero", "ostrov", "kostel", "katedrala",
+               "chram", "muzeum", "kapela", "lod", "roman", "novela", "povidka",
+               "nazvem", "osobnost", "osobnosti", "skladatel", "skladatele",
+               "spisovatel", "spisovatele", "malir", "malire", "reziser", "rezisera",
+               "herec", "herce", "zpevak", "zpevaka", "basnik", "basnika", "dilo"}
+
+
+def _dotaz_chybi_v_titulu(topic: str, title: str) -> list:
+    """Slova dotazu bez protějšku v titulu (skloněný tvar = společný začátek
+    aspoň max(4, délka − 3) znaků, nebo celé kratší slovo titulu ≥ 4)."""
+    try:
+        from scripts.web_reader import _title_tokens, _PAREN
+    except Exception:
+        return []
+    tt = _title_tokens(_PAREN.sub(" ", title or ""))
+    qt = _title_tokens(topic or "")
+    while qt and qt[0] in _DOTAZ_DRUH:
+        qt = qt[1:]
+    if not qt or not tt:
+        return []
+
+    def _sedi(q: str, t: str) -> bool:
+        if q == t:
+            return True
+        n = min(len(q), len(t))
+        if n < 4:
+            return False
+        p = 0
+        while p < n and q[p] == t[p]:
+            p += 1
+        return p >= max(4, len(q) - 3) or (p == len(t) and len(t) >= 4)
+    return [q for q in qt if not any(_sedi(q, t) for t in tt)]
 
 
 def _titles_align(topic: str, title: str) -> bool:
