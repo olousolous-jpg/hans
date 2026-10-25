@@ -86,9 +86,9 @@ _CAPABILITIES = [
     # HANS_BOOK_SUMMARY_V1 (16. 10.)
     ("knihy", "Čtu KNIHY ze své knihovny po úsecích (jednu za druhou, většinou anglická "
      "klasika z Projektu Gutenberg, a knihy, které mi domácnost nahraje). Ke každému úseku si "
-     "zapisuji svůj dojem a v noci i stručně, co se v něm stalo; po dočtení si udělám souhrn "
-     "celé knihy, takže umím říct, o čem byla. Souhrny vznikají v noci — u právě čtené "
-     "kapitoly ještě nemusí být",
+     "zapisuji svůj dojem a dopoledne i stručně, co se v něm stalo; po dočtení si udělám souhrn "
+     "celé knihy, takže umím říct, o čem byla. Souhrny vznikají dopoledne — u právě čtené "
+     "kapitoly ještě nemusí být",   # HANS_BOOK_SUMMARY_RANO_V1
      "„co teď čteš?“, „o čem byla kniha …?“, /cetl"),
     ("nastroj", "Po dostudování tématu si umím v knihovně modelů najít NÁSTROJ pro "
      "závěrečné dílo a navrhnout ho ke schválení — sám nic nestahuji, a když "

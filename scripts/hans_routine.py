@@ -708,6 +708,7 @@ class HansRoutine(NocMixin, PcMixin, ZdraviMixin, SpanekMixin, ReflexeMixin):
                 self._maybe_start_night_catchup()  # HANS_NIGHT_DAY_CATCHUP_V1
                 self._run_night_tasks()
                 self._maybe_shutdown_pc()  # HANS_PC_NIGHT_SHUTDOWN
+                self._maybe_morning_book_summary()  # HANS_BOOK_SUMMARY_RANO_V1
             except Exception as _e:
                 _log.warning('night worker: %s', _e)
             finally:

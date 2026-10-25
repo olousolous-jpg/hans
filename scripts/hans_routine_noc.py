@@ -78,7 +78,8 @@ class NocMixin:
             ('facts', self._nt_facts),
             ('entity_images', self._nt_entity_images),   # HANS_ENTITY_IMAGE_V1
             ('creation_reflection', self._nt_creation_reflection),
-            ('book_summary', self._nt_book_summary),   # HANS_BOOK_SUMMARY_V1, LAST_V1: poslední
+            # HANS_BOOK_SUMMARY_RANO_V1 (25. 10.): souhrny knih už NE v noci —
+            # běží ráno po probuzení (`_maybe_morning_book_summary`)
         )
 
     def _synthesis_due(self, today: str) -> bool:
@@ -217,6 +218,48 @@ class NocMixin:
         except Exception as _ile:
             _rt._log.debug("instant_lookup verify: %s", _ile)
 
+    def _maybe_morning_book_summary(self):
+        # HANS_BOOK_SUMMARY_RANO_V1 (25. 10., uživatel: „PC dělá dost hluk,
+        # zpracování knih přesunout z noci na ráno, po ranním probuzení za
+        # ostatní věci“) — qwen3 na CPU držel PC v noci vytížené, takže noční
+        # vypnutí čekalo (`pc_busy`) a PC hučelo do rána. Teď souhrny běží jen
+        # přes den v okně `book_summary.od_hodiny`–`do_hodiny` (8–12), až mozek
+        # běží aspoň `rano_po_min` minut (ranní dohánění — odložené zápisy,
+        # reflexe, studium — má přednost), mimo denní dohánění noci a herní mód.
+        # Sdílený slot velkého modelu hlídá `run_night` sám.
+        c = (self.config.get("book_summary", {}) or {})
+        if not c.get("enabled", True) or self.is_night:
+            self._bs_mozek_od = 0.0
+            return
+        _h = datetime.now().hour
+        if not (int(c.get("od_hodiny", 8)) <= _h < int(c.get("do_hodiny", 12))):
+            self._bs_mozek_od = 0.0
+            return
+        if time.time() < getattr(self, "_night_catchup_until", 0.0):
+            return
+        try:
+            from scripts.ollama_client import game_mode_on
+            if game_mode_on():
+                self._bs_mozek_od = 0.0
+                return
+        except Exception:
+            return
+        if not self._brain_up():
+            self._bs_mozek_od = 0.0
+            return
+        _ted = time.time()
+        _po = 60.0 * float(c.get("rano_po_min", 20))
+        if not getattr(self, "_bs_mozek_od", 0.0):
+            self._bs_mozek_od = _ted
+            _rt._log.info("HANS_BOOK_SUMMARY_RANO_V1: mozek nahoře → souhrny "
+                          "knih nejdřív za %.0f min", _po / 60.0)
+            return
+        if _ted - self._bs_mozek_od < _po:
+            return
+        import types as _types
+        self._nt_book_summary(_types.SimpleNamespace(
+            today=datetime.now().strftime("%Y-%m-%d")))
+
     def _nt_book_summary(self, ctx):
         # HANS_BOOK_SUMMARY_V1 (16. 10.) — souhrn děje přečtených knih z celých
         # úseků (qwen3 na CPU Ollamě), po dočtení souhrn knihy a úvaha z něj.
@@ -225,6 +268,7 @@ class NocMixin:
         # mít přednost před studiem, mají se spouštět jako poslední věc“) —
         # v seznamu nočních úloh jsou poslední a dokud dnešní studium neproběhlo,
         # nespustí se vůbec (studium má ve 3:00 PC jako první).
+        # HANS_BOOK_SUMMARY_RANO_V1 — volá se už jen z ranního kroku.
         if self._last_study_date != ctx.today and self._in_night_window():
             return
         try:

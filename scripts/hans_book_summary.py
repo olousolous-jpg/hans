@@ -8,7 +8,9 @@ domýšlela („náhlá ztráta Kargova“, Shylock v Ivanhoe). Na „o čem ta 
 neměl z čeho odpovědět. 📏 backlog `KNIHY_SOUHRN_16_10`: souhrn z CELÝCH úseků
 Baskervillského psa správný až na 2 z 15; z ořezu chybí rozuzlení.
 
-Noční úloha (`hans_routine_noc._nt_book_summary`), po kouscích s časovým
+Ranní úloha (HANS_BOOK_SUMMARY_RANO_V1, 25. 10.: dřív noční, PC v noci hučelo;
+`hans_routine_noc._maybe_morning_book_summary` → `_nt_book_summary`, okno
+`od_hodiny`–`do_hodiny` 8–12), po kouscích s časovým
 rozpočtem, deferral-safe:
   1. ke každému přečtenému úseku souhrn děje z CELÉHO textu (qwen3 anglicky,
      druhá Ollama jen na CPU — qwen3 a hans-czech střídavě v jedné Ollamě
@@ -297,7 +299,7 @@ def run_night(config: dict, diary_path: str, reflection=None,
     if not c.get("enabled", True):
         return "idle"
     _h = time.localtime().tm_hour
-    if not (int(c.get("od_hodiny", 2)) <= _h < 12):
+    if not (int(c.get("od_hodiny", 8)) <= _h < int(c.get("do_hodiny", 12))):   # HANS_BOOK_SUMMARY_RANO_V1
         return "deferred"
     from scripts import ollama_client as _oc
     if _oc.base_slot_busy():
@@ -336,8 +338,9 @@ def _run_night_body(config: dict, diary_path: str, reflection=None,
         return "idle"
     # od 2:00 (uživatel 16. 10.: PC večer kolem 22:00 potřebuje volné); qwen3
     # na CPU vytíží procesor na desítky minut
+    # HANS_BOOK_SUMMARY_RANO_V1 (25. 10.) — jen ráno 8–12 (dřív od 2:00 v noci)
     _h = time.localtime().tm_hour
-    if not (int(c.get("od_hodiny", 2)) <= _h < 12):
+    if not (int(c.get("od_hodiny", 8)) <= _h < int(c.get("do_hodiny", 12))):
         return "deferred"
     from scripts.ollama_client import brain_available
     if not brain_available(config, ollama_url=_cpu_url(config)) or not brain_available(config):
