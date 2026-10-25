@@ -2092,6 +2092,39 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             ctx._predem_dohledano = _dz
             except Exception as _lpp:
                 logging.getLogger(__name__).debug('HANS_LOOKUP_PRESNY_PODKLAD_V1: %s', _lpp)
+            # HANS_LOOKUP_PRESNY_UDAJ_V1 (25. 10.) — otázka na konkrétní údaj
+            # o předmětu s přesným článkem, podložená jen zápisky nebo RAG: podklad
+            # bývá o předmětu, ale údaj v něm není a model ho doplní z hlavy
+            # (navazující „Kde se narodil?“ → Mozart „ve Vídni“). 📏 1 671
+            # zalogovaných tahů: 58 zásahů (vše zkušební identity), 2 s předmětem
+            # vymyšleným přepisem F1. Párově 30 vláken (data/mereni/udaj_25_10/):
+            # 21 → 23 z 32, zásah 6×, horší 0. Zapnuto uživatelem 25. 10.;
+            # vypínač instant_lookup.presny_udaj.
+            try:
+                _cesta_u = getattr(self, '_grounding_cesta', '') or ''
+                if (getattr(self, '_grounding_outcome', '') == 'grounded'
+                        and (_cesta_u.startswith('zapisky') or _cesta_u == 'rag')
+                        and 'clanek' not in _cesta_u     # článek už v podkladu je
+                        and not getattr(ctx, '_predem_dohledano', None)
+                        and bool((self.config.get('instant_lookup', {}) or {})
+                                 .get('presny_udaj', True))):
+                    from scripts.hans_intent import pta_se_na_udaj as _psu
+                    if _psu(getattr(self, '_f1_query', None) or ctx._raw_message):
+                        self._presny_titul = None
+                        _pu = self._presny_predmet(ctx._raw_message, ctx.name)
+                        if _pu:
+                            self._podklad_tema = _pu
+                            _dz = self._dohledej_kotvu(ctx._raw_message, ctx.name,
+                                                       mel_zapisky=True)
+                            logging.getLogger(__name__).info(
+                                'HANS_LOOKUP_PRESNY_UDAJ_V1: otázka na údaj o %r (článek %r, '
+                                'cesta %s) → %s', _pu, getattr(self, '_presny_titul', None),
+                                _cesta_u, 'dohledáno' if _dz else 'nic, beze změny')
+                            if _dz:
+                                ctx._a1_abstain = True
+                                ctx._predem_dohledano = _dz
+            except Exception as _lpu:
+                logging.getLogger(__name__).debug('HANS_LOOKUP_PRESNY_UDAJ_V1: %s', _lpu)
             # HANS_LOOKUP_PRIBUZNY_V1 (24. 10.) — otázka na příbuzného osoby na
             # podložené cestě: podklad (zápisky, četba, entita) je o osobě, ne
             # o příbuzném → dohledat jeho článek (nebo osoby s blokem Wikidat)

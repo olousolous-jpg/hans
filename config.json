@@ -1118,7 +1118,8 @@
         "_judge_note": "úsudek ANO/NE je EN prompt (vzor reasoning-tier-when-to-use); judge_model lze přepsat, default = chat model",
         "presny_predmet": true,
         "en_clanek": true,
-        "en_prah_zn": 8000
+        "en_prah_zn": 8000,
+        "presny_udaj": true
     },
     "downtime": {
         "enabled": true,
