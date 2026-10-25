@@ -992,28 +992,57 @@ def clanek_obsahem(config: dict, otazka: str) -> Optional[str]:
         navrhy = [re.sub(r"^[\-\*\d\.\)\s]+", "", x).strip(" „“\"'*") for x in out.splitlines()]
         navrhy = [x for x in navrhy if 2 <= len(x) <= 80][:3]
         prah = float(_cfg(config).get("obsahem_prah", 0.66))
-        for n in navrhy:
-            r = _wo._cil(n)
+        db = _wo._db()
+
+        def _najdi(n):
+            # přesná shoda VČETNĚ velikosti písmen má přednost („Sonet“ = báseň,
+            # ne „SONET“ — `_cil` porovnává bez velikosti a vezme delší článek)
+            r = db.execute("SELECT id, titul FROM clanek WHERE titul=? LIMIT 1", (n,)).fetchone()
+            r = r or _wo._cil(n)
             if not r and " (" in n:      # „Symfonie (hudební skladba)“ → „Symfonie“
                 r = _wo._cil(re.sub(r"\s*\(.*$", "", n))
-            if not r:
-                continue
-            # „Sonet“ → „SONET“ (telekomunikace): přesměrování jen podle velikosti
-            # písmen na zkratku, kterou model nenavrhl
-            if r[1] != n and r[1].isupper() and not n.isupper():
-                continue
-            text, roz, kan = _wo.extrakt(r[1])
+            if not r:                     # „Kontinenty“ → „Kontinent“
+                z = _wo._presna_zaloha(n)
+                r = z[1] if z else None
+            return r
+
+        def _skore(titul):
+            text, roz, kan = _wo.extrakt(titul)
             if roz or not text:
-                continue
-            pk = _obsahem_pokryti(slova, r[1] + " " + text)
+                return None
+            pk = _obsahem_pokryti(slova, titul + " " + text)
             # název článku sám je slovem otázky („Jak funguje očkování?“ →
             # Očkování): slovesa a výplň v článku nebývají → stačí polovina
-            _vlastni = _obsahem_pokryti(_obsahem_slova(re.sub(r"\s*\(.*$", "", r[1])),
-                                        " ".join(slova)) >= 1.0
-            if pk >= (min(prah, 0.5) if _vlastni else prah):
-                _log.info("HANS_LOOKUP_OBSAHEM_V1: %r → návrhy %s → %r (pokrytí %.2f)",
-                          q[:80], navrhy, r[1], pk)
-                return r[1]
+            ts = _obsahem_slova(titul.replace("(", " ").replace(")", " "))
+            vl = (sum(1 for t in ts if any(_sklonovany_tvar(t, x) for x in slova)) / len(ts)
+                  if ts else 0.0)
+            if pk < (min(prah, 0.5) if vl >= 0.5 else prah):
+                return None
+            # bonus za slovo otázky v názvu („Jupiter (planeta)“ × Slunce
+            # u „která planeta je největší“)
+            return pk + 0.5 * vl
+
+        kand = []
+        for n in navrhy:
+            r = _najdi(n)
+            if not r:
+                continue
+            tituly = [r[1]]
+            if db.execute("SELECT rozcestnik FROM clanek WHERE id=?", (r[0],)).fetchone()[0]:
+                # rozcestník („Jupiter“, „Maraton“) → jeho významy podle názvu
+                zak = re.sub(r"\s*\(.*$", "", r[1])
+                tituly = [t for (t,) in db.execute(
+                    "SELECT titul FROM clanek WHERE rozcestnik=0 AND (titul LIKE ? OR titul LIKE ?) "
+                    "LIMIT 15", (zak + " (%", zak + "%"))]
+            for t in tituly:
+                sk = _skore(t)
+                if sk is not None:
+                    kand.append((sk, -len(kand), t))
+        if kand:
+            sk, _i, titul = max(kand)
+            _log.info("HANS_LOOKUP_OBSAHEM_V1: %r → návrhy %s → %r (skóre %.2f z %d)",
+                      q[:80], navrhy, titul, sk, len(kand))
+            return titul
         _log.info("HANS_LOOKUP_OBSAHEM_V1: %r → návrhy %s → nic nesedí", q[:80], navrhy)
         return None
     except Exception as e:

@@ -1430,9 +1430,11 @@ class FaktaMixin:
         """HANS_LOOKUP_OBSAHEM_V1 (25. 10.) — obecná otázka bez vlastního jména,
         kterou kotva nedohledala: článek podle obsahu (`clanek_obsahem`), pak
         běžné dohledání. Jen místo „nemám spolehlivý záznam“ (uživatel 25. 10.).
-        📏 48 otázek z 20 oborů: dobrý článek 38, nepřesný 3 (největší planeta →
-        Slunce, sonet → Poezie, maraton → Atletika), nic 7; 8 kontrolních
-        (na Hanse, vázané na čas, nesmysl) bez dohledání."""
+        📏 48 otázek z 20 oborů: dobrý článek 45 (po výběru z rozcestníku,
+        přesné velikosti písmen a skóre všech kandidátů; dřív 38 — Slunce u
+        největší planety, SONET u sonetu, Atletika u maratonu), obecnější 1
+        (jaderná elektrárna → Elektrárna), nic 3; 8 kontrolních (na Hanse,
+        vázané na čas, nesmysl) bez dohledání."""
         try:
             from scripts.hans_intent import pta_se_na_zazitek_hanse
             if pta_se_na_zazitek_hanse(veta):
