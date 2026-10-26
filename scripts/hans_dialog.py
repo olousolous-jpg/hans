@@ -867,7 +867,15 @@ class HansDialog:
     def _run_dialog_stopa(self):
         """HANS_STOPA_KOLAC_V1 (27. 9.) — rozhovor s Koláčem přes stopu (živý
         strom v adminu). Chyba stopy = rozhovor proběhne jako bez ní."""
-        if (self.config.get("stopa", {}) or {}).get("enabled", True):
+        # HANS_STOPA_KOLAC_PRAZDNA_V1 (26. 10.) — s mozkem dole rozhovor hned
+        # skončí; stopa se přesto psala á 30 s (26. 10. ráno ~200 prázdných)
+        # a vytlačila z posledních `KEEP` stop všechny skutečné rozhovory →
+        # diagnóza z 25. 10. neměla strom. Bez mozku tedy bez stopy.
+        try:
+            _mozek = self._brain_up_cached()
+        except Exception:
+            _mozek = True
+        if (_mozek and (self.config.get("stopa", {}) or {}).get("enabled", True)):
             try:
                 from scripts import hans_stopa as _hs
                 from scripts.hans_kolac import kolac_name as _kn

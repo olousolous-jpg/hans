@@ -125,7 +125,18 @@ _PADY_PODSTATNA = (("ovi", ""), ("em", ""), ("ii", "ie"), ("ií", "ie"), ("ie", 
                    # Garrigua Masaryka“, dohledání se nespustilo a odpověď byla
                    # z hlavy („Charlotte Jeřábková“); „Kipa Thorna“ → nic.
                    # 📏 153 kotev z korpusu: 2 změny (Masaryk, Kip Thorne), jinak 0.
-                   ("a", "e"))
+                   ("a", "e"),
+                   # HANS_WIKI_PRIVL_JMENO_V1 (26. 10.) — přivlastňovací tvar
+                   # příjmení → příjmení: přepis F1 „Kdo byl Karel Čapkovým
+                   # bratrem?“ → kotva „Karel Čapkovým“ bez přesného článku →
+                   # dohledání se nespustilo, odpověď z hlavy („Vincent van
+                   # Gogh“). -k- před příponou vrací vložné e (Čapk → Čapek).
+                   # 📏 355 kotev z logu: 3 změny, všechny k lepšímu (Čapek,
+                   # Bell, Amundsen), jinak 0 (`data/mereni/privl_26_10/`).
+                   ("kovým", "ek"), ("kova", "ek"), ("kovu", "ek"), ("kově", "ek"),
+                   ("kovy", "ek"), ("kův", "ek"), ("kovo", "ek"),
+                   ("ovým", ""), ("ova", ""), ("ovu", ""), ("ově", ""), ("ovy", ""),
+                   ("ův", ""), ("ovo", ""))
 _PREDLOZKY = {"z", "ze", "na", "nad", "pod", "u", "v", "ve", "von", "van", "de", "da", "di",
               "of", "the", "a", "aneb", "and"}
 

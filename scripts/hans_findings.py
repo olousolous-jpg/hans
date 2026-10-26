@@ -1664,6 +1664,8 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
             "co je téma „%s\" — nejdřív jednou větou KDO/CO to je, pak konkrétní "
             "fakta z textu. Drž se VÝHRADNĚ textu, nic si nepřidávej. Bez uvozovek.\n\n"
             "Text:\n%s" % (art.get("title") or topic, topic, text))
+    import time as _tm
+    _t0 = _tm.time()   # HANS_STOPA_SHRNUTI_V1
     try:
         from scripts.ollama_client import ollama_chat
         out = ollama_chat(
@@ -1677,9 +1679,15 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
                      "temperature": 0.2},
         )
     except Exception as e:
-        _log.debug("instant_lookup: summarize: %s", e)
+        _log.info("HANS_STOPA_SHRNUTI_V1: shrnutí %r modelem selhalo po %.1f s: %s",
+                  topic, _tm.time() - _t0, str(e)[:120])
         return None
     out = (out or "").strip()
+    # HANS_STOPA_SHRNUTI_V1 (26. 10.) — shrnutí článku modelem nebylo ve stromu
+    # myšlení vidět (mezera ~5 s v kroku dohledání; vrstva Model „nedošel“,
+    # ač odpověď psal model) → řádek do logu, strom ho přiřadí ke kroku
+    _log.info("HANS_STOPA_SHRNUTI_V1: model (%s) shrnul %r za %.1f s, %d zn: %s",
+              model, topic, _tm.time() - _t0, len(out), out[:90].replace("\n", " "))
     # HANS_LOOKUP_EN_V1 — česky „v článku není“ → jednou znovu i s anglickým
     if _en_zap and not _en_txt and out and _EN_NENI.search(out) \
             and _EN_VYCET.search(str(otazka)):   # HANS_LOOKUP_EN_KLICE_V1
