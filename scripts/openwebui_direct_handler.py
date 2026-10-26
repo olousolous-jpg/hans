@@ -1138,6 +1138,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         self._sc_a1(ctx)
         self._sc_pojistky(ctx)
         self._sc_overeni_tvrzeni(ctx)
+        self._sc_doporuceni(ctx)   # HANS_DOPORUCENI_OVERENI_V1
         # HANS_OVERENI_OPRAVA_V2 (23. 10.) — jasný rozpor s Wikidaty připsat
         # k odpovědi (≤ 4 s čekání), PŘED uložením do historie
         try:
@@ -2530,6 +2531,21 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             ctx.response = self._stream_message(
                 (ctx.system, ctx.user_message), name=ctx.name,
                 on_sentence=ctx.on_sentence, grounding=ctx._grounding)  # CHAT_ON_SENTENCE_V1
+
+    def _sc_doporuceni(self, ctx):
+        # HANS_DOPORUCENI_OVERENI_V1 (26. 10.) — doporučený titul (kniha/film)
+        # musí existovat; vymyšlený pryč (`scripts/hans_doporuceni.py`). Až ZA
+        # všemi pojistkami: HANS_CLAIM_FILTER_V1 odpověď umí nahradit vzorkem.
+        if ctx.response and not getattr(ctx, "_dohledano", False):
+            try:
+                from scripts import hans_doporuceni as _dop
+                _hi_k = getattr(getattr(self, "_hans_idle", None), "kodi", None)
+                _dp = _dop.over(ctx._raw_message or "", ctx.response,
+                                self.config.get("diary_db") or "data/hans_diary.db", _hi_k)
+                if _dp:
+                    ctx.response = _dp
+            except Exception as _dpe:
+                logging.getLogger(__name__).debug("HANS_DOPORUCENI_OVERENI_V1: %s", _dpe)
 
     def _sc_pojistky(self, ctx):
         # HANS_FAKE_LOOKUP_CLAIM_V1 (15. 10.) — model nesmí tvrdit, že právě

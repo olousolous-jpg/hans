@@ -1548,3 +1548,9 @@ def je_vlastni_dilo(veta: str) -> bool:
     from scripts import hans_recall_osebe as h
     return bool(h.predmet_vlastniho_dila(veta, "data/hans_diary.db")
                 or h.je_dotaz_na_vlastni_dilo(veta, "data/hans_diary.db"))
+
+
+def doporuceni_over(otazka: str, odpoved: str):
+    """HANS_DOPORUCENI_OVERENI_V1 — opravené doporučení, nebo None."""
+    from scripts.hans_doporuceni import over
+    return over(otazka, odpoved)
