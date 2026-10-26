@@ -587,6 +587,30 @@ def titul_z_vety(veta: str):
     try:
         if not os.path.exists(_FOLD_DB):
             return None
+        # HANS_WIKI_TITUL_UVOZ_V1 (26. 10., samotest: „Z kterého roku pochází
+        # „Kaple Neposkvrněného početí Panny Marie (Kuří)“?“ → úseky končí před
+        # závorkou, vyhrálo „Panny Marie“ → Maria (matka Ježíšova), kotva
+        # „Kaple Neposkvrněného“ bez článku → z hlavy „1728“ místo 1903).
+        # Text v uvozovkách, který je PŘESNĚ titulem (ne rozcestník), má přednost.
+        # Stejný název upřesněný závorkou ze slova druhu („pořad „Hledání
+        # ztraceného času““ → seriál) nechá běžné cestě.
+        for _uv in re.findall(r"[\u201e\"]([^\u201c\"]{3,120})[\u201c\"]", veta or ""):
+            _r = _cil(_uv.strip())
+            if _r and not _db().execute("SELECT rozcestnik FROM clanek WHERE id=?",
+                                        (_r[0],)).fetchone()[0] \
+                    and _norm(_r[1]) == _norm(_uv.strip()):
+                _bez = _titul_z_vety_useky(veta)
+                if _bez and _norm(re.sub(r"\s*\(.*?\)$", "", _bez)) == _norm(_uv.strip()):
+                    return _bez
+                return _r[1]
+        return _titul_z_vety_useky(veta)
+    except Exception as e:
+        _log.debug("titul_z_vety %r: %s", veta, e)
+        return None
+
+
+def _titul_z_vety_useky(veta: str):
+    try:
         slova = re.findall(r"[^\W\d_]+(?:[.-][^\W\d_]+)*\.?|\d+\.?", veta or "")
         fs = [_fold_tzv(w).rstrip(".") for w in slova]
         vf = " ".join(fs)
