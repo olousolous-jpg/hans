@@ -1350,6 +1350,13 @@ def _podklad_podle_otazky(titul: str, otazka: str, config: Optional[dict] = None
         _rod = [i for i, (h, b) in enumerate(sek[1:], 1)
                 if b and re.match(r"(?:potomci|potomstvo|rodina|deti|manzelstvi|rodinny|osobni\s+zivot|"
                                   r"soukromy|soukromi)", _fold_cs(h))]
+        # HANS_LOOKUP_RODINA_SLOVA_V1 (26. 10., /tazatel: „kolik dětí měl
+        # Antonín Dvořák?“ → „tři děti“ z neúplných Wikidat; „celkem devět
+        # dětí“ stojí v sekci „Předkové“, model vybral Osobnost + Dílo a strop
+        # podkladu ji vytlačil) — bez sekce „Rodina“ jde první sekce nejlepší
+        # podle slov otázky
+        if not _rod and sk:
+            _rod = [max(sk, key=lambda x: (x[0], -x[1]))[1]]
         if _rod:
             poradi = _rod[:1] + [i for i in poradi if i not in _rod[:1]]
     if not poradi and not ibr:
@@ -1364,6 +1371,15 @@ def _podklad_podle_otazky(titul: str, otazka: str, config: Optional[dict] = None
             break
         h, b = sek[i]
         if b[:200] in out:   # sekce už je v úvodu
+            # HANS_LOOKUP_SEKCE_ZBYTEK_V1 (26. 10.) — úvod (prvních 2 500 zn
+            # článku) ji ale mohl useknout: Dvořák „celkem devět dětí“ leží za
+            # koncem úvodu v sekci, která se tak celá přeskočila → přidat zbytek
+            _k = out.find(b[:200])
+            _dal = b[len(out) - _k:] if b[:len(out) - _k] == out[_k:] else ""
+            if len(_dal.strip()) < 80:
+                continue
+            out += "\n\n== %s (pokračování) ==\n%s" % (h, _dal[:min(1800, zbyva)])
+            vyb.append(h + " (pokračování)")
             continue
         out += "\n\n== %s ==\n%s" % (h, b[:min(1800, zbyva)])
         vyb.append(h)
@@ -1415,7 +1431,10 @@ def _wikidata_blok(titul: str) -> str:
                     return jm
                 n, u = (O._c().get("Z:" + v) or [None, None])[:2]
                 if n and u:
-                    return "%s (%s–%s)" % (jm, n, u)
+                    # HANS_WD_ROKY_VYSLOVNE_V1 (26. 10., /tazatel: „Johana Bavorská
+                    # (1356–1386)“ → model „oženil se v roce 1356–1386“ a „zemřela
+                    # v letech 1356 až 1386“) — co je narození a co úmrtí, výslovně
+                    return "%s (nar. %s, zemř. %s)" % (jm, n, u)
                 if n:
                     return "%s (nar. %s)" % (jm, n)
                 if u:
