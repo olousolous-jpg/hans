@@ -215,6 +215,25 @@ def _presna_zaloha(q: str):
                 r = _cil(var[0])
                 if r:
                     return var[0], r
+    # HANS_WIKI_FOLD_ZALOHA_V1 (26. 10.) — přepis F1 přidal háček navíc
+    # („kniha Babíčka“) → přesná shoda selhala a hledání sklouzlo na „Babička
+    # (film, 1971)“ (/tazatel 26. 10.). Poslední záchrana: tytéž varianty bez
+    # diakritiky v tabulce titulů, jen víceslovné a JEDINÝ článek (ne rozcestník).
+    # 📏 357 kotev z logu: změna jen Babíčka.
+    try:
+        fdb = _fold_db()
+        for z in zkus:
+            if not re.search(r"[^\x00-\x7f]", z) or len(z.split()) < 2:
+                continue      # bez diakritiky už to zkusily běžné cesty; jedno
+                              # slovo ne („Německa“ → obec „Nemecká“)
+            ts = [x for (x,) in fdb.execute("SELECT titul FROM t WHERE fold=? AND rozcestnik=0 "
+                                            "LIMIT 3", (_fold_tzv(z),))]
+            if len(ts) == 1:
+                r = _cil(ts[0])
+                if r:
+                    return ts[0], r
+    except Exception as e:
+        _log.debug("HANS_WIKI_FOLD_ZALOHA_V1 %r: %s", q, e)
     return None
 
 

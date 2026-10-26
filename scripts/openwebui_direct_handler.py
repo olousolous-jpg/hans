@@ -217,7 +217,12 @@ _NABIDKA_POSLAT = re.compile(r"\b(?:poslat|po[šs]lu|uk[áa]zat|uk[áa][žz]u)\b
 _PREDSTIRANE_DOHLEDANI = (
     re.compile(r"(?:V pam[ěe]ti jsem o tom (?:nic )?nem[ěe]l|Ve sv[ýy]ch z[áa]pisc[íi]ch jsem k tomu "
                r"nem[ěe]l dost)[^.]*?tak jsem se (?:pr[áa]v[ěe] )?pod[íi]val\.\s*"),
-    re.compile(r"Podle toho, co jsem (?:te[ďd]|pr[áa]v[ěe]) na[šs]el\s*(?:\(.*?\))?\s*:\s*"),
+    # HANS_FAKE_LOOKUP_CLAIM_V2 (26. 10.) — i tvar opakovaného dohledání
+    # („K tomu jsem se už díval, Marku. Podle toho, co jsem našel (Wikipedie —
+    # heslo X):“): /tazatel 26. 10. — vymyšlený film „Vraťte se do Čech“ dostal
+    # takový úvod a vymyšleného režiséra, žádné dohledání neproběhlo
+    re.compile(r"K tomu jsem se (?:u[žz] )?d[íi]val[^.]*\.\s*"),
+    re.compile(r"Podle toho, co jsem (?:(?:te[ďd]|pr[áa]v[ěe]) )?na[šs]el\s*(?:\(.*?\))?\s*:\s*"),
     re.compile(r"\s*Berte to (?:zat[íi]m )?s rezervou\s*[—-][^.]*\.(?:\s*Ud[ěe]l[áa]m to v noci[^.]*\.)?"),
 )
 _DOHLEDANI_VETA = re.compile(

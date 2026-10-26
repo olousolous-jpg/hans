@@ -30,7 +30,18 @@ def _nazev_dilu_sedi(nazev_norm: str, dotaz_norm: str) -> bool:
     if len(slova) == 1 and len(slova[0]) < 5:
         return False
     q = dotaz_norm.split()
+    # HANS_KODI_DIL_KRATKA_V1 (26. 10.) — krátké české slovo názvu (zájmeno,
+    # „je“) musí být v dotazu doslova: „Kdo režíroval film Vraťte se do Čech?“
+    # chytlo díl „Ti, kdo se vrátili“ (kdo = kdo, vrátili ~ Vraťte; „Ti“ se
+    # nepočítalo) → obsazení Vetřelců dávnověku jako podklad → vymyšlený
+    # režisér (/tazatel 26. 10.). 📏 3 561 dílů knihovny: dotčeno ~25 českých
+    # názvů („Kdo je Q“, „Já Borg“), anglické beze změny.
+    if any(t in _DIL_KRATKA and t not in q for t in nazev_norm.split()):
+        return False
     return all(any(t == x or _shoda_tokenu(t, x) for x in q) for t in slova)
+
+
+_DIL_KRATKA = frozenset(("ti", "ty", "vy", "ja", "je", "mu", "mi", "ho", "ta"))
 
 
 def _substring_na_hranici(kde: str, co: str, min_delka: int = 4) -> bool:
