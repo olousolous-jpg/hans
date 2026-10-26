@@ -1526,3 +1526,9 @@ def pribuzni_verdikty(veta: str) -> str:
                          for x in O._pribuzni(veta, ["TGM"]))
     finally:
         O._cache = stara
+
+
+def vztah_jinde(titul: str, otazka: str, out: str):
+    """HANS_LOOKUP_VZTAH_JINDE_V1 — opravená odpověď, nebo None."""
+    from scripts.hans_findings import _vztah_jinde
+    return _vztah_jinde(titul, otazka, out)

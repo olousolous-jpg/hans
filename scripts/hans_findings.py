@@ -1706,7 +1706,125 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
                     out = out2.strip()
             except Exception as e:
                 _log.debug("HANS_LOOKUP_EN_V1 druhé shrnutí: %s", e)
+    if out and otazka and not _rok_t:   # HANS_LOOKUP_VZTAH_JINDE_V1
+        try:
+            out = _vztah_jinde(str(art.get("title") or topic), str(otazka), out) or out
+        except Exception as e:
+            _log.debug("HANS_LOOKUP_VZTAH_JINDE_V1: %s", e)
     return out or None
+
+
+# ── HANS_LOOKUP_VZTAH_JINDE_V1 (26. 10.) — příbuzný z jiného řádku ───────────
+# /tazatel 26. 10.: „Kdo byl bratrem Boženy Němcové?“ → „Bratrem … byl Karel
+# Němec“ — článek sourozence nejmenuje, model si vzal jméno z řádku DĚTI.
+# Kontrola po shrnutí: otázka chce JEDEN vztah (sourozenec / dítě / manžel /
+# rodič); věta odpovědi s tím vztahem jmenuje osobu, kterou Wikidata či
+# infobox vedou u JINÉHO vztahu a u tázaného ne → věta pryč a místo ní, co
+# data uvádějí (nebo že neuvádějí). Nevadí osoba z otázky, předmět článku ani
+# jméno hned za slovem vztahu („byl synem Elišky“ = komu vztah patří).
+# 📏 53 dohledání s otázkou na vztah ze stínu 17.–26. 10.
+# (`data/mereni/vztah_26_10/mer.py`): označena 1 (Němcová), plané 0.
+_VZ_TRIDY = {"sour": r"\b(?:bratr\w*|sestr\w*|sourozen\w*)\b",
+             "dite": r"\b(?:syn|syna|synem|synove|synu|synovi|synech|dcer\w*|deti|detmi|potom\w*)\b",
+             "chot": r"\b(?:manzel\w*|chot\w*)\b",
+             "rodic": r"\b(?:otec|otce|otci|otcem|matk\w*|matce|rodic\w*)\b"}
+_VZ_POPIS = {"sour": "sourozence", "dite": "děti", "chot": "manžela či manželku",
+             "rodic": "rodiče"}
+
+
+def _vz_f(s) -> str:
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFD", str(s or "").lower())
+                   if unicodedata.category(ch) != "Mn")
+
+
+def _vz_trida(o):
+    t = _vz_f(o)
+    n = [k for k, p in _VZ_TRIDY.items() if re.search(p, t)]
+    return n[0] if len(n) == 1 else None
+
+
+def _vz_mapa(wd: str, ib: str) -> list:
+    """[(třída vztahu, tokeny jména, jméno)] z bloku Wikidat a infoboxu."""
+    m = []
+    for radek in (wd or "").split("\n") + (ib or "").split("\n"):
+        if ":" not in radek:
+            continue
+        k0 = _vz_f(radek.split(":", 1)[0])
+        k = ("sour" if k0.startswith("sourozen") else "dite" if k0.startswith(("deti", "potom"))
+             else "chot" if k0.startswith(("chot", "manzel")) else
+             "rodic" if k0.startswith(("otec", "matka", "rodic")) else
+             "pribuzni" if k0.startswith("pribuzn") else None)
+        if not k:
+            continue
+        hod = re.sub(r"matka [^—]+—", "", radek.split(":", 1)[1])
+        for jm in re.split(r",|;", hod):
+            tr = k
+            st = re.search(r"\(([^)]*)\)", jm)
+            if k == "pribuzni":     # „Josef Čapek (bratr)“
+                tr = _vz_trida(st.group(1)) if st else None
+                if not tr:
+                    continue
+            jm = re.sub(r"\(.*?\)", "", jm).strip()
+            tok = [w for w in re.findall(r"\w+", _vz_f(jm))
+                   if len(w) >= 3 and w not in ("vycet", "nemusi", "byt", "uplny")]
+            if tok:
+                m.append((tr, tok, jm))
+    return m
+
+
+def _vztah_jinde(titul: str, otazka: str, out: str):
+    """Opravená odpověď, nebo None (beze změny)."""
+    tr = _vz_trida(otazka)
+    if not tr:
+        return None
+    m = _vz_mapa(_wikidata_blok(titul), _infobox_pribuzni(titul))
+    if not m:
+        return None
+    tit = set(re.findall(r"\w+", _vz_f(titul)))
+    qs = re.findall(r"\w+", _vz_f(otazka))
+    cil = [x for x in m if x[0] == tr]
+    vety = re.split(r"(?<=[.!?])\s+", out.strip())
+    spatna = set()
+    for v in vety:
+        fv = _vz_f(v)
+        if not re.search(_VZ_TRIDY[tr], fv):
+            continue
+        sl = re.findall(r"\w+", fv)
+
+        def _hit(tok):
+            return all(any(s[:4] == t[:4] and abs(len(s) - len(t)) <= 3 for s in sl) for t in tok)
+
+        def _za_vztahem(tok):
+            for i, s in enumerate(sl):
+                if s[:4] == tok[0][:4] and any(
+                        re.fullmatch(p.replace("\\b", ""), w)
+                        for p in _VZ_TRIDY.values() for w in sl[max(0, i - 2):i]):
+                    return True
+            return False
+        jine = [x for x in m if x[0] != tr and not set(x[1]) <= tit
+                and not all(any(s[:3] == y[:3] for s in qs) for y in x[1])
+                and _hit(x[1]) and not _za_vztahem(x[1])]
+        if jine and not any(not set(x[1]) <= tit and _hit(x[1]) for x in cil):
+            spatna.add(v)
+            _log.info("HANS_LOOKUP_VZTAH_JINDE_V1: %r — %r je v datech u jiného vztahu (%s), "
+                      "ne %s → věta pryč", titul, jine[0][2], jine[0][0], _VZ_POPIS[tr])
+    if not spatna:
+        return None
+    # navazující věta bez podmětu („Byl jedním z jejích synů…“) jde s ní
+    # (i celý řetěz: „Narodil se 1839… Byl jedním z jejích dětí“, živě 26. 10.)
+    _bez_podmetu = re.compile(r"(?:Byl[aoiy]?|Je|Jeho|Její|Ten|Ta|On|Ona|Narodil[aoiy]?|"
+                              r"Zemřel[aoiy]?|Měl[aoiy]?|Žil[aoiy]?|Působil[aoiy]?|Pracoval[aoiy]?)\b")
+    zbyt, _pryc = [], False
+    for v in vety:
+        _pryc = v in spatna or (_pryc and bool(_bez_podmetu.match(v)))
+        if not _pryc:
+            zbyt.append(v)
+    _jm = list(dict.fromkeys(x[2] for x in cil))[:8]
+    _nom = {"sour": "sourozenci", "dite": "děti", "chot": "manžel / manželka", "rodic": "rodiče"}
+    uvod = ("Podle Wikidat a článku — %s: %s." % (_nom[tr], ", ".join(_jm))
+            if cil else "Článek ani Wikidata u „%s“ %s neuvádějí." % (titul, _VZ_POPIS[tr]))
+    return " ".join([uvod] + zbyt).strip()
 
 
 # ── 2) NOČNÍ OVĚŘENÍ ─────────────────────────────────────────────────────────
