@@ -3,15 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🎩 Hans Admin</title>
+<title>Hans</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg:     #1e1e2e; --bg2: #2a2a3e; --bg3: #313145;
-  --accent: #89b4fa; --accent2: #cba6f7;
-  --green:  #a6e3a1; --red: #f38ba8;
-  --yellow: #f9e2af; --orange: #fab387;
-  --fg:     #cdd6f4; --fg2: #a6adc8;
+  --bg:     #F3F5F7; --bg2: #FFFFFF; --bg3: #EEF1F4;
+  --accent: #0B6E77; --accent2: #0B6E77;
+  --green:  #1F7A45; --red: #B42318;
+  --yellow: #A16207; --orange: #C2410C;
+  --fg:     #16202A; --fg2: #5A6572;
+  --line:   #D5DBE1; --tint: #DCEFF0;
 }
 /* HANS_LETAKY_WEB_V1 — záložka Slevy */
 .sl-kotvy { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
@@ -38,8 +39,8 @@
 .sl-info { margin-top: 22px; color: var(--fg2); font-size: 0.9rem; }
 .sl-info.chyba { color: var(--red); }
 /* WEBADMIN_V2 — glassmorphism (dle navrh.html): gradient pozadí + frosted karty */
-body { background: linear-gradient(160deg, #181825 0%, #1e1e2e 45%, #232338 100%); background-attachment: fixed; color: var(--fg); font-family: 'Segoe UI', sans-serif; min-height: 100vh; }
-:root { --glass: rgba(49,49,69,0.55); --glass-brd: rgba(255,255,255,0.07); }
+body { background: var(--bg); color: var(--fg); font-family: 'Manrope', system-ui, sans-serif; min-height: 100vh; }
+:root { --glass: #FFFFFF; --glass-brd: transparent; }
 
 /* App shell — global left sidebar (APP_SHELL_V1) */
 .app-shell { display: flex; min-height: 100vh; }
@@ -84,24 +85,24 @@ th { background: var(--bg3); color: var(--accent2); padding: 8px; text-align: le
 td { padding: 7px 8px; border-bottom: 1px solid var(--bg3); vertical-align: top; }
 tr:hover td { background: var(--bg3); }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; background: var(--bg3); color: var(--fg2); }
-.badge.introspection { background: #2a1a4e; color: var(--accent2); }
-.badge.web_read      { background: #1a3a2e; color: var(--green); }
-.badge.movie_browsed { background: #3a2a1e; color: var(--orange); }
-.badge.idle_start    { background: #3a1a1e; color: var(--red); }
-.badge.idle_end      { background: #1a3a1e; color: var(--green); }
-.badge.observation   { background: #2a2a1e; color: var(--yellow); }
-.badge.room_description { background: #1a2a3e; color: var(--accent); }
-.badge.teddy_dialog  { background: #3a1a3e; color: var(--accent2); }
-.badge.mood_shift    { background: #2a3a1e; color: var(--green); }
-.badge.kodi_playing  { background: #1a1a3e; color: #89dceb; }
-.badge.spontaneous   { background: #2a1a2e; color: #cba6f7; }
-.badge.quantum_kolac { background: #0d0d2e; color: #89dceb; font-style: italic; }
+.badge.introspection { background: #EDE9FE; color: var(--accent2); }
+.badge.web_read      { background: #DCFCE7; color: var(--green); }
+.badge.movie_browsed { background: #FFEDD5; color: var(--orange); }
+.badge.idle_start    { background: #FFE4E6; color: var(--red); }
+.badge.idle_end      { background: #DCFCE7; color: var(--green); }
+.badge.observation   { background: #FEF3C7; color: var(--yellow); }
+.badge.room_description { background: #DBEAFE; color: var(--accent); }
+.badge.teddy_dialog  { background: #FAE8FF; color: var(--accent2); }
+.badge.mood_shift    { background: #ECFCCB; color: var(--green); }
+.badge.kodi_playing  { background: #E0E7FF; color: #0E7490; }
+.badge.spontaneous   { background: #F3E8FF; color: #7C3AED; }
+.badge.quantum_kolac { background: #E0F2FE; color: #0E7490; font-style: italic; }
 
 /* Forms */
 .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .form-row label { font-size: 0.8rem; color: var(--fg2); }
 .form-row input, .form-row select, .form-row textarea {
-  background: var(--bg3); border: 1px solid #444; border-radius: 4px;
+  background: var(--bg3); border: 1px solid #D5DBE1; border-radius: 4px;
   color: var(--fg); padding: 7px 10px; font-size: 0.9rem; font-family: inherit;
 }
 .form-row textarea { min-height: 80px; resize: vertical; }
@@ -120,7 +121,7 @@ button.btn:hover { opacity: 0.85; }
 .btn-neutral  { background: var(--bg3); color: var(--fg); }
 
 /* Log */
-#log-output { background: #0d0d1a; border-radius: 6px; padding: 12px; font-family: 'Consolas', monospace; font-size: 0.78rem; height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+#log-output { background: #F8FAFB; border-radius: 6px; padding: 12px; font-family: 'Consolas', monospace; font-size: 0.78rem; height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
 .log-hans     { color: var(--accent2); }
 .log-warn     { color: var(--yellow); }
 .log-error    { color: var(--red); }
@@ -131,7 +132,7 @@ button.btn:hover { opacity: 0.85; }
 
 /* Filter bar */
 .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
-.filter-bar input, .filter-bar select { background: var(--bg3); border: 1px solid #444; border-radius: 4px; color: var(--fg); padding: 6px 10px; font-size: 0.85rem; }
+.filter-bar input, .filter-bar select { background: var(--bg3); border: 1px solid #D5DBE1; border-radius: 4px; color: var(--fg); padding: 6px 10px; font-size: 0.85rem; }
 
 /* Saving indicator */
 #save-status { padding: 6px 14px; border-radius: 4px; font-size: 0.85rem; display: none; }
@@ -142,7 +143,7 @@ button.btn:hover { opacity: 0.85; }
 .schema-shell { display: flex; background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-radius: 16px; overflow: hidden; border: 1px solid var(--glass-brd); box-shadow: 0 6px 24px rgba(0,0,0,0.22); }
 /* WEBADMIN_V2 — vnořený sloupec (kategorie nastavení) redesign */
 .schema-side { width: 224px; flex-shrink: 0; background: var(--bg); border-right: 1px solid var(--bg3); padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; position: sticky; top: 0; align-self: flex-start; max-height: 84vh; }
-.schema-side input { background: var(--bg3); border: 1px solid #444; border-radius: 8px; color: var(--fg); padding: 9px 11px; font-size: 0.85rem; }
+.schema-side input { background: var(--bg3); border: 1px solid #D5DBE1; border-radius: 8px; color: var(--fg); padding: 9px 11px; font-size: 0.85rem; }
 .schema-side input:focus { outline: none; border-color: var(--accent); }
 .schema-side-title { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.7px; color: var(--fg2); padding: 2px 8px; }
 .schema-cats { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
@@ -161,9 +162,9 @@ button.btn:hover { opacity: 0.85; }
 .slider-field { display: flex; flex-direction: column; gap: 7px; }
 .slider-input { width: 100%; accent-color: var(--accent); cursor: pointer; height: 5px; }
 .slider-readout { display: flex; align-items: center; gap: 10px; }
-.slider-num { width: 96px; background: var(--bg3); border: 1px solid #444; border-radius: 6px; color: var(--fg); padding: 6px 9px; font-size: 0.9rem; }
+.slider-num { width: 96px; background: var(--bg3); border: 1px solid #D5DBE1; border-radius: 6px; color: var(--fg); padding: 6px 9px; font-size: 0.9rem; }
 .slider-num:focus { outline: none; border-color: var(--accent); }
-.slider-reset { background: var(--bg3); border: 1px solid #444; border-radius: 6px; color: var(--fg2); cursor: pointer; padding: 5px 9px; font-size: 0.85rem; }
+.slider-reset { background: var(--bg3); border: 1px solid #D5DBE1; border-radius: 6px; color: var(--fg2); cursor: pointer; padding: 5px 9px; font-size: 0.85rem; }
 .slider-reset:hover { color: var(--accent); border-color: var(--accent); }
 .slider-ends { font-size: 0.72rem; color: var(--fg2); font-variant-numeric: tabular-nums; }
 .schema-group > .intro { color: var(--fg2); font-size: 0.8rem; line-height: 1.4; margin-bottom: 14px; }
@@ -178,200 +179,313 @@ button.btn:hover { opacity: 0.85; }
 .slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
 .slider-val { min-width: 45px; text-align: right; color: var(--accent); font-family: monospace; }
 </style>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* HANS_WEB_OBYVAK_V1 (26. 10.) — vzhled C · Obývák: horní lišta, světlé karty */
+a { color: var(--accent); }
+.app-shell { display: block; }
+.app-body > main { max-width: 1280px; margin: 0 auto; padding: 8px 32px 72px; }
+.ob-top { max-width: 1280px; margin: 0 auto; padding: 22px 32px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; }
+.ob-brand { font-size: 22px; font-weight: 800; letter-spacing: -0.3px; }
+.ob-nav { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 auto; }
+.ob-nav button, .ob-sub button { font: inherit; font-size: 15px; font-weight: 600; border: 0; cursor: pointer; padding: 10px 18px; border-radius: 999px; background: transparent; color: #3B4652; min-height: 44px; display: inline-flex; align-items: center; gap: 8px; }
+.ob-nav button:hover, .ob-sub button:hover { background: #E4E8EC; }
+.ob-nav button.active { background: var(--fg); color: #FFFFFF; }
+.ob-side { display: flex; align-items: center; gap: 12px; font-size: 14px; color: #3B4652; }
+.ob-side #status-dot { width: 10px; height: 10px; border-radius: 50%; }
+#game-mode-btn { font: inherit; font-size: 14px !important; font-weight: 600; min-height: 40px; padding: 0 14px !important; border-radius: 999px !important; cursor: pointer; }
+.ob-sub { max-width: 1280px; margin: 0 auto; padding: 0 32px 8px; display: none; flex-wrap: wrap; gap: 4px; }
+.ob-sub.on { display: flex; }
+.ob-sub button { font-size: 14px; padding: 8px 14px; min-height: 40px; color: var(--fg2); }
+.ob-sub button.active { background: var(--tint); color: var(--accent); }
+.app-top { position: static; background: none; border: 0; backdrop-filter: none; -webkit-backdrop-filter: none; padding: 6px 0 14px; }
+.app-top h1 { font-size: 30px; font-weight: 800; letter-spacing: -0.5px; }
+.card { background: #FFFFFF; border: 0; border-radius: 22px; padding: 24px; margin-bottom: 20px; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; }
+.card h2 { font-size: 20px; font-weight: 800; color: var(--fg); margin-bottom: 14px; }
+.stat { background: #FFFFFF; border: 0; border-radius: 18px; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.stat .val { color: var(--fg); }
+.grid2, .grid3 { gap: 20px; }
+.thought-box { background: var(--tint); border-left: 0; border-radius: 14px; color: var(--fg); }
+th { background: var(--bg3); color: var(--fg); }
+button.btn { border-radius: 999px; font-weight: 700; min-height: 40px; }
+.btn-primary { color: #FFFFFF; }
+.btn-danger, .btn-success { color: #FFFFFF; }
+.form-row input, .form-row select, .form-row textarea, .filter-bar input, .filter-bar select { background: #F8FAFB; border-color: var(--line); border-radius: 10px; }
+.schema-shell { background: #FFFFFF; box-shadow: none; border: 0; border-radius: 22px; }
+.schema-side { background: #F8FAFB; }
+/* Domů */
+.ob-hero { background: #FFFFFF; border-radius: 28px; padding: 36px; display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; margin-bottom: 24px; }
+.ob-face { width: 180px; height: 180px; border-radius: 50%; background: var(--tint); flex-shrink: 0; overflow: hidden; position: relative; display: grid; place-items: center; }
+.ob-face .app-avatar { padding: 0; border: 0; position: absolute; inset: 0; }
+.ob-face .app-avatar > div { width: 180px !important; height: 180px !important; }
+.ob-face .app-avatar img, .ob-face .app-avatar video { width: 180px; height: 180px; border-radius: 50%; border: 0; background: transparent; }
+.ob-face .av-label { display: none; }
+.ob-face-ph { font-size: 44px; font-weight: 800; color: var(--accent); }
+.ob-hero-main { flex: 999 1 420px; min-width: 0; }
+.ob-mood { font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.ob-mood #mood-status { text-transform: capitalize; }
+.ob-mood #mood-reason { font-weight: 500; color: var(--fg2); }
+.ob-hero h1 { margin: 0; font-size: 40px; line-height: 1.15; font-weight: 800; letter-spacing: -0.8px; }
+.ob-hero #d-thought { background: none; border: 0; padding: 0; margin: 12px 0 22px; font-size: 17px; color: #3B4652; line-height: 1.5; font-style: normal; }
+.ob-ask-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.ob-ask-row input { flex: 1 1 260px; min-width: 0; font: inherit; font-size: 16px; min-height: 52px; padding: 0 20px; border: 2px solid var(--line); border-radius: 999px; background: #F8FAFB; color: var(--fg); }
+.ob-ask-row input:focus { outline: none; border-color: var(--accent); }
+.ob-ask-row button { font: inherit; font-size: 16px; font-weight: 700; min-height: 52px; padding: 0 26px; border: 0; border-radius: 999px; background: var(--accent); color: #FFFFFF; cursor: pointer; }
+.ob-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+.ob-chips button { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px; border: 1px solid var(--line); border-radius: 999px; background: #FFFFFF; color: #3B4652; cursor: pointer; }
+.ob-chips button:hover { border-color: var(--accent); color: var(--accent); }
+.ob-who { margin-left: auto; font-size: 13px; color: var(--fg2); display: flex; align-items: center; gap: 6px; }
+.ob-who select { font: inherit; font-size: 14px; min-height: 40px; border: 1px solid var(--line); border-radius: 999px; padding: 0 12px; background: #FFFFFF; color: var(--fg); }
+#chat-log { margin-top: 16px; max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+#chat-log:empty { display: none; }
+.ob-row3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-bottom: 20px; }
+.ob-row3 > .card { margin: 0; }
+.ob-label { font-size: 13px; font-weight: 700; color: var(--fg2); margin-bottom: 6px; }
+.ob-row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+.ob-row2 > .card { margin: 0 0 20px; }
+.ob-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.ob-head h2 { margin: 0 !important; }
+.ob-link { font: inherit; font-size: 15px; font-weight: 600; color: var(--accent); background: none; border: 0; cursor: pointer; padding: 8px 0; min-height: 40px; }
+.ob-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; font-size: 14px; color: #3B4652; padding: 4px 6px; }
+#climate-now { font-size: 22px !important; font-weight: 800; line-height: 1.5; }
+#kodi-title { font-size: 19px !important; font-weight: 700 !important; }
+.ob-stav .stat { background: var(--bg3); }
+.ob-stav .stat .val { font-size: 2rem; }
+#musings-list > div { background: var(--tint) !important; border-radius: 16px !important; }
+@media (max-width: 640px) {
+  .ob-top, .ob-sub, .app-body > main { padding-left: 16px; padding-right: 16px; }
+  .ob-hero { padding: 22px; gap: 20px; }
+  .ob-face { width: 120px; height: 120px; }
+  .ob-hero h1 { font-size: 30px; }
+  .ob-who { margin-left: 0; }
+}
+/* Myšlení — světlý strom; neonový pohled jen přes odkaz (HANS_WEB_NEON_V1) */
+#ms-box { background: #FFFFFF; border: 1px solid var(--line); border-radius: 18px; }
+.ms-ovl button { background: #EEF1F4; color: var(--fg); border-radius: 999px; padding: 6px 12px; font-weight: 600; }
+.ms-ovl button.hl { background: var(--accent); color: #FFFFFF; }
+.ms-uzel.svit circle { fill: #5A6572; stroke: #0B6E77; }
+.ms-uzel.svit text { fill: #16202A; }
+.ms-hrana.svit { stroke: #0B6E77; }
+.ms-uzel.cil circle { fill: #0B6E77; stroke: #0B6E77; }
+.ms-uzel.cil text { fill: #0B6E77; }
+.ms-tok { display: none; }
+#ms-neon-zavri { display: none; }
+.ms-neon-odkaz { font: inherit; font-size: 14px; font-weight: 600; color: var(--accent); background: none; border: 0; cursor: pointer; text-decoration: underline; min-height: 40px; }
+#ms-box.cele { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh !important; z-index: 300; min-height: 0; border-radius: 0; }
+#ms-box.neon { border: 0;
+  background: radial-gradient(ellipse at 40% 30%, #12183A 0%, #070A1A 55%, #03040C 100%); }
+#ms-box.cele #ms-neon-zavri { display: inline-block; }
+#ms-box.cele #ms-cele { display: none; }
+#ms-box.neon .ms-ovl button { background: rgba(255,255,255,.08); color: #E6ECFF; border: 1px solid rgba(255,255,255,.14); }
+#ms-box.neon .ms-ovl button.hl { background: #22D3EE; color: #04161B; border-color: #22D3EE; }
+#ms-box.neon #ms-info { background: rgba(7,10,26,.85); color: #C9D2EE; border: 1px solid rgba(34,211,238,.25); }
+#ms-box.neon .ms-hrana { stroke: rgba(120,140,200,.16); }
+#ms-box.neon .ms-uzel circle { fill: #1B2140; stroke: #2E3766; }
+#ms-box.neon .ms-uzel text { fill: rgba(200,210,240,.38); }
+#ms-box.neon .ms-uzel.vrstva text, #ms-box.neon .ms-uzel.koren text { fill: #E6ECFF; }
+#ms-box.neon .ms-hrana.svit { stroke-width: 2.6; }
+#ms-box.neon .ms-hrana.svit.l0, #ms-box.neon .ms-tok.svit.l0 { stroke: #22D3EE; filter: drop-shadow(0 0 5px #22D3EE); }
+#ms-box.neon .ms-hrana.svit.l1, #ms-box.neon .ms-tok.svit.l1 { stroke: #A78BFA; filter: drop-shadow(0 0 5px #A78BFA); }
+#ms-box.neon .ms-hrana.svit.l2, #ms-box.neon .ms-tok.svit.l2 { stroke: #F472B6; filter: drop-shadow(0 0 5px #F472B6); }
+#ms-box.neon .ms-hrana.svit.l3, #ms-box.neon .ms-tok.svit.l3 { stroke: #34D399; filter: drop-shadow(0 0 5px #34D399); }
+#ms-box.neon .ms-hrana.svit.l4, #ms-box.neon .ms-tok.svit.l4 { stroke: #FBBF24; filter: drop-shadow(0 0 5px #FBBF24); }
+#ms-box.neon .ms-hrana.svit.l5, #ms-box.neon .ms-tok.svit.l5 { stroke: #60A5FA; filter: drop-shadow(0 0 5px #60A5FA); }
+#ms-box.neon .ms-tok.svit { display: inline; fill: none; stroke-width: 3.2; stroke-linecap: round; stroke-dasharray: 1 22; animation: mstok 1.1s linear infinite; }
+@keyframes mstok { to { stroke-dashoffset: -23; } }
+#ms-box.neon .ms-uzel.svit circle { fill: #E6ECFF; stroke: #22D3EE; filter: drop-shadow(0 0 4px #22D3EE); }
+#ms-box.neon .ms-uzel.svit text { fill: #E6ECFF; }
+#ms-box.neon .ms-uzel.cil circle { fill: #FDE68A; stroke: #FBBF24; filter: drop-shadow(0 0 8px #FBBF24); animation: msblik 1.6s ease-in-out infinite; }
+#ms-box.neon .ms-uzel.cil text { fill: #FDE68A; }
+#ms-box.neon .ms-uzel.potlacen circle { fill: #FB7185; stroke: #FB7185; filter: drop-shadow(0 0 4px #FB7185); }
+#ms-box.neon .ms-uzel.potlacen text { fill: #FDA4AF; }
+#ms-box.neon .ms-uzel.ted circle { fill: #FFFFFF; stroke: #FFFFFF; filter: drop-shadow(0 0 10px #FFFFFF); }
+@keyframes msblik { 50% { filter: drop-shadow(0 0 16px #FBBF24); } }
+@media (prefers-reduced-motion: reduce) { #ms-box.neon .ms-tok.svit, #ms-box.neon .ms-uzel.cil circle { animation: none; } }
+</style>
 </head>
 <body>
 
-<!-- ── GLOBAL SHELL — levý sidebar (APP_SHELL_V1, layout dle mockupu) ─────────── -->
+<!-- HANS_WEB_OBYVAK_V1 — horní lišta (dřív levý panel APP_SHELL_V1) -->
 <div class="app-shell">
-  <aside class="app-side">
-    <div class="app-brand">🎩 Hans <span>Admin</span></div>
-    <nav class="app-nav" id="nav">
-      <button data-tab="dashboard" class="active" onclick="showTab('dashboard')">📊 Dashboard</button>
-      <button data-tab="diary" onclick="showTab('diary')">📔 Deník</button>
-      <button data-tab="faces" onclick="showTab('faces')">😀 Obličeje</button>
-      <button data-tab="objects" onclick="showTab('objects')">📦 Objekty</button>
-      <button data-tab="conversations" onclick="showTab('conversations')">💬 Konverzace</button>
-      <button data-tab="works" onclick="showTab('works')">🛠️ Hansova práce</button>
-      <button data-tab="zpravy" onclick="showTab('zpravy')">📰 Zprávy</button>
-      <button data-tab="slevy" onclick="showTab('slevy')">🛒 Slevy</button>
-      <button data-tab="politici" onclick="showTab('politici')">🏛️ Politici</button>
-      <button data-tab="questions" onclick="showTab('questions')">❓ Otázky<span id="q-nav-badge" style="background:var(--yellow);color:var(--bg);border-radius:10px;padding:1px 7px;font-size:0.7em;margin-left:auto;display:none">0</span></button>
-      <button data-tab="mysleni" onclick="showTab('mysleni')">🧠 Myšlení</button>
-      <button data-tab="users" onclick="showTab('users')">🔐 Uživatelé</button>
-      <button data-tab="cfg-identity" onclick="showTab('cfg-identity')">⚙ Nastavení</button>
-      <button data-tab="log" onclick="showTab('log')">📋 Log</button>
+  <header class="ob-top">
+    <div class="ob-brand">Hans</div>
+    <nav class="ob-nav" id="nav" aria-label="Hlavní">
+      <button data-group="domu" class="active" onclick="showTab('dashboard')">Domů</button>
+      <button data-group="denik" onclick="showTab('diary')">Deník</button>
+      <button data-group="rozhovory" onclick="showTab('conversations')">Rozhovory<span id="q-nav-badge" style="background:var(--yellow);color:#FFFFFF;border-radius:10px;padding:1px 7px;font-size:0.75em;display:none">0</span></button>
+      <button data-group="mysleni" onclick="showTab('mysleni')">Myšlení</button>
+      <button data-group="galerie" onclick="showTab('obrazy')">Galerie</button>
+      <button data-group="zpravy" onclick="showTab('zpravy')">Zprávy a slevy</button>
+      <button data-group="sprava" onclick="showTab('system')" aria-label="Správa">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
+        Správa</button>
     </nav>
-    <!-- AVATAR_WEB_SIDEBAR_V1 — Hansova tvář dle nálady; skrytá dokud se obrázek nenačte -->
-    <!-- AVATAR_WEB_ANIM_V1 — animovaný idle avatar (looping video, stejný klip
-         jako video náhled na displeji); PNG poster = fallback když video chybí -->
-    <!-- AVATAR_WEB_MIRROR_V1 — zrcadlí Pi preview stav (idle PNG / talk / klip) -->
-    <div class="app-avatar" id="app-avatar" style="display:none">
-      <div style="position:relative;width:130px;height:130px">
-        <img id="avatar-img" src="/api/avatar.png" alt=""
-             style="position:absolute;top:0;left:0">
-        <video id="avatar-vid" muted playsinline
-               style="position:absolute;top:0;left:0;opacity:0;transition:opacity 0.18s;background:transparent"></video>
-      </div>
-      <span class="av-label" id="avatar-label">Hans</span>
+    <div class="ob-side">
+      <span style="display:flex;align-items:center;gap:8px"><span id="status-dot" style="background:var(--yellow)"></span><span id="status-text">načítám…</span></span>
+      <!-- OLLAMA_GAME_MODE_V1 — herní mód (dřív v levém panelu) -->
+      <button id="game-mode-btn" onclick="toggleGameMode()"
+              title="Uvolní grafickou paměť pro hru na PC (Hans přestane používat Ollamu)."
+              style="border:1px solid var(--line);background:#FFFFFF;color:var(--fg2)">Herní mód</button>
     </div>
-    <!-- OLLAMA_GAME_MODE_V1 — herní mód v levém panelu pod Hansem -->
-    <button id="game-mode-btn" onclick="toggleGameMode()"
-            title="Uvolní grafickou paměť pro hru na PC (Hans přestane používat Ollamu)."
-            style="margin:4px 12px 8px;font-size:0.82rem;padding:7px 10px;border-radius:8px;border:1px solid var(--bg3);background:var(--bg3);color:var(--fg2);cursor:pointer;white-space:nowrap">🎮 Herní mód</button>
-    <div class="app-side-foot">
-      <div id="status-dot" style="background:var(--yellow)"></div>
-      <span id="status-text">načítám...</span>
-    </div>
-  </aside>
+  </header>
+  <nav class="ob-sub" id="ob-sub" aria-label="Podnabídka"></nav>
   <div class="app-body">
-    <header class="app-top">
-      <h1 id="page-title">Dashboard</h1>
-    </header>
     <main>
+    <header class="app-top" id="app-top" style="display:none">
+      <h1 id="page-title">Domů</h1>
+    </header>
 
-<!-- ── DASHBOARD ─────────────────────────────────────────────────────────── -->
+<!-- ── DOMŮ (HANS_WEB_OBYVAK_V1; dřív Dashboard — technika je v Správa › Stav systému) -->
 <div id="tab-dashboard" class="tab-content active">
-  <div class="grid3" style="margin-bottom:16px">
+  <section class="ob-hero">
+    <div class="ob-face">
+      <span class="ob-face-ph" aria-hidden="true">H</span>
+      <!-- AVATAR_WEB_SIDEBAR_V1 / AVATAR_WEB_ANIM_V1 / AVATAR_WEB_MIRROR_V1 — tvář dle nálady, zrcadlí Pi -->
+      <div class="app-avatar" id="app-avatar" style="display:none">
+        <div style="position:relative;width:180px;height:180px">
+          <img id="avatar-img" src="/api/avatar.png" alt="Hansova tvář" style="position:absolute;top:0;left:0">
+          <video id="avatar-vid" muted playsinline style="position:absolute;top:0;left:0;opacity:0;transition:opacity 0.18s;background:transparent"></video>
+        </div>
+        <span class="av-label" id="avatar-label">Hans</span>
+      </div>
+    </div>
+    <div class="ob-hero-main">
+      <div class="ob-mood"><span id="mood-status">…</span><span id="mood-reason"></span></div>
+      <h1 id="ob-pozdrav">Dobrý den.</h1>
+      <div id="d-thought" class="thought-box">načítám…</div>
+      <label for="chat-input" style="display:block;font-size:14px;font-weight:600;margin-bottom:8px">Na co se chcete zeptat?</label>
+      <div class="ob-ask-row">
+        <input id="chat-input" type="text" placeholder="Napište Hansovi…" onkeydown="if(event.key==='Enter')chatSend()">
+        <button type="button" onclick="chatSend()">Zeptat se</button>
+      </div>
+      <div class="ob-chips">
+        <button type="button" onclick="obZeptej('Co jsi dnes dělal?')">Co jsi dnes dělal?</button>
+        <button type="button" onclick="obZeptej('Co teď čteš?')">Co čteš?</button>
+        <button type="button" onclick="obZeptej('Jsou tento týden nějaké slevy?')">Nějaké slevy?</button>
+        <label class="ob-who" for="chat-person">Píše <select id="chat-person"></select></label>
+      </div>
+      <div id="chat-log"></div>
+      <div style="font-size:12px;color:var(--fg2);margin-top:8px">Hans odpoví tady i hlasem v obýváku.</div>
+    </div>
+  </section>
+
+  <div class="ob-row3">
+    <!-- WEBADMIN_V2 — Právě hraje (Kodi) -->
+    <section class="card" id="kodi-card" style="display:flex;gap:16px">
+      <img id="kodi-poster" alt="" style="width:72px;height:108px;border-radius:10px;object-fit:cover;background:var(--bg3);flex-shrink:0;display:none">
+      <div style="min-width:0">
+        <div class="ob-label">Právě v televizi</div>
+        <div id="kodi-title">Televize teď nehraje</div>
+        <div id="kodi-meta" style="font-size:14px;color:var(--fg2);margin:4px 0"></div>
+        <div id="kodi-plot" style="font-size:13px;color:var(--fg2);line-height:1.4;max-height:5.6em;overflow:hidden"></div>
+      </div>
+    </section>
+    <!-- HANS_CLIMATE_V1 — teplota a vlhkost v místnosti -->
+    <section class="card" id="climate-card" style="display:none">
+      <div class="ob-label">V místnosti</div>
+      <div id="climate-now" style="margin-bottom:6px"></div>
+      <div id="climate-chart"></div>
+      <div id="climate-note" style="font-size:12px;color:var(--fg2);margin-top:6px"></div>
+    </section>
+    <section class="card">
+      <div class="ob-label">Naposledy četl</div>
+      <div id="d-read" style="font-size:19px;font-weight:700;line-height:1.35">načítám…</div>
+    </section>
+  </div>
+
+  <!-- HANS_ART_V1 — obrazy -->
+  <section class="card" id="art-card" style="display:none">
+    <div class="ob-head"><h2>Co Hans namaloval</h2><button type="button" class="ob-link" onclick="showTab('obrazy')">Všechny obrazy</button></div>
+    <div id="art-shelf" style="display:flex;gap:16px;overflow-x:auto;padding-bottom:6px"></div>
+  </section>
+
+  <div class="ob-row2">
+    <!-- WEBADMIN_V2 — Filmy které viděl -->
+    <section class="card" id="movies-card">
+      <h2>Filmy, které viděl</h2>
+      <div id="movies-shelf" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:6px">načítám…</div>
+    </section>
+    <section class="card">
+      <div class="ob-head"><h2>Poslední záznam v deníku</h2><button type="button" class="ob-link" onclick="showTab('diary')">Otevřít deník</button></div>
+      <div id="d-diary">načítám…</div>
+    </section>
+  </div>
+
+  <!-- HANS_CREATIONS_V1 — co Hans napsal -->
+  <section class="card" id="musings-card" style="display:none">
+    <h2>Co Hans napsal</h2>
+    <div id="musings-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px"></div>
+  </section>
+
+  <section class="card ob-stav">
+    <div class="ob-head"><h2>Stav Hanse</h2><button type="button" class="ob-link" onclick="showTab('system')">Podrobnosti</button></div>
+    <div class="grid3">
+      <div class="stat"><div class="val" id="s-temp">—</div><div class="lbl">Teplota procesoru (°C)</div></div>
+      <div class="stat"><div class="val" id="s-load">—</div><div class="lbl">Zátěž procesoru (%)</div></div>
+      <div class="stat"><div class="val" id="s-ram">—</div><div class="lbl">Paměť RAM (%)</div></div>
+    </div>
+    <!-- HANS_HEALTH_V1 — zdraví subsystémů -->
+    <div id="health-card" style="display:none;margin-top:18px">
+      <div class="ob-label">Subsystémy</div>
+      <div id="health-grid" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      <div id="health-age" style="font-size:0.75rem;color:var(--fg2);margin-top:8px"></div>
+    </div>
+  </section>
+</div>
+
+<!-- ── SPRÁVA › STAV SYSTÉMU (HANS_WEB_OBYVAK_V1 — technické karty z dřívějšího Dashboardu) -->
+<div id="tab-system" class="tab-content">
+  <div class="grid3" style="margin-bottom:20px">
     <div class="stat"><div class="val" id="s-faces">—</div><div class="lbl">Známé obličeje</div></div>
     <div class="stat"><div class="val" id="s-model">—</div><div class="lbl">Model</div></div>
     <div class="stat"><div class="val" id="s-ollama">—</div><div class="lbl">Ollama URL</div></div>
   </div>
-
-  <div class="grid3" style="margin-bottom:16px">
-    <div class="stat"><div class="val" id="s-temp" style="font-size:1.4rem">—</div><div class="lbl">CPU teplota (°C)</div></div>
-    <div class="stat"><div class="val" id="s-load" style="font-size:1.4rem">—</div><div class="lbl">CPU load (%)</div></div>
-    <div class="stat"><div class="val" id="s-ram" style="font-size:1.4rem">—</div><div class="lbl">RAM (%)</div></div>
-  </div>
-  <div class="grid2" style="margin-bottom:16px">
-    <div class="card" style="padding:12px 16px">
-      <div style="display:flex;align-items:center;gap:12px">
-        <div id="brain-dot" style="width:14px;height:14px;border-radius:50%;background:var(--yellow);flex-shrink:0"></div>
-        <span id="brain-status" style="font-size:0.9rem;color:var(--fg2)">Kontroluji Ollama...</span>
-      </div>
-    </div>
-    <div class="card" style="padding:12px 16px">
-      <div style="font-size:0.8rem;color:var(--fg2);margin-bottom:4px">Nálada</div>
-      <div id="mood-status" style="font-size:0.9rem;color:var(--accent2)">načítám...</div>
-      <div id="mood-reason" style="font-size:0.75rem;color:var(--fg2);margin-top:2px"></div>
+  <div class="card" style="padding:16px 20px">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div id="brain-dot" style="width:14px;height:14px;border-radius:50%;background:var(--yellow);flex-shrink:0"></div>
+      <span id="brain-status" style="font-size:0.95rem;color:var(--fg2)">Kontroluji Ollamu…</span>
     </div>
   </div>
-
-  <!-- HANS_HEALTH_V1 — zdraví subsystémů (nahoře u mozku a nálady) -->
-  <div class="card" id="health-card" style="margin-bottom:16px;display:none">
-    <h2>🩺 Subsystémy</h2>
-    <div id="health-grid" style="display:flex;flex-wrap:wrap;gap:8px"></div>
-    <div id="health-age" style="font-size:0.72rem;color:var(--fg2);margin-top:8px"></div>
-  </div>
-
-  <!-- HANS_CLIMATE_V1 — teplota a vlhkost v místnosti z čidel -->
-  <div class="card" id="climate-card" style="margin-bottom:16px;display:none">
-    <h2>🌡️ Klima v místnosti</h2>
-    <div id="climate-now" style="font-size:1.4rem;margin-bottom:6px"></div>
-    <div id="climate-chart"></div>
-    <div id="climate-note" style="font-size:0.72rem;color:var(--fg2);margin-top:6px"></div>
-  </div>
-
-  <!-- STANCE_CHART_V1 — vývoj confidence postojů v čase -->
-  <div class="card" id="stances-card" style="margin-bottom:16px;display:none">
-    <h2>📈 Vývoj postojů</h2>
-    <div id="stances-chart"></div>
-    <div id="stances-legend" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:0.72rem"></div>
-    <div style="font-size:0.68rem;color:var(--fg2);margin-top:6px">Confidence 0–1 v čase. Záznam od 23. 7. 2026 (dřívější hodnoty se nezaznamenávaly).</div>
-  </div>
-
-  <!-- TRENDS_CHART_V1 — nálada a růst zájmů v čase -->
-  <div class="card" id="trends-card" style="margin-bottom:16px;display:none">
-    <h2>🎭 Nálada a zájmy v čase</h2>
-    <div style="font-size:0.75rem;color:var(--fg2);margin-bottom:2px">Nálada (intenzita 0–1)</div>
-    <div id="mood-chart"></div>
-    <div style="font-size:0.75rem;color:var(--fg2);margin:10px 0 2px">Růst zájmů (kolikrát potvrzeno)</div>
-    <div id="hobby-chart"></div>
-    <div id="hobby-legend" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:0.72rem"></div>
-    <div style="font-size:0.68rem;color:var(--fg2);margin-top:6px">Záznam od 23. 7. 2026.</div>
-  </div>
-
-  <div class="grid2">
-    <div class="card">
-      <h2> Poslední myšlenka</h2>
-      <div id="d-thought" class="thought-box">načítám...</div>
-    </div>
-    <div class="card">
-      <h2> Naposledy četl</h2>
-      <div id="d-read" class="thought-box">načítám...</div>
-    </div>
-  </div>
-
-  <!-- WEBADMIN_V2 — Právě hraje (Kodi) s bookletem -->
-  <div class="card" id="kodi-card" style="display:none;margin-bottom:16px">
-    <h2>▶ Právě hraje</h2>
-    <div style="display:flex;gap:16px">
-      <img id="kodi-poster" alt="" style="width:92px;height:138px;border-radius:8px;object-fit:cover;background:var(--bg3);flex-shrink:0">
-      <div style="min-width:0">
-        <div id="kodi-title" style="font-size:1.1rem;font-weight:600"></div>
-        <div id="kodi-meta" style="font-size:0.8rem;color:var(--fg2);margin:4px 0"></div>
-        <div id="kodi-plot" style="font-size:0.82rem;color:var(--fg2);line-height:1.4;max-height:7em;overflow:hidden"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- WEBADMIN_V2 — Filmy které viděl (booklety, Hansův názor) -->
-  <div class="card" id="movies-card" style="margin-bottom:16px">
-    <h2>🎬 Filmy které viděl</h2>
-    <div id="movies-shelf" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:6px">načítám...</div>
-  </div>
-
-  <!-- HANS_PLACE_V1 — model domova „kde jsem" -->
-  <div class="card" id="place-card" style="margin-bottom:16px;display:none">
-    <h2>🏠 Kde jsem</h2>
-    <div style="display:flex;gap:16px;flex-wrap:wrap">
-      <a id="place-img-link" href="#" target="_blank" style="flex-shrink:0">
-        <img id="place-img" src="" alt="" style="width:240px;height:180px;object-fit:cover;border-radius:8px;background:var(--bg3);display:none">
-      </a>
-      <div style="flex:1;min-width:220px">
-        <div id="place-model" style="font-size:0.9rem;line-height:1.5"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- HANS_ART_V1 — obrazy, které Hans namaloval ke knihám -->
-  <div class="card" id="art-card" style="margin-bottom:16px;display:none">
-    <h2>🎨 Co Hans namaloval</h2>
-    <div id="art-shelf" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:6px"></div>
-  </div>
-
-  <!-- HANS_CREATIONS_V1 — co Hans napsal sám pro sebe -->
-  <div class="card" id="musings-card" style="margin-bottom:16px;display:none">
-    <h2>✍️ Co Hans napsal</h2>
-    <div id="musings-list" style="display:flex;flex-direction:column;gap:10px"></div>
-  </div>
-
-  <!-- WEBADMIN_V2 — Chat s Hansem (odpoví i hlasem na Pi) -->
-  <div class="card" id="chat-card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-      <h2 style="margin:0;flex:1">💬 Chat s Hansem</h2>
-      <label style="font-size:0.78rem;color:var(--fg2)">Píše:</label>
-      <select id="chat-person" style="background:var(--bg3);border:1px solid #444;border-radius:6px;color:var(--fg);padding:5px 8px;font-size:0.85rem"></select>
-    </div>
-    <div id="chat-log" style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;min-height:40px"></div>
-    <div style="display:flex;gap:8px">
-      <input id="chat-input" type="text" placeholder="Napiš zprávu Hansovi…" onkeydown="if(event.key==='Enter')chatSend()" style="flex:1;background:var(--bg3);border:1px solid #444;border-radius:6px;color:var(--fg);padding:9px 12px;font-size:0.9rem">
-      <button class="btn btn-primary" onclick="chatSend()">Odeslat</button>
-    </div>
-    <div style="font-size:0.72rem;color:var(--fg2);margin-top:5px">Hans odpoví v okně i hlasem na Raspberry Pi.</div>
-  </div>
-
   <div class="card">
-    <h2> Poslední záznam v deníku</h2>
-    <div id="d-diary">načítám...</div>
-  </div>
-
-  <div class="card" style="margin-top:16px">
-    <h2> Rychlé čtení URL</h2>
-    <div style="display:flex;gap:8px">
-      <input id="read-url" type="text" placeholder="https://..." style="flex:1;background:var(--bg3);border:1px solid #444;border-radius:4px;color:var(--fg);padding:8px 12px;font-size:0.9rem">
-      <button class="btn btn-primary" onclick="triggerRead()"> Přečíst</button>
+    <h2>Rychlé čtení odkazu</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="read-url" type="text" placeholder="https://…" aria-label="Odkaz ke čtení" style="flex:1 1 260px;min-width:0;background:#F8FAFB;border:1px solid var(--line);border-radius:999px;color:var(--fg);padding:10px 16px;font-size:0.95rem">
+      <button class="btn btn-primary" onclick="triggerRead()">Přečíst</button>
     </div>
     <div id="read-status" style="margin-top:8px;font-size:0.85rem;color:var(--fg2)"></div>
+  </div>
+</div>
+
+<!-- ── JAK SE HANS MĚNÍ (HANS_WEB_OBYVAK_V1 — přesunuto z Dashboardu pod Deník) -->
+<div id="tab-vyvoj" class="tab-content">
+  <!-- HANS_PLACE_V1 — model domova „kde jsem" -->
+  <div class="card" id="place-card" style="display:none">
+    <h2>Kde jsem</h2>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <a id="place-img-link" href="#" target="_blank" style="flex-shrink:0">
+        <img id="place-img" src="" alt="Hansův obraz domova" style="width:240px;height:180px;object-fit:cover;border-radius:14px;background:var(--bg3);display:none">
+      </a>
+      <div style="flex:1;min-width:220px"><div id="place-model" style="font-size:0.95rem;line-height:1.55"></div></div>
+    </div>
+  </div>
+  <!-- STANCE_CHART_V1 -->
+  <div class="card" id="stances-card" style="display:none">
+    <h2>Vývoj postojů</h2>
+    <div id="stances-chart"></div>
+    <div id="stances-legend" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:0.75rem"></div>
+    <div style="font-size:0.72rem;color:var(--fg2);margin-top:6px">Jistota 0–1 v čase. Záznam od 23. 7. 2026 (dřívější hodnoty se nezaznamenávaly).</div>
+  </div>
+  <!-- TRENDS_CHART_V1 -->
+  <div class="card" id="trends-card" style="display:none">
+    <h2>Nálada a zájmy v čase</h2>
+    <div style="font-size:0.8rem;color:var(--fg2);margin-bottom:2px">Nálada (intenzita 0–1)</div>
+    <div id="mood-chart"></div>
+    <div style="font-size:0.8rem;color:var(--fg2);margin:10px 0 2px">Růst zájmů (kolikrát potvrzeno)</div>
+    <div id="hobby-chart"></div>
+    <div id="hobby-legend" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:0.75rem"></div>
+    <div style="font-size:0.72rem;color:var(--fg2);margin-top:6px">Záznam od 23. 7. 2026.</div>
   </div>
 </div>
 
@@ -442,6 +556,15 @@ button.btn:hover { opacity: 0.85; }
   <div id="sl-obsah"></div>
 </div>
 
+<!-- HANS_WEB_OBRAZY_V1 — Galerie › Obrazy: všechny Hansovy obrazy (dřív jen 12 na Dashboardu) -->
+<div id="tab-obrazy" class="tab-content">
+  <div id="obr-druhy" class="ob-chips" style="margin:0 0 16px"></div>
+  <div id="obr-mrizka" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:20px"></div>
+  <div style="margin-top:20px;display:flex;align-items:center;gap:14px">
+    <button type="button" class="btn btn-neutral" id="obr-dalsi" onclick="loadObrazy(48)">Načíst další</button>
+    <span id="obr-pocet" style="font-size:14px;color:var(--fg2)"></span>
+  </div>
+</div>
 <div id="tab-works" class="tab-content">
   <div class="filter-bar" style="margin-bottom:14px">
     <button class="btn btn-neutral" onclick="loadWorks()">↺ Obnovit</button>
@@ -515,35 +638,35 @@ button.btn:hover { opacity: 0.85; }
 
 <!-- ── MYŠLENÍ — živý strom rozhodování (HANS_STOPA_V1/ZIVE_V1/KOLAC_V1) ───── -->
 <style>
-#ms-box { position: relative; height: 72vh; min-height: 420px; overflow: hidden; border-radius: 10px; background: #181825; border: 1px solid #313244; cursor: grab; touch-action: none; }
+#ms-box { position: relative; height: 72vh; min-height: 420px; overflow: hidden; border-radius: 10px; background: #FFFFFF; border: 1px solid #E4E8EC; cursor: grab; touch-action: none; }
 #ms-box.tahni { cursor: grabbing; }
 #ms-svg { width: 100%; height: 100%; display: block; }
 .ms-ovl { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
-.ms-ovl button { padding: 4px 10px; font-size: 13px; background: #313244; color: #cdd6f4; border: 0; border-radius: 6px; cursor: pointer; }
-.ms-ovl button.hl { background: #89b4fa; color: #1e1e2e; font-weight: 600; }
-#ms-info { position: absolute; bottom: 8px; left: 8px; right: 8px; font-size: 12px; color: #bac2de; background: rgba(24,24,37,.88); padding: 6px 8px; border-radius: 6px; min-height: 1.4em; }
-.ms-hrana { fill: none; stroke: #3a3a50; stroke-width: 1.2; }
-.ms-hrana.svit { stroke: #a6e3a1; stroke-width: 3; }
-.ms-uzel circle { fill: #45475a; stroke: #585b70; stroke-width: 1; }
-.ms-uzel text { fill: #7f849c; font-size: 12px; dominant-baseline: middle; }
-.ms-uzel.svit circle { fill: #bac2de; stroke: #a6e3a1; stroke-width: 2; }
-.ms-uzel.svit text { fill: #cdd6f4; }
-.ms-uzel.cil circle { fill: #a6e3a1; stroke: #a6e3a1; r: 8; }
-.ms-uzel.cil text { fill: #a6e3a1; font-weight: 700; }
+.ms-ovl button { padding: 4px 10px; font-size: 13px; background: #E4E8EC; color: #16202A; border: 0; border-radius: 6px; cursor: pointer; }
+.ms-ovl button.hl { background: #2563EB; color: #FFFFFF; font-weight: 600; }
+#ms-info { position: absolute; bottom: 8px; left: 8px; right: 8px; font-size: 12px; color: #5A6572; background: rgba(255,255,255,.92); padding: 6px 8px; border-radius: 6px; min-height: 1.4em; }
+.ms-hrana { fill: none; stroke: #D5DBE1; stroke-width: 1.2; }
+.ms-hrana.svit { stroke: #1F7A45; stroke-width: 3; }
+.ms-uzel circle { fill: #C9D1D9; stroke: #9AA5B1; stroke-width: 1; }
+.ms-uzel text { fill: #7A8592; font-size: 12px; dominant-baseline: middle; }
+.ms-uzel.svit circle { fill: #5A6572; stroke: #1F7A45; stroke-width: 2; }
+.ms-uzel.svit text { fill: #16202A; }
+.ms-uzel.cil circle { fill: #1F7A45; stroke: #1F7A45; r: 8; }
+.ms-uzel.cil text { fill: #1F7A45; font-weight: 700; }
 .ms-uzel.volba text { font-size: 11px; }
-.ms-uzel.potlacen circle { fill: #fab387; stroke: #fab387; }
-.ms-uzel.potlacen text { fill: #fab387; }
-.ms-uzel.vrstva text { font-size: 14px; font-weight: 700; fill: #bac2de; }
-.ms-uzel.koren text { font-size: 14px; font-weight: 700; fill: #f5c2e7; }
-.ms-uzel.ted circle { fill: #f9e2af; stroke: #f9e2af; animation: mspulz .8s ease-in-out infinite; }
-.ms-uzel.ted text { fill: #f9e2af; font-weight: 700; }
+.ms-uzel.potlacen circle { fill: #C2410C; stroke: #C2410C; }
+.ms-uzel.potlacen text { fill: #C2410C; }
+.ms-uzel.vrstva text { font-size: 14px; font-weight: 700; fill: #5A6572; }
+.ms-uzel.koren text { font-size: 14px; font-weight: 700; fill: #BE185D; }
+.ms-uzel.ted circle { fill: #A16207; stroke: #A16207; animation: mspulz .8s ease-in-out infinite; }
+.ms-uzel.ted text { fill: #A16207; font-weight: 700; }
 @keyframes mspulz { 50% { r: 10; opacity: .55; } }
-#ms-zive { display: none; color: #f9e2af; font-weight: 700; font-size: 13px; }
+#ms-zive { display: none; color: #A16207; font-weight: 700; font-size: 13px; }
 #ms-zive::before { content: "● "; animation: mspulz2 1s infinite; }
 @keyframes mspulz2 { 50% { opacity: .2; } }
 .ms-leg { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; opacity: .8; }
 .ms-leg span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-.ms-l-cil::before { background: #a6e3a1; } .ms-l-zk::before { background: #bac2de; } .ms-l-ted::before { background: #f9e2af; } .ms-l-ne::before { background: #45475a; }
+.ms-l-cil::before { background: #1F7A45; } .ms-l-zk::before { background: #5A6572; } .ms-l-ted::before { background: #A16207; } .ms-l-ne::before { background: #C9D1D9; }
 #ms-odpoved { margin-top: 10px; font-size: .9rem; white-space: pre-wrap; display: none; max-height: 30vh; overflow-y: auto; }
 </style>
 <div id="tab-mysleni" class="tab-content">
@@ -551,14 +674,15 @@ button.btn:hover { opacity: 0.85; }
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
       <label style="font-size:.9rem"><input type="checkbox" id="ms-sledovat" checked> sledovat živě (chat, Matrix, rozhovor s Koláčem)</label>
       <span id="ms-zive">Hans právě přemýšlí</span>
-      <select id="ms-nedavne" style="margin-left:auto;max-width:420px"></select>
+      <button type="button" class="ms-neon-odkaz" id="ms-neon-odkaz">Klasický pohled</button>
+      <select id="ms-nedavne" style="margin-left:auto;max-width:420px;min-height:40px;border:1px solid var(--line);border-radius:999px;padding:0 12px;background:#FFFFFF;color:var(--fg)" aria-label="Poslední dotazy"></select>
     </div>
     <div class="ms-leg" style="margin-bottom:8px">
       <span class="ms-l-ted">právě tady</span><span class="ms-l-zk">prošel</span><span class="ms-l-cil">tady vznikla odpověď</span><span class="ms-l-ne">sem nedošel</span>
     </div>
-    <div id="ms-box">
+    <div id="ms-box" class="neon">
       <svg id="ms-svg"><g id="ms-g"></g></svg>
-      <div class="ms-ovl"><button id="ms-play" class="hl">▶ Přehrát</button><button id="ms-cesta">⌖ Na cestu</button><button id="ms-vse">⤢ Celý strom</button><button id="ms-plus">+</button><button id="ms-minus">−</button></div>
+      <div class="ms-ovl"><button id="ms-play" class="hl">▶ Přehrát</button><button id="ms-cesta">⌖ Na cestu</button><button id="ms-vse">⤢ Celý strom</button><button id="ms-plus">+</button><button id="ms-minus">−</button><button id="ms-cele">Celé okno</button><button id="ms-neon-zavri">Zavřít celé okno</button></div>
       <div id="ms-info">Čekám na dotaz. Kolečkem přibližuj, tažením posouvej, na uzel najeď pro podrobnosti.</div>
     </div>
     <div id="ms-odpoved"></div>
@@ -651,29 +775,93 @@ let logTimer = null;
 
 // ── Tab switching (APP_SHELL_V1) ──────────────────────────────────────────────
 const PAGE_TITLES = {
-  dashboard: 'Dashboard', diary: 'Deník', faces: 'Obličeje', objects: 'Objekty',
-  conversations: 'Konverzace', works: 'Hansova práce', questions: 'Otázky',
+  dashboard: 'Domů', diary: 'Deník', vyvoj: 'Jak se Hans mění', faces: 'Obličeje', objects: 'Objekty',
+  conversations: 'Rozhovory', works: 'Webová díla', obrazy: 'Obrazy', questions: 'Hansovy otázky',
   'cfg-identity': 'Nastavení', log: 'Log', users: 'Uživatelé', mysleni: 'Jak Hans přemýšlí',
   zpravy: 'Zprávy — sběr z více zdrojů',
   slevy: 'Slevy týdne — podle hlídaného seznamu',
   politici: 'Politici — ověřené výroky (Demagog.cz)',
+  system: 'Stav systému',
 };
+// HANS_WEB_OBYVAK_V1 — záložky ve skupinách; skupina s víc záložkami má podnabídku
+const OB_SKUPINY = {
+  domu: [['dashboard', 'Domů']],
+  denik: [['diary', 'Deník'], ['vyvoj', 'Jak se Hans mění']],
+  rozhovory: [['conversations', 'Rozhovory'], ['questions', 'Hansovy otázky']],
+  mysleni: [['mysleni', 'Myšlení']],
+  galerie: [['obrazy', 'Obrazy'], ['works', 'Webová díla']],
+  zpravy: [['zpravy', 'Zprávy'], ['slevy', 'Slevy'], ['politici', 'Politici']],
+  sprava: [['system', 'Stav systému'], ['faces', 'Obličeje'], ['objects', 'Objekty'], ['users', 'Uživatelé'], ['cfg-identity', 'Nastavení'], ['log', 'Log']],
+};
+function obSkupina(name) {
+  for (const g in OB_SKUPINY) if (OB_SKUPINY[g].some(x => x[0] === name)) return g;
+  return 'domu';
+}
 function showTab(name) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.app-nav button').forEach(b => b.classList.remove('active'));
   const tab = document.getElementById('tab-' + name);
   if (tab) tab.classList.add('active');
-  const btn = document.querySelector('.app-nav button[data-tab="' + name + '"]');
-  if (btn) btn.classList.add('active');
+  const g = obSkupina(name);
+  document.querySelectorAll('.ob-nav button').forEach(b => b.classList.toggle('active', b.dataset.group === g));
+  const sub = document.getElementById('ob-sub');
+  if (sub) {
+    const pol = OB_SKUPINY[g] || [];
+    sub.classList.toggle('on', pol.length > 1);
+    sub.innerHTML = pol.length > 1 ? pol.map(([id, nazev]) =>
+      `<button type="button" class="${id === name ? 'active' : ''}" onclick="showTab('${id}')">${nazev}</button>`).join('') : '';
+  }
+  const top = document.getElementById('app-top');
+  if (top) top.style.display = name === 'dashboard' ? 'none' : '';
   const pt = document.getElementById('page-title');
   if (pt) pt.textContent = PAGE_TITLES[name] || name;
   // Lazy load
   const loaders = {
     'diary': loadDiaryCards, 'faces': loadFaces, 'objects': loadObjects,
     'conversations': loadConversations, 'log': loadLog, 'questions': loadQuestions,
-    'works': loadWorks, 'zpravy': loadZpravy, 'slevy': loadSlevy, 'politici': loadPolitici, 'users': loadPristup, 'mysleni': () => window.msOtevri && window.msOtevri(),
+    'works': loadWorks, 'zpravy': loadZpravy, 'slevy': loadSlevy, 'politici': loadPolitici, 'users': loadPristup, 'obrazy': () => loadObrazy(0), 'mysleni': () => window.msOtevri && window.msOtevri(),
   };
   if (loaders[name]) loaders[name]();
+}
+// Domů: pozdrav podle denní doby a rychlé otázky
+function obPozdrav() {
+  const h = new Date().getHours();
+  const el = document.getElementById('ob-pozdrav');
+  if (el) el.textContent = h < 5 ? 'Dobrou noc.' : h < 10 ? 'Dobré ráno.' : h < 18 ? 'Dobrý den.' : 'Dobrý večer.';
+}
+function obZeptej(text) {
+  const i = document.getElementById('chat-input');
+  if (!i) return;
+  i.value = text; chatSend();
+}
+obPozdrav(); setInterval(obPozdrav, 600000);
+// skok na záložku podle adresy (#obrazy, #system, …)
+setTimeout(() => { const h = location.hash.slice(1); if (h && document.getElementById('tab-' + h)) showTab(h); }, 0);
+// HANS_WEB_OBRAZY_V1 — Galerie › Obrazy
+const OB_OBR = { limit: 48, druh: '', data: [] };
+async function loadObrazy(pridat) {
+  if (pridat) OB_OBR.limit += pridat;
+  try { OB_OBR.data = await (await fetch('/api/art/list?limit=' + OB_OBR.limit)).json(); } catch (e) { return; }
+  if (!Array.isArray(OB_OBR.data)) OB_OBR.data = [];
+  obObrazyKresli();
+}
+function obObrazyDruh(d) { OB_OBR.druh = OB_OBR.druh === d ? '' : d; obObrazyKresli(); }
+function obObrazyKresli() {
+  const D = OB_OBR.data, druhy = [...new Set(D.map(a => a.kind).filter(Boolean))];
+  document.getElementById('obr-druhy').innerHTML = druhy.length > 1 ? druhy.map(k =>
+    `<button type="button" onclick="obObrazyDruh('${esc(k)}')" style="${k === OB_OBR.druh ? 'border-color:var(--accent);color:var(--accent);background:var(--tint)' : ''}">${esc(k)}</button>`).join('') : '';
+  const V = OB_OBR.druh ? D.filter(a => a.kind === OB_OBR.druh) : D;
+  document.getElementById('obr-mrizka').innerHTML = V.map(a => {
+    const url = '/api/art/image?f=' + encodeURIComponent(a.file);
+    return `<figure style="margin:0;background:#FFFFFF;border-radius:18px;overflow:hidden;display:flex;flex-direction:column">
+      <a href="${url}" target="_blank"><img src="${url}" alt="${esc(a.book)}" loading="lazy" style="width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:var(--bg3)"></a>
+      <figcaption style="padding:12px 14px 14px">
+        <div style="display:flex;gap:8px;align-items:baseline;justify-content:space-between"><span style="font-weight:700;font-size:15px;line-height:1.3">${esc(a.book)}</span><span style="font-size:12px;color:var(--fg2);white-space:nowrap">${esc(a.date)}</span></div>
+        ${a.origin ? `<div onclick="this.style.maxHeight=this.style.maxHeight?'':'4.3em'" title="Klikni pro celý text" style="font-size:13px;font-style:italic;margin-top:6px;max-height:4.3em;overflow:hidden;line-height:1.4;cursor:pointer">${esc(a.origin)}</div>` : ''}
+        <div onclick="this.style.maxHeight=this.style.maxHeight?'':'4.3em'" title="Klikni pro celý text" style="font-size:13px;color:var(--fg2);margin-top:6px;max-height:4.3em;overflow:hidden;line-height:1.4;cursor:pointer">${esc(a.caption)}</div>
+      </figcaption></figure>`;
+  }).join('');
+  document.getElementById('obr-pocet').textContent = `Zobrazeno ${V.length}` + (D.length >= OB_OBR.limit ? '' : ' — to jsou všechny');
+  document.getElementById('obr-dalsi').style.display = D.length >= OB_OBR.limit ? '' : 'none';
 }
 
 // ── Config load/save ──────────────────────────────────────────────────────────
@@ -694,9 +882,9 @@ let schemaActiveCat = '';
 
 function schemaFieldHtml(f) {
   const sev = f.managed_by === 'severka'
-    ? ` <span class="badge" style="background:#2a1a4e;color:var(--accent2)">🧭 Severka</span>` : '';
+    ? ` <span class="badge" style="background:#EDE9FE;color:var(--accent2)">🧭 Severka</span>` : '';
   const rst = f.restart
-    ? ` <span class="badge" style="background:#3a2a1e;color:var(--orange)">restart</span>` : '';
+    ? ` <span class="badge" style="background:#FFEDD5;color:var(--orange)">restart</span>` : '';
   const tip = f.tip
     ? `<small style="color:var(--fg2);display:block;margin-top:4px;line-height:1.35">${f.tip}</small>` : '';
   let input;
@@ -1020,21 +1208,18 @@ async function loadStatus() {
   const reasonEl = document.getElementById('mood-reason');
   if (moodEl) {
     moodEl.textContent = s.mood || '—';
-    moodEl.style.fontSize = '1.3rem';
-    moodEl.style.fontWeight = '600';
-    moodEl.style.textTransform = 'capitalize';
   }
   if (reasonEl) reasonEl.textContent = '';
   document.getElementById('status-dot').style.background =
     s.config_ok ? 'var(--green)' : 'var(--red)';
   document.getElementById('status-text').textContent =
-    s.config_ok ? 'OK' : 'Config error';
+    s.config_ok ? 'Vše běží' : 'Chyba nastavení';
   // AVATAR_WEB_ANIM_V1 — ukaž blok jen když existuje avatar (probe PNG poster);
   // video se loopuje samo, src neobnovujeme (restartovalo by smyčku).
   const _avb = document.getElementById('app-avatar');
   if (_avb) {
     const _im = new Image();
-    _im.onload  = () => { _avb.style.display = 'flex'; };
+    _im.onload  = () => { _avb.style.display = 'flex'; const ph = document.querySelector('.ob-face-ph'); if (ph) ph.style.display = 'none'; };
     _im.onerror = () => { _avb.style.display = 'none'; };
     _im.src = '/api/avatar.png?t=' + Date.now();
   }
@@ -1047,13 +1232,13 @@ function _renderGameMode() {
   const btn = document.getElementById('game-mode-btn');
   if (!btn) return;
   if (_gameMode) {
-    btn.textContent = '🎮 Herní mód: ZAP — vypnout';
-    btn.style.background = 'var(--accent2, #c87)'; btn.style.color = '#fff';
-    btn.style.borderColor = 'var(--accent2, #c87)';
+    btn.textContent = 'Herní mód zapnutý — vypnout';
+    btn.style.background = 'var(--orange)'; btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--orange)';
   } else {
-    btn.textContent = '🎮 Herní mód';
-    btn.style.background = 'var(--bg3)'; btn.style.color = 'var(--fg2)';
-    btn.style.borderColor = 'var(--bg3)';
+    btn.textContent = 'Herní mód';
+    btn.style.background = '#FFFFFF'; btn.style.color = 'var(--fg2)';
+    btn.style.borderColor = 'var(--line)';
   }
 }
 async function loadGameMode() {
@@ -1386,8 +1571,13 @@ async function loadKodiPlaying() {
     const k = await (await fetch('/api/kodi/playing')).json();
     const card = document.getElementById('kodi-card');
     if (!card) return;
-    if (!k.playing) { card.style.display = 'none'; return; }
-    card.style.display = '';
+    if (!k.playing) {
+      document.getElementById('kodi-title').textContent = 'Televize teď nehraje';
+      document.getElementById('kodi-meta').textContent = '';
+      document.getElementById('kodi-plot').textContent = '';
+      document.getElementById('kodi-poster').style.display = 'none';
+      return;
+    }
     document.getElementById('kodi-title').textContent = k.title || '';
     const meta = [];
     if (k.showtitle) meta.push(k.showtitle + (k.season ? ` S${k.season}E${k.episode}` : ''));
@@ -1474,7 +1664,7 @@ async function loadHealth() {
     if (!h || !h.services || !h.services.length) { card.style.display = 'none'; return; }
     card.style.display = '';
     const ICON = {ok:'✅', paused:'⏸️', wedged:'⚠️', warn:'⚠️', down:'❌', unknown:'❔'};
-    const COL = {ok:'var(--bg3)', paused:'var(--bg3)', wedged:'#5a4a1e', warn:'#5a4a1e', down:'#5a2530', unknown:'var(--bg3)'};
+    const COL = {ok:'var(--bg3)', paused:'var(--bg3)', wedged:'#FEF3C7', warn:'#FEF3C7', down:'#5a2530', unknown:'var(--bg3)'};
     const grid = document.getElementById('health-grid');
     grid.innerHTML = h.services.map(s =>
       `<div title="${(s.detail||'').replace(/"/g,'')}" style="display:flex;align-items:center;gap:6px;`
@@ -1496,10 +1686,10 @@ async function loadHealth() {
 // (tmavsi + svetlejsi), aby bylo na prvni pohled videt, ktere dve krivky patri
 // k sobe. Poradi mist je abecedni → stabilni pri prejmenovani.
 const PLACE_PAIRS = [
-  ['#89b4fa', '#b8d0fd'],   // modra + svetle modra
-  ['#f38ba8', '#f9c2d1'],   // cervena + svetle cervena
-  ['#a6e3a1', '#cdf0ca'],
-  ['#f9e2af', '#fcf0d5'],
+  ['#2563EB', '#b8d0fd'],   // modra + svetle modra
+  ['#BE123C', '#f9c2d1'],   // cervena + svetle cervena
+  ['#1F7A45', '#cdf0ca'],
+  ['#A16207', '#fcf0d5'],
 ];
 let _MISTA = [];
 function PLACE_COL(misto, odstin) {
@@ -1508,7 +1698,7 @@ function PLACE_COL(misto, odstin) {
   // po prejmenovani „pokoj"). Takove dostane SEDOU, ne barvu ziveho mista:
   // jinak by se tvarilo jako ono a paleta by se posunula.
   const i = _MISTA.indexOf(misto);
-  if (i < 0) return odstin ? '#6c7086' : '#585b70';
+  if (i < 0) return odstin ? '#6c7086' : '#9AA5B1';
   return PLACE_PAIRS[i % PLACE_PAIRS.length][odstin ? 1 : 0];
 }
 function CIDLO_COL(c, vsechna) {
@@ -1554,17 +1744,17 @@ async function loadClimate() {
     const W=640,H=200,L=32,R=10,T=10,Bm=22,pw=W-L-R,ph=H-T-Bm;
     const X = ts => L + (ts-tmin)/(tmax-tmin)*pw;
     const Y = t  => T + (1-(t-ymin)/(ymax-ymin))*ph;
-    const COLORS = ['#f38ba8','#89b4fa','#a6e3a1','#f9e2af'];
+    const COLORS = ['#BE123C','#2563EB','#1F7A45','#A16207'];
     let g = '';
     for (let i=0;i<=3;i++) {
       const t = ymin + (ymax-ymin)*i/3, y = Y(t);
-      g += `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="#313145" stroke-width="1"/>`;
-      g += `<text x="${L-4}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#a6adc8">${t.toFixed(0)}°</text>`;
+      g += `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="#E4E8EC" stroke-width="1"/>`;
+      g += `<text x="${L-4}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#5A6572">${t.toFixed(0)}°</text>`;
     }
     const fmt = t => { const dd=new Date(t*1000);
       return dd.getHours()+':'+String(dd.getMinutes()).padStart(2,'0'); };
-    g += `<text x="${L}" y="${H-5}" font-size="9" fill="#a6adc8">${fmt(tmin)}</text>`;
-    g += `<text x="${W-R}" y="${H-5}" text-anchor="end" font-size="9" fill="#a6adc8">${fmt(tmax)}</text>`;
+    g += `<text x="${L}" y="${H-5}" font-size="9" fill="#5A6572">${fmt(tmin)}</text>`;
+    g += `<text x="${W-R}" y="${H-5}" text-anchor="end" font-size="9" fill="#5A6572">${fmt(tmax)}</text>`;
     C.forEach((c,i) => {
       const col = CIDLO_COL(c, C);
       const b = c.body.filter(p=>p.t!=null);
@@ -1592,7 +1782,7 @@ async function loadStances() {
     const S = (d && d.stances) || [];
     if (!S.length) { card.style.display = 'none'; return; }
     card.style.display = '';
-    const COLORS = ['#89b4fa','#cba6f7','#a6e3a1','#f9e2af','#fab387','#f38ba8'];
+    const COLORS = ['#2563EB','#7C3AED','#1F7A45','#A16207','#C2410C','#BE123C'];
     let tmin = Infinity, tmax = -Infinity;
     S.forEach(s => s.points.forEach(p => { if(p.ts<tmin)tmin=p.ts; if(p.ts>tmax)tmax=p.ts; }));
     if (!isFinite(tmin)) { card.style.display='none'; return; }
@@ -1603,12 +1793,12 @@ async function loadStances() {
     let g = '';
     [0,0.25,0.5,0.75,1].forEach(c => {
       const y=Y(c);
-      g += `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="#313145" stroke-width="1"/>`;
-      g += `<text x="${L-4}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#a6adc8">${c.toFixed(2)}</text>`;
+      g += `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="#E4E8EC" stroke-width="1"/>`;
+      g += `<text x="${L-4}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#5A6572">${c.toFixed(2)}</text>`;
     });
     const fmt = t => { const dd=new Date(t*1000); return dd.getDate()+'.'+(dd.getMonth()+1)+'.'; };
-    g += `<text x="${L}" y="${H-6}" font-size="9" fill="#a6adc8">${fmt(tmin)}</text>`;
-    g += `<text x="${W-R}" y="${H-6}" text-anchor="end" font-size="9" fill="#a6adc8">${fmt(tmax)}</text>`;
+    g += `<text x="${L}" y="${H-6}" font-size="9" fill="#5A6572">${fmt(tmin)}</text>`;
+    g += `<text x="${W-R}" y="${H-6}" text-anchor="end" font-size="9" fill="#5A6572">${fmt(tmax)}</text>`;
     S.forEach((s,i) => {
       const col = COLORS[i%COLORS.length];
       if (s.points.length > 1) {
@@ -1647,12 +1837,12 @@ function _svgChart(series, ymin, ymax, W, H) {
   let g='';
   [ymin,(ymin+ymax)/2,ymax].forEach(v=>{
     const y=Y(v);
-    g+=`<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="#313145"/>`;
-    g+=`<text x="${L-4}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#a6adc8">${bigY?Math.round(v):v.toFixed(2)}</text>`;
+    g+=`<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="#E4E8EC"/>`;
+    g+=`<text x="${L-4}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#5A6572">${bigY?Math.round(v):v.toFixed(2)}</text>`;
   });
   const fmt=t=>{const d=new Date(t*1000);return d.getDate()+'.'+(d.getMonth()+1)+'.';};
-  g+=`<text x="${L}" y="${H-5}" font-size="9" fill="#a6adc8">${fmt(tmin)}</text>`;
-  g+=`<text x="${W-R}" y="${H-5}" text-anchor="end" font-size="9" fill="#a6adc8">${fmt(tmax)}</text>`;
+  g+=`<text x="${L}" y="${H-5}" font-size="9" fill="#5A6572">${fmt(tmin)}</text>`;
+  g+=`<text x="${W-R}" y="${H-5}" text-anchor="end" font-size="9" fill="#5A6572">${fmt(tmax)}</text>`;
   series.forEach(s=>{
     if(s.points.length>1){
       const ln=s.points.map(p=>`${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join(' ');
@@ -1671,11 +1861,11 @@ async function loadTrends() {
     const mood=(d&&d.mood)||[], hobbies=(d&&d.hobbies)||[];
     if (!mood.length && !hobbies.length) { card.style.display='none'; return; }
     card.style.display='';
-    const moodS=[{points:mood.map(m=>({x:m.ts,y:m.intensity})),color:'#cba6f7'}];
+    const moodS=[{points:mood.map(m=>({x:m.ts,y:m.intensity})),color:'#7C3AED'}];
     document.getElementById('mood-chart').innerHTML =
       mood.length ? _svgChart(moodS,0,1,640,150)
                   : '<div style="font-size:0.72rem;color:var(--fg2)">zatím žádná data (naplní se při změně nálady)</div>';
-    const COLORS=['#89b4fa','#a6e3a1','#f9e2af','#fab387','#f38ba8','#cba6f7'];
+    const COLORS=['#2563EB','#1F7A45','#A16207','#C2410C','#BE123C','#7C3AED'];
     let mx=1; hobbies.forEach(h=>h.points.forEach(p=>{if(p.count>mx)mx=p.count;}));
     const hS=hobbies.map((h,i)=>({points:h.points.map(p=>({x:p.ts,y:p.count})),color:COLORS[i%COLORS.length]}));
     document.getElementById('hobby-chart').innerHTML = hS.length ? _svgChart(hS,0,mx,640,170) : '';
@@ -1887,7 +2077,7 @@ function chatAppend(text, mine) {
   const log = document.getElementById('chat-log');
   if (!log) return null;
   const div = document.createElement('div');
-  div.style.cssText = 'padding:7px 11px;border-radius:9px;max-width:88%;font-size:0.88rem;line-height:1.45;white-space:pre-wrap;' +
+  div.style.cssText = 'padding:10px 14px;border-radius:16px;max-width:88%;font-size:0.95rem;line-height:1.5;white-space:pre-wrap;' +
     (mine ? 'align-self:flex-end;background:var(--accent);color:#fff' : 'align-self:flex-start;background:var(--bg3);color:var(--fg)');
   div.textContent = text;
   log.appendChild(div); log.scrollTop = log.scrollHeight;
@@ -2144,14 +2334,14 @@ function _qCard(q) {
     body = `
       <textarea id="qa-${q.id}" placeholder="Vaše odpověď..."
         style="width:100%;min-height:56px;margin-top:8px;padding:7px 10px;
-               background:var(--bg3);border:1px solid #444;border-radius:4px;
+               background:var(--bg3);border:1px solid #D5DBE1;border-radius:4px;
                color:var(--fg);font-family:inherit;font-size:0.9rem;
                resize:vertical;box-sizing:border-box"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="_qSubmit(${q.id})">Odeslat</button>
         <button class="btn btn-danger" onclick="_qDismiss(${q.id})">Zrušit otázku</button>
         <label style="font-size:0.82rem;color:var(--fg2)">Přesměrovat:
-          <select style="background:var(--bg3);border:1px solid #444;border-radius:4px;
+          <select style="background:var(--bg3);border:1px solid #D5DBE1;border-radius:4px;
                          color:var(--fg);padding:4px 6px;margin-left:4px"
             onchange="_qReassign(${q.id}, this.value)">${opts}</select>
         </label>
@@ -2351,8 +2541,9 @@ async function savePristup() {
   }
 
   function rozloz(koren) {
-    const DX = [0, 230, 470, 760], R = 20; let radek = 0; const uzly = [], hrany = [];
+    const DX = [0, 230, 470, 760], R = 20; let radek = 0; const uzly = [], hrany = []; let vc = 0;
     (function jdi(n, hl, rod) {
+      n.vi = n.typ === "vrstva" ? vc++ : (rod ? rod.vi : -1);   // HANS_WEB_NEON_V1 — barva podle vrstvy
       n.x = DX[Math.min(hl, 3)] + (hl > 3 ? (hl - 3) * 200 : 0);
       const deti = (n.typ === "skupina" && !n.stav && !n.rozbal) ? [] : n.deti;
       if (!deti.length) n.y = radek++ * R;
@@ -2362,17 +2553,45 @@ async function savePristup() {
     return { uzly, hrany };
   }
 
+  // HANS_WEB_NEON_KRUH_V1 — kruhové rozložení jen pro neonový pohled
+  function rozlozKruh(koren) {
+    const RR = [0, 170, 360, 560, 740]; const uzly = [], hrany = [], listy = []; let vc = 0;
+    (function jdi(n, hl, rod) {
+      n.vi = n.typ === "vrstva" ? vc++ : (rod ? rod.vi : -1); n.hl = hl;
+      n._d = (n.typ === "skupina" && !n.stav && !n.rozbal) ? [] : n.deti;
+      if (!n._d.length) listy.push(n); else n._d.forEach(c => jdi(c, hl + 1, n));
+      uzly.push(n); if (rod) hrany.push([rod, n]);
+    })(koren, 0, null);
+    let pos = 0, pv; listy.forEach(n => { if (pv !== undefined && n.vi !== pv) pos += 6; n.p = pos++; pv = n.vi; });   // mezera mezi branami
+    listy.forEach(n => { n.a = (n.p + 0.5) / (pos + 6) * 2 * Math.PI - Math.PI / 2; });
+    (function uhel(n) { if (n._d.length) { n._d.forEach(uhel); n.a = (n._d[0].a + n._d[n._d.length - 1].a) / 2; } })(koren);
+    // koncové body všechny na vnějším kruhu, ~15 px oblouku na bod; vnitřní uzly podle hloubky
+    const hmax = Math.max(1, ...listy.map(n => n.hl)), Rl = Math.max(600, (pos + 6) * 15 / (2 * Math.PI));
+    uzly.forEach(n => { n.list = !n._d.length && n.hl > 0; n.r = n.list ? Rl : Rl * n.hl / (hmax + 0.4);
+      n.x = n.r * Math.cos(n.a); n.y = n.r * Math.sin(n.a); });
+    return { uzly, hrany, kruh: true };
+  }
+  function kruhCesta(a, b) {
+    const rm = (a.r + b.r) / 2, aa = a.r ? a.a : b.a;
+    return `M${a.x},${a.y} C${rm * Math.cos(aa)},${rm * Math.sin(aa)} ${rm * Math.cos(b.a)},${rm * Math.sin(b.a)} ${b.x},${b.y}`;
+  }
   function kresli(d, rozbalene) {
     const st = STROMY[(d && d.druh) || "chat"]; if (!st) return;
     POSL = d; const koren = postav(st, d);
     (function z(n) { if (rozbalene && rozbalene[n.id]) n.rozbal = true; n.deti.forEach(z); })(koren);
-    VYK = rozloz(koren); const g = $("ms-g"); g.innerHTML = "";
+    VYK = $("ms-box").classList.contains("neon") ? rozlozKruh(koren) : rozloz(koren); const g = $("ms-g"); g.innerHTML = "";
     VYK.hrany.forEach(([a, b]) => { const mx = (a.x + b.x) / 2;
-      const p = sv("path", { d: `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`, class: "ms-hrana" }); b.hrana = p; g.append(p); });
+      const dd = VYK.kruh ? kruhCesta(a, b) : `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`, lv = " l" + (Math.max(0, b.vi) % 6);
+      const p = sv("path", { d: dd, class: "ms-hrana" + lv }); b.hrana = p; g.append(p);
+      const tk = sv("path", { d: dd, class: "ms-tok" + lv }); b.tok = tk; g.append(tk); });
     VYK.uzly.forEach(n => {
       const u = sv("g", { class: "ms-uzel " + n.typ, transform: `translate(${n.x},${n.y})` });
       u.append(sv("circle", { r: n.typ === "volba" ? 3.5 : n.typ === "krok" ? 5 : 7 }));
-      const t = sv("text", { x: 10 }); t.textContent = n.nazev + (n.typ === "skupina" ? (n.stav || n.rozbal ? " ▾" : " ▸") : ""); u.append(t);
+      let ta = { x: 10 };
+      if (VYK.kruh && n.list) { const deg = n.a * 180 / Math.PI, vlevo = Math.cos(n.a) < 0;   // popisek natočený ven od středu
+        ta = vlevo ? { x: -10, "text-anchor": "end", transform: `rotate(${deg + 180})` } : { x: 10, transform: `rotate(${deg})` }; }
+      else if (VYK.kruh && n.x < -1) ta = { x: -10, "text-anchor": "end" };
+      const t = sv("text", ta); t.textContent = n.nazev + (n.typ === "skupina" ? (n.stav || n.rozbal ? " ▾" : " ▸") : ""); u.append(t);
       u.addEventListener("mouseenter", () => { $("ms-info").textContent = (n.nazev || "") + (n.info ? " — " + n.info : "") + (n.t != null && n.stav ? ` · ${n.t.toFixed(2)} s` : ""); });
       if (n.typ === "skupina") u.addEventListener("click", ev => { ev.stopPropagation(); const r = rozb(); r[n.id] = !r[n.id]; kresli(POSL, r); });
       n.el = u; g.append(u);
@@ -2386,7 +2605,8 @@ async function savePristup() {
     VYK.uzly.forEach(n => { const on = svit.has(n.id);
       n.el.classList.toggle("svit", on && n.stav === "svit"); n.el.classList.toggle("cil", on && n.stav === "cil");
       n.el.classList.toggle("potlacen", on && n.stav === "potlacen");
-      if (n.hrana) n.hrana.classList.toggle("svit", on && n.stav !== "potlacen"); });
+      if (n.hrana) n.hrana.classList.toggle("svit", on && n.stav !== "potlacen");
+      if (n.tok) n.tok.classList.toggle("svit", on && n.stav !== "potlacen"); });
   }
   function ted(klic) {
     if (!VYK) return "";
@@ -2403,9 +2623,9 @@ async function savePristup() {
   function prizpusob(uzly) {
     const box = $("ms-box").getBoundingClientRect(); if (!uzly.length || !box.width) return;
     const xs = uzly.map(n => n.x), ys = uzly.map(n => n.y);
-    const x0 = Math.min(...xs) - 20, x1 = Math.max(...xs) + 260, y0 = Math.min(...ys) - 30, y1 = Math.max(...ys) + 30;
+    const x0 = Math.min(...xs) - (VYK.kruh ? 260 : 20), x1 = Math.max(...xs) + 260, y0 = Math.min(...ys) - (VYK.kruh ? 230 : 30), y1 = Math.max(...ys) + (VYK.kruh ? 230 : 30);
     TR.k = Math.min(2.2, Math.max(0.15, Math.min(box.width / (x1 - x0), (box.height - 40) / (y1 - y0))));
-    TR.x = -x0 * TR.k + 10; TR.y = -y0 * TR.k + 10 + ((box.height - 40) - (y1 - y0) * TR.k) / 2; aplikuj();
+    TR.x = -x0 * TR.k + (VYK.kruh ? (box.width - (x1 - x0) * TR.k) / 2 : 10); TR.y = -y0 * TR.k + 10 + ((box.height - 40) - (y1 - y0) * TR.k) / 2; aplikuj();
   }
   const naCestu = () => { if (VYK) prizpusob(VYK.uzly.filter(n => n.stav)); };
 
@@ -2463,6 +2683,20 @@ async function savePristup() {
     $("ms-plus").onclick = () => zoom(1.3); $("ms-minus").onclick = () => zoom(1 / 1.3);
     $("ms-vse").onclick = () => VYK && prizpusob(VYK.uzly); $("ms-cesta").onclick = naCestu; $("ms-play").onclick = prehrat;
     $("ms-nedavne").onchange = e => { if (e.target.value) nacti(e.target.value, true); };
+    // HANS_WEB_NEON_V1 — neonový pohled přes celé okno, jen na vyžádání
+    // HANS_WEB_NEON_VYCHOZI_V1 — výchozí je neon v kartě; volba klasického pohledu se pamatuje v prohlížeči
+    const prekresli = () => { if (VYK) kresli(POSL, rozb()); setTimeout(() => VYK && prizpusob(VYK.uzly), 30); };
+    const neon = on => { box.classList.toggle("neon", on); if (!on) box.classList.remove("cele");
+      $("ms-neon-odkaz").textContent = on ? "Klasický pohled" : "Neonový pohled";
+      try { localStorage.setItem("ms_pohled", on ? "neon" : "klasicky"); } catch (e) {}
+      prekresli(); };
+    const cele = on => { if (on) box.classList.add("neon"); box.classList.toggle("cele", on); prekresli(); };
+    let vychozi = true; try { vychozi = localStorage.getItem("ms_pohled") !== "klasicky"; } catch (e) {}
+    box.classList.toggle("neon", vychozi); $("ms-neon-odkaz").textContent = vychozi ? "Klasický pohled" : "Neonový pohled";
+    $("ms-neon-odkaz").onclick = () => neon(!box.classList.contains("neon"));
+    $("ms-cele").onclick = () => cele(true);
+    $("ms-neon-zavri").onclick = () => cele(false);
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && box.classList.contains("cele")) cele(false); });
   })();
 
   window.msOtevri = async function () {
@@ -2479,6 +2713,7 @@ async function savePristup() {
   if (location.hash === "#slevy") setTimeout(() => showTab("slevy"), 0);     // HANS_LETAKY_WEB_V1
   if (location.hash === "#politici") setTimeout(() => showTab("politici"), 0);   // HANS_DEMAGOG_V1
   if (location.hash === "#nastaveni") setTimeout(() => showTab("cfg-identity"), 0);   // WEB_SETTINGS_ESSENTIAL_V1
+  if (location.hash === "#neon") setTimeout(() => { showTab("mysleni"); setTimeout(() => $("ms-cele").click(), 400); }, 0);   // HANS_WEB_NEON_V1
 })();
 </script>
 </body>
