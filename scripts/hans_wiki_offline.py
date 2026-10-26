@@ -709,3 +709,60 @@ def _titul_z_vety_useky(veta: str):
     except Exception as e:
         _log.debug("titul_z_vety %r: %s", veta, e)
         return None
+
+
+# ── HANS_WIKI_ROZCESTNIK_MISTO_V1 (26. 10.) — rozcestník + místo z otázky ──
+# /tazatel 26. 10.: „Kdo navrhl kostel svaté Ludmily na Vinohradech?“ → kotva
+# „kostel svaté Ludmily“ = rozcestník bez pražského významu → dohledání nic →
+# z hlavy „Jaroslav Rakovský“, po doptání „Josef Hlávka“ (správně Josef Mocker,
+# článek „Bazilika svaté Ludmily“). Významy rozcestníku (u sakrálních staveb
+# i kostel/chrám/bazilika/kaple…) → vybrat JEDINÝ, jehož název nebo začátek
+# článku obsahuje místo z otázky (slovo velkým písmenem za v/ve/na/u/z…).
+_SAKR = ("Kostel", "Chrám", "Bazilika", "Katedrála", "Kaple", "Klášter", "Kostelík")
+_MISTO_PRED = re.compile(r"\b(?:v|ve|na|u|z|ze|pod|nad|poblíž|blízko)\s+((?:[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w-]+\s*){1,3})")
+
+
+def vyznam_podle_mista(titul: str, veta: str):
+    """Rozcestník `titul` + místo ve `veta` → jediný význam, nebo None."""
+    try:
+        db = _db()
+        zak = re.sub(r"\s*\(.*?\)\s*$", "", titul or "").strip()
+        sl = zak.split()
+        if not sl:
+            return None
+        if sl[0].capitalize() in _SAKR:
+            zb = " ".join(sl[1:])
+            vzory = [(w + " " + zb, w + " " + zb + " (%") for w in _SAKR]
+        else:
+            vzory = [(zak, zak + " (%")]
+        kand = []
+        for presne, s_upr in vzory:
+            # i s přívlastkem: „Kostel svatého Jakuba Staršího (Kutná Hora)“
+            kand += [t for (t,) in db.execute(
+                "SELECT titul FROM clanek WHERE rozcestnik=0 AND (titul=? OR titul LIKE ? "
+                "OR titul LIKE ?) LIMIT 600", (presne, s_upr, s_upr[:-3] + " % (%"))]
+        kand = list(dict.fromkeys(kand))
+        # místo = skupina kmenů; víceslovné („Malé Straně“) musí sedět celé
+        mista = []
+        for m in _MISTO_PRED.finditer(veta or ""):
+            sk = [_fold_tzv(w) for w in m.group(1).split()
+                  if _fold_tzv(w) not in {_fold_tzv(x) for x in sl}]
+            if not sk or max(len(fw) for fw in sk) < 4:
+                continue
+            mista.append([fw[:max(3, len(fw) - 2)] for fw in sk if len(fw) >= 3])
+        if not kand or not mista:
+            return None
+        _sedi = lambda hay: any(all(re.search(r"\b" + re.escape(s), hay) for s in sk)
+                                for sk in mista)
+        # nejdřív místo v NÁZVU (levné, i u stovek kandidátů), text článku jen
+        # když název nerozhodne a kandidátů je málo
+        sedi = [t for t in kand if _sedi(_fold_tzv(t))]
+        if not sedi and len(kand) <= 40:
+            sedi = [t for t in kand if _sedi(_fold_tzv((extrakt(t)[0] or "")[:1500]))]
+        if len(sedi) == 1:
+            _log.info("HANS_WIKI_ROZCESTNIK_MISTO_V1: rozcestník %r + místo %s → %r",
+                      titul, mista, sedi[0])
+            return sedi[0]
+    except Exception as e:
+        _log.debug("HANS_WIKI_ROZCESTNIK_MISTO_V1 %r: %s", titul, e)
+    return None

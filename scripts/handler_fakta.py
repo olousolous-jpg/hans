@@ -970,6 +970,14 @@ class FaktaMixin:
             _wr._get = _jen_lokalne        # jen lokálně: rozhoduje se u každé otázky
             titul = _wr._wikipedia_search(tema)
             self._presny_titul = titul     # HANS_LOOKUP_PRESNY_PODKLAD_V1
+            if titul and _wo.extrakt(titul)[1]:
+                # HANS_WIKI_ROZCESTNIK_MISTO_V1 (26. 10.) — rozcestník + místo
+                # z otázky („kostel svaté Ludmily na Vinohradech“) → jediný význam
+                _vm = _wo.vyznam_podle_mista(titul, (veta or "") + " " + (_prepis or ""))
+                if _vm:
+                    self._presny_titul = _vm
+                    self._presny_z_vety = _vm
+                    return _vm
             if not titul or _wo.extrakt(titul)[1]:
                 return None
             a, b = _tok(tema), _tok(titul)
