@@ -917,6 +917,13 @@ def _overit(h, otazka, prepis, odpoved) -> list:
             _sl = re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", _hl).split(",")[0]))
             if not _sl or 2 * sum(w[:5] in _kv for w in _sl) <= len(_sl):
                 _hl = None
+            # HANS_OVERENI_OPRAVA_MISTO_V1 — římská číslice titulu musí být ve
+            # větě či otázce celá („Václav III. zemřel…“ × článek Václav II. →
+            # dřív planá oprava „u Václava II. úmrtí 1305“)
+            elif any(not re.search(r"(?<![IVXLC])" + re.escape(rc) + r"(?![IVXLC])",
+                                   r["veta"] + " " + otazka)
+                     for rc in re.findall(r"\b[IVXLC]+\.", _hl)):
+                _hl = None
         oprava = None
         for x in wd:
             if x["verdikt"] != "rozpor" or x["clanek"] != _hl or x["udaj"] in dol:
@@ -940,6 +947,33 @@ def _overit(h, otazka, prepis, odpoved) -> list:
                 _i = r["veta"].find(str(x["udaj"]).strip(" .,"))
                 if _i > 0 and _VZTAH_OSOBY.search(r["veta"][:_i]):
                     continue
+            # HANS_OVERENI_OPRAVA_MISTO_V1 (26. 10.) — místo narození / úmrtí
+            # (Mozart „ve Vídni“, Einstein „ve Vratislavi“): rozpor stín chytal,
+            # oprava se nepřipojila. 📏 stín 17.–25. 10. přepočten dnešním
+            # kódem: skutečné 8 (Mozart ×4, Einstein, Marie Terezie, Žofie
+            # Bavorská), plané odfiltrují pojistky níž (výčet dětí, Václav II.
+            # × III., Gasser — článek × Wikidata). Místo musí stát HNED za
+            # „v/ve“; místo, které Hans opsal z dohledaného článku, se neopravuje;
+            # hodnota z Wikidat českým štítkem („Salcburk“, ne „Salzburg“).
+            _misto_v = None
+            if _p in ("P19", "P20"):
+                _slo = re.match(r"[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž\-]+", str(x["udaj"]))
+                _mv = _slo and re.search(r"\b(ve?)\s+" + re.escape(_slo.group(0)), r["veta"])
+                _qs = [q for q in ((_c().get(_hl) or {}).get("p") or {}).get(_p, [])
+                       if isinstance(q, str)]
+                _lc = _c().get("LC:" + _qs[0]) if len(_qs) == 1 else ""
+                _txt_cl = next((tx for kn, tx in r["cl"] if kn == _hl), "") or ""
+                if (not _mv or not _lc
+                        or (_UVOD_DOHL.search(r["veta"])
+                            and _fold(_slo.group(0))[:max(4, len(_slo.group(0)) - 2)] in _fold(_txt_cl))):
+                    continue
+                _misto_v = (_mv.group(1).lower(), _slo.group(0), _lc)
+            if _misto_v:
+                oprava = {"p": _p, "clanek": _hl, "udaj": _misto_v[1], "spravne": _misto_v[2],
+                          "text": "Ještě oprava: podle Wikidat je u „%s“ uvedeno místo %s %s, ne %s %s." % (
+                              _hl, "narození" if _p == "P19" else "úmrtí", _misto_v[2],
+                              _misto_v[0], _misto_v[1])}
+                break
             if _p in _OPRAVA_POPIS and len(x.get("wd") or []) == 1:
                 oprava = {"p": _p, "clanek": _hl, "udaj": str(x["udaj"]).strip(" .,"),
                           "spravne": str(x["wd"][0]),

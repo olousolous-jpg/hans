@@ -1673,6 +1673,25 @@ class FaktaMixin:
                 re.search(r"(?<![a-z])" + re.escape(x) + r"[a-z]{0,4}(?![a-z])",
                           _txt)
                 for x in _formy if len(x) >= 4)
+            # HANS_F1_ASKER_TVARY_V1 (26. 10.) — pády jména s pohyblivým „e“
+            # („Marek“ → „Marka“, „Markovi“) a tvary z `known_persons` (bez
+            # 5. pádu: oslovení na konci přepisu neškodí). Dřív prošlo „Jak
+            # uvidí pozorovatel Marka pohybujícího se…“ nebo „Co zaujalo Marka
+            # na práci Heideggera?“. Jen PŘESNÉ tvary („Markéta“ ≠ Marek).
+            # 📏 1 820 přepisů z logu: 6 nově zahozeno (5 se špatným podmětem, 1 neutrální).
+            if not _jmenuje and _kdo:
+                _tv = set()
+                _pe = re.match(r"(.*[^aeiouy])e([klrcnz])$", _kdo)
+                if _pe and len(_kdo) >= 4:
+                    _km = _pe.group(1) + _pe.group(2)
+                    _tv |= {_km + k for k in ("a", "ovi", "em", "ova", "ovo", "ove", "ovy",
+                                              "ovu", "ovym", "ovych", "uv")}
+                _kp = (self.config.get("known_persons", {}) or {}).get(kdo or "") or {}
+                if isinstance(_kp, dict):
+                    _tv |= {_f(_kp[k]) for k in ("acc", "gen", "dat", "ins", "loc")
+                            if _kp.get(k)}
+                _jmenuje = any(len(x) >= 4 and re.search(
+                    r"(?<![a-z])" + re.escape(x) + r"(?![a-z])", _txt) for x in _tv - {_kdo})
             if not _jmenuje:
                 return False
             # V2: jméno tazatele v 1. pádě = podmět věty, i když vedlejší věta

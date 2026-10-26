@@ -324,7 +324,7 @@ class SystemMixin:
         ctx.diary_ctx = ""
         ctx._hi = getattr(self, '_hans_idle', None)
         if ctx._hi:
-            _diary = ctx._hi.get_diary_context(max_age_h=24)
+            _diary = ctx._hi.get_diary_context(max_age_h=24, cetba=False)   # HANS_CETBA_JEDNOU_V1
             if _diary:
                 ctx.diary_ctx = '\n\n' + _diary
 

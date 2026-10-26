@@ -2811,8 +2811,12 @@ class HansIdle:
 
     # ── LLM shrnutí dne ───────────────────────────────────────────────────────
 
-    def get_diary_context(self, max_age_h: int = 24) -> str:
-        """Vrať shrnutí deníku pro LLM kontext."""
+    def get_diary_context(self, max_age_h: int = 24, cetba: bool = True) -> str:
+        """Vrať shrnutí deníku pro LLM kontext.
+
+        HANS_CETBA_JEDNOU_V1 (26. 10.) — `cetba=False`: bez přílohy „… si
+        nedávno přečetl“; chat ji má vlastním krokem (`_sy_cetba`) a v zadání
+        byla dvakrát (~1 000 zn navíc v každé odpovědi, RYCHLOST_25_10)."""
         cutoff = time.time() - max_age_h * 3600
         # HANS_DIARY_CTX_LOCK_V1 (2. 10.) — volá to chat z jiného vlákna nad
         # sdíleným připojením; ostatní místa ho drží pod self._lock
@@ -2866,7 +2870,7 @@ class HansIdle:
         result = "\n".join(lines)
 
         # Přidej co Hans nedávno četl
-        if hasattr(self, "_curiosity"):
+        if cetba and hasattr(self, "_curiosity"):
             read_ctx = self._curiosity.get_context_string(max_items=2)
             if read_ctx:
                 result += "\n\n" + read_ctx
