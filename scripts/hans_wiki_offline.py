@@ -654,11 +654,16 @@ def _titul_z_vety_useky(veta: str):
                 # „Saturnin (román)“); samo druhové slovo titul není
                 if usek[0] in _TZV_DRUH_SLOVO:
                     if n >= 2:
-                        r3 = db.execute("SELECT titul FROM t WHERE fold=? AND rozcestnik=0",
-                                        ("%s (%s)" % (" ".join(usek[1:]),
-                                                      _fold_tzv(_TZV_DRUH_SLOVO[usek[0]])),)).fetchone()
-                        if r3:
-                            return r3[0]
+                        # HANS_WIKI_ROMAN_KNIHA_V1 (26. 10., /tazatel: „Kdo napsal
+                        # román Babička?“ → „Babička (film, 1940)“) — článek je
+                        # „Babička (kniha)“: u knižních druhů zkusit i příbuzná
+                        # upřesnění (`_UPRESNENI`: román → román, novela, povídka, kniha)
+                        _dr = _TZV_DRUH_SLOVO[usek[0]]
+                        for _u in dict.fromkeys((_dr,) + tuple(_UPRESNENI.get(_dr, ()))):
+                            r3 = db.execute("SELECT titul FROM t WHERE fold=? AND rozcestnik=0",
+                                            ("%s (%s)" % (" ".join(usek[1:]), _fold_tzv(_u)),)).fetchone()
+                            if r3:
+                                return r3[0]
                     continue
                 if (druhy and i > _sl_poz and n <= 3 and len(usek[0]) >= 3
                         and len(usek[-1]) >= 3 and usek[-1] not in _TZV_DRUH_SLOVO):

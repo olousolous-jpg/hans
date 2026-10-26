@@ -222,6 +222,9 @@ _PREDSTIRANE_DOHLEDANI = (
     # heslo X):“): /tazatel 26. 10. — vymyšlený film „Vraťte se do Čech“ dostal
     # takový úvod a vymyšleného režiséra, žádné dohledání neproběhlo
     re.compile(r"K tomu jsem se (?:u[žz] )?d[íi]val[^.]*\.\s*"),
+    # HANS_OPRAVA_NE_V_PROMPTU_V1 — „Ještě oprava:“ připojuje jen kontrola
+    # údajů (až PO pojistkách); od modelu je to vždy předstíraná kontrola
+    re.compile(r"\s*Je[šs]t[ěe] oprava:\s*[^.!?\n]*[.!?]?"),
     re.compile(r"Podle toho, co jsem (?:(?:te[ďd]|pr[áa]v[ěe]) )?na[šs]el\s*(?:\(.*?\))?\s*:\s*"),
     re.compile(r"\s*Berte to (?:zat[íi]m )?s rezervou\s*[—-][^.]*\.(?:\s*Ud[ěe]l[áa]m to v noci[^.]*\.)?"),
 )

@@ -192,6 +192,14 @@ def predmet_vlastniho_dila(text: str, db_path: str) -> str:
     for w in re.findall(r"\w{4,}", fold(t)):
         if w in _hr._VLASTNI_STOP or w.startswith(_hr._VLASTNI_OBECNE):
             continue
+        # HANS_A1_OWN_WORK_SLOVESO_V1 (26. 10., /tazatel: „Slyšel jste o malíři
+        # X, který … namaloval oltář?“ → předmět „namaloval“ = sloveso z přehledu
+        # děl → A1 přeskočena → „slyšel jsem o něm“ u vymyšleného malíře).
+        # Sloveso tvorby samo předmětem díla není.
+        if _hr._VLASTNI_CIN.fullmatch(w) or re.fullmatch(
+                r"(?:na)?maloval\w*|napsal\w*|psal\w*|vytvo[rř]il\w*|tvo[rř]il\w*|"
+                r"slo[zž]il\w*|studoval\w*|[cč]etl\w*|vybral\w*|zvolil\w*", w):
+            continue
         k = w[:4] if len(w) <= 6 else w[:5]
         if any(x.startswith(k) for x in lf_slova):
             return w

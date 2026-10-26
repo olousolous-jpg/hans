@@ -207,6 +207,11 @@ def is_memory_recall_ask(text: str) -> bool:
 
 
 # ── Keyword/heuristické vzory ────────────────────────────────────────────────
+# HANS_INTENT_POZDRAV_OTAZKA_V1 — úvodní pozdrav do první čárky/tečky
+_POZDRAV_UVOD = re.compile(
+    r"^\s*(?:dobr[ýy] (?:den|ve[čc]er)|dobr[ée] (?:r[áa]no|odpoledne)|ahoj(?:te)?|"
+    r"zdrav[íi]m|[čc]au|nazdar|hezk[ýy] den)\b[^,.!?]{0,20}[,.!]\s*", re.I)
+
 # VOLNÁ konverzace — pozdravy, emoce, "o tobě", společenské fráze.
 _VOLNA_PAT = re.compile(
     r"\b("
@@ -563,6 +568,37 @@ class HansIntent:
                                     source="keyword")
             return IntentResult(intent="udalost", confidence=0.65,
                                 source="keyword")
+
+        # HANS_INTENT_POZDRAV_OTAZKA_V1 (26. 10., /tazatel: „Dobrý den, mohl
+        # byste mi prosím říci, kde se narodil Karel Čapek?“ → volný hovor →
+        # z hlavy „Malé Vraží u Ždánic“). Úvodní pozdrav se odřízne; zbytek
+        # s otazníkem a kotvou (vlastní jméno, ne zájmeno vykání) = faktická,
+        # stejně jako tatáž věta bez pozdravu (záloha `fallback_kotva`).
+        # ⛔ NE každý „pozdrav + otázka“ (7. 10.: 64 vět, 0 faktických).
+        # 📏 126 vět s pozdravem (chaty + /tazatel): změna 8 — Čapek, Mozart,
+        # Karel IV., rok 1640, Napoleon, 2× člen domácnosti (bez pozdravu
+        # jdou stejně); „jak se máte“ ani otázky na Hanse beze změny.
+        if volna_hit and factual_signal:
+            # produkce posílá větu s předponou „<jméno> se ptá:“
+            _bezp = re.sub(r"^\s*\S+\s+se\s+pt[áa]:\s*", "", msg)
+            _zb = _POZDRAV_UVOD.sub("", _bezp, count=1)
+            if _zb != _bezp and "?" in _zb:
+                try:
+                    from scripts.hans_convindex import kotva_tematu as _kotva
+                    _cfg = getattr(self, "_config", None) or {}
+                    _kp = (_cfg.get("known_persons", {}) or {})
+                    _vyn = tuple(_kp.keys()) + tuple(str(v.get("nom", "")) for v in _kp.values())
+                    try:
+                        from scripts.hans_persona import persona_name as _pn
+                        _vyn += (str(_pn(_cfg) or ""),)
+                    except Exception:
+                        pass
+                    _k = _kotva(re.sub(r"^\s*\S+\s+se\s+pt[áa]:\s*", "", _zb), vynech=_vyn)
+                    if _k and not re.match(r"(?i)va[šs]\w*|v[áa][ms]$|vy$|ty$|tv\w*$", _k):
+                        return IntentResult(intent="udalost", confidence=0.6,
+                                            source="keyword_pozdrav")
+                except Exception:
+                    pass
 
         # Pozdrav + něco → mírně volná, ať to případně rozhodne LLM
         if volna_hit:

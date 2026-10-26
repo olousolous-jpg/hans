@@ -1532,3 +1532,19 @@ def vztah_jinde(titul: str, otazka: str, out: str):
     """HANS_LOOKUP_VZTAH_JINDE_V1 — opravená odpověď, nebo None."""
     from scripts.hans_findings import _vztah_jinde
     return _vztah_jinde(titul, otazka, out)
+
+
+def intent_pozdrav(veta: str) -> str:
+    """HANS_INTENT_POZDRAV_OTAZKA_V1 — intent klíčové vrstvy."""
+    from scripts import config_io
+    from scripts.hans_intent import HansIntent
+    o = HansIntent.__new__(HansIntent)
+    o._config = config_io.load()
+    return o._classify_keyword(veta).intent
+
+
+def je_vlastni_dilo(veta: str) -> bool:
+    """HANS_A1_OWN_WORK_SLOVESO_V1 — přeskočí A1 jako vlastní dílo?"""
+    from scripts import hans_recall_osebe as h
+    return bool(h.predmet_vlastniho_dila(veta, "data/hans_diary.db")
+                or h.je_dotaz_na_vlastni_dilo(veta, "data/hans_diary.db"))
