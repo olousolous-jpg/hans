@@ -179,6 +179,12 @@ def _a1_otazka_bez_otazniku(veta: str) -> bool:
         w = w[1:]
     if bool(w) and w[0] in _A1_TAZACI:
         return True
+    # HANS_A1_OTAZNIK_UPROSTRED_V1 (26. 10., /tazatel: „a znas sochare Vilem
+    # Krakovec z Brna? ten co delal ty kamenne lvy“ → A1 přeskočena → vymyšlený
+    # sochař 1876–1942) — otazník uprostřed s pokračováním za ním = otázka.
+    # 📏 1 402 zpráv: 30 takových, převážně otázky; A1 běží jen na faktické cestě.
+    if re.search(r"\?\s+\S", veta or ""):
+        return True
     # HANS_A1_QUESTION_COMMA_V1 (18. 10.) — tázací slovo až za čárkou v krátké
     # větě („a mara tereza, kdy zemrela“, „a chopina, kdy se narodil“): /tazatel
     # 18. 10. 10× A1 přeskočena → odpověď z hlavy (Marie Terezie „Innsbruck“).
@@ -2077,6 +2083,13 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # instant_lookup.presny_podklad.
             try:
                 _cesta_g = getattr(self, '_grounding_cesta', '')
+                # HANS_LOOKUP_PRESNY_PODKLAD_V2 (26. 10.) — společný krok podkladu
+                # (16. 10.) cestu přejmenuje na „podklad_entita…“ / „podklad_obsazeni…“
+                # a pojistka pak mlčela (/tazatel: „a ten co rezirova Psycho, kde se
+                # narodil?“ → entita „Psycho (kniha)“ → z hlavy „Leyktu v Litvě“)
+                _cesta_g = ('entita_c1' if _cesta_g.startswith('podklad_entita')
+                            else 'obsazeni_kodi' if _cesta_g.startswith('podklad_obsazeni')
+                            else _cesta_g)
                 if (getattr(self, '_grounding_outcome', '') == 'grounded'
                         and _cesta_g in ('entita_c1', 'obsazeni_kodi')
                         and not getattr(ctx, '_predem_dohledano', None)

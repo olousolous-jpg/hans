@@ -982,6 +982,22 @@ class FaktaMixin:
                 return None
             a, b = _tok(tema), _tok(titul)
             if not a or not b or not (_kryje(a, b) and _kryje(b, a)):
+                # HANS_LOOKUP_SLEPENA_KOTVA_V1 (26. 10., /tazatel: přepis „Kde se
+                # narodil režisér filmu Psycho Alfred Hitchcock?“ → kotva „film Psycho
+                # Alfred Hitchcock“ → „Hitchcock (film)“ neprošel → z hlavy „Leyku“).
+                # Přesný titul z přepisu, jehož slova všechna stojí v kotvě, platí.
+                try:
+                    _t2 = _wo.titul_z_vety(_prepis) if _prepis else None
+                except Exception:
+                    _t2 = None
+                if (_t2 and len(_tok(_t2)) >= 2 and _kryje(_tok(_t2), a)
+                        and not _wo.extrakt(_t2)[1]):
+                    logging.getLogger(__name__).info(
+                        "HANS_LOOKUP_SLEPENA_KOTVA_V1: kotva %r → přesný titul %r z přepisu",
+                        tema, _t2)
+                    self._presny_titul = _t2
+                    self._presny_z_vety = _t2
+                    return _t2
                 return None
             # HANS_WIKI_DILO_ROZCESTNIK_V1 (25. 10.) — zkratka velkými („ROMEA“)
             # není slovo psané normálně („Romea a Julii“ → sdružení ROMEA)
@@ -1644,6 +1660,22 @@ class FaktaMixin:
                   | self._f1_hlasky(kdo))
             nova = [k for k in kotvy_vsechny(novy)
                     if self._f1_hlasky(k) and not (self._f1_hlasky(k) & zn)]
+            if nova:
+                # HANS_F1_JMENO_Z_WD_V1 (26. 10., /tazatel: „a ten co rezirova
+                # Psycho, kde se narodil?“ → přepis „…Alfred Hitchcock…“ zahozen →
+                # z hlavy „narodil se v Leyktu v Litvě“) — jméno, které Wikidata
+                # uvádějí u díla/předmětu jmenovaného ve větě (režie, autor,
+                # skladatel…), přepis nevymyslel
+                try:
+                    from scripts.hans_findings import _wikidata_blok
+                    _wdh = set()
+                    for _k in ([_t] if _t else []) + list(kotvy_vsechny(q))[:3]:
+                        _r2 = _wo._cil(_k)
+                        if _r2:
+                            _wdh |= self._f1_hlasky(_wikidata_blok(_r2[1]))
+                    nova = [k for k in nova if not (self._f1_hlasky(k) <= _wdh)]
+                except Exception as _we:
+                    logging.getLogger(_h.__name__).debug("HANS_F1_JMENO_Z_WD_V1: %s", _we)
             if nova:
                 return "přidal jméno %r mimo větu i poslední tah" % nova[0]
         except Exception as e:

@@ -584,6 +584,12 @@ class EntityStore:
                 # zustavaji odmitnute, protoze tam chybi DRUHY token.
                 if key_tok == q_tok:
                     return True
+                # HANS_ENTITY_SHORT_QTOK_LOWER_V1 (26. 10., /tazatel: „a kolik golu
+                # za kariéru dal?“ → „dal“ = začátek klíče „dalek“ → entita „Dalek
+                # (Doctor Who)“) — krátké slovo DOTAZU psané malým nesmí sedět
+                # jako začátek DELŠÍHO klíče (opačný směr „ráj“ × „ráji“ zůstává)
+                if len(q_tok) < len(key_tok) and len(q_tok) < 4 and q_tok not in _q_upper:
+                    return False
                 kr, dl = ((key_tok, q_tok) if len(key_tok) <= len(q_tok)
                           else (q_tok, key_tok))
                 return (len(kr) >= 3 and dl.startswith(kr)

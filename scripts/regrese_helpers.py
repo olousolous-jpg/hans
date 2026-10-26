@@ -1554,3 +1554,26 @@ def doporuceni_over(otazka: str, odpoved: str):
     """HANS_DOPORUCENI_OVERENI_V1 — opravené doporučení, nebo None."""
     from scripts.hans_doporuceni import over
     return over(otazka, odpoved)
+
+
+def overeni_oprava_text(otazka: str, prepis: str, odpoved: str):
+    """HANS_OVERENI_DETI_PRED_DATEM_V1 — texty připojených oprav (seznam)."""
+    import types
+    from scripts import hans_overeni as o
+    h = types.SimpleNamespace(config=_cfg())
+    return [v["oprava"]["text"] for v in o._overit(h, otazka, prepis, odpoved) if v.get("oprava")]
+
+
+def a1_je_otazka(veta: str) -> bool:
+    """HANS_A1_OTAZNIK_UPROSTRED_V1 — otázka bez otazníku na konci?"""
+    from scripts.openwebui_direct_handler import _a1_otazka_bez_otazniku
+    return bool(_a1_otazka_bez_otazniku(veta))
+
+
+def presny_predmet_f1(veta: str, f1: str):
+    """HANS_LOOKUP_SLEPENA_KOTVA_V1 — předmět s přesným článkem (s přepisem F1)."""
+    from scripts.openwebui_direct_handler import OpenWebUIDirectHandler as C
+    h = C.__new__(C)
+    h.config = _cfg()
+    h._f1_query = f1
+    return h._presny_predmet(veta, "x")

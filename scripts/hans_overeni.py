@@ -734,7 +734,10 @@ def _jiny_rod(kan: str, veta: str) -> bool:
 
 
 _VZTAH_OSOBY = re.compile(r"\b(?:manžel\w*|chot\w*|choť|žen[auyo]u?\b|dcer\w*|matk\w*|"
-                          r"sestr\w*|syn\w*|otc\w*|otec|bratr\w*|vdov\w*|snach\w*|zeť\w*)", re.I)
+                          r"sestr\w*|syn\w*|otc\w*|otec|bratr\w*|vdov\w*|snach\w*|zeť\w*|"
+                          # HANS_OVERENI_DETI_PRED_DATEM_V1 (26. 10., /tazatel: „deset dětí,
+                          # narozených od roku 1661“ → planá oprava „u Ludvíka XIV. 1638“)
+                          r"dět[ií]\b|dětmi|potom\w*|sourozen\w*)", re.I)
 
 
 # HANS_OVERENI_PRIBUZNI_V1 (24. 10.) — roky života příbuzného (manžel/ka,
