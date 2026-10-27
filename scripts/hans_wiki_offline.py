@@ -286,6 +286,23 @@ def _presna_zaloha(q: str):
                     return var[0], r
     if _prevaz and _prevaz[1]:
         return _prevaz
+    # HANS_WIKI_TITUL_CARKA_V1 (27. 10., samotest: „Kdy zemřela Jemima Greyová,
+    # vévodkyně z Kentu?“ → kotva „Jemima Greyová“ bez přesného článku → z hlavy
+    # „30. prosince 1994“; článek se jmenuje „Jemima Greyová, vévodkyně z Kentu“).
+    # Jméno aspoň ze dvou slov → JEDINÝ článek tvaru „jméno, upřesnění“.
+    # 📏 426 kotev z logu: změna 0 (jednoslovné vyřazeny: „Evropy“ → film
+    # „Evropa, Evropa“, „Paříži“ → „Paříži, miluji tě“).
+    if len(sl) >= 2:
+        for z in [q] + _prvni_pad_vic(q):
+            nn = _norm(z) + ", "
+            ts = [x for (x, roz) in db.execute(
+                "SELECT titul, rozcestnik FROM clanek WHERE titul_norm >= ? AND titul_norm < ? "
+                "LIMIT 3", (nn, nn + "\U0010ffff")) if not roz]
+            if len(ts) == 1:
+                r = _cil(ts[0])
+                if r:
+                    _log.info("HANS_WIKI_TITUL_CARKA_V1: %r → %r", q, ts[0])
+                    return ts[0], r
     # HANS_WIKI_FOLD_ZALOHA_V1 (26. 10.) — přepis F1 přidal háček navíc
     # („kniha Babíčka“) → přesná shoda selhala a hledání sklouzlo na „Babička
     # (film, 1971)“ (/tazatel 26. 10.). Poslední záchrana: tytéž varianty bez
