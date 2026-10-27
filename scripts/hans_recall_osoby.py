@@ -211,6 +211,18 @@ def person_card_voiced(db_path: str, query: str, config: dict,
                 _wd = _wikidata_blok(_up.unquote(_m.group(1)).replace("_", " "))
         except Exception:
             _wd = ""
+        # HANS_PERSON_CARD_FACTS_V1 (27. 10., Koláčova zkouška #147: „Kdo byl
+        # Oleho Roemera učitel…?“ → karta osoby bez detailu → „článek neuvádí“,
+        # ač výpis faktů z četby má „Jeho učitelem … byl Rasmus Bartholin“).
+        # Řádky výpisu faktů podle otázky (tentýž blok jako HANS_FACTS_BY_TITLE_V1).
+        _fb = ""
+        try:
+            from scripts.hans_recall_znalost import fakta_podle_titulu as _fpt
+            _fb = _fpt(db_path, query or "", strop=8)[1]
+        except Exception:
+            _fb = ""
+        if _fb:
+            _wd = (_wd + "\n" if _wd else "") + "Z MÉHO ČTENÍ (uložená fakta):\n" + _fb
         out = ollama_generate(
             model, "FAKTA O OSOBĚ:\n" + card + ("\n" + _wd if _wd else "")
             + "\n\nOdpověz na dotaz: " + (query or ""),

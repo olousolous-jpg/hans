@@ -230,7 +230,12 @@ _VOLNA_PAT = re.compile(
     # pozdě — klasifikace musí překlep přežít sama.
     r"ja[kmn](pak)?\s+se\s+(ti\s+|v[áa]m\s+)?(dnes(ka)?\s+)?(m[áa][šs]|vede|da[řr][íi])|"
     r"co(pak)?\s+(te[ďd]\s+|pr[áa]v[ěe]\s+)?(d[ěe]l[áa][šs]|delas)|"
-    r"jak\s+je|díky|děkuj|prosím|promiň|"
+    # HANS_INTENT_JAK_JE_CITACE_V1 (27. 10., Koláčova zkouška #145: „Kde se
+    # zúčastnil Idi Amin schůzky, jak je uvedeno v článku …?“ → volný hovor bez
+    # faktů, 4× za týden). Citační obrat „jak je uvedeno/psáno…“ není „jak je ti“.
+    # 📏 20 vět s „jak je“: změna jen tato.
+    r"jak\s+je(?!\s+(?:uveden|psan|psán|napsan|napsán|zminen|zmíněn|popsan|popsán|receno|řečeno))|"
+    r"díky|děkuj|prosím|promiň|"
     r"jsi\s+(chytr|hodn|milý|skvěl|fajn|dobr|super|úžasn)|"
     r"jak[ýáé]\s+jsi|kdo\s+jsi|líbí\s+se\s+ti|"
     r"těší\s+mě|rád\s+tě|mám\s+tě\s+rád|chybíš"
