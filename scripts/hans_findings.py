@@ -1171,6 +1171,89 @@ _WD_POPIS = [("P571", "založení / začátek"), ("P569", "narození"), ("P570",
              # často nemá (Sedm samurajů 920 zn) a model pak spletl režii s rolí;
              # z paměti „Limonádového Joea hrál Jan Tříska“
              ("P161", "hrají")]
+# ── HANS_LOOKUP_DRZITELE_URADU_V1 (27. 10.) — kdo zastával úřad, v pořadí ──
+# „Kdo byl první prezident Československa?“ → článek „Prezident Československa“
+# jména nemá (lokální výpis zahodil tabulky, i „Seznam prezidentů…“ je bez nich)
+# → odpověď bez jména. Wikidata mají u osob P39 (funkce) s daty od–do: osoby
+# najde `haswbstatement:P39=<úřad>` (běžné API, SPARQL má limit 1/min), seřadí
+# se podle nástupu; bez data nástupu ven (fiktivní postavy). Jen u otázky na
+# pořadí. 📏 prototyp `data/mereni/urad_27_10/drzitele.py`: ČSR 10/10, ČR 4/4,
+# USA 47 + 5 fiktivních bez data (vyřazeny).
+_PORADI_RE = re.compile(
+    r"\b(?:prvn[íi]|posledn[íi]|druh[ýyáa]|t[řr]et[íi]|[čc]tvrt[ýya]|p[áa]t[ýya]|"
+    r"kolik[áa]t\w*|sou[čc]asn\w*|nyn[ěe]j[šs]\w*|dne[šs]n\w*|aktu[áa]ln\w*|"
+    r"n[áa]stupc\w*|p[řr]edch[ůu]dc\w*|"
+    r"(?:byl|byla|je|bude)\s+(?:po|p[řr]ed)\s+\w+|v[šs]ichni|seznam|po\s+sob[ěe])\b",
+    re.I)
+_DRZ_CACHE: dict = {}
+
+
+def _drzitele_uradu(qid: str) -> list:
+    """[(od, do, jméno)] seřazené podle nástupu; [] = nic / chyba."""
+    if not qid or not re.fullmatch(r"Q\d+", qid):
+        return []
+    if qid in _DRZ_CACHE:
+        return _DRZ_CACHE[qid]
+    out = []
+    try:
+        import urllib.parse as _up
+        from scripts.hans_facts import _get as _wget
+        api = "https://www.wikidata.org/w/api.php?format=json&"
+        ids, off = [], 0
+        while off is not None and len(ids) < 400:
+            s = _wget(api + "action=query&list=search&srlimit=50&sroffset=%d&srsearch=%s"
+                      % (off, _up.quote("haswbstatement:P39=" + qid)))
+            ids += [h["title"] for h in (s.get("query") or {}).get("search") or []]
+            off = ((s.get("continue") or {}).get("sroffset"))
+        for i in range(0, len(ids), 50):
+            es = _wget(api + "action=wbgetentities&props=claims|labels&languages=cs|en&ids="
+                       + "|".join(ids[i:i + 50])).get("entities") or {}
+            for e in es.values():
+                lab = ((e.get("labels") or {}).get("cs") or (e.get("labels") or {}).get("en")
+                       or {}).get("value")
+                for st in (e.get("claims") or {}).get("P39", []):
+                    if ((st.get("mainsnak") or {}).get("datavalue") or {}).get("value", {}).get("id") != qid:
+                        continue
+                    qu = st.get("qualifiers") or {}
+                    _t = lambda pp: [x["datavalue"]["value"]["time"][1:11]
+                                     for x in qu.get(pp, []) if "datavalue" in x]
+                    od, do = (_t("P580") or [None])[0], (_t("P582") or [None])[0]
+                    if od and lab:
+                        out.append((od, do, lab))
+        out.sort()
+    except Exception as e:
+        _log.info("HANS_LOOKUP_DRZITELE_URADU_V1: %s → chyba %s", qid, str(e)[:100])
+        return []
+    _DRZ_CACHE[qid] = out
+    return out
+
+
+def _drzitele_blok(titul: str, otazka: str) -> str:
+    """Blok „držitelé úřadu“ pro otázku na pořadí, jinak ''."""
+    if not otazka or not _PORADI_RE.search(str(otazka)):
+        return ""
+    try:
+        from scripts import hans_overeni as O
+        O._nacti_wd([titul])
+        qid = (O._c().get(titul) or {}).get("qid")
+    except Exception:
+        return ""
+    d = _drzitele_uradu(qid)
+    if len(d) < 2:
+        return ""
+    def rok(x):
+        try:
+            return str(int(str(x)[:4])) if x else "dosud"
+        except ValueError:
+            return "?"
+    radky = ["%d. %s (%s–%s)" % (i + 1, j, rok(od), rok(do)) for i, (od, do, j) in enumerate(d)]
+    if len(radky) > 60:   # dlouhá řada (papežové): začátek a konec se skutečným pořadím
+        radky = radky[:30] + ["… (vynecháno %d dalších)" % (len(radky) - 60)] + radky[-30:]
+    _log.info("HANS_LOOKUP_DRZITELE_URADU_V1: %r (%s) → %d držitelů", titul, qid, len(d))
+    return ("DRŽITELÉ ÚŘADU (Wikidata, v pořadí nástupu; má přednost před textem níže):\n"
+            + "\n".join(radky))
+
+
 _WD_STROP = {"P40": 14, "P3373": 8, "P26": 6, "P161": 8}   # HANS_LOOKUP_PRIBUZNI_V1 — panovník má 10+ dětí
 
 
@@ -1617,6 +1700,12 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
         _wdb = _wikidata_blok(str(art.get("title") or topic))
         if _wdb:
             text = _wdb + "\n\nText článku:\n" + text
+        try:   # HANS_LOOKUP_DRZITELE_URADU_V1 — otázka na pořadí u článku o úřadu
+            _drb = _drzitele_blok(str(art.get("title") or topic), str(otazka))
+            if _drb:
+                text = _drb + "\n\n" + text
+        except Exception as _dre:
+            _log.debug("HANS_LOOKUP_DRZITELE_URADU_V1: %s", _dre)
     if otazka and not _rok_t and _pta_na_pribuzne(otazka):   # HANS_LOOKUP_PRIBUZNI_V1
         _ibp = _infobox_pribuzni(str(art.get("title") or topic))
         if _ibp:

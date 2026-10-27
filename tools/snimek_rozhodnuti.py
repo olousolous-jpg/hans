@@ -113,7 +113,9 @@ def beh(jmeno: str, n_vet: int = 0, bez_nahravky: bool = False):
     # DATA zůstávají zmrazená z `priprav` (jinak by se snímky lišily daty),
     # KÓD se bere vždy aktuální z pracovního stromu — ten se měří.
     subprocess.run(["rsync", "-a", "--delete", "--exclude=__pycache__", "--exclude=*.pyc",
-                    os.path.join(ROOT, "scripts") + "/", os.path.join(BEH, "scripts") + "/"],
+                    # SNIMEK_KOD — volitelně jiný strom kódu (např. git archive starého commitu)
+                    os.path.join(os.environ.get("SNIMEK_KOD") or ROOT, "scripts") + "/",
+                    os.path.join(BEH, "scripts") + "/"],
                    check=True)
     shutil.copy2(os.path.abspath(__file__), os.path.join(BEH, "tools", "snimek_rozhodnuti.py"))
     shutil.copy2(os.path.join(DIR, "vety.json"), os.path.join(BEH, "vety.json"))
