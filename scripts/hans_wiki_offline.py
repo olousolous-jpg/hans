@@ -814,6 +814,20 @@ _SAKR = ("Kostel", "Chrám", "Bazilika", "Katedrála", "Kaple", "Klášter", "Ko
 _MISTO_PRED = re.compile(r"\b(?:v|ve|na|u|z|ze|pod|nad|poblíž|blízko)\s+((?:[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w-]+\s*){1,3})")
 
 
+def rozcestnik_1p(q: str):
+    """HANS_WIKI_MISTO_PRIVLASTEK_V1 — kotva v jiném pádě, jejíž 1. pád je
+    rozcestník („Lorety“ → „Loreta“) → titul rozcestníku, jinak None."""
+    try:
+        db = _db()
+        for z in [q] + _prvni_pad(q) + _prvni_pad_vic(q):
+            r = _cil(z)
+            if r and db.execute("SELECT rozcestnik FROM clanek WHERE id=?", (r[0],)).fetchone()[0]:
+                return r[1]
+    except Exception as e:
+        _log.debug("rozcestnik_1p %r: %s", q, e)
+    return None
+
+
 def vyznam_podle_mista(titul: str, veta: str):
     """Rozcestník `titul` + místo ve `veta` → jediný význam, nebo None."""
     try:
@@ -833,6 +847,12 @@ def vyznam_podle_mista(titul: str, veta: str):
             kand += [t for (t,) in db.execute(
                 "SELECT titul FROM clanek WHERE rozcestnik=0 AND (titul=? OR titul LIKE ? "
                 "OR titul LIKE ?) LIMIT 600", (presne, s_upr, s_upr[:-3] + " % (%"))]
+        # HANS_WIKI_MISTO_PRIVLASTEK_V1 (27. 10.) — přívlastek místa PŘED názvem
+        # („Lorety v Praze“ → rozcestník Loreta → „Pražská Loreta“; dřív Loreglia)
+        if len(sl) == 1:
+            kand += [t for (t,) in db.execute(
+                "SELECT titul FROM clanek WHERE rozcestnik=0 AND titul LIKE ? LIMIT 50",
+                ("% " + zak,)) if len(t.split()) == 2]
         kand = list(dict.fromkeys(kand))
         # místo = skupina kmenů; víceslovné („Malé Straně“) musí sedět celé
         mista = []

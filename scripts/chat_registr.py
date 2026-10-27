@@ -633,7 +633,10 @@ def zaregistruj(_cc):
             # HANS_ARTWORK_ADVERB_WIDEN_V1. Zmereno na 2 342 realnych vetach:
             # +1 spravne ("co jsis dnes precetl"), 0 ztrat; kontroly 11/11.
             # [[test-both-grammatical-persons]]
-            r"\bco\s+(?:jste|jsis)\s+(?:\w+\s+){0,3}?(?:pře|pre)?[čc]etl",
+            # HANS_CETL_TYKANI_SLOVA_V1 (27. 10.) — opačná asymetrie: „co jste v poslední
+            # době četl“ prošlo, „co jsi v poslední době četl“ ne (tykací vzor výš
+            # pouští jen dnes/včera/naposledy). 📏 3 665 vět: +3, všechny otázky na četbu.
+            r"\bco\s+(?:jste|jsis|jsi|sis)\s+(?:\w+\s+){0,3}?(?:pře|pre)?[čc]etl",
             r"\bco\s+(?:pr[áa]vě\s+|te[ďd]\s+)?[čc]tete\b",
             r"\bjak[éeýy]\s+(?:kn[ií]\w*|[čc]l[áa]nk\w*|texty|[čc]etb\w*)"
             r"(?:\s+(?:nebo|a)\s+\w+)?\s+(?:jsi|sis|jste)\s+(?:\w+\s+){0,3}?"

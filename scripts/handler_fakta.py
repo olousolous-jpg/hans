@@ -968,6 +968,16 @@ class FaktaMixin:
             from scripts.hans_overeni import _jen_lokalne
             _wr = WebReader(self.config)
             _wr._get = _jen_lokalne        # jen lokálně: rozhoduje se u každé otázky
+            # HANS_WIKI_MISTO_PRIVLASTEK_V1 (27. 10.) — kotva v jiném pádě → 1. pád je
+            # rozcestník + místo ve větě („Lorety v Praze“ → Pražská Loreta); dřív
+            # fulltext našel italskou obec Loreglia
+            if not _wo._cil(tema):
+                _r1 = _wo.rozcestnik_1p(tema)
+                _vm1 = _r1 and _wo.vyznam_podle_mista(_r1, (veta or "") + " " + (_prepis or ""))
+                if _vm1:
+                    self._presny_titul = _vm1
+                    self._presny_z_vety = _vm1
+                    return _vm1
             titul = _wr._wikipedia_search(tema)
             self._presny_titul = titul     # HANS_LOOKUP_PRESNY_PODKLAD_V1
             if titul and _wo.extrakt(titul)[1]:
