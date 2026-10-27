@@ -136,12 +136,24 @@ _PADY_PODSTATNA = (("ovi", ""), ("em", ""), ("ii", "ie"), ("ií", "ie"), ("ie", 
                    ("kovým", "ek"), ("kova", "ek"), ("kovu", "ek"), ("kově", "ek"),
                    ("kovy", "ek"), ("kův", "ek"), ("kovo", "ek"),
                    ("ovým", ""), ("ova", ""), ("ovu", ""), ("ově", ""), ("ovy", ""),
-                   ("ův", ""), ("ovo", ""))
+                   ("ův", ""), ("ovo", ""),
+                   # HANS_WIKI_PADY_JMENA_V1 (27. 10.) — koncovky, které chyběly u jmen
+                   # osob: příjmení na -e (Bonapartovi/Bonapartovy → Bonaparte), mužská
+                   # jména na -a (Járovi → Jára), Sergiu → Sergio, Karlův/Karlova → Karel.
+                   # Bez nich kotva „Napoleonovi Bonapartovi“ našla rod Bonapartové,
+                   # „Sergiu Leoneovi“ heslo Sergej a „Karlův IV“ nic.
+                   # 📏 437 kotev z logu (`data/mereni/pad1_27_10/`): 16 změn, všechny
+                   # k lepšímu, horší 0.
+                   ("ovi", "e"), ("ovy", "e"), ("ova", "e"), ("ovu", "e"), ("ovi", "a"),
+                   ("iu", "io"), ("lův", "el"), ("lova", "el"), ("lovu", "el"),
+                   ("lově", "el"), ("lovým", "el"), ("lovy", "el"))
 _PREDLOZKY = {"z", "ze", "na", "nad", "pod", "u", "v", "ve", "von", "van", "de", "da", "di",
               "of", "the", "a", "aneb", "and"}
 
 
 def _tvary_slova(w: str) -> list:
+    if re.fullmatch(r"[IVXLC]+", w):
+        return [w, w + "."]   # HANS_WIKI_PADY_JMENA_V1 — „Karel IV“ bez tečky → „Karel IV.“
     if re.fullmatch(r"[IVXLC]+\.?", w) or len(w) < 3:
         return [w]   # malá písmena ano: „Karlově mostě“ → „Karlův most“
     out = [w]
@@ -165,7 +177,59 @@ def _prvni_pad_vic(q: str, strop: int = 200) -> list:
     out = [[]]
     for v in varianty:
         out = [o + [x] for o in out for x in v][:strop]
-    return [" ".join(o) for o in out if " ".join(o) != q]
+    out = [" ".join(o) for o in out]
+    # HANS_WIKI_PADY_JMENA_V1 — tři jména bez předložky: i první + poslední
+    # (prostřední zkomolil přepis F1: „Tomáši Garriově Masarykovi“ → „Tomáš
+    # Masaryk“ = přesměrování na TGM). Až za plnými variantami.
+    if len(sl) == 3 and not za_predlozkou and all(w[:1].isupper() for w in sl):
+        out += ["%s %s" % (x, y) for x in _tvary_slova(sl[0]) for y in _tvary_slova(sl[2])]
+    return [o for o in dict.fromkeys(out) if o != q]
+
+
+# ── HANS_WIKI_ROZCESTNIK_OSOBA_V1 (27. 10.) — rozcestník osob → převažující osoba ──
+# „Alexandra Dumase“ → 1. pád „Alexandre Dumas“ = rozcestník → hledání sklouzlo
+# na „Alexandre Dumas (stanice metra v Paříži)“; „Františku Josefovi“ → Josefov.
+# Osoba se vezme, jen když je v rozcestníku uvedená PRVNÍ, má nejdelší článek
+# (≥ 15 000 zn, ≥ 1,3× druhý). 📏 2 642 rozcestníků osob v lokální wiki → 20
+# (Dumas starší, František Josef I., Havlíček Borovský, Petr Vok…); plošné
+# pravidlo bez omezení na osoby zamítnuto (Edison → báseň, Purkyně → kráter).
+_ROZC_OSOBY = re.compile(r"^(Jméno a příjmení|Jméno|Nositel(é|ky) jména)\b|sdílí (více|tyto|"
+                         r"následující)? ?osob|označovat (následující |tyto )?osoby|je jméno "
+                         r"(těchto|více) (panovník|osob)", re.I)
+
+
+def vyznam_prevazujici(row):
+    """Řádek rozcestníku (id, titul) → titul převažující osoby, nebo None."""
+    try:
+        db = _db()
+        tit = row[1]
+        zak = re.sub(r"\s*\(.*$", "", tit)
+        if len(zak.split()) < 2:
+            return None
+        rr = db.execute("SELECT text FROM clanek WHERE id=? AND rozcestnik=1",
+                        (row[0],)).fetchone()
+        if not rr or not _ROZC_OSOBY.search(rr[0][:300]):
+            return None
+        txt, n = rr[0], _norm(zak)
+        k = []
+        for t, ln in db.execute("SELECT titul, length(text) FROM clanek WHERE rozcestnik=0 "
+                                "AND titul_norm >= ? AND titul_norm < ? LIMIT 80",
+                                (n + " ", n + " \U0010ffff")):
+            i = txt.find(t)
+            if i >= 0:
+                k.append((i, ln, t))
+        if not k:
+            return None
+        prvni = min(k)
+        podle_delky = sorted(k, key=lambda x: -x[1])
+        if (podle_delky[0] != prvni or prvni[1] < 15000
+                or (len(podle_delky) > 1 and prvni[1] < 1.3 * podle_delky[1][1])):
+            return None
+        _log.info("HANS_WIKI_ROZCESTNIK_OSOBA_V1: rozcestník %r → %r", tit, prvni[2])
+        return prvni[2]
+    except Exception as e:
+        _log.debug("HANS_WIKI_ROZCESTNIK_OSOBA_V1: %s", e)
+        return None
 
 
 def _presna_zaloha(q: str):
@@ -196,11 +260,16 @@ def _presna_zaloha(q: str):
                     else "%sin %s" % (_pg.group(1), _pg.group(3)))
     zkus += _prvni_pad(q)
     zkus += _prvni_pad_vic(q)   # HANS_WIKI_PADY_VIC_V1
+    _prevaz = None   # HANS_WIKI_ROZCESTNIK_OSOBA_V1 — záloha, až když nic jiného
     for z in zkus:
         r = _cil(z)
         if r and not db.execute("SELECT rozcestnik FROM clanek WHERE id=?",
                                 (r[0],)).fetchone()[0]:
             return z, r
+        if r and _prevaz is None:
+            _v = vyznam_prevazujici(r)
+            if _v:
+                _prevaz = (_v, _cil(_v))
         # HANS_WIKI_DRUH_ROK_V1 (18. 10.) — „film Titanic“: „Titanic (film)“ je
         # rozcestník a článek se jmenuje „Titanic (film, 1997)“ → hledání
         # propadlo až na „Titan (film)“. Jediná varianta „X (druh, …)“ se vezme
@@ -215,6 +284,8 @@ def _presna_zaloha(q: str):
                 r = _cil(var[0])
                 if r:
                     return var[0], r
+    if _prevaz and _prevaz[1]:
+        return _prevaz
     # HANS_WIKI_FOLD_ZALOHA_V1 (26. 10.) — přepis F1 přidal háček navíc
     # („kniha Babíčka“) → přesná shoda selhala a hledání sklouzlo na „Babička
     # (film, 1971)“ (/tazatel 26. 10.). Poslední záchrana: tytéž varianty bez
@@ -257,6 +328,18 @@ def film_holy_titul(q: str):
     return None
 
 
+_ULICE = re.compile(r"^[^.]{0,80}\bje (ulice|náměstí|nábřeží|třída|sady)\b", re.I)
+
+
+def je_ulice(row) -> bool:
+    """HANS_WIKI_ULICE_OSOBA_V1 — článek (id, titul) je ulice/náměstí/nábřeží…"""
+    try:
+        r = _db().execute("SELECT text FROM clanek WHERE id=?", (row[0],)).fetchone()
+        return bool(r and _ULICE.search(r[0][:200]))
+    except Exception:
+        return False
+
+
 def prefixsearch(q: str, limit: int = 3) -> list:
     """Tituly začínající dotazem (bez ohledu na velikost písmen). Přesná
     shoda první, pak delší články (náhrada popularity). Přesměrování → cíl."""
@@ -282,6 +365,15 @@ def prefixsearch(q: str, limit: int = 3) -> list:
                            (r[0],)).fetchone()
             kand.setdefault(tit, d[0] if d else 0)
     ex = _cil(q)
+    if ex and je_ulice(ex):
+        # HANS_WIKI_ULICE_OSOBA_V1 (27. 10.) — „Boženy Němcové“ je přesný název
+        # ulice v Praze 2 → dohledání o spisovatelce četlo o ulici. Ulice/náměstí
+        # nazvané jménem ve 2. pádě ustoupí článku v 1. pádě. 📏 437 kotev z logu:
+        # jediná taková (Němcová).
+        z = _presna_zaloha(q)
+        if z and z[1][0] != ex[0]:
+            _log.info("HANS_WIKI_ULICE_OSOBA_V1: %r je ulice/náměstí → %r", q, z[0])
+            q, ex = z
     if not ex:
         z = _presna_zaloha(q)
         if z:

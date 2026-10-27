@@ -629,7 +629,10 @@ class WebReader:
                 # nepozná a propadlo by to na fulltext (tituly velkovévody)
                 try:
                     from scripts import hans_wiki_offline as _wo
-                    if lang == "cs" and _wo.dostupna() and not _wo._cil(_query_full):
+                    if lang == "cs" and _wo.dostupna() and (
+                            not _wo._cil(_query_full)
+                            # HANS_WIKI_ULICE_OSOBA_V1 — přesný titul je ulice („Boženy Němcové“)
+                            or _wo.je_ulice(_wo._cil(_query_full))):
                         _z = _wo._presna_zaloha(_query_full)
                         if _z and any(p.get("title") == _z[0] or p.get("title") == _z[1][1]
                                       for p in pfx):

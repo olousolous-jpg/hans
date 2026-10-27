@@ -974,6 +974,8 @@ class FaktaMixin:
                 # HANS_WIKI_ROZCESTNIK_MISTO_V1 (26. 10.) — rozcestník + místo
                 # z otázky („kostel svaté Ludmily na Vinohradech“) → jediný význam
                 _vm = _wo.vyznam_podle_mista(titul, (veta or "") + " " + (_prepis or ""))
+                if not _vm:   # HANS_WIKI_ROZCESTNIK_OSOBA_V1 — „František Josef“ → I.
+                    _vm = _wo.vyznam_prevazujici(_wo._cil(titul) or (None, titul))
                 if _vm:
                     self._presny_titul = _vm
                     self._presny_z_vety = _vm
@@ -998,6 +1000,18 @@ class FaktaMixin:
                     self._presny_titul = _t2
                     self._presny_z_vety = _t2
                     return _t2
+                # HANS_WIKI_ROZCESTNIK_OSOBA_V1 — převažující osoba z rozcestníku má
+                # slovo navíc („Alexandru Dumasovi“ → „Alexandre Dumas starší“);
+                # platí, když ji vrátila záloha 1. pádu a kryje všechna slova kotvy
+                try:
+                    _pz = None if _wo._cil(tema) else _wo._presna_zaloha(tema)
+                except Exception:
+                    _pz = None
+                if a and b and _pz and _pz[0] == titul and _kryje(a, b):
+                    logging.getLogger(__name__).info(
+                        "HANS_WIKI_ROZCESTNIK_OSOBA_V1: kotva %r → %r", tema, titul)
+                    self._presny_z_vety = titul
+                    return titul
                 return None
             # HANS_WIKI_DILO_ROZCESTNIK_V1 (25. 10.) — zkratka velkými („ROMEA“)
             # není slovo psané normálně („Romea a Julii“ → sdružení ROMEA)
