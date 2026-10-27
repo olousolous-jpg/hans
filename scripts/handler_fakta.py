@@ -962,6 +962,32 @@ class FaktaMixin:
                         tema, _tzv)
                     tema = _tzv
                     self._presny_z_vety = _tzv
+            elif tema and _prepis:
+                # HANS_WIKI_TITUL_Z_PREPISU_V1 (27. 10., /tazatel: „A kdo byl po něm?“ →
+                # F1 „Kdo byl prezidentem Československa po Eduardu Benešovi?“ → kotva
+                # „Československa“ → rozhlasová stanice). Holá věta titul nedala →
+                # titul z přepisu, jen DELŠÍ a obsahující kotvu celou.
+                try:
+                    _tzp = _wo.titul_z_vety(_prepis)
+                except Exception:
+                    _tzp = None
+                _tv = _tok(tema)
+                if _tzp and _tv and len(_tok(_tzp)) > len(_tv) and _kryje(_tv, _tok(_tzp)):
+                    logging.getLogger(__name__).info(
+                        "HANS_WIKI_TITUL_Z_PREPISU_V1: předmět %r → %r (titul z přepisu)",
+                        tema, _tzp)
+                    tema = _tzp
+                    self._presny_z_vety = _tzp
+            # HANS_WIKI_TZV_PADY_V1 (27. 10., /tazatel B) — kotva useknutá z víceslovného
+            # názvu („Národního“ → Národní divadlo, „Českou mši“ → Česká mše vánoční)
+            if tema and not _wo._cil(tema) and not _wo._presna_zaloha(tema):
+                _rk = _wo.rozsir_kotvu(veta, tema) or (_wo.rozsir_kotvu(_prepis, tema)
+                                                       if _prepis else None)
+                if _rk:
+                    logging.getLogger(__name__).info(
+                        "HANS_WIKI_TZV_PADY_V1: kotva %r → %r (celý název)", tema, _rk)
+                    tema = _rk
+                    self._presny_z_vety = _rk
             if not tema:
                 return None
             from scripts.web_reader import WebReader
@@ -980,6 +1006,19 @@ class FaktaMixin:
                     return _vm1
             titul = _wr._wikipedia_search(tema)
             self._presny_titul = titul     # HANS_LOOKUP_PRESNY_PODKLAD_V1
+            if (titul and not _wo.extrakt(titul)[1] and "(" not in titul
+                    and _wo._MISTO_PRED.search((veta or "") + " " + (_prepis or ""))):
+                # HANS_WIKI_MISTO_NEJUZSI_V1 (27. 10.) — obecný článek, který rozcestníkem
+                # NENÍ („Kostel svatého Mikuláše“ = výčet), ale má variantu s místem
+                # z otázky v závorce („… (Malá Strana)“) → ta
+                _vmo = _wo.vyznam_podle_mista(titul, (veta or "") + " " + (_prepis or ""), plny=False)
+                if (_vmo and _vmo != titul and "(" in _vmo
+                        and _vmo.split()[0].lower() == titul.split()[0].lower()):   # bazilika ≠ klášter
+                    logging.getLogger(__name__).info(
+                        "HANS_WIKI_MISTO_NEJUZSI_V1: %r → %r (místo z otázky)", titul, _vmo)
+                    self._presny_titul = _vmo
+                    self._presny_z_vety = _vmo
+                    return _vmo
             if titul and _wo.extrakt(titul)[1]:
                 # HANS_WIKI_ROZCESTNIK_MISTO_V1 (26. 10.) — rozcestník + místo
                 # z otázky („kostel svaté Ludmily na Vinohradech“) → jediný význam

@@ -304,7 +304,7 @@ def _c() -> dict:
     return _cache
 
 
-_CACHE_V = 6   # 23. 10.: P21 (HANS_OVERENI_POHLAVI_V1) · 22. 10.: P161 (HANS_LOOKUP_WD_OBSAZENI_V1) · 20. 10.: P40, P3373 (HANS_LOOKUP_PRIBUZNI_V1) · HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
+_CACHE_V = 7   # 27. 10.: jen preferovaná hodnota (HANS_WD_PREFERRED_RANK_V1) · 23. 10.: P21 (HANS_OVERENI_POHLAVI_V1) · 22. 10.: P161 (HANS_LOOKUP_WD_OBSAZENI_V1) · 20. 10.: P40, P3373 (HANS_LOOKUP_PRIBUZNI_V1) · HANS_OVERENI_ROZSIRENI_V1: P112, P86, P144(+P50), množství · 19. 10.: P800, P551
 
 
 def _uloz():
@@ -344,7 +344,13 @@ def _nacti_wd(tituly: list) -> None:
             t = ((e.get("sitelinks") or {}).get("cswiki") or {}).get("title")
             P = {}
             for p in _VSE_P:
-                for cl in (e.get("claims") or {}).get(p, []):
+                _cls = (e.get("claims") or {}).get(p, [])
+                # HANS_WD_PREFERRED_RANK_V1 (27. 10., /tazatel: „Braun se narodil
+                # 25. 2. 1648 (podle Wikidat)“ — Wikidata mají 1684-02-25 jako
+                # PREFEROVANÉ a chybné 1648 jako běžné; blok bral nejmenší datum).
+                # Má-li vlastnost preferovanou hodnotu, platí jen ta (pravidlo Wikidat).
+                _pref = [cl for cl in _cls if cl.get("rank") == "preferred"]
+                for cl in (_pref or _cls):
                     if (cl.get("rank") or "normal") == "deprecated":
                         continue
                     v = ((cl.get("mainsnak") or {}).get("datavalue") or {}).get("value")
@@ -687,7 +693,10 @@ def _jen_lokalne(url, params=None, **kw):
 
 _OPRAVA_POPIS = {"P569": "uveden rok narození", "P570": "uveden rok úmrtí",
                  "P571": "uveden rok založení či začátku stavby", "P50": "uveden autor",
-                 "P57": "uvedena režie"}
+                 "P57": "uvedena režie",
+                 # HANS_OVERENI_OPRAVA_SKLADATEL_V1 (27. 10.) — stín chytal rozpor
+                 # („Iron Man 2“: John Paesano × John Debney), oprava se nepřipojila
+                 "P86": "uveden skladatel"}
 _UVOD_DOHL = re.compile(r"Podle toho, co jsem (?:te\u010f )?na\u0161el \(Wikipedie \u2014 heslo "   # i „K tomu jsem se už díval…“
                         r"[\u201e\"]([^\u201c\"]{2,90})[\u201c\"]\):?")
 _DRUH_ZAVORKA = {"film", "kniha", "roman", "serial", "novela", "povidka", "album", "pisen",
@@ -842,6 +851,11 @@ def _overit(h, otazka, prepis, odpoved) -> list:
             clanky[k] = (kan, text) if text else None
         return clanky[k]
     radky = []
+    # HANS_OVERENI_HESLO_ODPOVEDI_V1 (27. 10.) — dohledané heslo platí i pro větu
+    # BEZ vlastního jména dál v odpovědi, ne jen pro větu s úvodem: „…otcem císaře Františka Josefa I.
+    # Narodil se 17. prosince 1802“ (heslo František Karel) → dřív věta bez
+    # podmětu připsána předmětu otázky a planá oprava „u F. J. I. 1830“
+    _hes_odp = _UVOD_DOHL.search(odpoved or "")
     for v0 in vety:
         # HANS_OVERENI_ODECET_V1 (19. 10.) — úvod dohledání „Podle toho, co jsem
         # teď našel (Wikipedie — heslo „X“):“ není údaj; X je článek předmětu,
@@ -849,6 +863,13 @@ def _overit(h, otazka, prepis, odpoved) -> list:
         _uv = _UVOD_DOHL.search(v0)
         v = v0[_uv.end():].strip() if _uv else v0
         _hes = [_uv.group(1)] if _uv else []
+        # jen věta BEZ vlastního jména („Narodil se 17. prosince 1802 ve Vídni.“) —
+        # věta, která osobu jmenuje (Žofie Bavorská × heslo Václav IV.), si ji nese sama
+        _osoby_v = [k for k in jmena(v) if not P.osloveni(k, v) and k != "Wikipedie"
+                    and not re.search(r"\b(?:ve?|na|u|ze?|do)\s+" + re.escape(k), v)
+                    and not (" " not in k and v.startswith(k + " "))]   # místo za předložkou, holé 1. slovo věty
+        if not _hes and _hes_odp and not _UVOZ.findall(v) and not _osoby_v:
+            _hes = [_hes_odp.group(1)]
         kand = list(dict.fromkeys(_hes + ([pr] if pr else []) + _UVOZ.findall(v) + [
             k for k in jmena(v) if not P.osloveni(k, v) and k != "Wikipedie"]))[:3]
         cl = [c for c in (_clanek(k) for k in kand) if c and not c[0].startswith("Seznam ")]
@@ -936,7 +957,7 @@ def _overit(h, otazka, prepis, odpoved) -> list:
             # být víceslovné jméno — vedlejší věta o osobě („Poláček, který
             # napsal … v Rychnově“, „Menzel, který natočil … podle novely
             # Bohumila Hrabala“) dávala plané návrhy (sada 40 otázek 19. 10.)
-            if _p in ("P50", "P57"):
+            if _p in ("P50", "P57", "P86"):   # P86: HANS_OVERENI_OPRAVA_SKLADATEL_V1 („složil Mou vlast“ ≠ jméno)
                 _vv = _fold(r["veta"])
                 _slt = re.findall(r"\w{4,}", _fold(re.sub(r"\(.*?\)", "", _hl).split(",")[0]))
                 _jm = re.findall(r"[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž]+", str(x["udaj"]))

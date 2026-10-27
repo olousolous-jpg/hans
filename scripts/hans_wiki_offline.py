@@ -111,6 +111,8 @@ _PRIVL_GEN = re.compile(r"^(\w+?)(ova|ovy|ina|iny) (\w+?)(u|a|e|y)$")
 # bere se jen PŘESNÁ shoda s titulem (ne rozcestník); slova za předložkou
 # („z Poděbrad“) se neskloňují.
 _PADY_PRIDAVNA = (("ého", "ý"), ("ému", "ý"), ("ém", "ý"), ("ým", "ý"), ("ými", "ý"),
+                  # HANS_WIKI_TZV_PADY_V1 — měkká přídavná jména („Národního“ → „Národní“)
+                  ("ího", "í"), ("ímu", "í"), ("ím", "í"), ("ími", "í"),
                   ("ou", "á"), ("é", "á"), ("é", "ý"),
                   ("ově", "ův"), ("ovu", "ův"), ("ova", "ův"), ("ovým", "ův"),
                   ("ině", "in"), ("inu", "in"), ("ina", "in"))
@@ -118,6 +120,9 @@ _PADY_PODSTATNA = (("ovi", ""), ("em", ""), ("ii", "ie"), ("ií", "ie"), ("ie", 
                    ("la", "el"), ("lu", "el"), ("lovi", "el"), ("ra", "er"), ("ru", "er"),
                    ("ka", "ek"), ("ku", "ek"),
                    ("y", "a"), ("i", "a"), ("u", "a"), ("ou", "a"), ("e", "a"), ("ě", "a"),
+                   ("i", "e"),   # HANS_WIKI_TZV_PADY_V1 — „mši“ → „mše“ (měkký ženský vzor)
+                   ("a", "us"), ("ovi", "us"), ("em", "us"),   # latinská jména (Julia → Julius) PŘED středním rodem
+                   ("a", "o"), ("u", "o"), ("e", "o"), ("em", "o"),   # střední rod („divadla“ → „divadlo“)
                    ("a", ""), ("u", ""), ("e", ""), ("ě", ""), ("i", ""),
                    # HANS_WIKI_PADY_A_E_V1 (22. 10.) — cizí příjmení na -e mají
                    # 2. pád na -a: „Tomáše Garrigua Masaryka“ → „Garrigu“, takže
@@ -298,6 +303,14 @@ def _presna_zaloha(q: str):
             ts = [x for (x, roz) in db.execute(
                 "SELECT titul, rozcestnik FROM clanek WHERE titul_norm >= ? AND titul_norm < ? "
                 "LIMIT 3", (nn, nn + "\U0010ffff")) if not roz]
+            if not ts:   # i bez diakritiky („Jemime Greyove“ → „Jemima Greyova, …“)
+                try:
+                    _fz = _fold_tzv(z) + ", "
+                    ts = [x for (x,) in _fold_db().execute(
+                        "SELECT titul FROM t WHERE fold >= ? AND fold < ? AND rozcestnik=0 "
+                        "LIMIT 3", (_fz, _fz + "\U0010ffff"))]
+                except Exception:
+                    ts = []
             if len(ts) == 1:
                 r = _cil(ts[0])
                 if r:
@@ -820,6 +833,43 @@ def _titul_z_vety_useky(veta: str):
         return None
 
 
+# HANS_WIKI_TZV_PADY_V1 (27. 10., /tazatel B: „budovu Národního divadla“ → kotva
+# „Národního“, „Českou mši vánoční“ → „Vánoční (píseň)“) — rozšíření kotvy.
+def rozsir_kotvu(veta: str, kotva: str):
+    """Kotva useknutá z víceslovného názvu („Národního“ z „budovu Národního
+    divadla“, „Českou mši“ z „Českou mši vánoční“) → celý titul v 1. pádě:
+    úseky 2–4 slov ZAČÍNAJÍCÍ prvním slovem kotvy, nejdelší přesný článek
+    se stejným počtem slov. Jen od kotvy — plošně po větě změřeno a zamítnuto
+    (3 362 vět: 154 změn, mezi nimi Český ráj u otázek na Hanse)."""
+    try:
+        slova = re.findall(r"[^\W\d_]+(?:[.-][^\W\d_]+)*\.?|\d+\.?", veta or "")
+        kt = (kotva or "").split()
+        if not kt:
+            return None
+        fs = [_fold_tzv(w).rstrip(".") for w in slova]
+        f0 = _fold_tzv(kt[0])
+        for i, f in enumerate(fs):
+            if f != f0:
+                continue
+            # druh díla před kotvou („sonátu Měsíčního světla“) — název díla je jiný
+            # než slova kotvy (dřív → „Měsíční světlo“, článek o světle Měsíce)
+            if i > 0 and re.match(r"(?:sonat|symfoni|oper|knih|kniz|roman|film|serial|pisn|"
+                                  r"pisen|basn|basen|obraz|sochu|socha|balet|koncert|hru\b|"
+                                  r"hra\b|cyklu|cyklus|album|desk|povid|novel|skladb)", fs[i - 1]):
+                break
+            for n in range(min(4, len(slova) - i), max(2, len(kt)) - 1, -1):
+                if n <= len(kt) or any(x in _TZV_STOP for x in fs[i:i + n]):
+                    continue
+                z = _presna_zaloha(" ".join(w.rstrip(".") for w in slova[i:i + n]))
+                if z and len(z[1][1].split()) == n and not z[1][1].startswith("Seznam ") \
+                        and not extrakt(z[1][1])[1]:
+                    return z[1][1]
+            break
+    except Exception as e:
+        _log.debug("rozsir_kotvu %r: %s", kotva, e)
+    return None
+
+
 # ── HANS_WIKI_ROZCESTNIK_MISTO_V1 (26. 10.) — rozcestník + místo z otázky ──
 # /tazatel 26. 10.: „Kdo navrhl kostel svaté Ludmily na Vinohradech?“ → kotva
 # „kostel svaté Ludmily“ = rozcestník bez pražského významu → dohledání nic →
@@ -845,8 +895,10 @@ def rozcestnik_1p(q: str):
     return None
 
 
-def vyznam_podle_mista(titul: str, veta: str):
-    """Rozcestník `titul` + místo ve `veta` → jediný význam, nebo None."""
+def vyznam_podle_mista(titul: str, veta: str, plny: bool = True):
+    """Rozcestník `titul` + místo ve `veta` → jediný význam, nebo None.
+    `plny=False` — bez pomalého hledání přívlastku před názvem (celá tabulka),
+    pro volání u každé otázky (HANS_WIKI_MISTO_NEJUZSI_V1)."""
     try:
         db = _db()
         zak = re.sub(r"\s*\(.*?\)\s*$", "", titul or "").strip()
@@ -861,24 +913,44 @@ def vyznam_podle_mista(titul: str, veta: str):
         kand = []
         for presne, s_upr in vzory:
             # i s přívlastkem: „Kostel svatého Jakuba Staršího (Kutná Hora)“
-            kand += [t for (t,) in db.execute(
-                "SELECT titul FROM clanek WHERE rozcestnik=0 AND (titul=? OR titul LIKE ? "
-                "OR titul LIKE ?) LIMIT 600", (presne, s_upr, s_upr[:-3] + " % (%"))]
+            # HANS_WIKI_MISTO_NEJUZSI_V1 — rozsah přes index titul_norm místo LIKE
+            # (LIKE prošel celou tabulku: ~2,4 s na volání)
+            _n = _norm(presne)
+            kand += [t for (t, tn) in db.execute(
+                "SELECT titul, titul_norm FROM clanek WHERE titul_norm >= ? AND titul_norm < ? "
+                "AND rozcestnik=0 LIMIT 600", (_n, _n + "\U0010ffff"))
+                if tn == _n or tn.startswith(_n + " (") or (tn.startswith(_n + " ") and " (" in t)]
         # HANS_WIKI_MISTO_PRIVLASTEK_V1 (27. 10.) — přívlastek místa PŘED názvem
         # („Lorety v Praze“ → rozcestník Loreta → „Pražská Loreta“; dřív Loreglia)
-        if len(sl) == 1:
-            kand += [t for (t,) in db.execute(
-                "SELECT titul FROM clanek WHERE rozcestnik=0 AND titul LIKE ? LIMIT 50",
-                ("% " + zak,)) if len(t.split()) == 2]
         kand = list(dict.fromkeys(kand))
         # místo = skupina kmenů; víceslovné („Malé Straně“) musí sedět celé
         mista = []
         for m in _MISTO_PRED.finditer(veta or ""):
+            # HANS_WIKI_MISTO_NE_JMENO_V1 (27. 10.) — „vzpomněl jsem si na Alexandra
+            # Dumase“ není místo: slova téhož názvu i v jiném pádě (kmen 4 znaky)
+            # ven; dřív „místo“ našlo stanici metra Alexandre Dumas
+            _kmeny = {_fold_tzv(x)[:4] for x in sl if len(x) >= 4}
             sk = [_fold_tzv(w) for w in m.group(1).split()
-                  if _fold_tzv(w) not in {_fold_tzv(x) for x in sl}]
+                  if _fold_tzv(w) not in {_fold_tzv(x) for x in sl}
+                  and _fold_tzv(w)[:4] not in _kmeny]
             if not sk or max(len(fw) for fw in sk) < 4:
                 continue
             mista.append([fw[:max(3, len(fw) - 2)] for fw in sk if len(fw) >= 3])
+        if len(sl) == 1 and plny:
+            kand += [t for (t,) in db.execute(
+                "SELECT titul FROM clanek WHERE rozcestnik=0 AND titul LIKE ? LIMIT 50",
+                ("% " + zak,)) if len(t.split()) == 2]
+            kand = list(dict.fromkeys(kand))
+        elif len(sl) == 1 and mista:
+            # přívlastek místa před názvem: od kmene místa (index), konec = název
+            _nz = " " + _norm(zak)
+            for sk in mista:
+                _s = sk[0][:3]
+                kand += [t for (t, tn) in db.execute(
+                    "SELECT titul, titul_norm FROM clanek WHERE titul_norm >= ? AND titul_norm < ? "
+                    "AND rozcestnik=0 LIMIT 5000", (_s, _s + "\U0010ffff"))
+                    if tn.endswith(_nz) and len(t.split()) == 2]
+            kand = list(dict.fromkeys(kand))
         if not kand or not mista:
             return None
         _sedi = lambda hay: any(all(re.search(r"\b" + re.escape(s), hay) for s in sk)
@@ -886,6 +958,14 @@ def vyznam_podle_mista(titul: str, veta: str):
         # nejdřív místo v NÁZVU (levné, i u stovek kandidátů), text článku jen
         # když název nerozhodne a kandidátů je málo
         sedi = [t for t in kand if _sedi(_fold_tzv(t))]
+        if len(sedi) > 1:
+            # HANS_WIKI_MISTO_NEJUZSI_V1 (27. 10.) — „na Malé Straně v Praze“: Praze
+            # sedí víc kostelů → nejdřív místo, které dá JEDINÝ význam
+            for sk in mista:
+                _j = [t for t in kand if all(re.search(r"\b" + re.escape(s), _fold_tzv(t)) for s in sk)]
+                if len(_j) == 1:
+                    sedi = _j
+                    break
         if not sedi and len(kand) <= 40:
             sedi = [t for t in kand if _sedi(_fold_tzv((extrakt(t)[0] or "")[:1500]))]
         if len(sedi) == 1:
