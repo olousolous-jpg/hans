@@ -49,6 +49,19 @@ def _clamp(x, lo: float = CONF_FLOOR, hi: float = CONF_CAP) -> float:
     return max(lo, min(hi, x))
 
 
+def _cil_slouceni(conn, norm: str):
+    """HANS_STANCE_MERGE_V1 — id postoje, do kterého byl sloučen postoj se
+    zněním `norm` (nebo None)."""
+    try:
+        r = conn.execute("SELECT h.event FROM stances s JOIN stance_history h "
+                         "ON h.stance_id=s.id WHERE s.claim_norm=? AND s.status='merged' "
+                         "AND h.event LIKE 'merged_into:%' ORDER BY h.id DESC LIMIT 1",
+                         (norm,)).fetchone()
+        return int(r[0].split(":")[1]) if r else None
+    except Exception:
+        return None
+
+
 def _normalize(claim: str) -> str:
     return _WS.sub(" ", (claim or "").strip().lower())
 
@@ -237,6 +250,13 @@ class StanceStore:
                     "WHERE claim_norm=? AND status='active' ORDER BY id LIMIT 1",
                     (norm,)).fetchone()
                 if row is None:
+                    # HANS_STANCE_MERGE_V1 — znění sloučeného postoje posílí jeho cíl
+                    _cil = _cil_slouceni(conn, norm)
+                    if _cil:
+                        row = conn.execute(
+                            "SELECT id, confidence, counterargs FROM stances "
+                            "WHERE id=? AND status='active'", (_cil,)).fetchone()
+                if row is None:
                     _cargs = (json.dumps(_merge_carg([], counterarg))
                               if counterarg else None)
                     cur = conn.execute(
@@ -276,6 +296,40 @@ class StanceStore:
             _log.warning("StanceStore.add_or_reinforce failed: %s", e)
             return None
 
+    def merge(self, zdroje: list, cil: int) -> int:
+        """HANS_STANCE_MERGE_V1 (28. 10.) — sloučí parafráze do jednoho postoje:
+        doklady se přičtou cíli (first_seen min, last_seen max, confidence max),
+        zdroje dostanou status 'merged' a do historie `merged_into:<cíl>` /
+        `merge_from:<id>`. Nic se nemaže. Vrací počet sloučených."""
+        n = 0
+        now = time.time()
+        conn = self._connect()
+        try:
+            c = conn.execute("SELECT * FROM stances WHERE id=? AND status='active'",
+                             (cil,)).fetchone()
+            if not c:
+                return 0
+            ev, f0, l0, cf = c["evidence_count"], c["first_seen"], c["last_seen"], c["confidence"]
+            for sid in zdroje:
+                s = conn.execute("SELECT * FROM stances WHERE id=? AND status='active'",
+                                 (sid,)).fetchone()
+                if not s or sid == cil:
+                    continue
+                ev += s["evidence_count"] or 0
+                f0, l0 = min(f0, s["first_seen"]), max(l0, s["last_seen"])
+                cf = max(cf or 0, s["confidence"] or 0)
+                conn.execute("UPDATE stances SET status='merged' WHERE id=?", (sid,))
+                self._hist(conn, sid, now, s["confidence"] or 0, "merged_into:%d" % cil)
+                self._hist(conn, cil, now, cf, "merge_from:%d" % sid)
+                n += 1
+            conn.execute("UPDATE stances SET evidence_count=?, first_seen=?, last_seen=?, "
+                         "confidence=? WHERE id=?", (ev, f0, l0, cf, cil))
+            conn.commit()
+            _log.info("HANS_STANCE_MERGE_V1: %s → [%d] (%d sloučeno)", zdroje, cil, n)
+            return n
+        finally:
+            conn.close()
+
     def challenge_held(self, target_claim: str) -> Optional[int]:
         """KOLAC_CHALLENGE_HELD_V1 (4. 10.) — Koláč postoj zpochybnil a ten
         OBSTÁL: confidence se nemění, jen bod `challenge_held` do historie.
@@ -308,7 +362,7 @@ class StanceStore:
         """KOLAC_DEBATE_NIGHT_JUDGE_V1 (4. 10.) — Hans postoj v debatě s Koláčem
         VĚCNĚ OBHÁJIL (noční soud): posil confidence krokem `alpha*factor`
         (zrcadlo contradict). evidence_count se NEMĚNÍ — obhajoba není nové
-        pozorování; last_seen ano (postoj je živý, jako u contradict)."""
+        pozorování; od 28. 10. ani last_seen (HANS_STANCE_LASTSEEN_OBS_V1)."""
         norm = _normalize(target_claim)
         if not norm:
             return None
@@ -339,8 +393,12 @@ class StanceStore:
                               row["id"], float(min_gap_days))
                     return row["id"]
                 new_conf = _clamp(conf + (1.0 - conf) * self._alpha * float(factor))
-                conn.execute("UPDATE stances SET confidence=?, last_seen=? WHERE id=?",
-                             (new_conf, now, row["id"]))
+                # HANS_STANCE_LASTSEEN_OBS_V1 (28. 10., rozhodnutí uživatele —
+                # varianta e) — obhajoba NEOSVĚŽÍ last_seen: postoj držený jen
+                # debatami (pečlivost 47 dokladů, 0 nových za 30 dní) zůstával
+                # „čerstvý“, v promptu i v okruhu cílů → další debata (62 : 2).
+                conn.execute("UPDATE stances SET confidence=? WHERE id=?",
+                             (new_conf, row["id"]))
                 self._hist(conn, row["id"], now, new_conf, "challenge_defended")
                 conn.commit()
                 _log.info("stance DEFEND [%s] conf %.2f->%.2f: %.60s",

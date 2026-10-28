@@ -180,7 +180,10 @@ def recent_stances(db_path: str, limit: int = 5) -> str:
         # správně — dva konzumenti téže tabulky si protiřečili. Tady je
         # měkčí obdoba téhož gatu, ať persona stojí na tom, co Severka
         # považuje za trvalé.
-        _MIN_EV, _FRESH_DAYS = 3, 21
+        # HANS_STANCE_LASTSEEN_OBS_V1 (28. 10., varianta e) — „viděn“ už jen
+        # z pozorování, ne z debat → okno 30 dní a ≥2 doklady (s 21/≥3 by
+        # zbyly 2 postoje; 📏 data/mereni/postoje_28_10/podklad.out)
+        _MIN_EV, _FRESH_DAYS = 2, 30
         rows = conn.execute(
             "SELECT claim FROM stances WHERE status='active' "
             "AND evidence_count >= ? AND last_seen >= ? "
