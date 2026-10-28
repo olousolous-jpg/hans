@@ -772,6 +772,63 @@ def titul_cesky_pridavne(veta: str):
     return None
 
 
+# HANS_ZPRAVY_NE_DEJINY_V1 (28. 10.) — předmět, který patří do minulosti: osoba
+# s datem úmrtí v první větě („(14. března 1879 Ulm – 18. dubna 1955 Princeton)“),
+# zaniklý stát, loď, dílo. Otázka na něj není otázka na zprávy (kvíz Seznam
+# Zpráv vzal „Kdo byl první prezident Československa?“, Kolumbus 5×, Titanic…).
+_MINULOST_DRUH = {"zaniklý stát", "civilní loď", "válečná loď", "film", "kniha", "album",
+                  "skladba", "opera", "videohra", "televizní pořad", "panovník", "světec"}
+_UMRTI_VETA = re.compile(r"^[^(]{0,200}\((?![*\s]*\*)[^()]*?\d{3,4}[^()]*?\s[–-]\s[^()]*?\d{3,4}[^()]*\)")
+
+
+def predmet_titul(kotva: str):
+    """HANS_ZPRAVY_NE_DEJINY_V1 — titul článku pro kotvu i v jiném pádě
+    (vč. středního rodu „Československa“ a latinského „Kolumba“)."""
+    k = (kotva or "").strip()
+    if not k:
+        return None
+    zk = [k]
+    sl = k.split()
+    last = sl[-1]
+    for a_, b_ in (("a", "o"), ("u", "o"), ("em", "o"), ("a", "us"), ("ovi", "us"),
+                   ("em", "us"), ("u", "us")):
+        if last.endswith(a_) and len(last) > 4:
+            zk.append(" ".join(sl[:-1] + [last[:-len(a_)] + b_]))
+    for z in zk:
+        r = _cil(z) or ((_presna_zaloha(z) or (None, None))[1])
+        if r and not _db().execute("SELECT rozcestnik FROM clanek WHERE id=?",
+                                   (r[0],)).fetchone()[0]:
+            return r[1]
+    return None
+
+
+def predmet_minulost(titul: str) -> bool:
+    try:
+        r = _cil(titul)
+        if not r:
+            return False
+        roz, druh, text = _db().execute(
+            "SELECT rozcestnik, infobox_druh, substr(text,1,600) FROM clanek WHERE id=?",
+            (r[0],)).fetchone()
+        if roz:
+            return False
+        if (druh or "") in _MINULOST_DRUH:
+            # loď jen v minulém čase („Titanic byl…“; Icon of the Seas „je“)
+            if "loď" in druh:
+                return bool(re.search(r"\sbyl[aoy]?\s|potopen|ztroskot|vyřazen|sešrotov",
+                                      (text or "")[:400]))
+            return True
+        # první řádek, který začíná názvem článku (před ním bývá „Další významy…“)
+        _z = re.sub(r"\s*\(.*?\)$", "", r[1]).split()[0]
+        for _ln in (text or "").split("\n")[:4]:
+            if _ln.strip().startswith(_z):
+                return bool(_UMRTI_VETA.match(_ln.strip()))
+        return False
+    except Exception as e:
+        _log.debug("HANS_ZPRAVY_NE_DEJINY_V1: %s", e)
+        return False
+
+
 def titul_z_vety(veta: str):
     """Nejdelší úsek věty, který je PŘESNĚ titulem článku → titul, jinak None."""
     try:

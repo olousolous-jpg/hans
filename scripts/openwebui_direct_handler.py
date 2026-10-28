@@ -96,6 +96,13 @@ A1_ABSTAIN_TEXT = (
 from scripts.cz_numbers import cz_clock_words as _cz_clock_words  # noqa: E402
 
 
+
+# HANS_ZPRAVY_NE_DEJINY_V1 — časové slovo = otázka smí na zprávy i u předmětu z minulosti
+_ZPRAVY_CAS = re.compile(
+    r"\b(?:dnes|dneska|v[čc]era|te[ďd]|aktu[áa]ln|nejnov[ěe]j|nov[ée]ho|nov[ée]\b|d[ěe]je|"
+    r"stalo|zpr[áa]v|letos|moment[áa]ln|pr[áa]v[ěe]|minul[ýé]|posledn[íi] dob|novink|situac)",
+    re.IGNORECASE)
+
 class _SkipLookup(Exception):
     """HANS_PERSON_CARD_BYPASS_V1 — interní signál: odpověď je z karty osoby,
     instantní dohledání se přeskakuje (jinak by přepsalo jistý fakt domněnkou)."""
@@ -1986,7 +1993,29 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     _nazor_jen_slovem = not _op_ask.search(str(ctx.user_message or ""))
                 except Exception:
                     _nazor_jen_slovem = False
-            if (getattr(self, '_grounding_outcome', '') not in ('self_state', 'opinion')
+            # HANS_ZPRAVY_NE_DEJINY_V1 (28. 10.) — otázka na předmět z minulosti
+            # (osoba s datem úmrtí, zaniklý stát, dílo, potopená loď) bez časového
+            # slova není otázka na zprávy: „Kdo byl první prezident Československa?“
+            # → kvíz Seznam Zpráv, Kolumbus 5×, kapitán Titanicu, režisér Avengers.
+            # 📏 49 otázek, kde vyhrály zprávy: 8 zablokováno, všechny dějiny;
+            # skutečné otázky na zprávy 0. Korpus 5 873 otázek: 925, vzorek 40 vše
+            # encyklopedické.
+            _dejiny = False
+            try:
+                _qd = str(getattr(self, '_f1_query', None) or ctx.user_message or "")
+                if not _ZPRAVY_CAS.search(_qd + " " + str(ctx.user_message or "")):
+                    from scripts.hans_convindex import kotva_tematu as _kt_d
+                    from scripts import hans_wiki_offline as _wo_d
+                    _kd = _kt_d(_qd)
+                    _td = _wo_d.predmet_titul(_kd) if (_kd and _wo_d.dostupna()) else None
+                    if _td and _wo_d.predmet_minulost(_td):
+                        _dejiny = True
+                        logging.getLogger(__name__).info(
+                            'HANS_ZPRAVY_NE_DEJINY_V1: předmět %r patří do minulosti → '
+                            'bez zpráv', _td)
+            except Exception as _dje:
+                logging.getLogger(__name__).debug('HANS_ZPRAVY_NE_DEJINY_V1: %s', _dje)
+            if not _dejiny and (getattr(self, '_grounding_outcome', '') not in ('self_state', 'opinion')
                     or _nazor_jen_slovem):
                 try:
                     from scripts.hans_zpravy import zpravy_podklad
