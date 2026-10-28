@@ -641,6 +641,10 @@ def zaregistruj(_cc):
             r"\bjak[éeýy]\s+(?:kn[ií]\w*|[čc]l[áa]nk\w*|texty|[čc]etb\w*)"
             r"(?:\s+(?:nebo|a)\s+\w+)?\s+(?:jsi|sis|jste)\s+(?:\w+\s+){0,3}?"
             r"(?:pře|pre)?[čc]etl",
+            # HANS_CETL_DOCTENA_V1 (28. 10.) — „ktera byla posledni kniha, kterou jsi
+            # docetl?“: druhá brána směrovače to zamítla jako otázku na svět
+            r"\b(?:posledn\w*|naposledy)\b[^?.!]{0,40}?\b(?:jsi|sis|jste)\s+(?:\w+\s+){0,2}?do[čc]etl",
+            r"\b(?:jsi|sis|jste)\s+naposledy\s+(?:\w+\s+){0,2}?do[čc]etl",
         ],
         handler=_cc._cmd_cetl,
         help_text="Co/kdy jsem četl (přímo z deníku): co jsi četl? četl jsi o X?",

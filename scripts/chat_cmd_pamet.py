@@ -323,6 +323,29 @@ def _cmd_cetl(handler, name, args) -> str:
                 q = str(_tc[0])
         except Exception:
             pass
+    # HANS_CETL_DOCTENA_V1 (28. 10., úspěšnost 27. 10.: „Jakou knihu jste
+    # naposledy dočetl?“ → výpis dnešní četby, článků a kapitol) — otázka na
+    # POSLEDNÍ DOČTENOU knihu → záznam book_finished z deníku.
+    # 📏 8 704 vět: 5 takových otázek, všechny na poslední dočtenou knihu.
+    _qf = _cc._fold_diacritics(q)
+    if re.search(r"\bdocetl|\bdocten", _qf) and re.search(r"\bnaposledy|\bposledn", _qf):
+        try:
+            import datetime as _dtd
+            import sqlite3 as _sq
+            _c = _sq.connect("file:%s?mode=ro" % _cc._recall_db(handler), uri=True, timeout=5)
+            try:
+                _r = _c.execute("SELECT ts, title FROM diary WHERE event_type='book_finished' "
+                                "ORDER BY ts DESC LIMIT 1").fetchone()
+            finally:
+                _c.close()
+            if _r and _r[1]:
+                _d = _dtd.datetime.fromtimestamp(_r[0])
+                _kn = re.sub(r"^Do[čc]etl:\s*", "", _r[1]).strip()
+                _cc._log.info("HANS_CETL_DOCTENA_V1: poslední dočtená %r", _kn)
+                return "Naposledy jsem dočetl knihu „%s“ — dočetl jsem ji %d. %d." % (
+                    _kn, _d.day, _d.month)
+        except Exception as _de:
+            _cc._log.debug("HANS_CETL_DOCTENA_V1: %s", _de)
     # HANS_BOOK_PROGRESS_ANSWER_V1 — průběh čtení z dat, ne výpisky.
     if _cc._PRUBEH_CTENI_PAT.search(q) or _cc._PRUBEH_CTENI_PAT.search(_cc._fold_diacritics(q)):
         try:
