@@ -345,6 +345,21 @@ _TAZACI_SLOVO = re.compile(r"^(jak\w*|kolik\w*|kde|kdy|proc|co|cos|kdo|cim|cemu|
                            r"kter\w+|odkud|kam|koho|komu)$")
 
 
+_KLIMA_FYZIKA = re.compile(
+    r"\bva[řr][ií]|\bvar[ua]\b|\bv[řr]e\b|t[áa]n[ií]\b|\btaje|mrzne|mrazu\b|"
+    r"tuhne|\btav[ií]|absolutn[íi] nul|kelvin|fahrenheit|povrch|j[áa]d[r]|"
+    r"slunc|planet|\bmars(?:u|e|em)?\b|\bvenu[šs]|\bm[ěe]s[íi]c|\b[úu]h(?:el|l)", re.I)
+_KLIMA_MISTO = re.compile(
+    r"m[íi]stnost|pokoj|uvnit[řr]|doma\b|tady|\btu\b|\bti\b|v[áa]m\b|tob[ěe]",
+    re.I)
+
+
+def _klima_fyzika(message: str) -> bool:
+    """HANS_CLIMATE_FYZIKA_V1 — stupně u děje/úhlu/tělesa, ne v místnosti."""
+    return bool(_KLIMA_FYZIKA.search(message)
+                and not _KLIMA_MISTO.search(message))
+
+
 def _otazka_ne_pokyn(akce: str, message: str) -> bool:
     """Ptá se věta, místo aby žádala akci `akce`? Pokyn má přednost i ve
     větě s otazníkem („nastuduj X?“, „můžeš jít spát?“)."""
@@ -2235,6 +2250,16 @@ class AgentRouter:
         # chod domácnosti: teploty po místnostech, co běží na TV, technika,
         # složení domácnosti. Doloženo auditem 30. 9. (klima i TV cizímu).
         # Počasí venku a Koláč zůstávají otevřené.
+        # HANS_CLIMATE_FYZIKA_V1 (28. 10.) — úspěšnost 27. 10.: „pri kolika
+        # stupnich vari voda?“ → report_climate (slovo „stupních“) → cizímu
+        # „O tom mluvím jen se svou domácností“. Stupně u fyzikálního děje
+        # (var, tání, mrznutí), úhlu nebo jiného tělesa (Slunce, planeta)
+        # bez zmínky o místnosti / oslovení nejsou dotaz na čidla → běžná
+        # faktická cesta, pro každého. 📏 2 810 chatových vět: změna jen tato.
+        if aid == "report_climate" and _klima_fyzika(message or ""):
+            log.info("HANS_CLIMATE_FYZIKA_V1: report_climate u fyzikální "
+                     "otázky → běžný hovor")
+            return None
         if aid in ("report_climate", "report_now_playing", "report_pc_health",
                    "report_home_status", "report_household"):
             try:

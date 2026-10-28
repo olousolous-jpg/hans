@@ -20,6 +20,12 @@ _F1_SLOVO_STOP = set("""jaky jaka jake jakou jakem ktery ktera ktere kterou koli
 kdyz jestli jsou bylo byla byli mate mame jsem jste jsme tvoje tvuj vase vas muzes muzete
 rekni reknete prosim nejaky nejaka nejake neco nekdo vlastne zrovna jeste hele tedy takze
 umis umite vis vite znas znate mohl mohla bych bys byste dneska dnes""".split())
+# HANS_LOOKUP_OBSAHEM_F1_SLOVO_V2 (28. 10.) — zájmena nahrazuje přepis F1
+# ZÁMĚRNĚ jménem z vlákna („a kolik jejich mladata?“ → „…mláďata slona?“)
+# a úvodní citoslovce se zahazují („Dobre. Kdo navrhl…“) → nekontrolovat
+_F1_SLOVO_STOP |= set("""jejich jeho jeji jemu jim nich nimi tento tato toto tyto
+tomu toho tech techto tehdy takovy takova takove onen dobre dobra dobry diky dekuji
+super jasne aha fajn""".split())
 
 
 def _f1_ztratil_slovo(veta: str, prepis: str) -> bool:
@@ -33,7 +39,9 @@ def _f1_ztratil_slovo(veta: str, prepis: str) -> bool:
         return False          # jen vstup bez diakritiky (F1 doplňuje háčky)
     pf = [w for w in re.findall(r"\w+", _f(prepis))]
     # delší slovo smí v přepisu být i se změněnou předponou („umrel“ → „zemřel“)
-    return any(not any(w[:4] == y[:4] or (len(w) >= 5 and w[1:5] in y) for y in pf)
+    # V2: čtyřpísmenné slovo stačí na 3 písmena („zije“ → „žijí“)
+    return any(not any(w[:min(4, len(w) - 1)] == y[:min(4, len(w) - 1)]
+                       or (len(w) >= 5 and w[1:5] in y) for y in pf)
                for w in re.findall(r"[a-z]{4,}", holy.lower()) if w not in _F1_SLOVO_STOP)
 
 

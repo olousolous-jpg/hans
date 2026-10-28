@@ -804,6 +804,27 @@ class GroundingMixin:
                         if _my:
                             _rok_t = _my.group(1)
                             break
+                    # HANS_YEAR_TEHDY_ODPOVED_V1 (28. 10., úspěšnost 27. 10.: „Kdy
+                    # padla Berlínská zeď?“ → „Kdo byl tehdy vůdcem SSSR?“ → Stalin)
+                    # — rok nebyl v otázce, ale v Hansově odpovědi na „kdy / v jakém
+                    # roce“ těsně předtím → první letopočet té odpovědi (bez úvodu
+                    # „…heslo „X“:“). 📏 20 vět s „tehdy“: změna jen tato.
+                    if not _rok_t and len(_hist_y) >= 2:
+                        _po = _hist_y[-1]
+                        _pq = next((m for m in reversed(_hist_y[:-1])
+                                    if m.get("role") == "user"), None)
+                        if (_po.get("role") == "assistant" and _pq and re.search(
+                                r"\bkdy\b|v\s+jak[ée]m\s+roce|ve\s+kter[ée]m\s+roce|"
+                                r"kter[ée]ho\s+roku", str(_pq.get("content") or ""),
+                                re.IGNORECASE)):
+                            _odp = re.sub(r"^.*?heslo \u201e[^\u201c\"]*[\u201c\"]\)?:", "",
+                                          str(_po.get("content") or ""), flags=re.S)
+                            _my = re.search(r"\b(1\d{3}|20[01]\d|202[0-5])\b", _odp)
+                            if _my:
+                                _rok_t = _my.group(1)
+                                logging.getLogger(_h.__name__).info(
+                                    "HANS_YEAR_TEHDY_ODPOVED_V1: rok %s z odpovědi na %r",
+                                    _rok_t, str(_pq.get("content") or "")[:60])
                 else:
                     # HANS_YEAR_CONTEXT_V1 (19. 10.) — rozhovor o roce drží kontext
                     # i bez „tehdy“: „a co brandenbursko, zmenilo se tam neco?“ po

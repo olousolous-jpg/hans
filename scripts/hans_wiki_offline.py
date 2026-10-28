@@ -237,6 +237,37 @@ def vyznam_prevazujici(row):
         return None
 
 
+# HANS_WIKI_PAD1_HLAVNI_V1 (28. 10.) — úspěšnost 27. 10.: „hlavní město
+# Kanady“ → přesný titul „Kanady“ (bota) vyhrál nad 1. pádem „Kanada“. Tvar
+# z dotazu je i 1. pád jiného slova (homonymum) → když 1. pád převodem dává
+# jiný článek a ten je ≥ 3× delší (hlavní význam), vezme se on.
+PAD1_HLAVNI = True
+
+
+def _pad1_hlavni(z: str, r):
+    if " " in z.strip() or z.endswith(")") or r[1] != z:
+        return None   # jen tvar, který je sám titulem (ne přesměrování)
+    db = _db()
+    try:
+        d0 = db.execute("SELECT length(text) FROM clanek WHERE id=?",
+                        (r[0],)).fetchone()[0] or 0
+        for alt in _prvni_pad(z):
+            if alt == z:
+                continue
+            r2 = _cil(alt)
+            if not r2 or r2[0] == r[0]:
+                continue
+            roz, d2 = db.execute("SELECT rozcestnik, length(text) FROM clanek "
+                                 "WHERE id=?", (r2[0],)).fetchone()
+            if not roz and (d2 or 0) >= 3 * d0 and (d2 or 0) >= 5000:
+                _log.info("HANS_WIKI_PAD1_HLAVNI_V1: %r → %r (%d × %d zn)",
+                          z, alt, d0, d2)
+                return alt, r2
+    except Exception as e:
+        _log.debug("HANS_WIKI_PAD1_HLAVNI_V1: %s", e)
+    return None
+
+
 def _presna_zaloha(q: str):
     """HANS_WIKI_OFFLINE_DIRY_V1 — přesný titul i (a) bez druhového slova
     („hora Mount Everest“, „kniha Krakatit“ → „Krakatit (kniha)“/„Krakatit“),
@@ -270,6 +301,10 @@ def _presna_zaloha(q: str):
         r = _cil(z)
         if r and not db.execute("SELECT rozcestnik FROM clanek WHERE id=?",
                                 (r[0],)).fetchone()[0]:
+            _hl = (_pad1_hlavni(z, r) if PAD1_HLAVNI
+                   and z in (q.strip(), " ".join(sl[1:])) else None)
+            if _hl:
+                return _hl
             return z, r
         if r and _prevaz is None:
             _v = vyznam_prevazujici(r)

@@ -299,6 +299,13 @@ _ZDVORILOST = re.compile(
     r"k dispozici|m[ůu][žz]u (v[áa]m )?(nab[íi]dnout|dohledat|zjistit)|"
     r"budu[- ]li|dovol[íi]te[- ]li|s dovolen[íi]m", re.IGNORECASE)
 
+# HANS_ADMIT_POZDRAV_V1 (28. 10., úspěšnost 27. 10.: „Dobrý den.\n\nV paměti
+# nemám záznam o tom, kdo byl posledním československým prezidentem…“ → úvodní
+# pozdrav se počítal jako věcná věta → dohledání po přiznání se nespustilo)
+_POZDRAV_VETA = re.compile(
+    r"^\s*(?:dobr[ýy] (?:den|ve[čc]er)|dobr[ée] r[áa]no|zdrav[íi]m|ahoj|nazdar)"
+    r"(?:[,\s]+[\w\u00C0-\u017F]+){0,2}\s*[.!]?\s*$", re.IGNORECASE)
+
 # Věta = konec interpunkce, nový řádek NEBO odrážka. Bez odrážek se dlouhý
 # výpis schopností („Co dokážu, pane: • …") tváří jako JEDNA věta a projde
 # jako čisté odříkání — změřeno.
@@ -329,7 +336,7 @@ def je_ciste_odrikani(text: str) -> bool:
         f = _fold(v)
         if _ABSTAIN_RE.search(f):
             priznani += 1
-        elif _SLIB_RE.search(f) or _ZDVORILOST.search(v):
+        elif _SLIB_RE.search(f) or _ZDVORILOST.search(v) or _POZDRAV_VETA.match(v):
             continue
         else:
             vecne += 1
