@@ -215,7 +215,9 @@ def ohodnot(odpoved: str, polozka: dict) -> str:
             # jméno / místo: příjmení (poslední slovo ≥ 4 zn.) nebo celé jméno, kmenem
             slova = [w for w in re.findall(r"\w+", _fold(re.sub(r"\(.*?\)", "", h))) if len(w) >= 4]
             if slova and polozka.get("vlastnost") in ("P19", "P20"):
-                ok = ok or any(w[:5] in f for w in slova)   # místo: kterékoli slovo
+                # HANS_SAMOTEST_KMEN_PAD_V1 (28. 10.: „v České Lípě“ × „Česká Lípa“
+                # → chybně) — kmen bez koncovky, krátké slovo aspoň 3 znaky
+                ok = ok or any(w[:max(3, min(5, len(w) - 1))] in f for w in slova)
             elif slova:
                 ok = ok or slova[-1][:5] in f
     if ok:

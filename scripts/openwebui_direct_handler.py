@@ -97,6 +97,11 @@ from scripts.cz_numbers import cz_clock_words as _cz_clock_words  # noqa: E402
 
 
 
+
+def _fold_cs(s: str) -> str:
+    import unicodedata as _ud
+    return "".join(c for c in _ud.normalize("NFD", (s or "").lower()) if _ud.category(c) != "Mn")
+
 # HANS_ZPRAVY_NE_DEJINY_V1 — časové slovo = otázka smí na zprávy i u předmětu z minulosti
 _ZPRAVY_CAS = re.compile(
     r"\b(?:dnes|dneska|v[čc]era|te[ďd]|aktu[áa]ln|nejnov[ěe]j|nov[ée]ho|nov[ée]\b|d[ěe]je|"
@@ -2163,6 +2168,26 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     if _psu(getattr(self, '_f1_query', None) or ctx._raw_message):
                         self._presny_titul = None
                         _pu = self._presny_predmet(ctx._raw_message, ctx.name)
+                        # HANS_LOOKUP_UDAJ_FAKTA_DILA_V1 (28. 10., zkouška #74/#87
+                        # „…probuzením Davida Holma ve Vozce smrti?“ → podklad měl
+                        # uložená fakta o „Vozka smrti“ i s údajem, pravidlo hledalo
+                        # „Davida Holma“ → fotbalista Dávid Holman). Fakta o díle
+                        # z otázky + předmět dohledání je jiný (postava) → nechat.
+                        # 📏 11 zásahů s fakty v podkladu: změna jen Holm (6×).
+                        if _pu and 'fakta' in _cesta_u:
+                            try:
+                                from scripts.hans_recall_znalost import fakta_tituly_ve_vete as _ftv
+                                _ts_f = _ftv(self.config.get("diary_db") or "data/hans_diary.db",
+                                             ctx._raw_message or "")
+                                _fk = lambda s: {w[:4] for w in re.findall(r"\w{3,}", _fold_cs(s))}
+                                if _ts_f and not any(_fk(_pu) & _fk(_t) for _t in _ts_f):
+                                    logging.getLogger(__name__).info(
+                                        'HANS_LOOKUP_UDAJ_FAKTA_DILA_V1: fakta o %s v podkladu, '
+                                        'předmět %r je jiný → nedohledávám', _ts_f, _pu)
+                                    _pu = None
+                            except Exception as _ufe:
+                                logging.getLogger(__name__).debug(
+                                    'HANS_LOOKUP_UDAJ_FAKTA_DILA_V1: %s', _ufe)
                         if _pu:
                             self._podklad_tema = _pu
                             _dz = self._dohledej_kotvu(ctx._raw_message, ctx.name,
