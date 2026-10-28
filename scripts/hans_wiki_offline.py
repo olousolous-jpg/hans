@@ -718,6 +718,9 @@ def _je_dilo(titul: str, druhy: list) -> bool:
     return bool(r and _prvni_veta_dilo(r[0], vz))
 
 
+DILO_ROZC_PAD = True
+
+
 def _dilo_z_rozcestniku(klic_fold: str, druhy: list):
     """Rozcestník s titulem `klic_fold` → jediný význam, který je dílem druhu
     podle slovesa, jinak None."""
@@ -737,6 +740,36 @@ def _dilo_z_rozcestniku(klic_fold: str, druhy: list):
         if _prvni_veta_dilo(text, vz):
             kand.append(tit)
     return kand[0] if len(kand) == 1 else None
+
+
+# HANS_WIKI_CESKY_PRIDAVNE_V1 (28. 10., úspěšnost 27. 10.: „kolik pismen ma ceska
+# abeceda?“, „kdo byl prvni cesky kral?“ → entita C1 „Česko“ z přídavného jména →
+# odpověď z hlavy „30 písmen“, „Václav I.“) — spojení „český/česká/české +
+# podstatné jméno“, které je v 1. pádě PŘESNĚ titulem článku (ne rozcestník)
+_CESKY_ADJ = re.compile(r"\b(cesk)(?:y|a|e|eho|emu|em|ym|ou|ych|ymi|ou)\s+([a-z]{3,})\b")
+
+
+def titul_cesky_pridavne(veta: str):
+    try:
+        if not os.path.exists(_FOLD_DB) or "?" not in (veta or ""):
+            return None
+        _q = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or "")
+        # jen otázka bez jiného vlastního jména („českého krále Jana…“ = o Janovi)
+        if any(w[:1].isupper() and not re.match(r"[ČC]esk", w)
+               for w in re.findall(r"\w+", _q)[1:]):
+            return None
+        vf = _fold_tzv(_q)
+        db = _fold_db()
+        for m in _CESKY_ADJ.finditer(vf):
+            for adj in ("cesky", "ceska", "ceske"):
+                for nom in _pady(m.group(2)):
+                    r = db.execute("SELECT titul FROM t WHERE fold=? AND rozcestnik=0",
+                                   ("%s %s" % (adj, nom),)).fetchone()
+                    if r and r[0] not in ("Česko", "Český ráj"):
+                        return r[0]
+    except Exception as e:
+        _log.debug("HANS_WIKI_CESKY_PRIDAVNE_V1: %s", e)
+    return None
 
 
 def titul_z_vety(veta: str):
@@ -825,6 +858,19 @@ def _titul_z_vety_useky(veta: str):
                 if (druhy and i > _sl_poz and n <= 3 and len(usek[0]) >= 3
                         and len(usek[-1]) >= 3 and usek[-1] not in _TZV_DRUH_SLOVO):
                     _d = _dilo_z_rozcestniku(" ".join(usek), druhy)   # HANS_WIKI_DILO_ROZCESTNIK_V1
+                    # HANS_WIKI_DILO_ROZC_PAD_V1 (28. 10., úspěšnost 27. 10.: „kdo
+                    # napsal kyticu?“ → „Kytici“ rozcestník nenašel → z hlavy „Mácha“)
+                    # — jednoslovný název v jiném pádě: rozcestník i v 1. pádě
+                    if not _d and n == 1 and DILO_ROZC_PAD and _velke(i, 1):
+                        for _p in _pady(usek[0]):
+                            if _p != usek[0]:
+                                _d = _dilo_z_rozcestniku(_p, druhy)
+                                if _d and "kniha" in druhy and (_db().execute(
+                                        "SELECT infobox_druh FROM clanek WHERE titul=?",
+                                        (_d,)).fetchone() or [""])[0] == "film":
+                                    _d = None   # „napsal Babičku“ ≠ film
+                                if _d:
+                                    break
                     if _d:
                         return _d
                 if (usek[-1] in _TZV_DRUH_SLOVO or (len(usek[0]) < 4 and usek[0] not in _ZAJMENO_1P)

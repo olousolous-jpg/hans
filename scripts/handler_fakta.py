@@ -65,6 +65,9 @@ def _f1_ztratil_sloveso(veta: str, prepis: str) -> bool:
     return any(not any(w[:4] in y for y in pf) for w in _F1_SLOVESA.findall(_f(holy)))
 
 
+DILO_PAD1 = True
+
+
 class FaktaMixin:
     """Část třídy `OpenWebUIDirectHandler` — viz hlavička modulu."""
 
@@ -997,6 +1000,15 @@ class FaktaMixin:
                     tema = _rk
                     self._presny_z_vety = _rk
             if not tema:
+                # HANS_WIKI_CESKY_PRIDAVNE_V1 (28. 10.) — „česká abeceda“, „první
+                # český král“: bez kotvy, ale spojení je přesně titulem článku
+                _cp = _wo.titul_cesky_pridavne(_prepis or veta) or _wo.titul_cesky_pridavne(veta)
+                if _cp:
+                    logging.getLogger(__name__).info(
+                        "HANS_WIKI_CESKY_PRIDAVNE_V1: předmět → %r", _cp)
+                    self._presny_titul = _cp
+                    self._presny_z_vety = _cp
+                    return _cp
                 return None
             from scripts.web_reader import WebReader
             from scripts.hans_overeni import _jen_lokalne
@@ -1099,6 +1111,26 @@ class FaktaMixin:
                                   r"vznikl\w*|m[eě]l[aoiy]?\s+premi[eé]r\w*)\b",
                                   _f(veta) + " " + _f(_prepis or ""))):
                 silny = True
+            # HANS_WIKI_DILO_ROZC_PAD_V1 (28. 10., úspěšnost 27. 10.: „kdo napsal
+            # kyticu?“ → F1 „Kytici“ → hledání „Kytice (film)“ → neprošlo → z hlavy
+            # „Mácha“) — jednoslovný název v jiném pádě se slovesem díla: rozcestník
+            # v 1. pádě a jeho jediný význam toho druhu („Kytice (báseň)“)
+            if not silny and DILO_PAD1 and len(a) == 1:
+                _vv = _f(veta) + " " + _f(_prepis or "")
+                _dr = (["kniha"] if re.search(r"\bkdo\s+napsal", _vv) else
+                       ["film"] if re.search(r"\bkdo\s+(?:re[zž][ií]roval|nato[cč]il)", _vv) else
+                       ["opera"] if re.search(r"\bkdo\s+(?:slo[zž]il|zkomponoval)", _vv) else [])
+                _th = re.sub(r"\s*\(.*?\)", "", tema).strip()
+                for _p1 in (_wo._prvni_pad(_th) if _dr else []):
+                    if _f(_p1) == _f(_th):
+                        continue
+                    _d = _wo._dilo_z_rozcestniku(_f(_p1), _dr)
+                    if _d:
+                        logging.getLogger(__name__).info(
+                            "HANS_WIKI_DILO_ROZC_PAD_V1: %r → dílo %r", tema, _d)
+                        self._presny_titul = _d
+                        self._presny_z_vety = _d
+                        return _d
             return tema if silny else None
         except Exception as _e:
             logging.getLogger(__name__).debug("HANS_LOOKUP_PRESNY_V1: %s", _e)
