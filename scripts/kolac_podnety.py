@@ -129,6 +129,39 @@ def zasoba(db: str) -> int:
         return 0
 
 
+# ── KOLAC_PODNET_HESLO_V1 (27. 10.) — do zásoby jen to, co má článek ──────────
+# Model si názvy podnětů vymýšlí volně: 6 z 10 skončilo „nenalezeno“ (318 z 529)
+# — výmysly („Valtlavínské klastry“, „Boží Zápasy“), skutečné věci pod nehesllovým
+# názvem („Gestalt teorie“, „Fotbalová legenda Pelé“) a spojení, která heslem
+# nejsou („Hudba a Parkinsonova choroba“). Dialog pak třikrát zkusil, nic nenašel
+# a spadl do volného hovoru → podnětů 27 % dialogů místo 50 %. Kontrola proti
+# lokální Wikipedii (jen lokálně, bez sítě) a uložení pod názvem článku.
+# 📏 484 podnětů (`data/mereni/podnety_27_10/kontrola.py`): úspěšných projde
+# 135/166, neúspěšných se vyřadí 278/318 (ztráta hlavně anglických názvů).
+def heslo_podnetu(config: dict, nazev: str):
+    """Název článku v lokální Wikipedii pro podnět, None = nemá článek.
+    Nedostupná lokální wiki → název beze změny (chování jako dřív)."""
+    try:
+        from scripts import hans_wiki_offline as wo
+        if not wo.dostupna():
+            return nazev
+        r = wo._cil(nazev) or (wo._presna_zaloha(nazev) or (None, None))[1]
+        if r and not wo.extrakt(r[1])[1]:
+            return r[1]
+        from scripts.web_reader import WebReader
+        from scripts.hans_overeni import _jen_lokalne
+        from scripts import hans_findings as hf
+        wr = WebReader(config)
+        wr._get = _jen_lokalne
+        t = wr._wikipedia_search(nazev)
+        if t and not wo.extrakt(t)[1] and hf._titles_align(nazev, t):
+            return t
+    except Exception as e:
+        _log.debug("KOLAC_PODNET_HESLO_V1 %r: %s", nazev, e)
+        return nazev
+    return None
+
+
 def pripravit(config: dict, db: str, kolik: int = 20) -> int:
     """Noční doplnění zásoby: model navrhne související věci k Hansovým
     studijním tématům, kód vyřadí ty, které Hans v paměti má."""
@@ -147,7 +180,9 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
     random.shuffle(progs)
     pridano = 0
     dole = False
-    for p in progs:
+    vyrazeno = 0
+    # KOLAC_PODNET_HESLO_V1 — projde jen ~třetina návrhů → témata až dvakrát
+    for p in progs + progs:
         if pridano >= kolik:
             break
         try:
@@ -175,6 +210,14 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
             if prilis_slozeny(nazev, int(_cfg(config).get("podnety_max_slov", 4))):
                 continue
             uz.add(nazev.lower())
+            _hes = heslo_podnetu(config, nazev)   # KOLAC_PODNET_HESLO_V1
+            if not _hes:
+                vyrazeno += 1
+                continue
+            if _hes.lower() in uz and _hes != nazev:
+                continue
+            nazev = _hes
+            uz.add(nazev.lower())
             stav = "v_pameti" if v_pameti(db, nazev) else "novy"
             c = _conn(db)
             try:
@@ -186,8 +229,9 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
             finally:
                 c.close()
             pridano += stav == "novy"
-    _log.info("KOLAC_PODNETY_V1: zásoba podnětů +%d (nových %d)%s", pridano,
-              zasoba(db), " — model neodpověděl, zkusím znovu" if dole else "")
+    _log.info("KOLAC_PODNETY_V1: zásoba podnětů +%d (nových %d, bez článku vyřazeno %d)%s",
+              pridano, zasoba(db), vyrazeno,
+              " — model neodpověděl, zkusím znovu" if dole else "")
     return None if dole else pridano
 
 

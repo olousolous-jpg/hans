@@ -2634,6 +2634,11 @@ class HansIdle:
             if not polozky:
                 polozky = self._vyrob_kurikulum(goal_topic)
                 if not polozky:
+                    # HANS_GOAL_KOTVA_VELIKOST_V1 — bez kurikula si cíl svůj název
+                    # přečte nejvýš jednou za 24 h (první čtení dá kotvu), jinak
+                    # běžná zvědavost; dřív četl týž článek při každé příležitosti
+                    if self._cil_cten_nedavno(goal_topic):
+                        return None, None
                     return goal_topic, None      # pad na dnesni chovani
                 self._goals.set_curriculum(g.id, polozky)
                 idx = 0
@@ -2644,6 +2649,26 @@ class HansIdle:
             _log.debug("_goal_next: %s", e)
             return goal_topic, None
 
+    def _cil_cten_nedavno(self, tema: str, hodin: float = 24.0) -> bool:
+        """HANS_GOAL_KOTVA_VELIKOST_V1 — četl Hans článek s názvem cíle za posledních N h?"""
+        import sqlite3 as _sq
+        try:
+            _db = self.config.get("diary_db", "data/hans_diary.db")
+            _var = list(dict.fromkeys([tema, tema[:1].upper() + tema[1:], tema.lower(),
+                                       tema.capitalize()]))
+            con = _sq.connect("file:%s?mode=ro" % _db, uri=True, timeout=4.0)
+            try:
+                r = con.execute(
+                    "SELECT 1 FROM diary WHERE event_type='web_read' AND ts > ? AND title IN (%s) "
+                    "LIMIT 1" % ",".join("?" * len(_var)),
+                    [time.time() - hodin * 3600] + _var).fetchone()
+            finally:
+                con.close()
+            return bool(r)
+        except Exception as e:
+            _log.debug("_cil_cten_nedavno: %s", e)
+            return False
+
     def _vyrob_kurikulum(self, tema: str) -> list:
         """Kurikulum pro cil, ukotvene tim, co Hans o tematu SAM precetl."""
         import re as _re
@@ -2653,13 +2678,32 @@ class HansIdle:
             _db = self.config.get("diary_db", "data/hans_diary.db")
             con = _sq.connect("file:%s?mode=ro" % _db, uri=True, timeout=4.0)
             try:
-                r = con.execute(
+                # HANS_GOAL_KOTVA_VELIKOST_V1 (27. 10.) — cíl „sport“ × článek
+                # „Sport“: přesná shoda titulu kotvu nenašla, kurikulum nevzniklo
+                # a cíl četl pořád svůj název (11× za 3 dny). Titul bez ohledu na
+                # velikost písmen (SQLite lower() neumí české znaky → varianty),
+                # odložený záznam {"pending": …} → jeho raw_text.
+                _var = list(dict.fromkeys([tema, tema[:1].upper() + tema[1:], tema.lower(),
+                                           tema.capitalize()]))
+                rows = con.execute(
                     "SELECT COALESCE(NULLIF(data,''),note) FROM diary "
-                    "WHERE event_type='web_read' AND title=? "
-                    "ORDER BY ts DESC LIMIT 1", (tema,)).fetchone()
+                    "WHERE event_type='web_read' AND title IN (%s) "
+                    "ORDER BY ts DESC LIMIT 10" % ",".join("?" * len(_var)), _var).fetchall()
             finally:
                 con.close()
-            txt = _re.sub(r"^\[\w+\]\s*", "", (r[0] if r else "") or "")
+            txt = ""
+            for (_d,) in rows:
+                _d = (_d or "").strip()
+                if _d.startswith("{"):
+                    try:
+                        import json as _js
+                        _d = str((_js.loads(_d) or {}).get("raw_text") or "")
+                    except Exception:
+                        _d = ""
+                _d = _re.sub(r"^\[\w+\]\s*", "", _d)
+                if _d:
+                    txt = _d
+                    break
             kotva = [v.strip() for v in _re.split(r"(?<=[.!?])\s+", txt)
                      if len(v.strip()) > 20][:3]
         except Exception as _ke:

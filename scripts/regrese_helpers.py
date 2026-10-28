@@ -1577,3 +1577,11 @@ def presny_predmet_f1(veta: str, f1: str):
     h.config = _cfg()
     h._f1_query = f1
     return h._presny_predmet(veta, "x")
+
+
+def podnet_heslo(nazev: str):
+    """KOLAC_PODNET_HESLO_V1 — název článku pro podnět (None = bez článku)."""
+    from scripts import kolac_podnety as _kp, hans_wiki_offline as _wo
+    if not _wo.dostupna():
+        return "BEZ_WIKI"
+    return _kp.heslo_podnetu(_cfg(), nazev)
