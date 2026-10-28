@@ -162,6 +162,87 @@ def heslo_podnetu(config: dict, nazev: str):
     return None
 
 
+# ── KOLAC_PODNETY_Z_FAKTU_V1 (28. 10.) — podněty ze jmen v Hansových faktech ──
+# Model navrhoval ke stále stejným studijním programům pořád totéž (zásoba 0,
+# 5–14 návrhů denně, ~25 % nálezů noc zamítla jako výmysly). Jména osob, děl
+# a míst z uložených výpisů faktů (`hans_recall_znalost._ft_nacti`) převedená
+# do 1. pádu, s PŘESNÝM článkem v lokální Wikipedii, která Hans v paměti nemá:
+# nic vymyšleného, souvisí s tím, co Hans četl, a zdroj se sám obnovuje (každé
+# dohledání uloží nová fakta). 📏 230 výpisů → 2 272 jmen → 153 kandidátů.
+_JMENO = re.compile(r"(?<![\w.])([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]+"
+                    r"(?:\s+(?:z|ze|von|van|de|da|di|of|the|a)\s+[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž]+"
+                    r"|\s+[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\wáčďéěíňóřšťúůýž.]+){1,3})")
+_DRUH_DILO = {"film", "kniha", "album", "skladba", "opera", "videohra", "televizní pořad"}
+_DRUH_MISTO = {"sídlo světa", "české sídlo", "česká obec", "region", "hora", "vodní tok",
+               "budova", "kostel", "chráněné území", "vodní plocha", "hrad", "zámek",
+               "stát", "zaniklý stát"}
+_PORADI_TYP = {"osoba": 0, "dilo": 1, "pojem": 2, "misto": 3}
+
+
+def _typ_clanku(r) -> str:
+    from scripts import hans_wiki_offline as wo
+    druh, text = wo._db().execute(
+        "SELECT infobox_druh, substr(text,1,600) FROM clanek WHERE id=?", (r[0],)).fetchone()
+    druh = druh or ""
+    if druh in _DRUH_DILO:
+        return "dilo"
+    if druh in _DRUH_MISTO:
+        return "misto"
+    z = re.sub(r"\s*\(.*?\)$", "", r[1]).split()[0]
+    for ln in (text or "").split("\n")[:4]:
+        if ln.strip().startswith(z):
+            # osoba: v první větě data narození („(* 1940)“, „(1879 – 1955)“)
+            if re.match(r"^[^(]{0,120}\((?:\*|[^()]*\d{3,4}[^()]*[–-])", ln.strip()):
+                return "osoba"
+            break
+    return "pojem"
+
+
+def kandidati_z_faktu(db: str, kolik: int = 20, uz=None) -> list:
+    """[(nazev článku, typ, zdrojový článek)] — nejčerstvější výpisy první,
+    osoby a díla před pojmy a místy."""
+    from scripts import hans_wiki_offline as wo
+    from scripts.hans_recall_znalost import _ft_nacti
+    if not wo.dostupna():
+        return []
+    vyp, _t = _ft_nacti(db)
+    uz = set(uz or ())
+    out, videno = [], set()
+    for poradi, (tit, radky) in enumerate(reversed(list(vyp.items()))):
+        _zdroj = wo._cil(tit)
+        _ze_zdroje = 0
+        for ln in radky:
+            if _ze_zdroje >= 2:          # pestrost: nejvýš 2 ze zdroje na dávku
+                break
+            for m in _JMENO.finditer(" " + ln):
+                n = m.group(1).strip(" .")
+                if n in videno or n.lower() in uz or n.lower() in (tit or "").lower():
+                    continue
+                videno.add(n)
+                r = wo._cil(n)
+                if not r:
+                    _t1 = wo.predmet_titul(n)
+                    r = wo._cil(_t1) if _t1 else None
+                if (not r or r[1].lower() in uz or r[1] == tit
+                        or (_zdroj and r[0] == _zdroj[0])):   # „Ole Rømer“ = zdroj
+                    continue
+                if wo._db().execute("SELECT rozcestnik FROM clanek WHERE id=?",
+                                    (r[0],)).fetchone()[0]:
+                    continue
+                if v_pameti(db, r[1]):
+                    uz.add(r[1].lower())
+                    continue
+                uz.add(r[1].lower())
+                out.append((r[1], _typ_clanku(r), tit, poradi))
+                _ze_zdroje += 1
+                if _ze_zdroje >= 2:
+                    break
+        if len(out) >= kolik * 3:
+            break
+    out.sort(key=lambda x: (_PORADI_TYP.get(x[1], 9), x[3]))
+    return [(n, typ, tit) for n, typ, tit, _p in out[:kolik]]
+
+
 def pripravit(config: dict, db: str, kolik: int = 20) -> int:
     """Noční doplnění zásoby: model navrhne související věci k Hansovým
     studijním tématům, kód vyřadí ty, které Hans v paměti má."""
@@ -179,6 +260,26 @@ def pripravit(config: dict, db: str, kolik: int = 20) -> int:
         c.close()
     random.shuffle(progs)
     pridano = 0
+    # KOLAC_PODNETY_Z_FAKTU_V1 — nejdřív jména z vlastních faktů (bez modelu)
+    if bool(_cfg(config).get("podnety_z_faktu", True)):
+        try:
+            for nazev, typ, zdroj in kandidati_z_faktu(db, kolik, uz):
+                c = _conn(db)
+                try:
+                    c.execute("INSERT INTO kolac_podnety (ts, tema, nazev, typ, stav) "
+                              "VALUES (?,?,?,?,'novy')", (time.time(), "fakta: " + zdroj, nazev, typ))
+                    c.commit()
+                finally:
+                    c.close()
+                uz.add(nazev.lower())
+                pridano += 1
+            _log.info("KOLAC_PODNETY_Z_FAKTU_V1: +%d podnětů ze jmen ve faktech", pridano)
+        except Exception as e:
+            _log.warning("KOLAC_PODNETY_Z_FAKTU_V1 selhalo: %s", e)
+        if pridano >= kolik:
+            _log.info("KOLAC_PODNETY_V1: zásoba podnětů +%d (nových %d, model netřeba)",
+                      pridano, zasoba(db))
+            return pridano
     dole = False
     vyrazeno = 0
     # KOLAC_PODNET_HESLO_V1 — projde jen ~třetina návrhů → témata až dvakrát
@@ -392,7 +493,10 @@ def poloz(config: dict, db: str, asker: str):
             continue
         # jen u osob: jmenovci jsou past u jmen; u míst a pojmů kontrola
         # zahazovala i správná hesla (Flossenbürg k Norimberskému procesu)
-        if p.get("typ") == "osoba" and not souvisi_s_tematem(
+        # KOLAC_PODNETY_Z_FAKTU_V1 — jméno z věty faktu s přesným článkem:
+        # jmenovec nehrozí, téma (zdrojový článek) bývá anglicky („Zionism“)
+        if p.get("typ") == "osoba" and not (p.get("tema") or "").startswith("fakta:") \
+                and not souvisi_s_tematem(
                 p.get("tema") or "", nal.get("raw_text") or ""):
             if nal.get("id"):
                 hf._set_status(db, int(nal["id"]), "rejected",
