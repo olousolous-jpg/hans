@@ -285,6 +285,42 @@ def _je_dilo_clanek(r, druhy) -> bool:
         return True
 
 
+# HANS_WIKI_ROZC_OSOBA_KDO_V1 (29. 10., úspěšnost: „kdo byl krok?“ → entita
+# „Krok za krokem“ / článek Krokodýl) — „Kdo byl X?“ a X je rozcestník → jediný
+# význam, jehož popis v rozcestníku je o osobě („Krok (vojvoda) – bájná postava
+# českých dějin“). 📏 185 otázek „kdo byl/je“ z logu: změna jen Krok.
+_ROZC_OSOBA = re.compile(
+    r"–\s*.*\b(postav\w*|kníže|kněžn\w*|král\w*|královn\w*|císař\w*|vojvod\w*|spisovatel\w*|"
+    r"básník\w*|politik\w*|herec|herečk\w*|malíř\w*|skladatel\w*|zpěvák\w*|zpěvačk\w*|"
+    r"fotbalist\w*|hokejist\w*|sportovc\w*|vědec|fyzik\w*|chemik\w*|filozof\w*|duchovní|kněz|"
+    r"biskup\w*|papež\w*|svat[ýá]|světic\w*|bůh|bohyn\w*|hrdin\w*|osobnost\w*|podnikatel\w*|"
+    r"architekt\w*|režisér\w*|narozen\w*)\b", re.I)
+
+
+def osoba_z_rozcestniku(titul: str):
+    """Jediný osobní význam rozcestníku `titul` (název začíná týmž slovem), jinak None."""
+    try:
+        r = _cil(titul)
+        if not r:
+            return None
+        row = _db().execute("SELECT rozcestnik, text FROM clanek WHERE id=?", (r[0],)).fetchone()
+        if not row or not row[0]:
+            return None
+        hlava = _fold(re.sub(r"\s*\(.*?\)", "", r[1]))
+        kand = []
+        for ln in (row[1] or "").splitlines():
+            m = re.match(r"\s*([^–\n]{2,80}?)\s+–", ln)
+            if m and _ROZC_OSOBA.search(ln):
+                t = m.group(1).strip()
+                t = t[:1].upper() + t[1:]
+                if _fold(t).startswith(hlava) and _cil(t):
+                    kand.append(t)
+        kand = list(dict.fromkeys(kand))
+        return kand[0] if len(kand) == 1 else None
+    except Exception:
+        return None
+
+
 def _presna_zaloha(q: str):
     """HANS_WIKI_OFFLINE_DIRY_V1 — přesný titul i (a) bez druhového slova
     („hora Mount Everest“, „kniha Krakatit“ → „Krakatit (kniha)“/„Krakatit“),

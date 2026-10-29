@@ -1336,6 +1336,16 @@ class FaktaMixin:
                         self._presny_titul = _d3
                         self._presny_z_vety = _d3
                         return _d3
+                    # HANS_WIKI_ROZC_OSOBA_KDO_V1 — „Kdo byl X?“ → jediný osobní význam
+                    _q4 = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", _prepis or veta or "").strip()
+                    if re.fullmatch(r"(?i)kdo\s+(?:byl|byla|je|bylo)\s+\S+\s*\??", _q4):
+                        _o4 = _wo.osoba_z_rozcestniku(titul)
+                        if _o4:
+                            logging.getLogger(__name__).info(
+                                "HANS_WIKI_ROZC_OSOBA_KDO_V1: rozcestník %r → osoba %r", titul, _o4)
+                            self._presny_titul = _o4
+                            self._presny_z_vety = _o4
+                            return _o4
                 except Exception:
                     pass
                 return None

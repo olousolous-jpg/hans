@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+ENTITY_DISTINCT = True   # HANS_ENTITY_DISTINCT_TOKENS_V1 (vypínač pro měření)
 import sqlite3
 import time
 import unicodedata
@@ -654,6 +655,17 @@ class EntityStore:
                 # prvního I posledního tokenu — řeší prostřední jména
                 # („Erich Robert Sorge" ↔ dotaz „Erich Sorge").
                 full = len(matched) == len(kt)
+                # HANS_ENTITY_DISTINCT_TOKENS_V1 (29. 10., úspěšnost: „kdo byl krok?“ →
+                # „Krok za krokem“ — oba tokeny klíče sedly na JEDINÉ slovo dotazu)
+                if full and len(kt) >= 2 and ENTITY_DISTINCT:
+                    _pouz = set()
+                    for _kt1 in kt:
+                        _k = next((i for i, qt in enumerate(q_tokens) if i not in _pouz and
+                                   (qt.startswith(_kt1) if _scvrkly else _match_q(_kt1, qt))), None)
+                        if _k is None:
+                            full = False
+                            break
+                        _pouz.add(_k)
                 ends = (len(kt) >= 2 and kt[0] in matched and kt[-1] in matched)
                 # loose: příjmení (poslední token) samo stačí — ALE jen když
                 # dotaz NEMÁ žádný jiný obsahový token, který se s entitou

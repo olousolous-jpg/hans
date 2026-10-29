@@ -1043,7 +1043,7 @@ def clanek_obsahem(config: dict, otazka: str) -> Optional[str]:
                 zak = re.sub(r"\s*\(.*$", "", r[1])
                 tituly = [t for (t,) in db.execute(
                     "SELECT titul FROM clanek WHERE rozcestnik=0 AND (titul LIKE ? OR titul LIKE ?) "
-                    "LIMIT 15", (zak + " (%", zak + "%"))]
+                    "LIMIT 15", (zak + " (%", zak + " %"))]   # HANS_WIKI_ROZC_OSOBA_KDO_V1 — ne „Krokodýl“ k „Krok“
             for t in tituly:
                 sk = _skore(t)
                 if sk is not None:
