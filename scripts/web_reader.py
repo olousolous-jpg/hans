@@ -224,6 +224,48 @@ def _zacatek_delsiho_slova(query: str, title: str) -> bool:
                if _odstran_diakritiku(a) not in presne for b in tt)
 
 
+# ── HANS_WIKI_RELAX_POKRYTI_V1 (29. 10.) — ZMÍRNĚNÝ STUPEŇ JEN PŘI CELÉM TITULU ──
+# RELAX (shoda ≥ 0,45 a krátký titul) přijímal titul, kde sedělo jen jedno slovo
+# dotazu: „Petra Holana“ → Petr Fabian, „Románské stavebnictví“ → Romanshorn,
+# „Českou mši“ → MSI (firma), „Lea Tolstého“ → Lea Goldbergová.
+# 📏 983 dotazů (osnovy studia, cíle, kotvy a témata dohledání z logu): RELAX
+# rozhodl 40×, z toho ~27 cizích; s touto podmínkou přijme 11, všechny správně
+# (Top Gear, Pátý element, Typografie, Jára Cimrman…); ztratí 3 hraniční
+# („Nobelový cen“ s překlepem, Zeměmoří, Mozartovi).
+def _relax_pokryje(query: str, title: str) -> bool:
+    """Každé slovo titulu má v dotazu VLASTNÍ protějšek, pojistky slov drží
+    a jednoslovný titul sedí přesně / skloněním bez zbylého vlastního jména."""
+    t = _PAREN.sub("", title or "")
+    if _title_coverage(query, title) < 1.0:
+        return False
+    if _zacatek_delsiho_slova(query, title) or _konflikt_prvniho_pismene(query, title):
+        return False
+    tt = [_odstran_diakritiku(x) for x in _title_tokens(t)]
+    qt = [_odstran_diakritiku(x) for x in _title_tokens(query)]
+    pouzite = set()
+    for b in tt:      # „Jackem“ nesmí krýt „Jackie“ i „Jackson“ zároveň
+        k = next((i for i, a in enumerate(qt) if i not in pouzite and _token_match(a, b)), None)
+        if k is None:
+            return False
+        pouzite.add(k)
+    if len(tt) == 1:
+        b = tt[0]
+        b0 = (t.split() or [""])[0]
+        qw = re.findall(r"\w+", query or "")
+        shoda = [w for w in qw if _token_match(_odstran_diakritiku(w), b)]
+        if not any(_odstran_diakritiku(w) == b or (_odstran_diakritiku(w).startswith(b)
+                                                    and len(w) - len(b) <= 3) for w in shoda):
+            return False                    # Harmonie × Harmonika
+        if b0.isupper() and len(b0) > 1 and not any(w.isupper() for w in shoda):
+            return False                    # zkratka (MSI) × obyčejné slovo
+        zbyle = [w for w in qw if w not in shoda and len(w) >= 3]
+        if any(w[0].isupper() for w in zbyle if w != qw[0]) or (
+                len(qw) == 2 and qw[0] not in shoda and qw[0][0].isupper()
+                and qw[1][0].isupper()):
+            return False                    # Marcel Paldner × Marcel
+    return True
+
+
 def _sklonovany_tvar(query: str, title: str) -> bool:
     """HANS_WIKI_LONGER_WORD_V1 — záloha z našeptávače bez přesného tokenu smí
     projít jen jako skloňovaný tvar téhož slova („Karlštejna“ × „Karlštejn“),
@@ -758,7 +800,8 @@ class WebReader:
             relax_tok = int((self.config.get("curiosity", {}) or {})
                             .get("wiki_title_relax_max_tokens", 3))
             if (best_title and best_score >= relax
-                    and len(_title_tokens(best_title)) <= relax_tok):
+                    and len(_title_tokens(best_title)) <= relax_tok
+                    and _relax_pokryje(query, best_title)):   # HANS_WIKI_RELAX_POKRYTI_V1
                 _log.debug("Wikipedia srsearch RELAX: %r score=%.2f, krátký titul "
                            "→ přijato", best_title, best_score)
                 return best_title

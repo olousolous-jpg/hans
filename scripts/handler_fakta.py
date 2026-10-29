@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+_SLEPENA_BEZ_TITULU = True   # HANS_LOOKUP_SLEPENA_BEZ_TITULU_V1 (vypínač pro měření)
 
 # HANS_NOTES_TITLE_SUPPORT_V1 — slova, která do titulu zápisku přidává Hans
 # sám (druh zápisku), ne jeho předmět
@@ -1049,9 +1050,14 @@ class FaktaMixin:
                     self._presny_titul = _vm
                     self._presny_z_vety = _vm
                     return _vm
-            if not titul or _wo.extrakt(titul)[1]:
+            # HANS_LOOKUP_SLEPENA_BEZ_TITULU_V1 (29. 10.) — slepená kotva („film Psycho
+            # Alfred Hitchcock“) se zkusí i bez titulu z hledání; dřív se k ní došlo jen
+            # díky cizímu titulu z RELAX („Hitchcock (film)“), který HANS_WIKI_RELAX_POKRYTI_V1 zavřel
+            if titul and _wo.extrakt(titul)[1]:
                 return None
-            a, b = _tok(tema), _tok(titul)
+            if not titul and not _SLEPENA_BEZ_TITULU:
+                return None
+            a, b = _tok(tema), (_tok(titul) if titul else [])
             if not a or not b or not (_kryje(a, b) and _kryje(b, a)):
                 # HANS_LOOKUP_SLEPENA_KOTVA_V1 (26. 10., /tazatel: přepis „Kde se
                 # narodil režisér filmu Psycho Alfred Hitchcock?“ → kotva „film Psycho
