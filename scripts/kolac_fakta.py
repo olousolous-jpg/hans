@@ -64,6 +64,31 @@ def _conn(db: str):
 _PO_PRIZNANI_TVRDI = re.compile(r"po dohled[aá]n|dohledal|vy[sš]lo mi|mi vy[sš]lo|na[sš]el jsem", re.I)
 
 
+# KOLAC_EXAM_SOUD_SLOVY_V1 — kmeny základních i řadových číslovek (bez diakritiky)
+_SL_NACT = ["desat", "jedenact", "dvanact", "trinact", "ctrnact", "patnact",
+            "sestnact", "sedmnact", "osmnact", "devatenact"]
+_SL_DES = {2: "dvacet|dvacat", 3: "tricet|tricat", 4: "ctyricet|ctyricat",
+           5: "padesat", 6: "sedesat", 7: "sedmdesat", 8: "osmdesat", 9: "devadesat"}
+_SL_JED = {1: "jeden|jedna|prvn", 2: "dva|dve|druh", 3: "tri|tret", 4: "ctyri|ctvrt",
+           5: "pet|pat", 6: "sest", 7: "sedm", 8: "osm", 9: "devet|devat"}
+
+
+def _cislo_slovy(n: int, o: str) -> bool:
+    """Je číslo 10–99 v textu `o` (už _fold) slovy? Menší čísla ne — „druhá“,
+    „prvn…“ jsou v běžných větách i bez významu čísla."""
+    if n == 10:
+        return re.search(r"\b(deset|desat)", o) is not None
+    if 11 <= n <= 19:
+        return re.search(r"\b" + _SL_NACT[n - 10], o) is not None
+    if 20 <= n <= 99:
+        d, j = divmod(n, 10)
+        if not j:
+            return re.search(r"\b(%s)" % _SL_DES[d], o) is not None
+        return (re.search(r"\b(%s)\w*\s+(a\s+)?(%s)" % (_SL_DES[d], _SL_JED[j]), o)
+                or re.search(r"\b(%s)\w*a(%s)" % (_SL_JED[j], _SL_DES[d]), o)) is not None
+    return False
+
+
 def soud(odpoved: str, klic: str, otazka: str = "") -> str:
     """Je správný údaj v odpovědi? Čísla musí sedět přesně, slova kmenem
     (5 znaků). Vrací ok | nevedel | vedle | odmitl | neposouzeno | prazdno."""
@@ -89,6 +114,13 @@ def soud(odpoved: str, klic: str, otazka: str = "") -> str:
     # KOLAC_EXAM_SOUD_V2 — číslice, která stojí už v otázce, se nepočítá
     # (#65: „Strážci Galaxie: Volume 3“ → „třicátý druhý“ vyšlo jako „vedle“).
     # 📏 28 zkoušek z faktů: mění právě #64 a #65, oba podle ručního čtení.
+    # KOLAC_EXAM_SOUD_SLOVY_V1 (29. 10.) — číslo 10–99 z klíče stačí i slovy
+    # („ve čtrnácté verzi“ × klíč 14, „třicátý druhý“ × „32. film“).
+    # 📏 118 zkoušek z faktů: mění právě #65 a #154, oba správně.
+    if any(t.isdigit() for t in toks) and all(
+            (_cislo_slovy(int(t), o) or re.search(r"(?<!\d)%s(?!\d)" % t, o))
+            if t.isdigit() else (t[:5] in o) for t in toks):
+        return "ok"
     _v_otazce = set(re.findall(r"\d+", _fold(otazka or "")))
     if any(x.isdigit() for x in toks) and not [
             c for c in re.findall(r"\d+", o) if c not in _v_otazce]:
@@ -254,7 +286,8 @@ def zapis_vysledek(db: str, otazka_id: int, verdikt: str) -> None:
     try:
         c.execute(
             "UPDATE kolac_otazky SET polozeno=polozeno+1, posledni_ts=?, "
-            "posledni_verdikt=?, stav=? WHERE id=?",
+            "posledni_verdikt=?, stav=CASE WHEN stav='zamitnuto' THEN stav "
+            "ELSE ? END WHERE id=?",   # KOLAC_EXAM_ZAMITNUTI_ZASOBA_V1
             (time.time(), verdikt,
              "vyrazeno" if verdikt == "odmitl" else "ok", otazka_id))
         c.commit()

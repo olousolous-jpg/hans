@@ -337,6 +337,19 @@ def potvrd(db_path: str, exam_id: int, config: dict) -> str:
 
 
 def zamitni(db_path: str, exam_id: int) -> str:
+    # KOLAC_EXAM_ZAMITNUTI_ZASOBA_V1 (29. 10.) — zamítnutí označilo jen zkoušku,
+    # otázka zůstala v zásobě a Koláč ji kladl dál (Hotel Transylvánie 3 po
+    # zamítnutí #112 ještě 2×) → vyřadit i otázku zásoby se stejným zněním
+    try:
+        with _conn(db_path) as db:
+            r = db.execute("SELECT otazka FROM kolac_exam WHERE id = ?",
+                           (int(exam_id),)).fetchone()
+            if r and r[0]:
+                db.execute("UPDATE kolac_otazky SET stav='zamitnuto' WHERE otazka = ?",
+                           (r[0],))
+                db.commit()
+    except Exception as e:
+        _log.debug("KOLAC_EXAM_ZAMITNUTI_ZASOBA_V1: %s", e)
     if _oznac(db_path, exam_id, -1):
         return "Dobrá, pane — nález #%s už připomínat nebudu." % exam_id
     return "Nález #%s se mi označit nepodařilo, pane." % exam_id

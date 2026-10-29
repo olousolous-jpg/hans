@@ -1794,8 +1794,14 @@ def _summarize_for_user(config: dict, topic: str, art: dict,
     # HANS_STOPA_SHRNUTI_V1 (26. 10.) — shrnutí článku modelem nebylo ve stromu
     # myšlení vidět (mezera ~5 s v kroku dohledání; vrstva Model „nedošel“,
     # ač odpověď psal model) → řádek do logu, strom ho přiřadí ke kroku
-    _log.info("HANS_STOPA_SHRNUTI_V1: model (%s) shrnul %r za %.1f s, %d zn: %s",
-              model, topic, _tm.time() - _t0, len(out), out[:90].replace("\n", " "))
+    if out:
+        _log.info("HANS_STOPA_SHRNUTI_V1: model (%s) shrnul %r za %.1f s, %d zn: %s",
+                  model, topic, _tm.time() - _t0, len(out), out[:90].replace("\n", " "))
+    else:
+        # HANS_STOPA_SHRNUTI_PRAZDNE_V1 (29. 10.) — ollama_chat při chybě spojení
+        # vrací prázdno místo výjimky; log pak tvrdil „shrnul za 0.0 s, 0 zn“
+        _log.info("HANS_STOPA_SHRNUTI_V1: shrnutí %r modelem selhalo po %.1f s: "
+                  "prázdná odpověď (model nedostupný?)", topic, _tm.time() - _t0)
     # HANS_LOOKUP_EN_V1 — česky „v článku není“ → jednou znovu i s anglickým
     if _en_zap and not _en_txt and out and _EN_NENI.search(out) \
             and _EN_VYCET.search(str(otazka)):   # HANS_LOOKUP_EN_KLICE_V1

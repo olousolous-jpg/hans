@@ -216,7 +216,7 @@ def neuspechy(dni: int = 30) -> list:
     try:
         r = c.execute("SELECT id, ts, verdikt, tema, otazka, klic, odpoved FROM kolac_exam "
                       "WHERE verdikt IN ('vedle','nevedel') AND ts > ? AND "
-                      "COALESCE(potvrzeno, 1) != 0 ORDER BY id",
+                      "COALESCE(potvrzeno, 1) NOT IN (0, -1) ORDER BY id",   # -1 = zamítnuto uživatelem
                       (__import__("time").time() - dni * 86400,)).fetchall()
         return [dict(x) for x in r]
     finally:
