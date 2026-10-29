@@ -165,7 +165,17 @@ def _kratky_prefix(q_tok: str, t_tok: str) -> bool:
     """Je shoda POUZE tím, že dotaz je krátký prefix delšího slova v titulu?"""
     a = _odstran_diakritiku(q_tok)
     b = _odstran_diakritiku(t_tok)
-    return a != b and b.startswith(a) and len(b) - len(a) >= _PREFIX_MEZERA
+    if a != b and b.startswith(a) and len(b) - len(a) >= _PREFIX_MEZERA:
+        return True
+    # HANS_WIKI_PREFIX_SOUHLASKA_V1 (29. 10.) — o JEDEN znak delší slovo titulu
+    # končící souhláskou: žádný pád „Holman“ není „Holma“ (to je 2. pád „Holm“).
+    # Doloženo: „Davida Holma“ (postava z Vozky smrti) → fotbalista Dávid Holman.
+    # 📏 976 entit se zdrojem z Wikipedie × skloněné tvary (3 140 dotazů): 0 změn.
+    return (a != b and b.startswith(a) and len(b) - len(a) == 1
+            and b[-1] in _SOUHLASKY)
+
+
+_SOUHLASKY = frozenset("bcdfghjklmnpqrstvwxz")
 
 
 # ── HANS_WIKI_LONGER_WORD_V1 (8. 10.) — SLOVO DOTAZU JE JEN ZAČÁTEK JINÉHO SLOVA ──

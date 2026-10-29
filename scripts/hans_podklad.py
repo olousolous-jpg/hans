@@ -454,9 +454,27 @@ def vyber(druh, kusy, nazev=None, texty=()) -> list:
             and (not kryje(kusy["entita_dnes"], nazev)
                  or dilo_bez_naznaku(kusy["entita_dnes"], *texty))):
         v.append("-entita")     # Bell → Alexandrie, Marťan; královna → film
-    if druh in ("kotva", "entita_slaba") and kusy.get("zpravy") and not kusy.get("zpravy_o_predmetu"):
+    if (druh in ("kotva", "entita_slaba") and kusy.get("zpravy") and not kusy.get("zpravy_o_predmetu")
+            and not any(_NOVINKY_DOTAZ.search(_fold_n(x)) for x in texty if x)):
         v.append("-zpravy")
     return v
+
+
+# HANS_PODKLAD_NOVINKY_V1 (29. 10.) — výslovná otázka na novinky o místě nebo
+# oboru („co je nového ve Francii?“) zprávy nevyřadí, i když je kontrola
+# předmětu ve zprávách nenašla (zprávy pak vyřadil `-zpravy` → článek Francie).
+# Plošně časové slovo ne: „dneska jsem četl o Einsteinovi“, „na základě těchto
+# zpráv“ (Kolumbus) jsou otázky na svět. 📏 7 zásahů `-zpravy` 15.–28. 10.:
+# změna jen Francie; 1 765 chatových vět: vzor sedne 1× („novinky ve světě designu“).
+_NOVINKY_DOTAZ = re.compile(
+    r"\b(co\s+(je|se)\s+(nov[eé]ho|nov[eé]|d[eě]je|stalo|ted\s+deje|aktualne\s+deje)\s+(v|ve|na|u)\s+\w+"
+    r"|(jak[eé]|nejak[eé])\s+(jsou\s+)?(zpr[aá]vy|novinky)\s+(z|ze|o|v|ve)\s+\w+"
+    r"|(zpr[aá]vy|novinky)\s+(z|ze)\s+\w+)", re.IGNORECASE)
+
+
+def _fold_n(s: str) -> str:
+    import unicodedata as _ud
+    return "".join(c for c in _ud.normalize("NFD", (s or "").lower()) if _ud.category(c) != "Mn")
 
 
 def _tituly_cteni(h, blok) -> list:
