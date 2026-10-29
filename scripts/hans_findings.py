@@ -1186,6 +1186,8 @@ _PORADI_RE = re.compile(
     r"(?:byl|byla|je|bude)\s+(?:po|p[řr]ed)\s+\w+|v[šs]ichni|seznam|po\s+sob[ěe])\b",
     re.I)
 _DRZ_CACHE: dict = {}
+# HANS_LOOKUP_NASTUPCE_OSOBY_V1 — „prezidentem po Václavu Havlovi“ (jméno velkým)
+_PO_JMENU_RE = re.compile(r"\b(?:[Pp]o|[Pp][řr]ed)\s+[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]\w+")
 
 
 def _drzitele_uradu(qid: str) -> list:
@@ -1228,9 +1230,73 @@ def _drzitele_uradu(qid: str) -> list:
     return out
 
 
+# ── HANS_LOOKUP_NASTUPCE_OSOBY_V1 (29. 10.) — předchůdce a nástupce osoby ──
+# „Kdo byl po Havlovi prezidentem?“ → článek je o OSOBĚ, seznam držitelů úřadu
+# (výše) se nepoužil a model řekl Zeman (/tazatel 29. 10.: i Lincoln/Johnson).
+# Wikidata mají u funkce (P39) kvalifikátory předchůdce P1365 a nástupce P1366.
+_FUNKCE_CACHE: dict = {}
+
+
+def _funkce_osoby(qid: str) -> list:
+    """[(úřad, od, do, předchůdce, nástupce)] pro osobu; [] = nic."""
+    if not qid or not re.fullmatch(r"Q\d+", qid):
+        return []
+    if qid in _FUNKCE_CACHE:
+        return _FUNKCE_CACHE[qid]
+    out = []
+    try:
+        from scripts.hans_facts import _get as _wget
+        api = "https://www.wikidata.org/w/api.php?format=json&"
+        e = (_wget(api + "action=wbgetentities&props=claims&ids=" + qid).get("entities") or {}).get(qid) or {}
+        rows, ids = [], set()
+        for st in (e.get("claims") or {}).get("P39", []):
+            ur = ((st.get("mainsnak") or {}).get("datavalue") or {}).get("value", {}).get("id")
+            qu = st.get("qualifiers") or {}
+            _v = lambda pp: [x["datavalue"]["value"] for x in qu.get(pp, []) if "datavalue" in x]
+            od = [x.get("time", "")[1:5] for x in _v("P580")]
+            do = [x.get("time", "")[1:5] for x in _v("P582")]
+            pred = [x.get("id") for x in _v("P1365") if x.get("id")]
+            po = [x.get("id") for x in _v("P1366") if x.get("id")]
+            if ur and (pred or po):
+                rows.append((ur, od[:1], do[:1], pred, po))
+                ids |= {ur, *pred, *po}
+        lab = {}
+        idl = sorted(ids)
+        for i in range(0, len(idl), 50):
+            es = _wget(api + "action=wbgetentities&props=labels&languages=cs|en&ids="
+                       + "|".join(idl[i:i + 50])).get("entities") or {}
+            for k, v in es.items():
+                lab[k] = ((v.get("labels") or {}).get("cs") or (v.get("labels") or {}).get("en")
+                          or {}).get("value") or k
+        for ur, od, do, pred, po in rows:
+            out.append((lab.get(ur, ur), (od or [""])[0], (do or [""])[0],
+                        ", ".join(lab.get(x, x) for x in pred), ", ".join(lab.get(x, x) for x in po)))
+    except Exception as e:
+        _log.info("HANS_LOOKUP_NASTUPCE_OSOBY_V1: %s → chyba %s", qid, str(e)[:100])
+        return []
+    _FUNKCE_CACHE[qid] = out
+    return out
+
+
+def _funkce_osoby_blok(titul: str, qid: str) -> str:
+    f = _funkce_osoby(qid)
+    if not f:
+        return ""
+    # roky patří osobě z titulu, ne nástupci (živě 29. 10.: „Klaus prezidentem
+    # 1993 až 2003“ z řádku „prezident ČR (1993–2003): … nástupce Václav Klaus“)
+    _kdo = re.sub(r"\s*\(.*?\)", "", titul).strip()
+    radky = ["%s byl %s v letech %s–%s; před ním: %s; po něm: %s" % (
+                 _kdo, u, od or "?", do or "dosud", p or "—", n or "—")
+             for u, od, do, p, n in f]
+    _log.info("HANS_LOOKUP_NASTUPCE_OSOBY_V1: %r (%s) → %d funkcí", titul, qid, len(f))
+    return ("FUNKCE OSOBY (Wikidata; předchůdce a nástupce v úřadu, má přednost před textem níže):\n"
+            + "\n".join(radky))
+
+
 def _drzitele_blok(titul: str, otazka: str) -> str:
     """Blok „držitelé úřadu“ pro otázku na pořadí, jinak ''."""
-    if not otazka or not _PORADI_RE.search(str(otazka)):
+    if not otazka or not (_PORADI_RE.search(str(otazka))
+                          or _PO_JMENU_RE.search(str(otazka))):   # HANS_LOOKUP_NASTUPCE_OSOBY_V1
         return ""
     try:
         from scripts import hans_overeni as O
@@ -1240,7 +1306,7 @@ def _drzitele_blok(titul: str, otazka: str) -> str:
         return ""
     d = _drzitele_uradu(qid)
     if len(d) < 2:
-        return ""
+        return _funkce_osoby_blok(titul, qid)   # HANS_LOOKUP_NASTUPCE_OSOBY_V1
     def rok(x):
         try:
             return str(int(str(x)[:4])) if x else "dosud"
