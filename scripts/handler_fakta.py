@@ -1195,6 +1195,12 @@ class FaktaMixin:
             # jen začátkem delšího titulu („Válku“ × „Válka s Mloky“)
             try:
                 _tzv = _wo.titul_z_vety(re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or ""))
+                # HANS_LOOKUP_SLOVESA_TVORBY_V1 — „autorem hudby k opeře Carmen“ ≠ „Carmen (novela)“
+                if (_tzv and "(" in _tzv and re.search(r"\boper\w*|\bhudb\w*", _f(veta) + " " + _f(_prepis or ""))
+                        and not re.search(r"\((?:[^)]*\b)?(?:oper|hudb|skladb|suit)", _f(_tzv))):
+                    logging.getLogger(__name__).info(
+                        "HANS_LOOKUP_SLOVESA_TVORBY_V1: %r nesedí na operu/hudbu z otázky → nebrat", _tzv)
+                    _tzv = None
             except Exception:
                 _tzv = None
             if _tzv:
@@ -1268,6 +1274,25 @@ class FaktaMixin:
                     self._presny_z_vety = _vm1
                     return _vm1
             titul = _wr._wikipedia_search(tema)
+            # HANS_LOOKUP_SLOVESO_DRUH_V1 (29. 10., úspěšnost: „kdo režíroval Titanic?“ →
+            # článek o lodi, kapitán Smith) — sloveso filmu / knihy a nalezený článek
+            # dílem není → varianta „film X“ / „kniha X“
+            try:
+                _vv2 = _f(veta) + " " + _f(_prepis or "")
+                _dsl = ("film" if re.search(r"\bkdo\s+(?:re[zž][ií]roval|nato[cč]il|hr[aá]l|hraje)\b", _vv2)
+                        else "kniha" if re.search(r"\bkdo\s+napsal\b", _vv2) else None)
+                _tb = re.sub(r"^(?:film|kniha|knihu|román)\s+", "", tema or "", flags=re.I)
+                if _dsl and titul and "(" not in titul and _tb == tema:
+                    _rt = _wo._cil(titul)
+                    if _rt and not _wo._je_dilo_clanek(_rt, ["film"] if _dsl == "film" else ["kniha"]):
+                        _zd = _wo._presna_zaloha("%s %s" % (_dsl, _tb))
+                        if _zd and _zd[0] != titul and "(" in _zd[0]:
+                            logging.getLogger(__name__).info(
+                                "HANS_LOOKUP_SLOVESO_DRUH_V1: %r není %s → %r", titul, _dsl, _zd[0])
+                            titul = _zd[0]
+                            self._presny_z_vety = titul
+            except Exception as _sde:
+                logging.getLogger(__name__).debug("HANS_LOOKUP_SLOVESO_DRUH_V1: %s", _sde)
             self._presny_titul = titul     # HANS_LOOKUP_PRESNY_PODKLAD_V1
             if (titul and not _wo.extrakt(titul)[1] and "(" not in titul
                     and _wo._MISTO_PRED.search((veta or "") + " " + (_prepis or ""))):
@@ -1296,6 +1321,23 @@ class FaktaMixin:
             # Alfred Hitchcock“) se zkusí i bez titulu z hledání; dřív se k ní došlo jen
             # díky cizímu titulu z RELAX („Hitchcock (film)“), který HANS_WIKI_RELAX_POKRYTI_V1 zavřel
             if titul and _wo.extrakt(titul)[1]:
+                # HANS_LOOKUP_SLOVESA_TVORBY_V1 — rozcestník („Kytice“) + sloveso díla
+                # („kdo je autorem básně Kytice?“) → jediný význam toho druhu
+                try:
+                    _vv3 = _f(veta) + " " + _f(_prepis or "")
+                    _dr3 = (["opera"] if re.search(r"\boper\w*|\bhudb\w*", _vv3) else
+                            ["kniha"] if re.search(r"\bkdo\s+(?:napsal|je\s+autor\w*|byl\s+autor\w*)", _vv3) else
+                            ["film"] if re.search(r"\bkdo\s+(?:re[zž][ií]roval|nato[cč]il)", _vv3) else
+                            ["opera"] if re.search(r"\bkdo\s+(?:slo[zž]il|zkomponoval)", _vv3) else [])
+                    _d3 = _wo._dilo_z_rozcestniku(_f(re.sub(r"\s*\(.*?\)", "", titul)), _dr3) if _dr3 else None
+                    if _d3:
+                        logging.getLogger(__name__).info(
+                            "HANS_LOOKUP_SLOVESA_TVORBY_V1: rozcestník %r → dílo %r", titul, _d3)
+                        self._presny_titul = _d3
+                        self._presny_z_vety = _d3
+                        return _d3
+                except Exception:
+                    pass
                 return None
             if not titul and not _SLEPENA_BEZ_TITULU:
                 return None
@@ -1362,9 +1404,29 @@ class FaktaMixin:
             # slovesem, jen když titul článku je PŘESNĚ to slovo (/tazatel 17. 10.)
             # HANS_WIKI_DILO_ROZCESTNIK_V1 — téma s upřesněním („Máj (Karel Hynek
             # Mácha)“) se porovná bez závorky
-            if (not silny and _f(re.sub(r"\s*\(.*?\)", "", titul)) == _f(re.sub(r"\s*\(.*?\)", "", tema))
+            # HANS_LOOKUP_SLOVESA_TVORBY_V1 (29. 10., úspěšnost: „kdo vytvořil Myslitele?“ →
+            # z hlavy) — i titul v 1. pádě („Myslitele“ → „Myslitel“) a další slovesa tvorby
+            _th0 = _f(re.sub(r"\s*\(.*?\)", "", tema))
+            _pad1_ok = False
+            try:
+                _tt = re.sub(r"\s*\(.*?\)", "", tema).strip()
+                _rt1 = _wo._cil(titul)
+                _pad1_ok = ("(" not in titul
+                            and _f(titul) in [_f(x) for x in _wo._prvni_pad(_tt)]
+                            and bool(_rt1) and not _wo._db().execute(
+                                "SELECT rozcestnik FROM clanek WHERE id=?", (_rt1[0],)).fetchone()[0]
+                            # „Válku a mír“ — víceslovný název, ne „Válka“
+                            and not re.search(re.escape(_tt) + r"\s+(?:a|i|ve|v|na|z|ze|o)\s",
+                                              (_prepis or "") + " " + (veta or "")))
+            except Exception:
+                _pad1_ok = False
+            _druh_kolize = bool(re.search(r"\boper\w*|\bhudb\w*", _f(veta) + " " + _f(_prepis or ""))
+                                and "(" in titul and not re.search(r"\((?:[^)]*\b)?oper", _f(titul)))
+            if (not silny and not _druh_kolize
+                    and (_f(re.sub(r"\s*\(.*?\)", "", titul)) == _th0 or _pad1_ok)
                     and re.search(r"\bkdo\s+(?:napsal|re[zž][ií]roval|slo[zž]il|nato[cč]il|"
-                                  r"namaloval|zkomponoval|nazp[ií]val)\b"
+                                  r"namaloval|zkomponoval|nazp[ií]val|vytvo[rř]il|vytesal|"
+                                  r"postavil|navrhl|vynalezl|objevil|zalo[zž]il|je\s+autor\w*|byl\s+autor\w*)\b"
                                   # HANS_LOOKUP_PRESNY_VYDANI_V1 (18. 10.) — „kdy vyšel
                                   # Krakatit?“ → z hlavy „Karel Poláček“ (živě 18. 10.)
                                   r"|\bkdy\s+(?:vy[sš]el|vy[sš]l[aoiy]|byl[aoiy]?\s+vyd[aá]n\w*|"
@@ -1377,13 +1439,15 @@ class FaktaMixin:
             # v 1. pádě a jeho jediný význam toho druhu („Kytice (báseň)“)
             if not silny and DILO_PAD1 and len(a) == 1:
                 _vv = _f(veta) + " " + _f(_prepis or "")
-                _dr = (["kniha"] if re.search(r"\bkdo\s+napsal", _vv) else
+                # HANS_LOOKUP_SLOVESA_TVORBY_V1 — i „kdo je autorem (básně) X“
+                _dr = (["opera"] if re.search(r"\boper\w*|\bhudb\w*", _vv) else   # „autorem hudby k opeře Carmen“
+                       ["kniha"] if re.search(r"\bkdo\s+(?:napsal|je\s+autor\w*|byl\s+autor\w*)", _vv) else
                        ["film"] if re.search(r"\bkdo\s+(?:re[zž][ií]roval|nato[cč]il)", _vv) else
                        ["opera"] if re.search(r"\bkdo\s+(?:slo[zž]il|zkomponoval)", _vv) else [])
                 _th = re.sub(r"\s*\(.*?\)", "", tema).strip()
-                for _p1 in (_wo._prvni_pad(_th) if _dr else []):
-                    if _f(_p1) == _f(_th):
-                        continue
+                for _p1 in (([_th] + _wo._prvni_pad(_th)) if _dr else []):
+                    if _f(_p1) == _f(_th) and _p1 is not _th:
+                        continue      # holý tvar už je 1. pád — zkouší se jednou (rozcestník „Kytice“)
                     _d = _wo._dilo_z_rozcestniku(_f(_p1), _dr)
                     if _d:
                         logging.getLogger(__name__).info(
