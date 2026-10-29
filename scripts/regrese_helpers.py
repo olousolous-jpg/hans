@@ -1594,3 +1594,9 @@ def presna_zaloha_titul(q: str):
         return "BEZ_WIKI"
     r = _wo._presna_zaloha(q)
     return r[0] if r else None
+
+
+def agent_zminka_o_lidech(veta: str) -> bool:
+    """HANS_AGENT_WHO_HOME_CUE_V1 — mluví věta o lidech / domě / kameře?"""
+    from scripts.hans_agent import _ma_zminku_o_lidech
+    return _ma_zminku_o_lidech(veta, _cfg())

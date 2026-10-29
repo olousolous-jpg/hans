@@ -232,11 +232,32 @@ def _zacatek_delsiho_slova(query: str, title: str) -> bool:
 # rozhodl 40×, z toho ~27 cizích; s touto podmínkou přijme 11, všechny správně
 # (Top Gear, Pátý element, Typografie, Jára Cimrman…); ztratí 3 hraniční
 # („Nobelový cen“ s překlepem, Zeměmoří, Mozartovi).
+_DRUH_DILA_DOTAZ = ("film", "filmu", "kniha", "knihu", "román", "romanu", "románu",
+                    "seriál", "seriálu", "dokument", "dokumentu", "novela", "povídka")
+
+
+def _dilo_cely_nazev(query: str, title: str) -> bool:
+    """HANS_WIKI_DILO_CELY_NAZEV_V1 — dotaz „<druh díla> <název>“: sedí název celý?
+    Jiný dotaz = True (pravidlo se netýká)."""
+    sl = str(query or "").split()
+    if len(sl) < 2 or sl[0].lower() not in _DRUH_DILA_DOTAZ:
+        return True
+    return _title_similarity(" ".join(sl[1:]), _PAREN.sub("", title or "")) >= 1.0
+
+
 def _relax_pokryje(query: str, title: str) -> bool:
     """Každé slovo titulu má v dotazu VLASTNÍ protějšek, pojistky slov drží
     a jednoslovný titul sedí přesně / skloněním bez zbylého vlastního jména."""
     t = _PAREN.sub("", title or "")
     if _title_coverage(query, title) < 1.0:
+        return False
+    # HANS_FILM_NAZEV_SOUBORU_V1 (29. 10.) — název DÍLA („film Neandrtálská
+    # apokalypsa“) se přibližně nebere: → „Apokalypsa (film, 1979)“; dílo
+    # musí sedět celé (40 rozhodnutí RELAX: změna 0)
+    _q1 = (str(query or "").split() or [""])[0].lower()
+    if _q1 in ("film", "filmu", "kniha", "knihu", "román", "romanu", "románu",
+               "seriál", "seriálu", "dokument", "dokumentu", "novela", "povídka") \
+            and _title_similarity(query, title) < 1.0:
         return False
     if _zacatek_delsiho_slova(query, title) or _konflikt_prvniho_pismene(query, title):
         return False
@@ -763,6 +784,13 @@ class WebReader:
             # HANS_WIKI_COVERAGE_V1 — shoda musí platit i opačně
             _min_cov = float((self.config.get("curiosity", {}) or {})
                              .get("wiki_title_min_coverage", 0.4))
+            # HANS_WIKI_DILO_CELY_NAZEV_V1 (29. 10.) — „film Neandrtálská apokalypsa“:
+            # slovo „film“ sedlo na závorku „(film, 1979)“ → shoda 0,67 → Apokalypsa.
+            # U dotazu s druhem díla rozhoduje název bez druhu proti titulu bez závorky.
+            if best_title and best_score >= min_score and not _dilo_cely_nazev(query, best_title):
+                _log.info("HANS_WIKI_DILO_CELY_NAZEV_V1: %r → %r zamítnuto (název díla "
+                          "nesedí celý)", query, best_title)
+                return _pfx_zaloha
             if best_title and best_score >= min_score:
                 _cov = _title_coverage(query, best_title)
                 if _cov >= _min_cov:

@@ -1180,7 +1180,9 @@ _WD_POPIS = [("P571", "založení / začátek"), ("P569", "narození"), ("P570",
 # pořadí. 📏 prototyp `data/mereni/urad_27_10/drzitele.py`: ČSR 10/10, ČR 4/4,
 # USA 47 + 5 fiktivních bez data (vyřazeny).
 _PORADI_RE = re.compile(
-    r"\b(?:prvn[íi]|posledn[íi]|druh[ýyáa]|t[řr]et[íi]|[čc]tvrt[ýya]|p[áa]t[ýya]|"
+    # HANS_LOOKUP_PORADI_PADY_V1 (29. 10.) — i pádové tvary („prvním prezidentem“
+    # → dřív bez seznamu držitelů → „Masaryk 1918–1939 a 1945–1992“)
+    r"\b(?:prvn[íi]\w*|posledn[íi]\w*|druh[ýyáaée]\w*|t[řr]et[íi]\w*|[čc]tvrt[ýyáaée]\w*|p[áa]t[ýyáaée]\w*|"
     r"kolik[áa]t\w*|sou[čc]asn\w*|nyn[ěe]j[šs]\w*|dne[šs]n\w*|aktu[áa]ln\w*|"
     r"n[áa]stupc\w*|p[řr]edch[ůu]dc\w*|"
     r"(?:byl|byla|je|bude)\s+(?:po|p[řr]ed)\s+\w+|v[šs]ichni|seznam|po\s+sob[ěe])\b",

@@ -558,6 +558,34 @@ def _asks_person_presence(message: str, config: dict) -> bool:
         r"videl|vidis|vidite|dorazil|prisel|prisla|je\s+pryc|odesel|odesla)", msg))
 
 
+# HANS_AGENT_WHO_HOME_CUE_V1 (29. 10.) — „kdo je doma“ jen u věty, která
+# o lidech / domě / kameře vůbec mluví. Doloženo: „supervulkany? kde jsou ty
+# nejvetsi?“ (conf 0,80) a „Cesky raj, co o nem vis?“ → „co vidím kamerou,
+# sděluji jen známým“. 📏 9 voleb report_who_is_home z přepisů testů: změna
+# jen tyto 2; správné (někdo doma, s kým žiješ, ostatní v domě…) beze změny.
+_WHO_HOME_CUE = None
+
+
+def _ma_zminku_o_lidech(message: str, config: dict) -> bool:
+    import re as _re, unicodedata as _ud
+    global _WHO_HOME_CUE
+    if _WHO_HOME_CUE is None:
+        _WHO_HOME_CUE = _re.compile(
+            r"\b(dom[aeuěy]?\w*|nekdo|nikdo|nekoho|nikoho|kdo\s+(je|tu|tam|tady|s)|s\s+kym|"
+            r"sam|sama|samotn\w*|spolecnost\w*|ostatni\w*|lid[ie]\w*|osob\w*|clovek\w*|"
+            r"pritom\w*|kamer\w*|vid[ií]s|vid[ií]te|vidis|vidite|videl\w*|prisel|prisla|"
+            r"odesel|odesla|rodin\w*|navstev\w*|host\w*|kluk\w*|holk\w*|zena|muz|u\s+(nas|vas|tebe))\b")
+    msg = "".join(c for c in _ud.normalize("NFKD", (message or "").lower())
+                  if not _ud.combining(c))
+    if _WHO_HOME_CUE.search(msg):
+        return True
+    try:
+        from scripts.cz_names import find_known_person as _fkp
+        return bool(_fkp(message, config))
+    except Exception:
+        return True      # selhání detekce nesmí vypnout dotaz na přítomnost
+
+
 def _looks_like_recall(message: str) -> bool:
     return bool(_RECALL_PAT.search(message or ""))
 
@@ -1975,6 +2003,9 @@ class AgentRouter:
         # TALKU — složitá metaotázka jím neprojde, a `is_about_self` na ni
         # (změřeno) taky nereaguje. Predikát je SDÍLENÝ s `is_source_query`,
         # ať se dvě pravidla o téže třídě otázek nerozejdou.
+        dict(marker="HANS_AGENT_WHO_HOME_CUE_V1", akce=("report_who_is_home",),
+             podminka=lambda s, aid, msg, dec, h: not _ma_zminku_o_lidech(msg, s.config),
+             verdikt=None, duvod="věta nemluví o lidech ani o domě"),
         dict(marker="HANS_AGENT_META_MEMORY_GUARD_V1",
              akce=("report_home_status", "report_who_is_home",
                    "report_now_playing", "report_kolac_status"),

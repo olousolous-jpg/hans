@@ -25,6 +25,55 @@ def _resolve_person(question: str, config: dict,
     return asker
 
 
+# HANS_FILM_NAZEV_SOUBORU_V1 (29. 10.) — Kodi u souboru bez metadat hlásí
+# jméno souboru („Neandrtalska apokalypsa E01.mkv“, 244 řádků deníku).
+# Deník se nemění (páruje se podle něj s knihovnou), čistí se jen řeč:
+# bez přípony, číslování, tagů vydání; S01E19 / 2x04 / E01 → řada a díl.
+_FN_PRIP = r"\.(mkv|avi|mp4|m4v|mov|wmv|mpg|mpeg|ts)$"
+_FN_TAG = (r"H[. ]?26[45]|x26[45]|HEVC|\d{3,4}p|4K|FHD|UHD|HD|cz|en|sk|czdab|dabing|titulky|sub|subs|BluRay|"
+        r"WEB-?DL|WEBRip|DVDRip|TvRip|dvbt|XviD|DD\d(\.\d)?|DDP\d(\.\d)?|AC3|DTS|Atmos|AAC")
+def cisty_nazev_souboru(t: str) -> str:
+    """HANS_FILM_NAZEV_SOUBORU_V1 — název souboru z Kodi → název k vyslovení."""
+    s0 = (t or "").strip()
+    if not re.search(_FN_PRIP, s0, re.I):
+        return s0
+    s = re.sub(_FN_PRIP, "", s0, flags=re.I)
+    dil = None
+    m = re.search(r"\bS(\d{1,2})E(\d{1,3})\b", s, re.I) or re.search(r"\b(\d{1,2})x(\d{1,3})\b", s)
+    if m:
+        dil = "%d. řada, %d. díl" % (int(m.group(1)), int(m.group(2))); s = s[:m.start()] + " " + s[m.end():]
+    else:
+        m = re.search(r"\bE(\d{1,3})\b", s, re.I)
+        if m:
+            dil = "%d. díl" % int(m.group(1)); s = s[:m.start()] + " " + s[m.end():]
+    rok = None
+    if s.count(".") >= 3:                 # název vydání „Ice.Age.2002.1080p.BluRay…“
+        m = re.search(r"[._ ]((?:19|20)\d\d)(?:[._ ]|$)", s)
+        if m:
+            rok, s = m.group(1), s[:m.start()]
+    s = re.sub(r"\[[^\]]*\]", " ", s)    # [TvRip][1080p]
+    def _zav(mm):
+        x = mm.group(1).strip()
+        nonlocal rok
+        if re.fullmatch(r"(?:19|20)\d\d", x):
+            rok = rok or x; return " "
+        if not x or re.fullmatch(r"(?:%s)(?:[ ,]+(?:%s))*" % (_FN_TAG, _FN_TAG), x, re.I):
+            return " "
+        return " (%s) " % x
+    s = re.sub(r"\(([^()]*)\)", _zav, s)
+    s = re.sub(r"[._]+", " ", s)
+    s = re.sub(r"(?<![\w-])(?:%s)(?![\w])" % _FN_TAG, " ", s, flags=re.I)
+    s = re.sub(r"-[A-Z][\w-]*$", "", s.strip())        # skupina vydání „-SPEED“
+    s = re.sub(r"^\s*\d{1,3}\s*[-.]?\s+(?=\D)|^\s*\d{1,3}[-.](?=\D)", "", s)   # „003-“, „02 “
+    s = re.sub(r"\s{2,}", " ", s).strip(" -–,")
+    if len(re.sub(r"\W", "", s)) < 4:
+        s = re.sub(_FN_PRIP, "", s0, flags=re.I).strip()
+        return s
+    if rok: s += " (%s)" % rok
+    if dil: s += " (%s)" % dil
+    return s
+
+
 def films_watched_answer(db_path: str, question: str = "",
                          limit: int = 5) -> str:
     """Jaký film/pořad jsem viděl/sledoval — z deníku (kodi_playing),
@@ -56,7 +105,7 @@ def films_watched_answer(db_path: str, question: str = "",
                 (_rng[0], _rng[1])).fetchall()
             _seen, _tit = set(), []
             for _ts, _t in rows:
-                _t = (_t or "").strip()
+                _t = cisty_nazev_souboru((_t or "").strip())   # HANS_FILM_NAZEV_SOUBORU_V1
                 if _t and _t.lower() not in _seen:
                     _seen.add(_t.lower())
                     _tit.append(_t)
@@ -83,7 +132,7 @@ def films_watched_answer(db_path: str, question: str = "",
                     "sledoval, pane. Nebudu si nic vymýšlet.")
         seen, titles = set(), []
         for ts, title in rows:
-            t = (title or "").strip()
+            t = cisty_nazev_souboru((title or "").strip())   # HANS_FILM_NAZEV_SOUBORU_V1
             if t and t.lower() not in seen:
                 seen.add(t.lower())
                 titles.append((ts, t))
