@@ -1301,6 +1301,14 @@ def _drzitele_blok(titul: str, otazka: str) -> str:
                           or _PO_JMENU_RE.search(str(otazka))):   # HANS_LOOKUP_NASTUPCE_OSOBY_V1
         return ""
     try:
+        # HANS_LOOKUP_NASTUPCE_OSOBY_V1 — přesměrování („Tomáš Masaryk“) → cílový článek
+        from scripts import hans_wiki_offline as _wo_r
+        _cr = _wo_r._cil(titul) if _wo_r.dostupna() else None
+        if _cr and _cr[1]:
+            titul = _cr[1]
+    except Exception:
+        pass
+    try:
         from scripts import hans_overeni as O
         O._nacti_wd([titul])
         qid = (O._c().get(titul) or {}).get("qid")

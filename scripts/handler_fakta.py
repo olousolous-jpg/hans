@@ -46,6 +46,32 @@ def _f1_ztratil_slovo(veta: str, prepis: str) -> bool:
                for w in re.findall(r"[a-z]{4,}", holy.lower()) if w not in _F1_SLOVO_STOP)
 
 
+# HANS_LOOKUP_PO_OSOBE_V1 — „po / před <Jméno Jméno …>“
+_PO_OSOBE = re.compile(r"\b(?:po|před|pred)\s+((?:[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w.]*\s*){1,4})")
+
+
+def _tema_po_osobe(prepis, tema):
+    """HANS_LOOKUP_PO_OSOBE_V1 — „kdo byl … po/před <Jméno>“ v přepisu F1:
+    předmětem je ta osoba, ne stát/úřad z vlákna. Jinak `tema` beze změny."""
+    import unicodedata as _ud
+    if not prepis or not tema or not re.search(r"\bkdo\b", prepis, re.I) \
+            or re.search(r"\b(kdy|kde|jak)\b", prepis, re.I):
+        return tema
+    m = _PO_OSOBE.search(prepis)
+    if not m:
+        return tema
+    pt = m.group(1).strip()
+
+    def _f(x):
+        return "".join(c for c in _ud.normalize("NFD", (x or "").lower())
+                       if _ud.category(c) != "Mn")
+    if all(w[:4] in _f(tema) for w in re.findall(r"\w{3,}", _f(pt))):
+        return tema
+    logging.getLogger(__name__).info(
+        "HANS_LOOKUP_PO_OSOBE_V1: předmět %r → %r (po/před osobě)", tema, pt)
+    return pt
+
+
 def _jmeno_mimo_vetu(veta: str, prepis) -> bool:
     """HANS_LOOKUP_OBSAHEM_JMENO_V1 — nese přepis vlastní jméno (velké písmeno
     uvnitř věty), které v holé větě není?"""
@@ -965,6 +991,13 @@ class FaktaMixin:
             _prepis = getattr(self, '_f1_query', None)
             tema = ((kotva_tematu(_prepis, vynech=_known) if _prepis else None)
                     or kotva_tematu(veta or "", vynech=_known))
+            # HANS_LOOKUP_PO_OSOBE_V1 (29. 10.) — „kdo byl … po/před <Jméno>“: předmětem
+            # je ta osoba, ne stát/úřad, který přepis F1 přidal z vlákna („a kdo byl po
+            # Masarykovi?“ po řeči o Klausovi → „…prezidentem České republiky po
+            # Masarykovi?“ → kotva „České republiky“ → „Havel po Masarykovi“). Složené
+            # otázky (kdy/kde/jak) ne. 📏 2 201 přepisů: vzor 11, změna 6 (+ Karlštejn
+            # vynechán).
+            tema = _tema_po_osobe(_prepis, tema)
             # HANS_WIKI_TITUL_Z_VETY_V1 (19. 10.) — přesný titul článku přímo
             # z holé věty, když kotva chybí, v holé větě není (přepis F1 si ji
             # vymyslel: „babicku“ → „Babí léto“, „karluv“ → „Karlov“), nebo je
@@ -1076,6 +1109,18 @@ class FaktaMixin:
             if not titul and not _SLEPENA_BEZ_TITULU:
                 return None
             a, b = _tok(tema), (_tok(titul) if titul else [])
+            # HANS_LOOKUP_PO_OSOBE_V1 — titul je přesměrování („Tomáš Masaryk“) →
+            # porovnat i s cílovým článkem („Tomáš Garrigue Masaryk“)
+            if titul and a and b and not (_kryje(a, b) and _kryje(b, a)):
+                try:
+                    _cl = _wo._cil(titul)
+                    if _cl and _cl[1] != titul and _kryje(a, _tok(_cl[1])) and _kryje(_tok(_cl[1]), a):
+                        logging.getLogger(__name__).info(
+                            "HANS_LOOKUP_PO_OSOBE_V1: přesměrování %r → %r", titul, _cl[1])
+                        titul, b = _cl[1], _tok(_cl[1])
+                        self._presny_titul = titul
+                except Exception:
+                    pass
             if not a or not b or not (_kryje(a, b) and _kryje(b, a)):
                 # HANS_LOOKUP_SLEPENA_KOTVA_V1 (26. 10., /tazatel: přepis „Kde se
                 # narodil režisér filmu Psycho Alfred Hitchcock?“ → kotva „film Psycho
@@ -1542,6 +1587,7 @@ class FaktaMixin:
             _prepis = getattr(self, '_f1_query', None)
             tema = (kotva_tematu(_prepis, vynech=_known) if _prepis else None) \
                 or kotva_tematu(veta or "", vynech=_known)
+            tema = _tema_po_osobe(_prepis, tema)   # HANS_LOOKUP_PO_OSOBE_V1
             if not tema:
                 # HANS_CONCEPT_ASK_V1 (7.9.) — ZÁLOHA pro OBECNÝ POJEM.
                 # `kotva_tematu` pozná téma podle VELKÉHO písmene, protože je
