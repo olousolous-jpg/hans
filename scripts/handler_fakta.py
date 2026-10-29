@@ -180,6 +180,89 @@ def nezname_dilo(*texty):
     return None
 
 
+# ── HANS_ZASLUHA_OSOBY_V1 (29. 10.) — osoba s povoláním / připsanou zásluhou ──
+# Měření úspěšnosti 29. 10.: z 8 vymyšlených osob 6 vymyšleno — (a) potvrzení
+# premisy z hlavy při stabilních vzorcích A1 („Radek Pospíchal, vynálezce
+# samočisticího okna“ → „ano, vím… Hydro Glass“), (b) dohledaný jmenovec bez
+# upozornění (skladatel Kubíček → knihovník). (a) → vždy dohledat; (b) → článek
+# nepotvrzuje povolání z otázky → „znám jen jmenovce“.
+# 📏 2 280 přepisů F1: vzor 36 (skutečné osoby s článkem + všechny vymyšlené z testů).
+_ZS_JM = r"[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]+"
+_ZS_ROLE = {   # kmen role v otázce → kmeny, které ji v úvodu článku potvrdí
+    "skladatel": ("skladatel", "hudebn", "komponist", "dirigent"), "malíř": ("malíř", "malířk", "výtvarn", "grafik"),
+    "básník": ("básník", "básnířk", "spisovatel", "literát"), "básnířk": ("básnířk", "básník", "spisovatel"),
+    "spisovatel": ("spisovatel", "prozaik", "básník", "autor", "dramatik", "novinář"),
+    "herec": ("herec", "herečk", "herc"), "herc": ("herec", "herečk", "herc"), "hereč": ("herečk", "herec"),
+    "inženýr": ("inženýr", "konstruktér", "technik", "vynálezce"), "profesor": ("profesor", "vědec", "docent", "pedagog", "fyzik", "chemik", "matematik", "lékař", "filozof", "historik"),
+    "doktor": ("lékař", "doktor", "MUDr", "vědec", "chemik", "fyzik"), "kapitán": ("kapitán", "námoř", "mořeplav", "důstojník", "voják", "pilot"),
+    "vynálezc": ("vynálezce", "vynalezl", "konstruktér", "inženýr"), "objevitel": ("objevil", "objevitel", "vědec", "cestovatel", "badatel"),
+    "sochař": ("sochař", "výtvarn"), "architekt": ("architekt", "stavitel"), "režisér": ("režisér", "filmař"),
+    "astronom": ("astronom", "astrofyzik", "fyzik"), "fyzik": ("fyzik",), "chemik": ("chemik",),
+    "zpěvák": ("zpěvák", "zpěvačk", "hudebník"), "zpěvačk": ("zpěvačk", "zpěvák"),
+}
+_ZS_ROLE_RE = "(" + "|".join(sorted(_ZS_ROLE, key=len, reverse=True)) + r")\w*"
+_ZS_VZ_ROLE = re.compile(r"\b" + _ZS_ROLE_RE + r"\s+(" + _ZS_JM + r"(?:\s+" + _ZS_JM + r")+)")
+_ZS_VZ_KTERY = re.compile(
+    r"(" + _ZS_JM + r"(?:\s+" + _ZS_JM + r")+)[^.?!]{0,40}?,?\s+(?:který|která|co|jenž|jež)\s+"
+    r"(?:údajně\s+|prý\s+|jako\s+první\s+)?(?:vynalez\w*|složil\w*|napsal\w*|objevil\w*|obeplul\w*|"
+    r"postavil\w*|namaloval\w*|hrál\w*|natočil\w*|založil\w*|vymyslel\w*|sestrojil\w*|navrhl\w*|"
+    r"zkonstruoval\w*|vytvořil\w*|zpíval\w*)")
+
+
+def zasluha_osoby(*texty):
+    """(jméno, kmen role nebo None) když text označuje osobu povoláním nebo jí
+    připisuje zásluhu; jinak None."""
+    for t in texty:
+        t = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", t or "")
+        m = _ZS_VZ_ROLE.search(t)
+        if m:
+            return m.group(2), m.group(1).lower()
+        m = _ZS_VZ_KTERY.search(t)
+        if m:
+            return m.group(1), None
+    return None
+
+
+def jmenovec_bez_role(otazka: str, odpoved: str):
+    """HANS_ZASLUHA_OSOBY_V1 (b) — dohledaný článek nepotvrzuje povolání z otázky →
+    náhradní věta, jinak None."""
+    try:
+        zs = zasluha_osoby(otazka)
+        if not zs or not zs[1]:
+            return None
+        m = re.search(r"heslo „([^“\"]+)[“\"]", odpoved or "")
+        if not m:
+            return None
+        from scripts import hans_wiki_offline as _wo
+        titul = m.group(1)
+        text = (_wo.extrakt(titul) or ("",))[0] or ""
+        uvod = re.sub(r"^\s*(?:Možná hledáte|Na |Tento článek)[^\n]*\n", "", text)[:700].lower()
+        if not uvod or any(k.lower() in uvod for k in _ZS_ROLE.get(zs[1], (zs[1],))):
+            return None
+        _prijm = _nd_f(zs[0].split()[-1])[:5]
+        if _prijm not in _nd_f(titul):
+            if _prijm and _prijm in _nd_f(text):
+                return None      # článek o díle osobu zmiňuje (obsazení, výčet) → nechat
+            logging.getLogger(__name__).info(
+                "HANS_ZASLUHA_OSOBY_V1: článek %r osobu %r neuvádí", titul, zs[0])
+            return ("V článku „%s“ o tom člověku nic není, pane, a jinde jsem ho nenašel — "
+                    "nechci si nic domýšlet." % titul)
+        _orig = re.sub(r"^\s*(?:Možná hledáte|Na |Tento článek)[^\n]*\n", "", text)
+        _orig = re.split(r"\n\s*==|\s==\s", _orig[:900])[0]
+        _orig = re.sub(r"\s*\([^()]*\)", "", re.sub(r"\s+", " ", _orig)).strip()
+        prvni = re.split(r"(?<=[a-záčďéěíňóřšťúůýž]{2}[.!?])\s+(?=[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])", _orig, maxsplit=1)[0]
+        prvni = prvni[:300]
+        logging.getLogger(__name__).info(
+            "HANS_ZASLUHA_OSOBY_V1: %r je jmenovec — článek nepotvrzuje roli %r", titul, zs[1])
+        _r1 = {"herc": "herec", "hereč": "herečka", "básnířk": "básnířka", "zpěvačk": "zpěvačka",
+               "vynálezc": "vynálezce"}.get(zs[1], zs[1])
+        return ("Znám jen jmenovce, pane — podle Wikipedie: %s O tom, že by šlo o „%s“, "
+                "tam nic není, takže o člověku, na kterého se ptáte, nic spolehlivého nemám."
+                % (prvni[:1].upper() + prvni[1:], _r1))
+    except Exception:
+        return None
+
+
 def _jmeno_mimo_vetu(veta: str, prepis) -> bool:
     """HANS_LOOKUP_OBSAHEM_JMENO_V1 — nese přepis vlastní jméno (velké písmeno
     uvnitř věty), které v holé větě není?"""
@@ -1784,6 +1867,9 @@ class FaktaMixin:
             out = lookup_now(self.config, _dbp, tema, veta or "", asker=name,
                              otazka=_pq or _prepis or veta,   # HANS_LOOKUP_QUESTION_SUMMARY_V1
                              mel_zapisky=mel_zapisky)
+            if out:   # HANS_ZASLUHA_OSOBY_V1 (b) — dohledán jmenovec
+                out = jmenovec_bez_role((getattr(self, '_f1_query', None) or "") + " " + (veta or ""),
+                                        out) or out
             logging.getLogger(_h.__name__).info(
                 "HANS_ANCHOR_LOOKUP_V1: téma %r → %s", tema,
                 "dohledáno" if out else "nic (platí dosavadní odpověď)")

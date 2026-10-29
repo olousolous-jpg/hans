@@ -1600,3 +1600,10 @@ def agent_zminka_o_lidech(veta: str) -> bool:
     """HANS_AGENT_WHO_HOME_CUE_V1 — mluví věta o lidech / domě / kameře?"""
     from scripts.hans_agent import _ma_zminku_o_lidech
     return _ma_zminku_o_lidech(veta, _cfg())
+
+
+def zasluha_osoby_seznam(veta: str):
+    """HANS_ZASLUHA_OSOBY_V1 — výsledek jako seznam (JSON)."""
+    from scripts.handler_fakta import zasluha_osoby
+    r = zasluha_osoby(veta)
+    return list(r) if r else None

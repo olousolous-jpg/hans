@@ -2497,6 +2497,17 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             'HANS_NEZNAME_DILO_V1: dílo %r nezná Wikipedie ani Wikidata → '
                             'neodpovídám z hlavy', _nd)
                 if not _skip_a1 and not _zada:
+                    # HANS_ZASLUHA_OSOBY_V1 (a) — osoba s povoláním / připsanou zásluhou:
+                    # stabilní vzorky jen opakují premisu otázky → vždy dohledat
+                    from scripts.handler_fakta import zasluha_osoby
+                    _zs = zasluha_osoby(getattr(self, '_f1_query', None) or "", ctx._raw_message)
+                    if _zs:
+                        _zada = True
+                        ctx._a1_abstain = True
+                        logging.getLogger(__name__).info(
+                            'HANS_ZASLUHA_OSOBY_V1: osoba %r (%s) → dohledávám, ne z hlavy',
+                            _zs[0], _zs[1] or "připsaná zásluha")
+                if not _skip_a1 and not _zada:
                     from scripts.hans_selfconsistency import is_unstable
                     _a1_vysl = is_unstable(self.config, ctx._raw_message)
                     if _a1_vysl is True:
