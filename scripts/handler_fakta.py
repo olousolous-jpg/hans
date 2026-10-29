@@ -1503,6 +1503,8 @@ class FaktaMixin:
         Zápis jde JEN do čekárny `unverified_findings`; noční ověření
         a ranní oprava už běží ([[instant-lookup-verify-loop]]).
         """
+        if self._je_dotaz_na_novinky(veta):   # HANS_NOVINKY_BEZ_ZPRAV_V1
+            return None
         # HANS_ASK_HANS_EXPERIENCE_V1 (17. 10.) — otázka na Hansův zážitek či
         # dílo („Byl jste někdy v Paříži?“) není dotaz na fakt o světě →
         # nedohledávat (dřív film „Paříži, miluji tě“)
@@ -1637,6 +1639,23 @@ class FaktaMixin:
                 "HANS_ANCHOR_LOOKUP_V1 selhalo: %s", e)
             return None
 
+    def _je_dotaz_na_novinky(self, veta: str) -> bool:
+        """HANS_NOVINKY_BEZ_ZPRAV_V1 (29. 10.) — „co je nového v Německu?“, ke
+        které zprávy nic nedaly: encyklopedický článek není odpověď (/tazatel
+        29. 10. 2×: popis státu, Schröder 1998). Vzor sdílený s
+        HANS_PODKLAD_NOVINKY_V1 (`hans_podklad._NOVINKY_DOTAZ`)."""
+        try:
+            from scripts.hans_podklad import _NOVINKY_DOTAZ, _fold_n
+            for x in (veta, getattr(self, '_f1_query', None)):
+                if x and _NOVINKY_DOTAZ.search(_fold_n(re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", x))):
+                    logging.getLogger(_h.__name__).info(
+                        "HANS_NOVINKY_BEZ_ZPRAV_V1: dotaz na novinky bez zpráv → "
+                        "článek nedohledávám: %.60s", veta or "")
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _dohledej_obsahem(self, veta: str, name: str = None):
         """HANS_LOOKUP_OBSAHEM_V1 (25. 10.) — obecná otázka bez vlastního jména,
         kterou kotva nedohledala: článek podle obsahu (`clanek_obsahem`), pak
@@ -1648,7 +1667,7 @@ class FaktaMixin:
         vázané na čas, nesmysl) bez dohledání."""
         try:
             from scripts.hans_intent import pta_se_na_zazitek_hanse
-            if pta_se_na_zazitek_hanse(veta):
+            if pta_se_na_zazitek_hanse(veta) or self._je_dotaz_na_novinky(veta):
                 return None
             from scripts.hans_findings import clanek_obsahem, lookup_now
             _prepis = getattr(self, '_f1_query', None)

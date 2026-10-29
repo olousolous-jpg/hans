@@ -85,6 +85,10 @@ _POZDRAV_UZIVATEL_RE = re.compile(
 
 # HANS_SELFCONSISTENCY_A1_V1 — deterministická abstinence u nestabilního
 # faktického dotazu (short-circuit místo volné generace persony).
+A1_NOVINKY_TEXT = (   # HANS_NOVINKY_BEZ_ZPRAV_V1
+    "Ve zprávách, které teď mám, o tom nic není, pane. Novinky odtud vám "
+    "tedy nepovím — a z encyklopedie by to novinky nebyly."
+)
 A1_ABSTAIN_TEXT = (
     "K tomuhle nemám spolehlivý záznam a nerad bych si domýšlel, pane. "
     "Raději přiznám, že si tím nejsem jistý, než abych řekl něco vymyšleného."
@@ -2523,7 +2527,9 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             ctx.response = (getattr(ctx, '_predem_dohledano', None)   # HANS_LOOKUP_ON_REQUEST_V2
                             or self._dohledej_kotvu(ctx._raw_message, ctx.name)
                             or self._dohledej_obsahem(ctx._raw_message, ctx.name)   # HANS_LOOKUP_OBSAHEM_V1
-                            or A1_ABSTAIN_TEXT)
+                            # HANS_NOVINKY_BEZ_ZPRAV_V1 — novinky bez zpráv: poctivá věta
+                            or (A1_NOVINKY_TEXT if self._je_dotaz_na_novinky(ctx._raw_message)
+                                else A1_ABSTAIN_TEXT))
             ctx._dohledano = True
             # CLAIM_RETRACT_V1 — brzda umí ODMÍTNOUT, ale neuměla se OPRAVIT.
             # Doloženo 6.8. 09:10→09:12: Hans tvrdil „hradby až 5 metrů",

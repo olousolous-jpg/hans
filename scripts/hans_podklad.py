@@ -466,8 +466,12 @@ def vyber(druh, kusy, nazev=None, texty=()) -> list:
 # Plošně časové slovo ne: „dneska jsem četl o Einsteinovi“, „na základě těchto
 # zpráv“ (Kolumbus) jsou otázky na svět. 📏 7 zásahů `-zpravy` 15.–28. 10.:
 # změna jen Francie; 1 765 chatových vět: vzor sedne 1× („novinky ve světě designu“).
+# HANS_NOVINKY_BEZ_ZPRAV_V1 (29. 10.) — zúženo: bez „co se stalo“ (dějiny),
+# bez letopočtu, ne o filmu/knize/snu/pořadu/domě (19 přepisů F1 v logu:
+# zůstanou jen Francie, Německo, Anglie dnes, Izrael, novinky ve světě designu)
 _NOVINKY_DOTAZ = re.compile(
-    r"\b(co\s+(je|se)\s+(nov[eé]ho|nov[eé]|d[eě]je|stalo|ted\s+deje|aktualne\s+deje)\s+(v|ve|na|u)\s+\w+"
+    r"^(?!.*\b\d{3,4}\b)(?!.*\b(film\w*|knih\w*|roman\w*|snu|sen|porad\w*|seri[aá]l\w*|dom[eě]|doma)\b).*"
+    r"\b(co\s+(je|se)\s+(nov[eé]ho|nov[eé]|d[eě]je|ted\s+deje|aktualne\s+deje)\s+(v|ve|na|u)\s+\w+"
     r"|(jak[eé]|nejak[eé])\s+(jsou\s+)?(zpr[aá]vy|novinky)\s+(z|ze|o|v|ve)\s+\w+"
     r"|(zpr[aá]vy|novinky)\s+(z|ze)\s+\w+)", re.IGNORECASE)
 
