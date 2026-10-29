@@ -72,6 +72,114 @@ def _tema_po_osobe(prepis, tema):
     return pt
 
 
+# ── HANS_NEZNAME_DILO_V1 (29. 10.) — dílo, které nezná Wikipedie ani Wikidata ──
+# „Znáte román Stíny na hladině? Kdo ho napsal?“ → „Autorkou je Věra Linhartová“:
+# A1 viděla stabilní vzorky (model si vymýšlí soustavně). Název díla za druhovým
+# slovem se česky neskloňuje → fráze ve fulltextu lokální Wikipedie je spolehlivá
+# (u osob v pádech ne — „Richarda Lva Srdce“ 0 výskytů). Neznámé dílo → A1
+# abstinuje → dohledání (najde-li článek, odpoví z něj), jinak přiznání.
+# 📏 3 664 přepisů F1: 131 názvů děl, neznámých 9 (Stíny na hladině, Poustevní
+# noc, Marvelovské mstitele, vlastní díla Hanse, 1 zkomolený pád).
+_ND_DRUH = (r"(?:rom[aá]n\w{0,3}|knih\w{0,3}|knize|film\w{0,3}|seri[aá]l\w{0,3}|oper[auy]|ope[rř]e|"
+            r"b[aá]s[eň]\w{0,3}|p[ií]s[eň]\w{0,3}|novel\w{0,2}|pov[ií]dk\w{0,2}|symfoni\w{0,2}|"
+            r"sb[ií]rk\w{0,2}|album|alba|albu|dokument\w{0,3}|div[aá]deln[ií]\s+hr\w{0,2})")
+_ND_TITUL = re.compile(r"\b" + _ND_DRUH + r"\s+(?:[„\"])?([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ0-9][^?,.;:!“\"()]{0,70})")
+_ND_STOP = set("""je jsou byl byla bylo byli bude poprve vydan vydana vydano vydal vysel vysla vyslo
+napsal napsala natocil natocila slozil slozila namaloval od podle skutecne opravdu kdo kdy kde jak
+ktery ktera ktere kterou vubec nebo ne a ze se si to ten ta tu ti tim tom jeho jeji jejich hraje hral
+hrala reziroval rezirovala znate znas vite vis ma mel mela""".split())
+_ND_PRED = set("na nad pod z ze v ve o u za pred a i s se do od k ke pro mezi bez po pri".split())
+
+
+def _nd_f(x):
+    import unicodedata as _ud
+    return "".join(c for c in _ud.normalize("NFD", (x or "").lower()) if _ud.category(c) != "Mn")
+
+
+def _nd_tituly(text: str) -> list:
+    out = []
+    for m in _ND_TITUL.finditer(text or ""):
+        sl = []
+        for w in m.group(1).split():
+            if sl and _nd_f(w) in _ND_STOP:
+                break
+            sl.append(w)
+        n = re.sub(r"\s+z\s+roku\s+\d{4}.*$|\s*\(\d{4}\).*$", "", " ".join(sl)).strip()
+        if n and _nd_f(n.split()[0]) not in ("hans", "hansi", "hansem"):
+            out.append(n)
+    return out
+
+
+_ND_CACHE: dict = {}
+
+
+def _nd_znamy(n: str) -> bool:
+    if n in _ND_CACHE:
+        return _ND_CACHE[n]
+    v = _nd_znamy_bez_cache(n)
+    if v is not None:
+        _ND_CACHE[n] = v
+    return bool(v) if v is not None else True
+
+
+def _nd_znamy_bez_cache(n: str):
+    """True známé / False neznámé / None nevím (chyba sítě — nekešovat)."""
+    from scripts import hans_wiki_offline as _wo
+    if _wo._cil(n) or _wo._presna_zaloha(n):
+        return True
+    w = re.findall(r"\w+", _nd_f(n))
+    try:
+        if not w or _wo._db().execute("SELECT 1 FROM clanek_fts WHERE clanek_fts MATCH ? LIMIT 1",
+                                      (" + ".join(w),)).fetchone():
+            return True
+    except Exception:
+        return True
+    sl = n.split()
+    for i in range(len(sl) - 1, 0, -1):      # známý začátek + zbytek věty („Titanic dobrý“)
+        if _nd_f(sl[i]) not in _ND_PRED and (_wo._cil(" ".join(sl[:i]))
+                                              or _wo._presna_zaloha(" ".join(sl[:i]))):
+            return True
+    try:   # Wikidata (i anglický popisek), krátký limit; chyba = známé
+        import json as _js
+        import urllib.parse as _up
+        import urllib.request as _ur
+        for lang in ("cs", "en"):
+            req = _ur.Request("https://www.wikidata.org/w/api.php?format=json&action=wbsearchentities"
+                              "&type=item&limit=5&language=%s&uselang=%s&search=%s"
+                              % (lang, lang, _up.quote(n)), headers={"User-Agent": "Hans/1.0"})
+            with _ur.urlopen(req, timeout=3) as fh:
+                r = _js.load(fh)
+            for x in r.get("search", []):
+                if (_nd_f(x.get("label", "")).startswith(_nd_f(n))
+                        or _nd_f((x.get("match") or {}).get("text", "")) == _nd_f(n)):
+                    return True
+    except Exception as e:
+        logging.getLogger(__name__).info("HANS_NEZNAME_DILO_V1: Wikidata %r nedostupná (%s) "
+                                         "→ beru jako známé", n, str(e)[:80])
+        return None
+    return False
+
+
+def nezname_dilo(*texty):
+    """Název díla z textů (věta, přepis), které nezná lokální Wikipedie ani
+    Wikidata; jinak None."""
+    try:
+        from scripts import hans_wiki_offline as _wo
+        if not _wo.dostupna():
+            return None
+        vid = set()
+        for t in texty:
+            for n in _nd_tituly(re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", t or "")):
+                if n in vid:
+                    continue
+                vid.add(n)
+                if not _nd_znamy(n):
+                    return n
+    except Exception:
+        return None
+    return None
+
+
 def _jmeno_mimo_vetu(veta: str, prepis) -> bool:
     """HANS_LOOKUP_OBSAHEM_JMENO_V1 — nese přepis vlastní jméno (velké písmeno
     uvnitř věty), které v holé větě není?"""

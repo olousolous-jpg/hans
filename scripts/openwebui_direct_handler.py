@@ -85,6 +85,10 @@ _POZDRAV_UZIVATEL_RE = re.compile(
 
 # HANS_SELFCONSISTENCY_A1_V1 — deterministická abstinence u nestabilního
 # faktického dotazu (short-circuit místo volné generace persony).
+A1_NEZNAME_DILO_TEXT = (   # HANS_NEZNAME_DILO_V1
+    "„%s“ neznám, pane — nenašel jsem to na Wikipedii ani ve Wikidatech. "
+    "Nechci si autora ani nic dalšího domýšlet."
+)
 A1_NOVINKY_TEXT = (   # HANS_NOVINKY_BEZ_ZPRAV_V1
     "Ve zprávách, které teď mám, o tom nic není, pane. Novinky odtud vám "
     "tedy nepovím — a z encyklopedie by to novinky nebyly."
@@ -2481,6 +2485,18 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             'HANS_LOOKUP_PRESNY_V1: předmět %r má přesný článek → '
                             'dohledávám místo odpovědi z hlavy', _pp)
                 if not _skip_a1 and not _zada:
+                    # HANS_NEZNAME_DILO_V1 — dílo, které nezná Wikipedie ani Wikidata:
+                    # nevěřit stabilním vzorkům (vymyšlený autor), dohledat / přiznat
+                    from scripts.handler_fakta import nezname_dilo
+                    _nd = nezname_dilo(ctx._raw_message, getattr(self, '_f1_query', None) or "")
+                    if _nd:
+                        _zada = True
+                        ctx._a1_abstain = True
+                        ctx._nezname_dilo = _nd
+                        logging.getLogger(__name__).info(
+                            'HANS_NEZNAME_DILO_V1: dílo %r nezná Wikipedie ani Wikidata → '
+                            'neodpovídám z hlavy', _nd)
+                if not _skip_a1 and not _zada:
                     from scripts.hans_selfconsistency import is_unstable
                     _a1_vysl = is_unstable(self.config, ctx._raw_message)
                     if _a1_vysl is True:
@@ -2526,7 +2542,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # HANS_ANCHOR_LOOKUP_V1 — než odmítneš, zkus to dohledat.
             ctx.response = (getattr(ctx, '_predem_dohledano', None)   # HANS_LOOKUP_ON_REQUEST_V2
                             or self._dohledej_kotvu(ctx._raw_message, ctx.name)
-                            or self._dohledej_obsahem(ctx._raw_message, ctx.name)   # HANS_LOOKUP_OBSAHEM_V1
+                            # HANS_NEZNAME_DILO_V1 — u neznámého díla ne podle obsahu
+                            # (živě: článek o Nezvalovi → „napsal Vladislav Vančura“)
+                            or (None if getattr(ctx, '_nezname_dilo', None)
+                                else self._dohledej_obsahem(ctx._raw_message, ctx.name))   # HANS_LOOKUP_OBSAHEM_V1
+                            or ((A1_NEZNAME_DILO_TEXT % ctx._nezname_dilo)
+                                if getattr(ctx, '_nezname_dilo', None) else None)
                             # HANS_NOVINKY_BEZ_ZPRAV_V1 — novinky bez zpráv: poctivá věta
                             or (A1_NOVINKY_TEXT if self._je_dotaz_na_novinky(ctx._raw_message)
                                 else A1_ABSTAIN_TEXT))
