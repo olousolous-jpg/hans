@@ -1585,3 +1585,12 @@ def podnet_heslo(nazev: str):
     if not _wo.dostupna():
         return "BEZ_WIKI"
     return _kp.heslo_podnetu(_cfg(), nazev)
+
+
+def presna_zaloha_titul(q: str):
+    """HANS_WIKI_DRUH_DILA_HOLY_V1 — titul přesné zálohy (None = žádný)."""
+    from scripts import hans_wiki_offline as _wo
+    if not _wo.dostupna():
+        return "BEZ_WIKI"
+    r = _wo._presna_zaloha(q)
+    return r[0] if r else None

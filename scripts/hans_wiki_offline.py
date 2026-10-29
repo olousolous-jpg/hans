@@ -268,6 +268,23 @@ def _pad1_hlavni(z: str, r):
     return None
 
 
+# HANS_WIKI_DRUH_DILA_HOLY_V1 — druh díla v kotvě → slovesný vzor `_je_dilo`
+_DRUH_DILA_SLOVA = {"román": ["kniha"], "novela": ["kniha"], "povídka": ["kniha"],
+                    "kniha": ["kniha"], "film": ["film"], "seriál": ["film"]}
+_INFOBOX_DILA = {"kniha", "film", "televizní pořad", "skladba", "album", "videohra",
+                 "opera", "divadelní hra", "mediální franšíza"}
+
+
+def _je_dilo_clanek(r, druhy) -> bool:
+    try:
+        ib = _db().execute("SELECT infobox_druh FROM clanek WHERE id=?", (r[0],)).fetchone()
+        if ib and ib[0] in _INFOBOX_DILA:
+            return True
+        return _je_dilo(r[1], druhy)
+    except Exception:
+        return True
+
+
 def _presna_zaloha(q: str):
     """HANS_WIKI_OFFLINE_DIRY_V1 — přesný titul i (a) bez druhového slova
     („hora Mount Everest“, „kniha Krakatit“ → „Krakatit (kniha)“/„Krakatit“),
@@ -297,10 +314,19 @@ def _presna_zaloha(q: str):
     zkus += _prvni_pad(q)
     zkus += _prvni_pad_vic(q)   # HANS_WIKI_PADY_VIC_V1
     _prevaz = None   # HANS_WIKI_ROZCESTNIK_OSOBA_V1 — záloha, až když nic jiného
+    _druh_dila = (_DRUH_DILA_SLOVA.get(sl[0].lower())
+                  if len(sl) >= 2 and sl[0][:1].islower() else None)
     for z in zkus:
         r = _cil(z)
         if r and not db.execute("SELECT rozcestnik FROM clanek WHERE id=?",
                                 (r[0],)).fetchone()[0]:
+            # HANS_WIKI_DRUH_DILA_HOLY_V1 (29. 10.) — „román Stíny (na hladině)“
+            # → holé „Stíny“ = stín jako jev, „film Titanicu“ → loď, „kniha
+            # Válka“ → Válka. Holý titul bez upřesnění u kotvy s druhem díla jen
+            # když článek dílem je (infobox díla / první věta). 📏 43 kotev
+            # s druhem díla z logu: odmítne 10 (vše cizí, kromě Metropolis).
+            if _druh_dila and "(" not in z and not _je_dilo_clanek(r, _druh_dila):
+                continue
             _hl = (_pad1_hlavni(z, r) if PAD1_HLAVNI
                    and z in (q.strip(), " ".join(sl[1:])) else None)
             if _hl:

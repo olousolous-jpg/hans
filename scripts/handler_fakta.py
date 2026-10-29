@@ -46,6 +46,24 @@ def _f1_ztratil_slovo(veta: str, prepis: str) -> bool:
                for w in re.findall(r"[a-z]{4,}", holy.lower()) if w not in _F1_SLOVO_STOP)
 
 
+def _jmeno_mimo_vetu(veta: str, prepis) -> bool:
+    """HANS_LOOKUP_OBSAHEM_JMENO_V1 — nese přepis vlastní jméno (velké písmeno
+    uvnitř věty), které v holé větě není?"""
+    import unicodedata as _ud
+
+    def _f(x):
+        return "".join(c for c in _ud.normalize("NFD", (x or "").lower())
+                       if _ud.category(c) != "Mn")
+    if not prepis:
+        return False
+    holy = _f(re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or ""))
+    slova = re.findall(r"\w+", str(prepis))
+    for w in slova[1:]:
+        if w[:1].isupper() and len(w) >= 3 and _f(w)[:4] not in holy:
+            return True
+    return False
+
+
 # HANS_LOOKUP_F1_SLOVESO_V1 (25. 10.) — přepis F1 nahradil sloveso otázky
 # „autorem“ („Kdo složil Prodanou nevěstu?“ → „Kdo je autorem divadelní hry
 # Prodaná nevěsta?“) a shrnutí podle přepisu vybralo libretistu. „napsal“ →
@@ -1643,9 +1661,23 @@ class FaktaMixin:
                     "HANS_LOOKUP_OBSAHEM_F1_SLOVO_V1: přepis %r ztratil slovo věty %r → holá věta",
                     _prepis, veta)
                 _prepis = None
-            titul = clanek_obsahem(self.config, _prepis or veta)
-            if not titul and _prepis:
+            # HANS_LOOKUP_OBSAHEM_JMENO_V1 (29. 10.) — jméno, které přepis doplnil
+            # z vlákna („a kdy se narodil?“ → „…Bohumil Kvasnička z Brna?“), se
+            # nesmí ztratit hledáním podle holé věty: ta předmět nemá a vrátí
+            # cizí článek (Mozart, Jan Žižka, Karel IV., Jméno růže). 📏 48
+            # hledání podle obsahu v logu: změna jen u těchto 5, všechny cizí.
+            _holy_ok = not _jmeno_mimo_vetu(veta, getattr(self, '_f1_query', None))
+            if _prepis:
+                titul = clanek_obsahem(self.config, _prepis)
+                if not titul and _holy_ok:
+                    titul = clanek_obsahem(self.config, veta)
+            elif _holy_ok:
                 titul = clanek_obsahem(self.config, veta)
+            else:
+                logging.getLogger(_h.__name__).info(
+                    "HANS_LOOKUP_OBSAHEM_JMENO_V1: přepis nese jméno mimo větu %r → "
+                    "podle holé věty nehledám", veta)
+                titul = None
             if not titul:
                 return None
             _dbp = (self.config.get("hans_idle", {}) or {}).get(

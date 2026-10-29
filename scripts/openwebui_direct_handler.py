@@ -102,6 +102,11 @@ def _fold_cs(s: str) -> str:
     import unicodedata as _ud
     return "".join(c for c in _ud.normalize("NFD", (s or "").lower()) if _ud.category(c) != "Mn")
 
+# HANS_A1_UPRESNENI_V1 — „myslel jsem / mám na mysli / mluvím o / ptám se na“
+_A1_UPRESNENI = re.compile(
+    r"\b(myslel[a]?\s+jsem|mam\s+na\s+mysli|mluvim\s+o|ptam\s+se\s+(na|o)"
+    r"|ptal[a]?\s+jsem\s+se\s+(na|o)|nemyslel[a]?\s+jsem)\b")
+
 # HANS_ZPRAVY_NE_DEJINY_V1 — časové slovo = otázka smí na zprávy i u předmětu z minulosti
 _ZPRAVY_CAS = re.compile(
     r"\b(?:dnes|dneska|v[čc]era|te[ďd]|aktu[áa]ln|nejnov[ěe]j|nov[ée]ho|nov[ée]\b|d[ěe]je|"
@@ -2389,10 +2394,17 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         # se zeptat – mohl byste mi zjistit něco o X?“) se brala
                         # jako věta, která se na nic neptá, a k dohledání nedošlo
                         from scripts.hans_intent import zada_dohledani as _zd0
+                        # HANS_A1_UPRESNENI_V1 (29. 10.) — upřesnění předmětu předchozí
+                        # otázky („to je Mozart, já mluvím o Kvasničkovi z Brna“) není
+                        # rozkaz: přepis F1 je otázka → A1 běží (dřív model vymyslel
+                        # životopis neexistující osoby). 📏 55 vět, kde se A1 přeskočila:
+                        # vzor sedne na 7, všechny upřesnění (REM, van Gogh, Lincoln…).
+                        _upr = bool(_A1_UPRESNENI.search(_fold_cs(ctx._raw_message))
+                                    and str(getattr(self, '_f1_query', None) or "").strip().endswith("?"))
                         if (_ar is not None and not _ar._looks_like_request(
                                 ctx._raw_message)
                                 and not _a1_otazka_bez_otazniku(ctx._raw_message)
-                                and not _zd0(ctx._raw_message)):
+                                and not _zd0(ctx._raw_message) and not _upr):
                             _skip_a1 = True
                             logging.getLogger(__name__).info(
                                 'HANS_A1_ONLY_FOR_QUESTIONS_V1: A1 přeskočena '
