@@ -2259,7 +2259,20 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             ctx._predem_dohledano = _dz
             except Exception as _lob:
                 logging.getLogger(__name__).debug('HANS_LOOKUP_OBSAZENI_V1: %s', _lob)
-            if getattr(self, '_grounding_outcome', '') == 'factual_nofacts':
+            # HANS_POCTY_V1 (29. 10.) — jednoduchý výpočet spočítá program; model ho jen
+            # vysloví (živě: blok uvnitř brány A1 se nespustil, A1 se přeskočila dřív)
+            _vp = None
+            try:
+                from scripts.hans_pocty import vypocet
+                _vp = vypocet(getattr(self, '_f1_query', None) or "") or vypocet(ctx._raw_message)
+            except Exception:
+                _vp = None
+            if _vp:
+                ctx.system += ("\n\nVÝPOČET (spočítal program, výsledek je přesný — řekni přesně "
+                               "tento výsledek, nepočítej znovu): %s\n" % _vp)
+                ctx._vypocet = _vp
+                logging.getLogger(__name__).info('HANS_POCTY_V1: %s', _vp)
+            if getattr(self, '_grounding_outcome', '') == 'factual_nofacts' and not _vp:
                 # HANS_A1_NOT_FOR_OWN_STATE_V1 (20.8.) — A1 hlídá SVĚTOVÁ
                 # tvrzení bez opory. Otázka NA HANSE nebo NA DĚNÍ V DOMĚ ale
                 # oporu má — jen ne v RAG, nýbrž v system promptu (bloky `cap`,

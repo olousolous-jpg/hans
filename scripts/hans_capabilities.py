@@ -41,6 +41,11 @@ _CAPABILITIES = [
      "U zpráv posílám ODKAZ na článek (jen u médií, jejichž kanály sbírám — u souhrnů z Google News odkaz nemám) "
      "a na požádání i odkazy od konkrétního média",
      "/zpravy [téma]; „co píšou o …“, „co je ve zprávách“; po výpisu „pošli odkaz (na Novinky)“"),
+    # HANS_POCTY_V1 (29. 10.)
+    ("pocty", "Umím SPOČÍTAT jednoduchý příklad — sčítání, odčítání, násobení, dělení, druhou "
+     "a třetí mocninu, odmocninu a procenta ze dvou čísel; spočítá to program přesně, ne já "
+     "z hlavy. Slovní úlohy, rovnice a jednotky zatím neumím",
+     "„kolik je 17 krát 23?“, „druhá odmocnina z 144“, „kolik je 20 % ze 150?“"),
     # HANS_HLAVNI_ZPRAVA_V1
     ("hlavni_zprava", "Jednou za dva dny sám vyberu HLAVNÍ ZPRÁVU — příběh, který se nejdéle držel "
      "na špici ve více médiích — a pošlu na Matrix krátké shrnutí: co se stalo, jak se to "
