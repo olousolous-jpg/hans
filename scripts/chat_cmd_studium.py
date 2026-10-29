@@ -223,6 +223,29 @@ def _cmd_severka(handler, name, args) -> str:
     else:
         out.append("")
         out.append("Žádný čekající návrh změny, pane.")
+    # SEVERKA_ZAMITNUTO_V1 — návrhy, které zastavila pojistka (poslední 3)
+    try:
+        import sqlite3 as _sq
+        _cfg = getattr(handler, "config", {}) or {}
+        _con = _sq.connect("file:%s?mode=ro" % (_cfg.get("diary_db") or "data/hans_diary.db"),
+                           uri=True, timeout=3.0)
+        try:
+            _zam = _con.execute(
+                "SELECT ts, note FROM diary WHERE event_type='severka_zamitnuto' "
+                "ORDER BY ts DESC LIMIT 3").fetchall()
+        finally:
+            _con.close()
+        if _zam:
+            out.append("")
+            out.append("Zastavené návrhy (nejnovější první):")
+            for _ts, _note in _zam:
+                _r = dict(l.split(": ", 1) for l in (_note or "").split("\n")[:2] if ": " in l)
+                import time as _tm
+                out.append("  %s — %s (%s)" % (_tm.strftime("%d. %m.", _tm.localtime(_ts)),
+                                               _r.get("Navržená role", "?"),
+                                               _r.get("Proč zastaveno", "")))
+    except Exception as _ze:
+        _cc._log.debug("SEVERKA_ZAMITNUTO_V1 výpis: %s", _ze)
     return _cc.NL_RUNTIME.join(out)
 
 

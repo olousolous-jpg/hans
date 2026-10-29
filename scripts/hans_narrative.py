@@ -20,7 +20,8 @@ _log = logging.getLogger("hans_narrative")
 
 _EXCLUDE = ("distillation_finding", "tendency_snapshot", "kodi_playing",
             "person_seen", "teddy_arrived", "teddy_gone", "weather",
-            "night_summary", "wol", "narrative_chapter")
+            "night_summary", "wol", "narrative_chapter",
+            "severka_zamitnuto")   # SEVERKA_ZAMITNUTO_V1 — Severka čte kapitolu
 
 
 def _ro(db_path):

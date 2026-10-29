@@ -1089,7 +1089,10 @@ class HansEveningReflection:
 
     def _extract_stances_3step(self, text: str, date_str: str):
         try:
-            known = [s.claim for s in self._stances.top_stances(limit=40)]
+            # HANS_STANCE_KNOWN_ALL_V1 (28. 10.) — se VŠEMI aktivními (dřív top 40
+            # z 87): nové postoje s 1 dokladem v seznamu chyběly a každá jejich
+            # parafráze vznikla znovu („Raději přiznám, že nevím…“ 3× za měsíc)
+            known = [s.claim for s in self._stances.all_stances(limit=300)]
         except Exception:
             known = []
 

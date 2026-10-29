@@ -63,6 +63,7 @@ EVENT_MAP: dict[str, str] = {
     "work_completion_reflection": "odvodil", "self_critique": "odvodil",
     "immune_check": "odvodil", "contradiction_flag": "odvodil",
     "severka_proposal": "odvodil", "morning_health": "odvodil",
+    "severka_zamitnuto": "odvodil",   # SEVERKA_ZAMITNUTO_V1
     "dialog_reflection": "odvodil", "evening_reflection": "odvodil",
     # představil jsem si (fantazie — NESMÍ jako fakt)
     "dream": "predstavil", "musing": "predstavil", "spontaneous": "predstavil",

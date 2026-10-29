@@ -1301,9 +1301,22 @@ class HansDialog:
         jmeno = ke.identita(self.config)
         _log.info("KOLAC_EXAM_V1: zkouška [%s] téma %r → %r",
                   polozka["zdroj"], polozka["tema"], polozka["otazka"])
+        # KOLAC_EXAM_STOPA_V1 (28. 10.) — zkouška se strojem myšlení, uloženým
+        # MIMO rotaci 200 provozních stop (`data/zkousky_stopy/<id zkoušky>.json`):
+        # třídič neúspěchů (`kolac_exam_trida`) z něj čte cestu a text podkladu.
+        # Bez stromu se dalo třídit jen z logu, kde se míchají tahy jiných
+        # identit. Chyba stopy = dotaz proběhne jako bez ní (`spust`).
+        _rid_zk = "zk_%d" % int(time.time() * 1000)
         try:
-            odpoved = handler.send_chat_message(jmeno, polozka["otazka"],
-                                                channel="zkouska") or ""
+            if (self.config.get("stopa", {}) or {}).get("enabled", True):
+                from scripts import hans_stopa as _hs_zk
+                odpoved = _hs_zk.spust(handler.send_chat_message, jmeno, polozka["otazka"],
+                                       channel="zkouska", rid=_rid_zk, kanal="zkouska",
+                                       osoba=jmeno, zprava=polozka["otazka"],
+                                       adresar=ke.STOPY_DIR) or ""
+            else:
+                odpoved = handler.send_chat_message(jmeno, polozka["otazka"],
+                                                    channel="zkouska") or ""
         except Exception as e:
             _log.warning("KOLAC_EXAM_V1: odpověď selhala: %s", e)
             return False
@@ -1321,10 +1334,12 @@ class HansDialog:
             # mozek spadl mezi gate a dotazem).
             _log.warning("KOLAC_EXAM_V1: prázdná odpověď na %r → zkouška "
                          "zahozena (mozek nejspíš dolů)", polozka["tema"])
+            ke.stopa_k_zkousce(_rid_zk, 0)   # KOLAC_EXAM_STOPA_V1 — bez sirotků
             return False
         hodnoceni = ke.ohodnot(polozka["zdroj"], odpoved, polozka.get("klic", ""),
                                polozka.get("otazka", ""))   # KOLAC_EXAM_SOUD_V2
         _exam_id = ke.zapis(self._diary_path, polozka, odpoved, hodnoceni)
+        ke.stopa_k_zkousce(_rid_zk, _exam_id)   # KOLAC_EXAM_STOPA_V1
         if polozka.get("otazka_id"):       # KOLAC_EXAM_FAKTA_V1 — stav v zásobě
             try:
                 from scripts import kolac_fakta as _kf

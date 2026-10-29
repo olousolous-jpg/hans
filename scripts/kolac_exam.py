@@ -96,6 +96,25 @@ def _cfg(config: dict) -> dict:
     return (config or {}).get("kolac_exam", {}) or {}
 
 
+# KOLAC_EXAM_STOPA_V1 (28. 10.) — stromy myšlení zkoušek mimo rotaci provozních
+STOPY_DIR = "data/zkousky_stopy"
+
+
+def stopa_k_zkousce(rid: str, exam_id: int) -> None:
+    """Přejmenuje stopu `<rid>.json` na `<id zkoušky>.json` (nezapsaná zkouška
+    = stopa se smaže, ať tam neleží sirotci)."""
+    try:
+        src = os.path.join(STOPY_DIR, "%s.json" % rid)
+        if not os.path.exists(src):
+            return
+        if exam_id:
+            os.replace(src, os.path.join(STOPY_DIR, "%d.json" % int(exam_id)))
+        else:
+            os.remove(src)
+    except Exception as e:
+        _log.debug("KOLAC_EXAM_STOPA_V1: %s", e)
+
+
 def zapnuto(config: dict) -> bool:
     return bool(_cfg(config).get("enabled", True))
 

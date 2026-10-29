@@ -582,6 +582,8 @@ class Severka:
         if _vada:
             _log.warning("severka %s: návrh NEZAKLÁDÁM — %s | CORE: %.160s",
                          date_str, _vada, " ".join(new_core.split()))
+            self._write_rejected_diary(_role, new_core, rationale, parsed.get("analysis", ""),
+                                       date_str, "role není konkrétní: " + _vada)
             return {"decision": "keep", "gate": True, "durable": durable,
                     "message": "", "role_rejected": _vada}
         # SEVERKA_ROLE_JUDGE_V1 (24. 9.) — jen jiné pojmenování téže role
@@ -601,6 +603,9 @@ class Severka:
             if _stejna:
                 _log.info("severka %s: „%s“ je jen jiné pojmenování role „%s“ "
                           "→ držím identitu", date_str, _role, _cur_role)
+                self._write_rejected_diary(_role, new_core, rationale,
+                                           parsed.get("analysis", ""), date_str,
+                                           "jen jiné pojmenování role „%s“" % _cur_role)
                 return {"decision": "keep", "gate": True, "durable": durable,
                         "message": "", "role_same": _role}
 
@@ -646,6 +651,29 @@ class Severka:
         out += ("\n\nNic se nezmění bez Vašeho svolení. Přejete-li si to schválit, "
                 "řekněte „/severka schválit\"; zamítnout „/severka zamítnout\".")
         return out
+
+    def _write_rejected_diary(self, role, new_core, rationale, analysis, date_str, duvod):
+        """SEVERKA_ZAMITNUTO_V1 (27. 10.) — i návrh, který zastavila pojistka
+        (jiné pojmenování role, role není konkrétní), do deníku: dřív zůstal jen
+        řádek v logu a nešlo zpětně zjistit, kam Severka míří (8.–22. 10. třikrát
+        „archivář …“). Typ `severka_zamitnuto` je vyloučený z narativní kapitoly
+        (Severka kapitolu čte → nesmí se krmit vlastními návrhy)."""
+        from scripts.hans_persona import apply_name as _an
+        try:
+            note = (f"Navržená role: {role}\n"
+                    f"Proč zastaveno: {duvod}\n"
+                    f"Navržený CORE: {_an(new_core, self._config)}\n"
+                    f"Důvod návrhu: {rationale}\n"
+                    f"Rozbor: {analysis}")
+            db = sqlite3.connect(self._diary_path, timeout=5.0)
+            db.execute(
+                "INSERT INTO diary (ts, event_type, title, note) VALUES (?,?,?,?)",
+                (time.time(), "severka_zamitnuto",
+                 f"Severka — zastavený návrh {date_str}: {role}", note))
+            db.commit()
+            db.close()
+        except Exception as e:
+            _log.warning("severka: zápis zastaveného návrhu selhal: %s", e)
 
     def _write_proposal_diary(self, pid, new_core, rationale, analysis, date_str):
         # SEVERKA_DISPLAY_NAME_V1 — deník je Hansova paměť, token tam nepatří
