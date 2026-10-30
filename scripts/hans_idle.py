@@ -1570,8 +1570,11 @@ class HansIdle:
             c = Counter()
             for name in set(names):
                 rows = conn.execute(
+                    # HANS_FILM_ZANRY_BEZ_TV_V1 (30. 10.) — bez živé televize: přenosy
+                    # dávaly „sport“ na 1. místo (156 sezení, 0 filmů), ale tady se
+                    # vybírá film z knihovny; u ostatních osob pořadí skoro stejné
                     "SELECT genre FROM kodi_sessions "
-                    "WHERE persons LIKE ? AND genre!=''",
+                    "WHERE persons LIKE ? AND genre!='' AND media_type!='channel'",
                     ('%"' + name + '"%',)).fetchall()
                 for (g,) in rows:
                     for part in re.split(r"[/,]", g or ""):

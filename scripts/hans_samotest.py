@@ -171,7 +171,16 @@ def _otazky(titul: str, druh: str) -> list:
             jmena = [j for j in jmena if j]
             if jmena:
                 out.append((sablona % jm, p, jmena))
-        for p, sablona in (("P571", "Z kterého roku pochází „%s“?"), ("P577", "Kdy vyšlo dílo „%s“?")):
+        # HANS_SAMOTEST_DRUH_ROK_V1 (30. 10., „Kdy vyšlo dílo „Čelisti“?“ — čekán
+        # film 1975, Hans správně řekl román 1974): z titulu se „(film)“ ořízne,
+        # druh proto patří do otázky (z upřesnění v titulu nebo z infoboxu)
+        _dm = re.search(r"\((film|kniha|román|opera|seriál|album|píseň)", titul)
+        _dr = _dm.group(1) if _dm else ("film" if _ib == "film" else "")
+        _vysl = {"film": "Kdy měl premiéru film „%s“?", "seriál": "Kdy začal vysílat seriál „%s“?",
+                 "kniha": "Kdy vyšla kniha „%s“?", "román": "Kdy vyšel román „%s“?",
+                 "opera": "Kdy měla premiéru opera „%s“?", "album": "Kdy vyšlo album „%s“?",
+                 "píseň": "Kdy vyšla píseň „%s“?"}.get(_dr, "Kdy vyšlo dílo „%s“?")
+        for p, sablona in (("P571", "Z kterého roku pochází „%s“?"), ("P577", _vysl)):
             roky = sorted({x[0] for x in P.get(p) or [] if isinstance(x, list)})
             if roky:
                 out.append((sablona % jm, p, [str(r) for r in roky]))
