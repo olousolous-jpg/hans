@@ -471,6 +471,15 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         except Exception:
             pass
         resp = self._collapse_repeated_greetings(resp or "")
+        # HANS_WEB_CHAT_BEZ_MOZKU_V1 (27. 10.) — herní mód / PC dole: model nic
+        # nevrátil a web dostal prázdnou odpověď → čekal do vypršení (tazatel 300 s).
+        # Táž věta jako na Matrixu (CHAT_DEFERRED_V1), ale bez fronty: webová
+        # odpověď patří k jednomu dotazu, později ji není kam doručit.
+        if not resp.strip():
+            resp = ("Můj mozek (počítač s jazykovým centrem) teď nemá volno — buď je "
+                    "vypnutý, nebo se na něm hraje — takže vám hned pořádně neodpovím. "
+                    "Zeptejte se mě prosím znovu za chvíli.")
+            logging.getLogger(__name__).info("HANS_WEB_CHAT_BEZ_MOZKU_V1: prázdná odpověď → věta o mozku")
 
         tts = self.tts_speaker
         if tts and getattr(tts, "enabled", False) and resp:
@@ -2695,6 +2704,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     ctx.response = _pd
             except Exception as _pde:
                 logging.getLogger(__name__).debug("HANS_FAKE_LOOKUP_CLAIM_V1: %s", _pde)
+        # HANS_SMISENE_PISMO_V1 (27. 10.) — slovo z latinky i cyrilice („objeвили“) → latinka
+        if ctx.response:
+            try:
+                from scripts.cz_pismo import oprav_smisene_pismo as _osp
+                _sp = _osp(ctx.response)
+                if _sp != ctx.response:
+                    logging.getLogger(__name__).info("HANS_SMISENE_PISMO_V1: opraveno smíšené písmo")
+                    ctx.response = _sp
+            except Exception as _spe:
+                logging.getLogger(__name__).debug("HANS_SMISENE_PISMO_V1: %s", _spe)
         # G4D_DEDUP_ADDRESS_V1 — očisti opakované oslovení PŘED
         # rozdvojením do conv_store i diary→RAG (oba cíle čisté).
         if ctx.response:
@@ -3159,7 +3178,10 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         in ('factual_nofacts', 'grounded')):
                     from scripts.hans_thread import je_ciste_odrikani
                     if je_ciste_odrikani(ctx.response):
-                        _dohl2 = self._dohledej_kotvu(ctx._raw_message, ctx.name)
+                        _dohl2 = (self._dohledej_kotvu(ctx._raw_message, ctx.name)
+                                  # HANS_ADMIT_OBSAHEM_V1 (28. 10.) — jako u A1: otázka
+                                  # bez jména („posledním československým prezidentem“)
+                                  or self._dohledej_obsahem(ctx._raw_message, ctx.name))
                         if _dohl2:
                             logging.getLogger(__name__).info(
                                 'HANS_ANCHOR_LOOKUP_ON_ADMIT_V1: přiznal '

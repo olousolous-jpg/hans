@@ -429,8 +429,8 @@ def _format_evidence_social_en(evidence: dict, max_items: int = 20) -> str:
     lines = []
     lines.append("EVIDENCE FROM YOUR LAST %d DAYS — SOCIAL LENS "
                  "(raw facts, no interpretation). Note each person's gender in "
-                 "parentheses — respect it when you write (Mrs./Ms. for female, "
-                 "Mr. for male):"
+                 "parentheses — respect it when you write (Mrs. for female, "
+                 "Mr. for male):"   # HANS_SELF_INSIGHT_OSLOVENI_V1 (25. 10.): „Mrs./Ms.“ → model volil náhodně, manželka „slečna“, dcera „paní“
                  % evidence.get("window_days", 30))
     lines.append("")
     # HANS_SELF_INSIGHT_LABELS_V1 — „camera ticks“ model vyložil jako
