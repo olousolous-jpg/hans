@@ -74,13 +74,15 @@ _CASE_TEMPLATES = [
     {
         "trigger": "reading_inspired",
         "names": [
-            "Případ inspirovaný {topic}",
-            "Záhada podle {topic}",
+            # KOLAC_CASE_TITLE_QUOTE_V1 (30. 10.) — název článku se neskloňuje
+            # („Případ inspirovaný Národní galerie (Londýn)“) → v uvozovkách
+            "Případ inspirovaný četbou \u201e{topic}\u201c",
+            "Záhada podle \u201e{topic}\u201c",
             "Kauza literárních paralel",
         ],
         "opening_clues": [
-            "{name} četl o {topic} a Kolač v tom vidí paralelu s děním v domě.",
-            "Podle Koláče není náhoda, že {name} právě četl o {topic}.",
+            "{name} četl článek \u201e{topic}\u201c a Kolač v tom vidí paralelu s děním v domě.",
+            "Podle Koláče není náhoda, že {name} právě četl \u201e{topic}\u201c.",
         ],
     },
     {
@@ -108,6 +110,16 @@ PHASE_GATHERING  = "gathering"   # 2-3. den — sbírání stop
 PHASE_THEORY     = "theory"      # 4. den — Kolač má teorii
 PHASE_RESOLUTION = "resolution"  # 5. den — rozuzlení
 PHASE_CLOSED     = "closed"
+
+
+
+def _cisty_titul(topic: str) -> str:
+    """KOLAC_CASE_TITLE_QUOTE_V1 — titul článku bez upřesnění a balastu
+    („Midway (1976 film): Film Midwa…“ → „Midway“)."""
+    import re as _re
+    s = str(topic or "").split(":")[0]
+    s = _re.sub(r"\s*\([^)]*\)?", "", s).strip(" ,.-")
+    return s or str(topic or "").strip()
 
 
 @dataclass
@@ -417,7 +429,7 @@ class KolacCases:
         name = random.choice(template["names"])
         # Nahraď placeholdery
         obj = self._extract_object(context_parts)
-        topic = self._extract_topic(context_parts)
+        topic = _cisty_titul(self._extract_topic(context_parts))
         from scripts.hans_kolac import localize_kolac  # KOLAC_NAME_CONFIGURABLE_V1
         return localize_kolac(name.format(obj=obj, topic=topic), self.config)
 
@@ -425,7 +437,7 @@ class KolacCases:
                                 context_parts: list) -> str:
         clue = random.choice(template["opening_clues"])
         obj = self._extract_object(context_parts)
-        topic = self._extract_topic(context_parts)
+        topic = _cisty_titul(self._extract_topic(context_parts))
         from scripts.hans_persona import persona_name as _pn  # PERSONA_NAME_CONFIGURABLE_V1
         from scripts.hans_kolac import localize_kolac  # KOLAC_NAME_CONFIGURABLE_V1
         return localize_kolac(
