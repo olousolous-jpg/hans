@@ -2210,6 +2210,18 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             except Exception as _ufe:
                                 logging.getLogger(__name__).debug(
                                     'HANS_LOOKUP_UDAJ_FAKTA_DILA_V1: %s', _ufe)
+                        # HANS_LOOKUP_UDAJ_UPRESNENI_V1 (30. 10., samotest „Kde se narodil
+                        # David Hájek?“) — společný krok podkladu určil téma s upřesněním
+                        # „David Hájek (spisovatel)“ a holé „David Hájek“ (basketbalista)
+                        # by ho přepsalo → odpověď o jiném člověku. Upřesněný titul
+                        # téhož jména má přednost. 📏 celé logy: 2 případy (Hájek,
+                        # „pořad Hledání ztraceného času“ → román místo seriálu), oba k lepšímu.
+                        _pt_pred = str(getattr(self, '_podklad_tema', None) or '')
+                        if _pu and re.match(re.escape(_pu) + r"\s*\(", _pt_pred):
+                            logging.getLogger(__name__).info(
+                                'HANS_LOOKUP_UDAJ_UPRESNENI_V1: předmět %r → upřesněný %r',
+                                _pu, _pt_pred)
+                            _pu = _pt_pred
                         if _pu:
                             self._podklad_tema = _pu
                             _dz = self._dohledej_kotvu(ctx._raw_message, ctx.name,
