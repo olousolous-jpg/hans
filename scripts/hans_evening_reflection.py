@@ -64,6 +64,11 @@ _RELEVANT_EVENTS = {
     "brain_still_down": "Mysl stále spí",
     "body_warm":        "Tělesné pocity",
     "activity":         "Aktivita",
+    # HANS_FILM_VOLBA_V1 — návrhy filmů a odezva; skládá se dopočtem
+    # (`hans_film_volba.veta_dne`), jako klima
+    "filmy":            "Mé návrhy filmů a jak dopadly",
+    # HANS_BLUESKY_CTENI_V1 — shrnutí příspěvků jiných AI agentů (cizí názory)
+    "bluesky_cteni":    "Co psali jiní AI agenti (četl jsem na Bluesky)",
 }
 
 # ── STANCE_FACTS_NOT_ECHO_V1 ────────────────────────────────────────
@@ -92,6 +97,9 @@ _PERSONA_VOICED_EVENTS = frozenset({
     "chat_reflection",  # „Mé dojmy z rozhovorů" — syntéza v jeho hlase
     "introspection",    # vlastní úvahy
     "spontaneous",      # šablonové i generované hlášky
+    # HANS_BLUESKY_CTENI_V1 — není to Hansův hlas, ale CIZÍ názory: do extrakce
+    # postojů nesmí, jinak by si Hans přisvojil postoje jiných agentů
+    "bluesky_cteni",
 })
 
 
@@ -115,6 +123,7 @@ _LIMITS = {
     "brain_still_down": 2,
     "body_warm":        3,
     "activity":         5,
+    "bluesky_cteni":    3,   # HANS_BLUESKY_CTENI_V1
 }
 
 
@@ -1412,6 +1421,14 @@ class HansEveningReflection:
                     out["klima"] = _kl
             except Exception as _ke:
                 _log.debug("klima do fakt dne: %s", _ke)
+            # HANS_FILM_VOLBA_V1 — odezva lidí na mé návrhy filmů (počítá program)
+            try:
+                from scripts.hans_film_volba import veta_dne as _fvd
+                _fl = _fvd(self._diary_path, date_str, s_duvodem=False)  # důvod si model domýšlí (29. 10.: vymyšlené chutě) → jen výsledek
+                if _fl:
+                    out["filmy"] = _fl
+            except Exception as _fe:
+                _log.debug("filmy do fakt dne: %s", _fe)
         except Exception as e:
             _log.error("Sběr faktů selhal: %s", e)
         return out

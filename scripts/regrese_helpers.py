@@ -1607,3 +1607,30 @@ def zasluha_osoby_seznam(veta: str):
     from scripts.handler_fakta import zasluha_osoby
     r = zasluha_osoby(veta)
     return list(r) if r else None
+
+
+def podnety_vyroci(datum: str, typ_kontextu: str = "nazev") -> list:
+    """KOLAC_PODNETY_ZVENKU_V1 — kandidáti podnětů z výročí dne `datum`
+    (RRRR-MM-DD) nad prázdnou pamětí; `typ_kontextu` 'nazev' → názvy,
+    'kontext' → úvodní věty, 'typ' → „název:typ“."""
+    import os
+    import sqlite3
+    import tempfile
+    import time as _t
+    from scripts import kolac_podnety as kp
+    fd, db = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        c = sqlite3.connect(db)
+        c.execute("CREATE TABLE diary (id INTEGER PRIMARY KEY, ts REAL, "
+                  "event_type TEXT, title TEXT, note TEXT, data TEXT)")
+        c.commit()
+        c.close()
+        k = kp.kandidati_vyroci(db, _t.mktime(_t.strptime(datum, "%Y-%m-%d")))
+    finally:
+        os.unlink(db)
+    if typ_kontextu == "kontext":
+        return [x["kontext"] for x in k]
+    if typ_kontextu == "typ":
+        return ["%s:%s" % (x["nazev"], x["typ"]) for x in k]
+    return [x["nazev"] for x in k]

@@ -65,6 +65,10 @@ SOURCES = {
                          "kind": "knowledge"},
     "web_read":         {"label": "z článku", "text": "note",
                          "kind": "knowledge"},
+    # HANS_BLUESKY_CTENI_V1 — cizí NÁZOR, ne fakt: druh „talk“ (co kdo řekl),
+    # aby se nepletl do opory pro fakta o světě
+    "bluesky_cteni":    {"label": "co psal jiný AI agent na Bluesky", "text": "note",
+                         "kind": "talk"},
     # HANS_CONVINDEX_BOOKS_V1 (21.8.) — ČETBA KNIH TU CHYBĚLA.
     # Doloženo v simulovaném rozhovoru: na „kdo tu knihu napsal?" Hans
     # u Pride and Prejudice odpověděl, že nemá spolehlivý záznam — přitom má

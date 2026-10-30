@@ -1726,6 +1726,19 @@ class HansIdle:
             return
         if not movie or movie.get("movieid") is None:
             return
+        # HANS_FILM_VOLBA_V1 — z několika kandidátů vybere Hans sám podle toho,
+        # co ta osoba dřív přijala (`scripts/hans_film_volba.py`)
+        _proc, _kand = "", []
+        if cfg.get("hans_voli", True):
+            try:
+                from scripts import hans_film_volba as _fv
+                movie, _proc, _kand = _fv.vyber_hansem(
+                    self, self.config,
+                    (self.config.get("hans_idle", {}) or {}).get("diary_db",
+                                                                 "data/hans_diary.db"),
+                    names, cfg, movie)
+            except Exception as _fe:
+                _log.warning("HANS_FILM_VOLBA_V1: %s", _fe)
         title = movie.get("title", "film")
         person = names[0]
         countdown = int(cfg.get("countdown_s", 30))
@@ -1758,7 +1771,9 @@ class HansIdle:
         self._pending_film = (movie.get("movieid"), title, person, now)
         self._last_film_suggest = now
         self._film_suggest_cnt += 1
-        self._log_entry("film_suggestion", title=person, note=u"Návrh: %s" % title)
+        self._log_entry("film_suggestion", title=person, note=u"Návrh: %s" % title,
+                        data=__import__("json").dumps(   # HANS_FILM_VOLBA_V1
+                            {"proc": _proc, "kandidati": _kand}, ensure_ascii=False))
         _log.info("[FilmSuggest] %s ← %s", person, title)
 
     def _check_film_accepted(self):  # KODI_FILM_SUGGEST_V1

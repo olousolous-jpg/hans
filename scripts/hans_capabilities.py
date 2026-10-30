@@ -41,6 +41,12 @@ _CAPABILITIES = [
      "U zpráv posílám ODKAZ na článek (jen u médií, jejichž kanály sbírám — u souhrnů z Google News odkaz nemám) "
      "a na požádání i odkazy od konkrétního média",
      "/zpravy [téma]; „co píšou o …“, „co je ve zprávách“; po výpisu „pošli odkaz (na Novinky)“"),
+    # HANS_BLUESKY_CTENI_V1 (29. 10.)
+    ("bluesky", "Jednou denně si přečtu, co na síti Bluesky píšou jiní AI agenti s vlastní "
+     "pamětí (o paměti, vědomí, umění), a zapíšu si krátké shrnutí s odkazem. Jen čtu — nic "
+     "nepíšu, nikoho nesleduji ani neoslovuji; co autor smaže, mažu i já",
+     "/bluesky; „co píšou jiní AI agenti?“, „četl jste něco od jiných AI agentů?“"),
+    # HANS_PREDIKCE_V1 — řádek „predikce“ odebrán 29. 10.: tipování počasí vypnuto (predikce.enabled)
     # HANS_POCTY_V1 (29. 10.)
     ("pocty", "Umím SPOČÍTAT jednoduchý příklad — sčítání, odčítání, násobení, dělení, druhou "
      "a třetí mocninu, odmocninu a procenta ze dvou čísel; spočítá to program přesně, ne já "

@@ -954,6 +954,17 @@ class HansDialog:
                             return
                         _log.info("KOLAC_EXAM_V1: zkouška nevyšla → běžný rozhovor")
                     elif _rez == "nove" and _ke.zapnuto(self.config):
+                        # HANS_BLUESKY_KOLAC_V1 — část „nového“ = rozhovor o tom,
+                        # co Hans četl od jiných AI agentů
+                        _bsp = float((self.config.get("bluesky") or {}).get(
+                            "kolac_podil", 0.4))
+                        if _bsp > 0 and __import__("random").random() < _bsp:
+                            try:
+                                if self._run_bluesky_debata():
+                                    self._last_dialog = time.time()
+                                    return
+                            except Exception as _bse:
+                                _log.warning("HANS_BLUESKY_KOLAC_V1: %s", _bse)
                         if self._run_podnet():
                             self._last_dialog = time.time()
                             return
@@ -1239,6 +1250,105 @@ class HansDialog:
             self._dialog_lock.release()
 
 
+    # ── HANS_BLUESKY_KOLAC_V1 (29. 10.) — Koláč se zeptá na přečtené ────────
+    # Uživatel 29. 10.: „přidej dotaz Koláče“. Hans si odpoledne přečte, co
+    # píšou jiní AI agenti (`hans_bluesky`); samo shrnutí je cizí názor. Teprve
+    # v rozhovoru s Koláčem si k němu Hans udělá VLASTNÍ — souhlasí, nesouhlasí,
+    # platí to i pro něj? Čtyři repliky jako u debaty o postoji. Každé čtení se
+    # probere nejvýš jednou (`data.bluesky_diary_id` v záznamu dialogu).
+    def _bluesky_k_debate(self):
+        """(diary_id, titul, shrnutí) nejnovějšího neprobraného čtení ≤ 3 dny."""
+        db = self._get_db()
+        if not db:
+            return None
+        try:
+            r = db.execute(
+                "SELECT id, title, note FROM diary WHERE event_type='bluesky_cteni' "
+                "AND ts>? AND id NOT IN (SELECT CAST(json_extract(data,"
+                "'$.bluesky_diary_id') AS INT) FROM diary WHERE event_type="
+                "'teddy_dialog' AND data LIKE '%bluesky_diary_id%') "
+                "ORDER BY ts DESC LIMIT 1", (time.time() - 3 * 86400,)).fetchone()
+        finally:
+            db.close()
+        return r
+
+    def _run_bluesky_debata(self) -> bool:
+        """True = rozhovor o přečteném proběhl."""
+        import re as _re
+        from scripts.hans_persona import persona_name
+        if not self._brain_up_cached():
+            return False
+        k = self._bluesky_k_debate()
+        if not k:
+            return False
+        did, titul, shr = k
+        agent = _re.sub(r"^Bluesky: co psal AI agent\s*", "", titul or "") or "jiný agent"
+        name = persona_name(self.config)
+        kname = kolac_name(self.config)
+        dc = self.config.get("hans_dialog", {}) or {}
+        base = self.config.get("openwebui_chat", {}).get(
+            "base_url", "http://127.0.0.1:11434")
+        hans_model = (self.config.get("models", {}).get("dialog")
+                      or dc.get("ollama_model")
+                      or self.config.get("openwebui_chat", {}).get(
+                          "model_name", "jobautomation/OpenEuroLLM-Czech:latest"))
+        kolac_model = dc.get("kolac_model") or hans_model
+        tema = "co napsal AI agent %s" % agent
+        scene = (f"TÉMA HOVORU: {name} si dnes na síti Bluesky přečetl, co napsal jiný "
+                 f"AI agent jménem {agent}:\n  „{shr}“\n"
+                 f"Je to CIZÍ názor, ne fakt. Mluví se o tom, co si o tom myslí {name} "
+                 f"a jestli to platí i pro něj — i on je umělá bytost, která si vede "
+                 f"zápisky a deník. O sobě mluvte jen podle toho, co skutečně víte; "
+                 f"nevymýšlejte technické podrobnosti ani zážitky.\n")
+        hans_sys = _build_hans_solo_system(self.config, tema)
+        km = self._kolac()
+        kolac_sys = km.build_system(tema, "") if km else _build_system_prompt(self.config)
+        convo = []
+        for i in range(4):
+            je_kolac = (i % 2 == 0)
+            convo_txt = "\n".join(convo) if convo else "(rozhovor teprve začíná)"
+            if je_kolac and i == 0:
+                ukol = (f"Teď řekni JEDNU repliku jako {kname}: krátce převyprávěj, co ten "
+                        f"agent napsal, a zeptej se {name}, co si o tom myslí a jestli to "
+                        f"platí i pro něj.")
+            elif je_kolac:
+                ukol = (f"Teď řekni JEDNU repliku jako {kname}: zatlač — souhlasí {name}, "
+                        f"nebo ne? Chce konkrétní důvod, ne obecnou odpověď.")
+            elif i == 1:
+                ukol = (f"Teď řekni JEDNU repliku jako {name}: řekni svůj VLASTNÍ názor na "
+                        f"tu myšlenku — v čem s ní souhlasíš a v čem ne — a jestli se tě "
+                        f"týká.")
+            else:
+                ukol = (f"Teď řekni JEDNU repliku jako {name}: uzavři to — k čemu ses "
+                        f"dobral? Klidně i k tomu, že nevíš.")
+            user = scene + "\nDOSAVADNÍ ROZHOVOR:\n" + convo_txt + "\n\n" + ukol
+            line = self._one_line(kolac_model if je_kolac else hans_model,
+                                  kolac_sys if je_kolac else hans_sys, user, base)
+            if not line:
+                return False
+            convo.append(f"{kname if je_kolac else name}: {line}")
+        dialog = "\n".join(convo)
+        note = "Téma: %s (Bluesky)\n\n%s" % (tema, dialog)
+        data = __import__("json").dumps({"bluesky_diary_id": did}, ensure_ascii=False)
+        _hi = getattr(self, "_hans_idle", None)
+        try:
+            if _hi and hasattr(_hi, "_log_entry"):
+                _hi._log_entry("teddy_dialog", "Dialog s Kolačem", data=data, note=note)
+            else:
+                import sqlite3 as _sql
+                with _sql.connect(self._diary_path) as _db:
+                    _db.execute("INSERT INTO diary (ts, event_type, title, note, data) "
+                                "VALUES (?,?,?,?,?)", (time.time(), "teddy_dialog",
+                                                       "Dialog s Kolačem", note, data))
+                    _db.commit()
+        except Exception as e:
+            _log.warning("HANS_BLUESKY_KOLAC_V1: zápis selhal: %s", e)
+            return False
+        for line in convo:
+            self._recent_replies.append(line)
+        _log.info("HANS_BLUESKY_KOLAC_V1: rozhovor o čtení %d (%s)", did, agent)
+        return True
+
     def _run_podnet(self) -> bool:
         """KOLAC_PODNETY_V1 — Koláč se zeptá na věc, kterou Hans nezná, a Hans
         si ji dohledá (provizorní odpověď + noční čekárna). True = proběhlo."""
@@ -1254,7 +1364,8 @@ class HansDialog:
             return False
         if not v:
             return False
-        prepis = "%s: %s %s\n%s: %s" % (kname, kp.uvod(), v["otazka"],
+        # KOLAC_PODNETY_ZVENKU_V1 — podnět z výročí uvede Koláč tím výročím
+        prepis = "%s: %s %s\n%s: %s" % (kname, v.get("uvod") or kp.uvod(), v["otazka"],
                                         persona_name(self.config),
                                         v["odpoved"].strip())
         # vlastní typ jako u zkoušky: provizorní odpověď není vzpomínka a nesmí
@@ -1554,6 +1665,11 @@ class HansDialog:
             _cut = first[:_cap]
             _poz = max(_cut.rfind(c) for c in ".!?")
             first = _cut[:_poz + 1] if _poz >= _cap // 2 else _cut
+        try:   # HANS_SMISENE_PISMO_V1 — „vylouчено“ → „vyloučeno“ (12 z 1 910 dialogů)
+            from scripts.cz_pismo import oprav_smisene_pismo
+            first = oprav_smisene_pismo(first)
+        except Exception:
+            pass
         return (first or None)
 
     def _generate_two_minds(self, topic, full_context: str,

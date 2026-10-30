@@ -142,6 +142,17 @@ def _odezva(conn, since: float) -> tuple:
     if minulo:
         ven.append(("mých návrhů přišlo ve chvíli, kdy pán řešil něco jiného",
                     str(minulo)))
+    # HANS_FILM_VOLBA_V1 — návrhy filmů: rozhodl člověk (spustil / nespustil)
+    try:
+        nav = _q1(conn, "SELECT count(*) FROM diary WHERE event_type="
+                  "'film_suggestion' AND ts>=?", (since,))
+        pri = _q1(conn, "SELECT count(*) FROM diary WHERE event_type="
+                  "'film_suggestion_accepted' AND ts>=?", (since,))
+        if nav:
+            ven.append(("mých návrhů filmu lidé přijali / celkem", "%d / %d"
+                        % (pri, nav)))
+    except Exception:
+        pass
     # V3: JEN lesson_learned. fact_correction je G5K = vlastni overeni faktu,
     # ne oprava od uzivatele — patri do vnitrniho dialogu.
     n = _q1(conn, "SELECT count(*) FROM diary WHERE "

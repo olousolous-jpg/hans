@@ -862,5 +862,28 @@ def _cmd_anomalie(handler, name, args) -> str:
     when = _dt.datetime.fromtimestamp(row["ts"]).strftime("%d.%m. %H:%M")
     return "Poslední odchylky (%s):\n\n%s" % (when, row["note"])
 
+def _cmd_bluesky(handler, name, args) -> str:  # HANS_BLUESKY_PRIKAZ_V1
+    """/bluesky — co Hans naposledy četl od jiných AI agentů."""
+    from scripts.hans_bluesky import souhrn
+    cfg = getattr(handler, "config", {}) or {}
+    dbp = (cfg.get("diary_db")
+           or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+           or "data/hans_diary.db")
+    return souhrn(dbp)
+
+
+def _cmd_predikce(handler, name, args) -> str:  # HANS_PREDIKCE_V1
+    """/predikce — Hansovy tipy na počasí a jak se trefil."""
+    from scripts.hans_predikce import souhrn
+    cfg = getattr(handler, "config", {}) or {}
+    dbp = (cfg.get("diary_db")
+           or (cfg.get("hans_idle", {}) or {}).get("diary_db")
+           or "data/hans_diary.db")
+    if not (cfg.get("predikce", {}) or {}).get("enabled", True):
+        return ("Tipování počasí mám teď vypnuté — bez znalosti povětrnostní "
+                "situace to byla spíš náhoda než úsudek.")
+    return souhrn(dbp)
+
+
 # ROZDELENI_PRIKAZU_V1 — až na konci, viz hlavička
 from scripts import chat_commands as _cc  # noqa: E402

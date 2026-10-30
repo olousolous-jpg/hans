@@ -2061,6 +2061,8 @@ from scripts.chat_cmd_tvorba import _cmd_prohloubit   # ROZDELENI_PRIKAZU_V1 —
 
 
 from scripts.chat_cmd_studium import _cmd_vhledy   # ROZDELENI_PRIKAZU_V1 — přesunuto
+from scripts.chat_cmd_studium import _cmd_predikce   # HANS_PREDIKCE_V1
+from scripts.chat_cmd_studium import _cmd_bluesky   # HANS_BLUESKY_PRIKAZ_V1
 
 
 

@@ -410,6 +410,151 @@ def cekajicich(db: str, asker: str) -> int:
         return 0
 
 
+# ── KOLAC_PODNETY_ZVENKU_V1 (29. 10.) — podnět zvenku: dnešní výročí ─────────
+# Rozbor 29. 10. (`SMERY_ROZVOJE_29_10`): všech 188 položených podnětů vzešlo
+# z Hansových studijních témat → kruh (koníčky → studium → podněty → koníčky)
+# a Severka pak z podkladu pořád odvodí „archiváře“. Část podnětů proto chodí
+# ZVENKU: jméno nebo pojem z článku lokální Wikipedie o dnešním dni (události,
+# narození, úmrtí) s vlastním dlouhým článkem, který Hans v paměti nemá. Každý
+# den jiné obory; nic vymyšleného (přesný článek), bez modelu.
+# 📏 29. 10., 30. 10., 5. 3., 17. 11.: 57–86 nových kandidátů na den.
+_MESICE = ("leden", "únor", "březen", "duben", "květen", "červen", "červenec",
+           "srpen", "září", "říjen", "listopad", "prosinec")
+_SLOVO = re.compile(r"[^\W\d_][\w\-]*\.?")      # tečka kvůli „Kýros II.“
+_DRUH_NE = {"jméno", "příjmení", "latinka", "písmeno"}
+
+
+def kandidati_vyroci(db: str, kdy=None, uz=None) -> list:
+    """[{nazev, typ, kontext}] z článku o dnešním dni v lokální Wikipedii."""
+    from scripts import hans_wiki_offline as wo
+    if not wo.dostupna():
+        return []
+    lt = time.localtime(kdy or time.time())
+    den = "%d. %s" % (lt.tm_mday, _MESICE[lt.tm_mon - 1])
+    r = wo._db().execute("SELECT text FROM clanek WHERE titul=?", (den,)).fetchone()
+    if not r:
+        return []
+    uz = {u.lower() for u in (uz or ())}
+    out, videno, sekce = [], set(), ""
+    for ln in (r[0] or "").split("\n"):
+        s = ln.strip()
+        if s in ("Události.", "Narození.", "Úmrtí.", "Svátky."):
+            sekce = s[:-1]
+            continue
+        if sekce not in ("Události", "Narození", "Úmrtí"):
+            continue
+        m = re.match(r"^(\d{3,4}(?: př\. n\. l\.)?)\s*–\s*(.+)$", s)
+        if not m:
+            continue
+        rok, vec = m.group(1).lstrip("0"), m.group(2)
+        hledej = re.sub(r"\(.*?\)", "", vec)
+        if sekce != "Události":
+            hledej = hledej.split(",")[0]      # jen jméno osoby
+        w = _SLOVO.findall(hledej)
+        i = 0
+        while i < len(w):
+            if not w[i][0].isupper():
+                i += 1
+                continue
+            hit = None
+            for n in (4, 3, 2, 1):
+                if i + n > len(w):
+                    continue
+                f = " ".join(w[i:i + n])
+                c = wo._cil(f) or (wo._cil(f.rstrip(".")) if f.endswith(".") else None)
+                if c:
+                    hit = (n, c)
+                    break
+            if not hit:
+                i += 1
+                continue
+            n, c = hit
+            na_zacatku = i == 0
+            span = w[i:i + n]
+            i += n
+            tit = c[1]
+            if tit in videno or tit.lower() in uz or tit[0].isdigit():
+                continue
+            videno.add(tit)
+            roz, delka, druh = wo._db().execute(
+                "SELECT rozcestnik, length(text), infobox_druh FROM clanek WHERE id=?",
+                (c[0],)).fetchone()
+            if roz or (delka or 0) < 4000 or (druh or "") in _DRUH_NE or len(tit) < 3:
+                continue
+            if len(span) == 1:
+                # skloněný tvar se shodou jinde („Prahy“ = obec, myšlena Praha)
+                _z = span[0].rstrip(".")
+                if _z[-1:] in "yiue":
+                    _n = wo._cil(_z[:-1] + "a")
+                    if _n and _n[0] != c[0]:
+                        continue
+            if v_pameti(db, tit):
+                continue
+            if sekce == "Události":
+                typ = _typ_clanku(c)
+                # první slovo věty má velké písmeno jen kvůli začátku věty:
+                # „Televizní stanice ČTV…“ → obecný článek; osoba nebo víc
+                # vlastních slov („Kýros II. Veliký“) projde
+                if na_zacatku and typ != "osoba" and sum(
+                        x[0].isupper() for x in span) < 2:
+                    continue
+                kontext = "Dnes je výročí: v roce %s – %s" % (rok, vec.rstrip("."))
+            else:
+                typ = "osoba"
+                kontext = "Dnes je výročí %s: %s (%s)." % (
+                    "narození" if sekce == "Narození" else "úmrtí",
+                    re.sub(r"\s*\((?:†|\*).*?\)", "", vec).rstrip("."), rok)
+            out.append({"nazev": tit, "typ": typ, "kontext": kontext[:300],
+                        "udalost": sekce == "Události"})
+    return out
+
+
+def podnet_zvenku(config: dict, db: str):
+    """Jeden podnět z dnešního výročí, zapsaný do zásoby (stav 'novy');
+    vrací dict jako `vyber` + 'kontext', nebo None."""
+    c = _conn(db)
+    try:
+        uz = [r[0] for r in c.execute("SELECT nazev FROM kolac_podnety")]
+    finally:
+        c.close()
+    k = kandidati_vyroci(db, uz=uz)
+    if not k:
+        return None
+    # události mají dvojí váhu (pestřejší obory než seznam narozených)
+    vahy = [2 if x["udalost"] else 1 for x in k]
+    x = random.choices(k, weights=vahy, k=1)[0]
+    lt = time.localtime()
+    c = _conn(db)
+    try:
+        cur = c.execute("INSERT INTO kolac_podnety (ts, tema, nazev, typ, stav) "
+                        "VALUES (?,?,?,?,'novy')",
+                        (time.time(), "zvenku: výročí %d. %d." % (lt.tm_mday, lt.tm_mon),
+                         x["nazev"], x["typ"]))
+        c.commit()
+        r = c.execute("SELECT * FROM kolac_podnety WHERE id=?", (cur.lastrowid,)).fetchone()
+    finally:
+        c.close()
+    d = dict(r)
+    d["kontext"] = x["kontext"]
+    return d
+
+
+def _vyber_s_podilem(config: dict, db: str):
+    """KOLAC_PODNETY_ZVENKU_V1 — s pravděpodobností `podnety_zvenku_podil`
+    (výchozí 0,25) podnět zvenku, jinak ze zásoby jako dřív."""
+    podil = float(_cfg(config).get("podnety_zvenku_podil", 0.25))
+    if podil > 0 and random.random() < podil:
+        try:
+            p = podnet_zvenku(config, db)
+            if p:
+                _log.info("KOLAC_PODNETY_ZVENKU_V1: podnět zvenku '%s' — %s",
+                          p["nazev"], p.get("kontext", ""))
+                return p
+        except Exception as e:
+            _log.warning("KOLAC_PODNETY_ZVENKU_V1 selhalo: %s", e)
+    return vyber(db)
+
+
 def vyber(db: str):
     c = _conn(db)
     try:
@@ -454,7 +599,7 @@ def poloz(config: dict, db: str, asker: str):
     for _ in range(pokusu + 6):           # strop i pro věci vyřazené bez hledání
         if hledano >= pokusu:
             break
-        p = vyber(db)
+        p = _vyber_s_podilem(config, db)   # KOLAC_PODNETY_ZVENKU_V1
         if not p:
             return None
         if v_pameti(db, p["nazev"]):
@@ -495,7 +640,7 @@ def poloz(config: dict, db: str, asker: str):
         # zahazovala i správná hesla (Flossenbürg k Norimberskému procesu)
         # KOLAC_PODNETY_Z_FAKTU_V1 — jméno z věty faktu s přesným článkem:
         # jmenovec nehrozí, téma (zdrojový článek) bývá anglicky („Zionism“)
-        if p.get("typ") == "osoba" and not (p.get("tema") or "").startswith("fakta:") \
+        if p.get("typ") == "osoba" and not (p.get("tema") or "").startswith(("fakta:", "zvenku:")) \
                 and not souvisi_s_tematem(
                 p.get("tema") or "", nal.get("raw_text") or ""):
             if nal.get("id"):
@@ -509,6 +654,7 @@ def poloz(config: dict, db: str, asker: str):
         _log.info("KOLAC_PODNETY_V1: podnět '%s' (%s) → heslo '%s', čeká na "
                   "noční ověření", p["nazev"], p.get("tema") or "", heslo)
         return {"otazka": ot, "odpoved": odp, "heslo": heslo,
-                "nazev": p["nazev"], "tema": p.get("tema") or ""}
+                "nazev": p["nazev"], "tema": p.get("tema") or "",
+                "uvod": p.get("kontext") or ""}
     _log.info("KOLAC_PODNETY_V1: %d podnětů po sobě nevyšlo → volný hovor", hledano)
     return None

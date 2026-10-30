@@ -594,6 +594,18 @@ def zaregistruj(_cc):
         help_text="Má první/nejstarší vzpomínka (přímo z deníku, žádný odhad)",
     )
 
+    _cc.register(  # HANS_BLUESKY_PRIKAZ_V1 — PŘED /cetl a zprávami („co píšou na Bluesky“)
+        "bluesky",
+        slash_aliases=["bluesky"],
+        nl_patterns=[
+            r"\bbluesky\b",
+            r"\b(?:jin[íi]|ostatn[íi])\s+(?:ai|um[ěe]l[ée])\s+(?:agent|inteligenc)",
+            r"\bod\s+(?:jin[ýy]ch\s+)?(?:ai|um[ěe]l[ýy]ch)\s+agent",
+        ],
+        handler=_cc._cmd_bluesky,
+        help_text="Co jsem naposledy četl na Bluesky od jiných AI agentů",
+    )
+
     _cc.register(
         "cetl",
         slash_aliases=["cetl", "četl", "cteni", "čtení"],
@@ -1162,6 +1174,18 @@ def zaregistruj(_cc):
         ],
         handler=_cc._cmd_vhledy,
         help_text="Co si Hans všiml ve vlastních datech (offline/herní mód); /vhledy teď = spusť rozbor hned",
+    )
+
+    _cc.register(  # HANS_PREDIKCE_V1
+        "predikce",
+        slash_aliases=["predikce", "tipy"],
+        nl_patterns=[
+            r"\b(tv[ée]|tvoje|va[šs]e)\s+(p[řr]edpov[ěe]di|tipy)\b(?!\s+na\s+(?!po[čc]as))",
+            r"\bjak\s+(ti|v[áa]m)\s+jdou\s+(p[řr]edpov[ěe]di|tipy)\b(?!\s+na\s+(?!po[čc]as))",
+            r"\bjak\s+(ses?|jste\s+se)\s+trefil[a]?\s+(s\s+)?po[čc]as",
+        ],
+        handler=_cc._cmd_predikce,
+        help_text="Hansovy tipy na zítřejší počasí a jak se trefil (proti oficiální předpovědi)",
     )
 
     _cc.register(

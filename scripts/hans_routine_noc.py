@@ -218,6 +218,34 @@ class NocMixin:
         except Exception as _ile:
             _rt._log.debug("instant_lookup verify: %s", _ile)
 
+    def _maybe_bluesky(self):
+        # HANS_BLUESKY_CTENI_V1 (29. 10.) — jednou denně přečte, co píšou jiní
+        # AI agenti na Bluesky (jen čtení, `scripts/hans_bluesky.py`); á 10 min.
+        if time.time() - getattr(self, "_bluesky_ts", 0.0) < 600:
+            return
+        self._bluesky_ts = time.time()
+        try:
+            from scripts import hans_bluesky
+            from scripts.ollama_client import game_mode_on
+            mozek = (not game_mode_on()) and bool(self._brain_up())
+            hans_bluesky.krok(self.config, self._diary_path, mozek)
+        except Exception as _be:
+            _rt._log.warning("HANS_BLUESKY_CTENI_V1: %s", _be)
+
+    def _maybe_predikce(self):
+        # HANS_PREDIKCE_V1 (29. 10.) — večerní tip na zítřejší počasí a ověření
+        # včerejšího (`scripts/hans_predikce.py`); nejvýš jednou za 10 min.
+        if time.time() - getattr(self, "_predikce_ts", 0.0) < 600:
+            return
+        self._predikce_ts = time.time()
+        try:
+            from scripts import hans_predikce
+            from scripts.ollama_client import game_mode_on
+            mozek = (not game_mode_on()) and bool(self._brain_up())
+            hans_predikce.krok(self.config, self._diary_path, mozek)
+        except Exception as _pe:
+            _rt._log.warning("HANS_PREDIKCE_V1: %s", _pe)
+
     def _maybe_morning_book_summary(self):
         # HANS_BOOK_SUMMARY_RANO_V1 (25. 10., uživatel: „PC dělá dost hluk,
         # zpracování knih přesunout z noci na ráno, po ranním probuzení za
@@ -423,6 +451,14 @@ class NocMixin:
                     _rt._log.warning("hans_art: noční render selhal: %s", _arte)
                 # HANS_DREAMS_PER_DREAM_V1 — sen za KAŽDÝ nový sen (priorita, mimo
                 # 2denní throttle; idempotence dle dream_ts + krátký odstup uvnitř).
+                # HANS_ART_PODNET_V1 — obraz z nově poznaného má (jednou za 2 dny)
+                # přednost před snem
+                if not _painted:
+                    try:
+                        from scripts.hans_creations import paint_podnet
+                        _painted = paint_podnet(self.config, self._diary_path)
+                    except Exception as _pe:
+                        _rt._log.warning("hans_art: malba podnětu selhala: %s", _pe)
                 if not _painted:
                     try:
                         from scripts.hans_art import paint_dream
