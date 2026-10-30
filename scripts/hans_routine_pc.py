@@ -305,6 +305,12 @@ class PcMixin:
             painted = generate_pending_artwork(self.config, self._diary_path)
         except Exception as _e:
             _rt._log.warning("pre-shutdown art (kniha): %s", _e)
+        if not painted:  # HANS_ART_PODNET_V1 — nově poznané před snem
+            try:
+                from scripts.hans_creations import paint_podnet
+                painted = paint_podnet(self.config, self._diary_path)
+            except Exception as _e:
+                _rt._log.warning("pre-shutdown art (podnět): %s", _e)
         if not painted:
             try:
                 from scripts.hans_art import paint_dream

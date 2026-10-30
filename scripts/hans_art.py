@@ -317,6 +317,8 @@ def origin_line(title: str, data) -> str:
         return f"Portrét: {t}." if t else "Portrét."
     if src == "subject":
         return f"Námět, který jste mi zadal: {t}." if t else ""
+    if src == "podnet":                    # HANS_ART_PODNET_V1
+        return f"Maloval jsem, co jsem se nedávno dozvěděl: {t}." if t else ""
     if src in ("book", "") and t:
         return f"Vycházel jsem z četby: {t}."
     return f"Námět: {t}." if t else ""

@@ -153,6 +153,106 @@ def write_musing(config: dict, db_path: str, seed: Optional[dict] = None) -> boo
     return True
 
 
+# ── HANS_ART_PODNET_V1 (29. 10.) — malba z nově poznaného ────────────────────
+# Rozbor 29. 10. (`SMERY_ROZVOJE_29_10`): 30 ze 67 obrazů za měsíc byl „Sen“,
+# sen se maluje za každý nový sen a předbíhá vše ostatní. Uživatel 29. 10.:
+# „malovat z jiných podnětů“. Nejvýš jednou za `podnet_painting.min_interval_days`
+# (2) dostane PŘEDNOST před snem obraz na věc, kterou Hans nedávno poznal
+# z Koláčova podnětu a noc ji ověřila (článek je v paměti → malba má oporu).
+# Přednost mají podněty zvenku (výročí dne), pak osoba/dílo/místo, pak nejnovější.
+def _pcfg(config: dict) -> dict:
+    return ((config.get("hans_art", {}) or {}).get("podnet_painting", {}) or {})
+
+
+def podnet_k_malbe(db_path: str, dni: int = 10):
+    """Heslo ověřeného podnětu, které ještě nemá obraz; None = není co."""
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        try:
+            rows = con.execute(
+                "SELECT p.heslo, p.typ, p.tema, p.polozeno_ts FROM kolac_podnety p "
+                "WHERE p.stav='polozeno' AND p.heslo<>'' AND p.polozeno_ts>? "
+                "AND EXISTS (SELECT 1 FROM unverified_findings u WHERE "
+                "u.resolved_title=p.heslo AND u.status='verified') "
+                "AND NOT EXISTS (SELECT 1 FROM diary d WHERE d.event_type='artwork' "
+                "AND d.title=p.heslo)",
+                (time.time() - dni * 86400,)).fetchall()
+        finally:
+            con.close()
+    except Exception as e:
+        _log.debug("creations: podnet_k_malbe: %s", e)
+        return None
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (not (r[2] or "").startswith("zvenku:"),
+                             r[1] == "pojem", -r[3]))
+    return rows[0][0]
+
+
+def _last_podnet_painting_ts(db_path: str) -> float:
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        try:
+            # HANS_ART_PODNET_ZNACKA_V1 — portrét osoby se zapisuje jako „person“,
+            # proto po malbě přeznačíme (`_oznac_podnet`); json_extract místo LIKE.
+            r = con.execute("SELECT max(ts) FROM diary WHERE event_type='artwork' "
+                            "AND json_extract(data,'$.source')='podnet'").fetchone()
+        finally:
+            con.close()
+        return float(r[0] or 0)
+    except Exception:
+        return 0.0
+
+
+def _oznac_podnet(db_path: str, rel_path: str) -> None:
+    """HANS_ART_PODNET_ZNACKA_V1 (30. 10.) — malba osoby (`paint_person`) se
+    zapíše se source='person'; tady ji přeznačíme na 'podnet' (+ podoba=1),
+    jinak odstup 2 dnů nic nenajde a galerie ji nedá do „nově poznané“."""
+    if not rel_path:
+        return
+    try:
+        con = sqlite3.connect(db_path, timeout=5.0)
+        try:
+            n = con.execute(
+                "UPDATE diary SET data=json_set(data,'$.source','podnet','$.podoba',1) "
+                "WHERE event_type='artwork' AND json_extract(data,'$.path')=? "
+                "AND json_extract(data,'$.source')='person'", (rel_path,)).rowcount
+            con.commit()
+        finally:
+            con.close()
+        if n:
+            _log.info("HANS_ART_PODNET_ZNACKA_V1: obraz %s přeznačen na podnet", rel_path)
+    except Exception as e:
+        _log.warning("HANS_ART_PODNET_ZNACKA_V1 selhalo: %s", e)
+
+
+def paint_podnet(config: dict, db_path: str) -> bool:
+    """Namaluj obraz na nedávno poznanou věc. True = namalováno. Nikdy nehází."""
+    pc = _pcfg(config)
+    if not pc.get("enabled", True):
+        return False
+    try:
+        iv = float(pc.get("min_interval_days", 2))
+        last = _last_podnet_painting_ts(db_path)
+        if last and time.time() - last < iv * 86400:
+            return False
+        heslo = podnet_k_malbe(db_path, int(pc.get("max_age_days", 10)))
+        if not heslo:
+            return False
+        from scripts import hans_art
+        if not hans_art.comfy_available(config):
+            return False
+        _log.info("HANS_ART_PODNET_V1: maluji nově poznané „%s“", heslo)
+        r = hans_art.paint_subject(config, db_path, heslo, source="podnet",
+                                   source_label="tím, co jsem se nedávno dozvěděl")
+        if r:
+            _oznac_podnet(db_path, r[0] if isinstance(r, (tuple, list)) else "")
+        return bool(r)
+    except Exception as e:
+        _log.warning("HANS_ART_PODNET_V1 selhalo: %s", e)
+        return False
+
+
 # ── chooser: Hans sám volí tvůrčí akt ───────────────────────────────────────
 def creative_impulse(config: dict, db_path: str) -> bool:
     """Hans ve volné chvíli zváží dostupné tvůrčí akty a JEDEN vybere (váženě +

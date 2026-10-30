@@ -153,7 +153,7 @@ def rederive_lesson_with_feedback(config: dict, db_path: str, artwork_rowid) -> 
     try:
         _dj = json.loads(data or "{}") or {}
         vision = _dj.get("vision", "")
-        if _dj.get("source") == "subject":        # HANS_ART_SUBJECT_CHECK_V1
+        if _dj.get("source") in ("subject", "podnet"):   # HANS_ART_SUBJECT_CHECK_V1 (+ HANS_ART_PODNET_V1)
             _sc = _dj.get("subject_check") or {}
             _zadani = (title or "") + ((" (English: %s)" % _sc["en"]) if _sc.get("en") else "")
             if _sc.get("match") == "no" and _sc.get("instead"):

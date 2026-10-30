@@ -1232,7 +1232,7 @@ async def art_list(limit: int = 12):
         _SRC_LABEL = {"dream": "sen", "day": "den a nálada", "home": "domov",
                       "home_photo": "domov", "book": "kniha", "": "kniha",
                       "self": "autoportrét", "person": "portrét",
-                      "subject": "námět"}
+                      "subject": "námět", "podnet": "nově poznané"}  # HANS_ART_PODNET_V1
         for ts, title, note, data in rows:
             f = None
             src = ""

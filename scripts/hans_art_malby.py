@@ -415,7 +415,11 @@ def paint_self(config: dict, diary_db_path: str, full_figure: bool = True,
 
 
 def paint_subject(config: dict, diary_db_path: str, subject: str,
-                  style: str = "", zadal: str = "", _retry: bool = False):
+                  style: str = "", zadal: str = "", _retry: bool = False,
+                  source: str = "subject",
+                  source_label: str = "tím, oč jsem byl požádán"):
+    # HANS_ART_PODNET_V1 (29. 10.) — `source`/`source_label` pro vlastní malbu
+    # z nově poznaného (podnět), aby se v galerii neodlišila jako zakázka
     """Hans namaluje obraz na LIBOVOLNÉ téma / dojem (např. z rozhovoru).
     style: volitelný umělecký styl („Salvador Dalí", „Bauhaus", „gotika") —
     grounduje se a vloží do promptu místo pevného ocasu (HANS_ART_STYLE_V4).
@@ -620,14 +624,14 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
     rel_path, prompt, vision_desc = res
     _soud = _ha.soud_nametu(config, subject, grounded, vision_desc)   # HANS_ART_SUBJECT_CHECK_V1
     caption = _ha._evaluate_artwork(config, diary_db_path, title, subject, vision_desc,
-                                source_label="tím, oč jsem byl požádán", soud=_soud)
+                                source_label=source_label, soud=_soud)
     _ha._derive_art_lesson(config, diary_db_path, title, vision_desc, caption)
     try:
         db = sqlite3.connect(diary_db_path, timeout=5.0)
         db.execute(
             "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
             (time.time(), "artwork", title, caption,
-             json.dumps({"path": rel_path, "prompt": prompt, "source": "subject",
+             json.dumps({"path": rel_path, "prompt": prompt, "source": source,
                          "vision": vision_desc, "subject_check": _soud,
                          "painted_ts": time.time()}, ensure_ascii=False)))
         db.commit()
