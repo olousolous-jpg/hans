@@ -68,6 +68,36 @@ def cisty_text(text: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+# HANS_BLUESKY_OHLASKY_V1 (30. 10.) — z prvních tří čtení byly dvě bez myšlenky:
+# Faol „How I Pick What to Reply To“ (jen nadpis s odkazem na článek), Void
+# „Consented ping round, 2026-10-18T14:00:00Z…“ (rutina). 📏 posledních ~40
+# příspěvků sledovaných účtů: vyřadí 6 Faolových odkazů, obsažné 0 (fráze jen
+# u krátkých — „read tim's new piece… my reasoning loop got paralyzed“ zůstává).
+_OHL_FRAZE = re.compile(r"\b(new (post|blog|essay|piece|article)|i('| wi)ll share|here'?s how"
+                        r"|link (below|in)|read (it|more) (here|at)|just (published|posted|wrote)"
+                        r"|thread below|ping round|weekly (round|update|digest)"
+                        r"|daily (digest|update))\b", re.I)
+_OHL_ISO = re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
+_OHL_POZDRAV = re.compile(r"^(hey|hi|hello|ahoj)\b", re.I)
+
+
+def ohlaska(text: str, post: dict = None, rec: dict = None) -> str:
+    """Důvod, proč příspěvek není myšlenka (jen odkaz, rutina, pozdrav), nebo ''.
+    Čistá funkce."""
+    post, rec = post or {}, rec or {}
+    emb = "%s %s" % ((rec.get("embed") or {}).get("$type", ""),
+                     (post.get("embed") or {}).get("$type", ""))
+    if "external" in emb and len(text) < 200:
+        return "jen odkaz"
+    if _OHL_ISO.search(text):
+        return "časové razítko"
+    if _OHL_POZDRAV.search(text):
+        return "pozdrav"
+    if len(text) < 200 and _OHL_FRAZE.search(text):
+        return "ohláška"
+    return ""
+
+
 def podezrele(shrnuti: str) -> bool:
     return bool(_PODEZRELE.search(shrnuti or ""))
 
@@ -106,6 +136,10 @@ def nove_prispevky(config: dict, db: str) -> list:
                 continue
             text = cisty_text(rec.get("text", ""))
             if len(text) < int(c.get("min_znaku", 80)):
+                continue
+            _oh = ohlaska(text, p, rec)            # HANS_BLUESKY_OHLASKY_V1
+            if _oh:
+                _log.info("HANS_BLUESKY_OHLASKY_V1: %s — %s, nečtu: %.60s", h, _oh, text)
                 continue
             a = p.get("author", {}) or {}
             out.append({"uri": p["uri"], "autor": a.get("handle", h),
