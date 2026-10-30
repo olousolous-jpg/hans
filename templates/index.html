@@ -303,6 +303,13 @@ button.btn { border-radius: 999px; font-weight: 700; min-height: 40px; }
 #ms-box.neon .ms-uzel.ted circle { fill: #FFFFFF; stroke: #FFFFFF; filter: drop-shadow(0 0 10px #FFFFFF); }
 @keyframes msblik { 50% { filter: drop-shadow(0 0 16px #FBBF24); } }
 @media (prefers-reduced-motion: reduce) { #ms-box.neon .ms-tok.svit, #ms-box.neon .ms-uzel.cil circle { animation: none; } }
+/* HANS_WEB_FINALE_V1 — konečná cesta v neonu: ostatní prošlé ztlumit, cestu rozzářit */
+#ms-box.neon.ma-finale .ms-hrana.svit:not(.finale), #ms-box.neon.ma-finale .ms-tok.svit:not(.finale) { opacity: .22; filter: none; }
+#ms-box.neon.ma-finale .ms-uzel.svit:not(.finale) { opacity: .35; }
+#ms-box.neon .ms-hrana.finale { stroke: #FFFFFF !important; stroke-width: 4 !important; opacity: 1; filter: drop-shadow(0 0 7px #FBBF24) drop-shadow(0 0 2px #FFFFFF) !important; }
+#ms-box.neon .ms-tok.finale { stroke: #FBBF24 !important; stroke-width: 4 !important; }
+#ms-box.neon .ms-uzel.finale text { fill: #FDE68A !important; font-weight: 700; }
+#ms-box.neon .ms-uzel.finale circle { stroke: #FBBF24 !important; filter: drop-shadow(0 0 6px #FBBF24); }
 </style>
 </head>
 <body>
@@ -659,6 +666,13 @@ button.btn { border-radius: 999px; font-weight: 700; min-height: 40px; }
 .ms-uzel.vrstva text { font-size: 14px; font-weight: 700; fill: #5A6572; }
 .ms-uzel.koren text { font-size: 14px; font-weight: 700; fill: #BE185D; }
 .ms-uzel.ted circle { fill: #A16207; stroke: #A16207; animation: mspulz .8s ease-in-out infinite; }
+/* HANS_WEB_FINALE_V1 — konečná cesta odpovědi (klasický pohled) */
+#ms-box.ma-finale .ms-hrana.svit:not(.finale) { stroke: #A7D3B8; stroke-width: 1.8; }
+#ms-box.ma-finale .ms-uzel.svit:not(.finale) circle { fill: #AEB7C1; stroke: #A7D3B8; }
+#ms-box.ma-finale .ms-uzel.svit:not(.finale) text { fill: #7A8592; }
+.ms-hrana.finale { stroke: #2563EB !important; stroke-width: 4.5 !important; }
+.ms-uzel.finale circle { stroke: #2563EB !important; stroke-width: 3 !important; }
+.ms-uzel.finale text { fill: #1E3A8A !important; font-weight: 700; }
 .ms-uzel.ted text { fill: #A16207; font-weight: 700; }
 @keyframes mspulz { 50% { r: 10; opacity: .55; } }
 #ms-zive { display: none; color: #A16207; font-weight: 700; font-size: 13px; }
@@ -2544,6 +2558,7 @@ async function savePristup() {
     const DX = [0, 230, 470, 760], R = 20; let radek = 0; const uzly = [], hrany = []; let vc = 0;
     (function jdi(n, hl, rod) {
       n.vi = n.typ === "vrstva" ? vc++ : (rod ? rod.vi : -1);   // HANS_WEB_NEON_V1 — barva podle vrstvy
+      n.rod = rod;   // HANS_WEB_FINALE_V1 — rodič pro zvýraznění konečné cesty
       n.x = DX[Math.min(hl, 3)] + (hl > 3 ? (hl - 3) * 200 : 0);
       const deti = (n.typ === "skupina" && !n.stav && !n.rozbal) ? [] : n.deti;
       if (!deti.length) n.y = radek++ * R;
@@ -2557,7 +2572,7 @@ async function savePristup() {
   function rozlozKruh(koren) {
     const RR = [0, 170, 360, 560, 740]; const uzly = [], hrany = [], listy = []; let vc = 0;
     (function jdi(n, hl, rod) {
-      n.vi = n.typ === "vrstva" ? vc++ : (rod ? rod.vi : -1); n.hl = hl;
+      n.vi = n.typ === "vrstva" ? vc++ : (rod ? rod.vi : -1); n.hl = hl; n.rod = rod;   // HANS_WEB_FINALE_V1
       n._d = (n.typ === "skupina" && !n.stav && !n.rozbal) ? [] : n.deti;
       if (!n._d.length) listy.push(n); else n._d.forEach(c => jdi(c, hl + 1, n));
       uzly.push(n); if (rod) hrany.push([rod, n]);
@@ -2607,6 +2622,14 @@ async function savePristup() {
       n.el.classList.toggle("potlacen", on && n.stav === "potlacen");
       if (n.hrana) n.hrana.classList.toggle("svit", on && n.stav !== "potlacen");
       if (n.tok) n.tok.classList.toggle("svit", on && n.stav !== "potlacen"); });
+    // HANS_WEB_FINALE_V1 (30. 10., uživatel) — po rozsvícení všeho zvýraznit KONEČNOU
+    // cestu: od kořene ke každému cílovému uzlu (krok, který dotaz vyřídil, a zvolené
+    // volby); ostatní prošlé kroky se ztlumí. Dřív svítily všechny stejně.
+    const fin = new Set();
+    if (doI >= poradi().length) VYK.uzly.forEach(n => { if (n.stav === "cil") for (let x = n; x; x = x.rod) fin.add(x.id); });
+    VYK.uzly.forEach(n => { const f = fin.has(n.id); n.el.classList.toggle("finale", f);
+      if (n.hrana) n.hrana.classList.toggle("finale", f); if (n.tok) n.tok.classList.toggle("finale", f); });
+    $("ms-box").classList.toggle("ma-finale", fin.size > 0);
   }
   function ted(klic) {
     if (!VYK) return "";
