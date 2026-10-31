@@ -52,6 +52,25 @@ _CAPABILITIES = [
      "a třetí mocninu, odmocninu a procenta ze dvou čísel; spočítá to program přesně, ne já "
      "z hlavy. Slovní úlohy, rovnice a jednotky zatím neumím",
      "„kolik je 17 krát 23?“, „druhá odmocnina z 144“, „kolik je 20 % ze 150?“"),
+    # HANS_VYPOCTY_MODEL_V1 (31. 10.)
+    ("vypocty", "Umím SPOČÍTAT i složitější příklad a slovní úlohu — procenta a slevy, zdražení, "
+     "měsíční splátku úvěru, úročení, průměr, rovnici, přepočet receptu nebo spotřeby — a počítat "
+     "s datem: kolik dní zbývá do Vánoc, jaký den v týdnu bylo nějaké datum, kolik je komu let, kdy "
+     "jsou Velikonoce. Vzorec sestaví pomocný jazykový model a spočítá ho program; použiju jen čísla "
+     "z vaší otázky, údaje o lidech (narození, úmrtí) si takhle nedopočítám",
+     "„kolik zaplatím měsíčně za úvěr 200 000 na 5 let při 6 %?“, „kolik dní zbývá do Vánoc?“, "
+     "„jaký den v týdnu byl 17. listopadu 1989?“"),
+    # HANS_FYZIKA_V1 (31. 10.)
+    ("fyzika", "Umím SPOČÍTAT jednoduchý fyzikální příklad s jednotkami — volný pád (rychlost, doba, "
+     "výška), kinetickou a polohovou energii, práci a výkon, sílu a zrychlení, rychlost, dráhu a čas, "
+     "proud, napětí, odpor a příkon — a převést jednotky (km/h na m/s, kWh na jouly…). Ke známým "
+     "zákonům (zachování energie a hybnosti, Newtonovy, Ohmův, Archimédův, Pascalův, Hookův) přidám "
+     "příklad s čísly. Počítá to program přesně. Jiné výpočty (gravitace a planety, oběžné "
+     "a únikové rychlosti, teplo, tlak, světlo, zvuk, plyny…) sestaví jako vzorec pomocný jazykový "
+     "model a spočítá je program; když vzorci nemohu věřit, výsledek neřeknu. Šikmý vrh, tření "
+     "a složité obvody spolehlivě neumím",
+     "„jakou rychlostí dopadne kámen z 20 m?“, „kolik je 100 km/h v m/s?“, „vysvětli zákon "
+     "zachování energie na příkladu“"),
     # HANS_HLAVNI_ZPRAVA_V1
     ("hlavni_zprava", "Jednou za dva dny sám vyberu HLAVNÍ ZPRÁVU — příběh, který se nejdéle držel "
      "na špici ve více médiích — a pošlu na Matrix krátké shrnutí: co se stalo, jak se to "

@@ -1833,5 +1833,17 @@
         ],
         "_note": "HANS_BLUESKY_CTENI_V1 (29. 10.): jen čtení samostatných příspěvků AI agentů přes veřejné rozhraní bez přihlášení; seznam účtů lze upravit",
         "kolac_podil": 0.4
+    },
+    "fyzika_model": {
+        "enabled": true,
+        "model": "qwen3:30b",
+        "keep_alive": "10m",
+        "_note": "HANS_FYZIKA_MODEL_V1 (31. 10.): fyzika mimo hans_fyzika — qwen3 na CPU Ollamě napíše výraz, program spočítá s tabulkou konstant (scripts/hans_fyzika_model.py); konstanta bez opory v otázce = zahodit. Ne při hře ani noční dávce. 📏 35 otázek: 31 správně, 4 zahozeno, 0 špatně. false = vypnuto."
+    },
+    "vypocty_model": {
+        "enabled": true,
+        "model": "qwen3:30b",
+        "keep_alive": "10m",
+        "_note": "HANS_VYPOCTY_MODEL_V1 (31. 10.): matematika, slovní úlohy a datum — qwen3 na CPU Ollamě napíše výraz s povolenými funkcemi (splatka, procento, datum, dny, den_v_tydnu, velikonoce, reseni…), program spočítá (scripts/hans_vypocty_model.py, AST bez eval); čísla mimo otázku = zahodit. 📏 34/37 správně, 0 nesmyslů. false = vypnuto."
     }
 }

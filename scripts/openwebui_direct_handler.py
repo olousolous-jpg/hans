@@ -2288,7 +2288,57 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 _vp = vypocet(getattr(self, '_f1_query', None) or "") or vypocet(ctx._raw_message)
             except Exception:
                 _vp = None
-            if _vp:
+            # HANS_FYZIKA_V1 (31. 10.) — fyzika s jednotkami, převod jednotek, vzorový
+            # příklad ke známému zákonu; čísla počítá program (model dosazoval špatně:
+            # kámen z 20 m „6,32 m/s“, auto 50 km/h „98 750 J“)
+            _vp_fyz = False
+            if not _vp:
+                try:
+                    from scripts.hans_fyzika import podklad as _fyz_podklad
+                    _fz = (_fyz_podklad(getattr(self, '_f1_query', None) or "")
+                           or _fyz_podklad(ctx._raw_message))
+                except Exception:
+                    _fz = None
+                # HANS_FYZIKA_MODEL_V1 (31. 10.) — ostatní fyzika: qwen3 (CPU) napíše výraz,
+                # program ho spočítá s tabulkou konstant; konstanta bez opory v otázce = zahodit.
+                # 📏 35 otázek: 31 správně, 4 zahozeno, 0 špatně (data/mereni/vyraz_model_31_10/)
+                if not _fz:
+                    try:
+                        from scripts.hans_fyzika_model import vypocet_modelem as _fyz_model
+                        _fm = _fyz_model(self.config, ctx._raw_message)
+                        if _fm:
+                            _fz = ("vypocet", _fm)
+                    except Exception as _fme:
+                        logging.getLogger(__name__).debug('HANS_FYZIKA_MODEL_V1: %s', _fme)
+                # HANS_VYPOCTY_MODEL_V1 (31. 10.) — matematika, slovní úlohy, datum: qwen3 napíše
+                # výraz s povolenými funkcemi, program spočítá; čísla mimo otázku = zahodit.
+                # 📏 25 + 12 nových otázek: 34 správně, 2 zahozeno, 0 nesmyslů (data/mereni/vypocty_model_31_10/)
+                if not _fz:
+                    try:
+                        from scripts.hans_vypocty_model import vypocet_modelem as _vyp_model
+                        _vm = _vyp_model(self.config, ctx._raw_message)
+                        if _vm:
+                            _fz = ("vypocet", _vm)
+                    except Exception as _vme:
+                        logging.getLogger(__name__).debug('HANS_VYPOCTY_MODEL_V1: %s', _vme)
+                if _fz and _fz[0] == "priklad":
+                    ctx.system += ("\n\nPŘÍKLAD S ČÍSLY (čísla spočítal program a jsou přesná — když "
+                                   "uvádíš příklad s čísly, použij tento a jeho čísla, jiná nevymýšlej; "
+                                   "výklad zákona piš vlastními slovy): %s\n" % _fz[1])
+                    logging.getLogger(__name__).info('HANS_FYZIKA_V1: příklad %s', _fz[1][:80])
+                elif _fz:
+                    _vp = _fz[1]
+                    ctx.system += (("\n\nPŘEVOD JEDNOTEK (spočítal program, výsledek je přesný — řekni ho "
+                                    "i s jednotkou, nepočítej znovu): %s\n" if _fz[0] == "prevod" else
+                                    "\n\nPOSTUP VÝPOČTU (spočítal program, čísla jsou přesná — vysvětli "
+                                    "postup a řekni přesně tyto výsledky i s jednotkami, čísla piš číslicemi, "
+                                    "konstanty jmenuj česky (ne kódová jména jako M_earth), "
+                                    "nepočítej znovu): %s\n") % _vp)
+                    ctx._vypocet = _vp
+                    ctx._vypocet_fyz = True
+                    logging.getLogger(__name__).info('HANS_FYZIKA_V1: %s %s', _fz[0], _vp[:120])
+                    _vp_fyz = True
+            if _vp and not _vp_fyz:
                 ctx.system += ("\n\nVÝPOČET (spočítal program, výsledek je přesný — řekni přesně "
                                "tento výsledek, nepočítej znovu): %s\n" % _vp)
                 ctx._vypocet = _vp
@@ -3325,6 +3375,25 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 except Exception as _e:
                     print(f"[Chat] human_chat log_entry failed: {_e}")
                     _hi_log = None
+            # HANS_FYZIKA_VYSLEDEK_V1 (31. 10.) — výsledek výpočtu z programu musí být
+            # v odpovědi číslicemi; model ho občas přepíše slovy a zkomolí („devatenicet
+            # koma osm metrů za sekundu“ místo 19,8 m/s). Chybí-li → krátký řádek navíc.
+            try:
+                _vyp = getattr(ctx, '_vypocet', None)
+                if _vyp and ctx.response and getattr(ctx, '_vypocet_fyz', False):
+                    _seg = _vyp.split("→")[-1] if "→" in _vyp else _vyp.split("=")[-1]
+                    _seg = re.split(r"\s\(předpoklad", _seg)[0].strip()
+                    _seg = re.sub(r"^výsledek\s*=\s*", "", _seg)
+                    _num = re.search(r"\d[\d ]*(?:,\d+)?", _seg)
+                    if _num:
+                        _n = _num.group(0).strip()
+                        _resp = ctx.response.replace("\u00a0", " ")
+                        if _n not in _resp and _n.replace(",", ".") not in _resp:
+                            ctx.response = ctx.response.rstrip() + "\n\nVýsledek: %s." % _seg.rstrip(".")
+                            logging.getLogger(__name__).info(
+                                "HANS_FYZIKA_VYSLEDEK_V1: výsledek v odpovědi chyběl → připojen %s", _seg[:60])
+            except Exception:
+                pass
             if not _hi_log and not _skip_mem:
                 # Fallback — přímý SQL
                 try:
