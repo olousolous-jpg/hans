@@ -1780,6 +1780,19 @@ class AgentRouter:
         r"v[áa][šs]\w*)\b|\b\w{2,}[šs]\b|\b\w+te\b", re.IGNORECASE)
     _NE_DRUHA = {"dnes", "pres", "nas", "kolac", "ves"}
 
+    def _kolac_ve_vete_nebo_vlakne(self, message: str, handler) -> bool:
+        """HANS_AGENT_KOLAC_JEN_ZMINKA_V1 — Koláč ve větě, nebo v jedné ze dvou
+        posledních výměn vlákna. Chyba při čtení vlákna = True (nepotlačit)."""
+        if self._mentions_kolac(message):
+            return True
+        try:
+            from scripts.hans_thread import recent_turns
+            turns = recent_turns(handler, getattr(self, "_speaker", "") or "")
+        except Exception:
+            return True
+        posl = [t for _r, t in turns if (t or "").strip() != (message or "").strip()][-2:]
+        return any(self._mentions_kolac(t) for t in posl)
+
     def _navazuje_na_kolace(self, aid, message: str, handler) -> bool:
         """HANS_AGENT_SOCIAL_GUARD_THREAD_V1 — router vybral `report_kolac_status`
         správně, ale brzda soudila HOLOU větu: „a co dělá teď?" po řeči
@@ -1903,6 +1916,15 @@ class AgentRouter:
              akce=("report_home_status", "report_who_is_home", "report_now_playing"),
              podminka=lambda s, aid, msg, dec, h: s._mentions_kolac(msg),
              verdikt="report_kolac_status", duvod="dotaz je o Koláčovi"),
+        # HANS_AGENT_KOLAC_JEN_ZMINKA_V1 (31. 10.) — stav Koláče jen když věta nebo
+        # poslední dvě výměny Koláče zmiňují. Doloženo 31. 10.: „co rika ohmuv zakon?“
+        # → „Koláč zrovna tiše přemítá…“ (router: „co říká…“ jako u Koláče).
+        # 📏 deník: 15× akce, 11 se zmínkou, 1 navazuje („co ho ještě zaujalo…“),
+        # 3 bez souvislosti („jak se máš?“, „jak šlo malování?“ — Hansova věc).
+        dict(marker="HANS_AGENT_KOLAC_JEN_ZMINKA_V1",
+             akce=("report_kolac_status",),
+             podminka=lambda s, aid, msg, dec, h: not s._kolac_ve_vete_nebo_vlakne(msg, h),
+             verdikt=None, duvod="ve větě ani ve vlákně není Koláč"),
         # HANS_AGENT_CORRECTION_V1 (21.8.) — KOREKCE NEŽÁDÁ NOVOU AKCI.
         # Princip „korekce nežádá výpis" platil jen pro příkazovou vrstvu;
         # agent žádné takové pravidlo NEMĚL (zapsáno 20.8., doloženo 21.8.
