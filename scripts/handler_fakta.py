@@ -2206,6 +2206,12 @@ class FaktaMixin:
                             if _kp.get(k)}
                 _jmenuje = any(len(x) >= 4 and re.search(
                     r"(?<![a-z])" + re.escape(x) + r"(?![a-z])", _txt) for x in _tv - {_kdo})
+                # HANS_F1_ASKER_DATIV_V1 (1. 11., /tazatel) — 3. pád „Marku“ uvnitř věty
+                # („a kolik by mu bylo dnes?“ → „Kolik let by Marku bylo dnes?“ → heslo
+                # „Mark (jméno)“); oslovení za čárkou nebo na konci věty dál neškodí
+                if not _jmenuje and _pe and len(_kdo) >= 4:
+                    _jmenuje = bool(re.search(
+                        r"(?<![a-z,])(?<!,\s)" + re.escape(_km + "u") + r"(?![a-z])(?!\s*[?.!]*\s*$)", _txt))
             if not _jmenuje:
                 return False
             # V2: jméno tazatele v 1. pádě = podmět věty, i když vedlejší věta

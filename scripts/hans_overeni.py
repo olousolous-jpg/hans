@@ -767,6 +767,12 @@ def _pribuzni(veta: str, kany: list) -> list:
                 if not isinstance(q, str) or not C.get("Z:" + q):
                     continue
                 n, u = (C["Z:" + q] + [None, None])[:2]
+                # HANS_OVERENI_JMENOVEC_V1 (1. 11.) — příbuzný se jménem hlavní osoby článku
+                # (syn Jaroslav Seifert *1932, James Watt ml.): věta „Jaroslav Seifert
+                # (1901–1986)“ je o otci → „Ještě oprava: … rok narození 1932, ne 1901“
+                _hlavni = _fold(re.sub(r"\s*\(.*\)$", "", kan))
+                if C.get("LC:" + q) and _fold(C["LC:" + q]) == _hlavni:
+                    continue
                 for jm in dict.fromkeys(([C["LC:" + q]] if C.get("LC:" + q) else []) + _jm(q)):
                     # všechna slova jména po sobě; delší slovo i ve skloněném tvaru
                     # (kmen bez 2 posledních písmen, nejméně 3: Anna → Annou) — „Jan Garrigue

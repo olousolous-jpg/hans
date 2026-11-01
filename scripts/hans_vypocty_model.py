@@ -203,7 +203,14 @@ CUE_OSOBA = re.compile(
     r"\b(kolik\s+let|v\s+kolika\s+letech|jak\s+star\w*|doz\w*l\w*\s+se|se\s+doz\w*l\w*|"
     r"jak\s+dlouho\s+(?:zil|zila|zili)|kolik\s+(?:dni|tydnu|mesicu|roku)\s+(?:zil|zila)|"
     r"o\s+kolik\s+(?:let|roku)|kolik\s+(?:je|bylo|bude)\s+(?:to\s+)?let|"
-    r"(?:jaky|ktery|v\s+jaky)\s+den|den\s+v\s+tydnu|kolik\s+dni)\b")
+    r"(?:jaky|ktery|v\s+jaky)\s+den|den\s+v\s+tydnu|kolik\s+dni|"
+    r"kolik\s+by\s+(?:mu|ji|jim|jemu)\s+(?:bylo|bude))\b")   # HANS_VYPOCTY_ZAJMENO_V1
+# HANS_VYPOCTY_ZAJMENO_V1 (1. 11., /tazatel) — navazující „a kolik by mu bylo dnes?“:
+# osoba z předchozích otázek (jako rok u „tehdy“, HANS_YEAR_EVENTS_V1); příbuzní
+# („jeho otec“, „manželce“) ne — jejich data nemáme, model by vzal data osoby.
+_ZAJMENO = re.compile(r"\b(mu|jemu|ji|jim|jeho|jej|on|ona|nej|nemu)\b")
+_PRIBUZNI = re.compile(r"\b(otec|otce|otci|otcem|matk\w*|manzel\w*|chot\w*|syn\w*|dcer\w*|bratr\w*|"
+                       r"sestr\w*|dite|ditet\w*|deti|vnuk\w*|vnuc\w*|dedeck\w*|babick\w*|predk\w*|potom\w*)\b")
 _WD_CACHE = "data/wd_zivot.json"
 _wd_c = None
 
@@ -365,9 +372,13 @@ def _wd_cz(d) -> str:
     return ("%d. %d. %d" % (d[2], d[1], d[0]) if d[2] else "roku %d" % d[0])
 
 
-def fakta_osob(q: str):
-    """(věta pro model, věta pro Hanse, povolená čísla, juliánský) nebo None."""
+def fakta_osob(q: str, predchozi=()):
+    """(věta pro model, věta pro Hanse, povolená čísla, juliánský, data, osoba z historie)
+    nebo None. `predchozi` = dřívější otázky téhož člověka, nejnovější první."""
     if not CUE_OSOBA.search(_f(q)):
+        return None
+    if _PRIBUZNI.search(_f(q)):
+        _log.info("HANS_VYPOCTY_ZAJMENO_V1: otázka na příbuzného → bez faktů")
         return None
     rad, cz, cis, jul, trojice = [], [], set(), False, set()
     if re.search(r"\b(vladl\w*|kraloval\w*|panoval\w*|uradoval\w*|prezident\w*|ve\s+funkci|na\s+trune)", _f(q)):
@@ -377,6 +388,15 @@ def fakta_osob(q: str):
     if _zb:
         _log.info("HANS_VYPOCTY_WD_V2: jména bez dat %s → bez faktů", _zb[:4])
         return None
+    _z_hist = ""
+    if not _os and _ZAJMENO.search(_f(q)):
+        for p in list(predchozi or ())[:4]:
+            _po, _pz = osoby_a_zbytek(p)
+            if _po:
+                if len(_po) == 1 and not _pz:      # jen jednoznačně jedna osoba
+                    _os, _z_hist = _po, _po[0]
+                    _log.info("HANS_VYPOCTY_ZAJMENO_V1: zájmeno → %s (z předchozí otázky)", _z_hist)
+                break
     for o in _os:
         z = zivot(o)
         if not z or not (z.get("nar") or z.get("zem")):
@@ -397,8 +417,9 @@ def fakta_osob(q: str):
         cz.append("%s %s" % (o, ", ".join(kc)))
     if not rad:
         return None
-    return ("Known facts from Wikidata: " + "; ".join(rad) + ".",
-            "údaje z Wikidat: " + "; ".join(cz), cis, jul, trojice)
+    return ("Known facts from Wikidata: " + "; ".join(rad) + "." + (
+                " The pronoun in the question (mu, jeho, on…) means %s." % _z_hist if _z_hist else ""),
+            "údaje z Wikidat: " + "; ".join(cz), cis, jul, trojice, _z_hist)
 
 
 _SYS_OSOBA = (   # HANS_VYPOCTY_WD_V2 — jen když jsou data osoby
@@ -550,12 +571,12 @@ def _volno() -> bool:
         return True
 
 
-def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[str]:
+def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()) -> Optional[str]:
     c = (config or {}).get("vypocty_model", {}) or {}
     if not c.get("enabled", True):
         return None
     q0 = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", text or "").strip()
-    _fo = fakta_osob(q0) if c.get("wikidata", True) else None   # HANS_VYPOCTY_WD_V1
+    _fo = fakta_osob(q0, predchozi) if c.get("wikidata", True) else None   # HANS_VYPOCTY_WD_V1
     if not _fo and not vypada_jako_vypocet(text):
         return None
     if not _volno():

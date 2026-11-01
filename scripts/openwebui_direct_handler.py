@@ -2324,7 +2324,14 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 if not _fz:
                     try:
                         from scripts.hans_vypocty_model import vypocet_modelem as _vyp_model
-                        _vm = _vyp_model(self.config, ctx._raw_message)
+                        # HANS_VYPOCTY_ZAJMENO_V1 — dřívější otázky téhož člověka (osoba k „mu“)
+                        _pred = []
+                        try:
+                            _pred = [m.get("content") or "" for m in reversed(
+                                self.conv_store.get_history(ctx.name) or []) if m.get("role") == "user"][:4]
+                        except Exception:
+                            pass
+                        _vm = _vyp_model(self.config, ctx._raw_message, predchozi=_pred)
                         if _vm:
                             _fz = ("vypocet_model", _vm)   # HANS_VYPOCTY_VETOU_V1
                     except Exception as _vme:
