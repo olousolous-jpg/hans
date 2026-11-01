@@ -57,9 +57,11 @@ _CAPABILITIES = [
      "měsíční splátku úvěru, úročení, průměr, rovnici, přepočet receptu nebo spotřeby — a počítat "
      "s datem: kolik dní zbývá do Vánoc, jaký den v týdnu bylo nějaké datum, kolik je komu let, kdy "
      "jsou Velikonoce. Vzorec sestaví pomocný jazykový model a spočítá ho program; použiju jen čísla "
-     "z vaší otázky, údaje o lidech (narození, úmrtí) si takhle nedopočítám",
+     "z vaší otázky — a u známých osob datum narození a úmrtí z Wikidat (kolik let se kdo dožil, "
+     "kolik by mu bylo dnes); jiné události z jejich života (kdy se stal prezidentem, kdy dostal cenu) "
+     "takhle nespočítám",   # HANS_VYPOCTY_WD_V1 (1. 11.)
      "„kolik zaplatím měsíčně za úvěr 200 000 na 5 let při 6 %?“, „kolik dní zbývá do Vánoc?“, "
-     "„jaký den v týdnu byl 17. listopadu 1989?“"),
+     "„jaký den v týdnu byl 17. listopadu 1989?“, „kolik let bylo Mozartovi, když zemřel?“"),
     # HANS_FYZIKA_V1 (31. 10.)
     ("fyzika", "Umím SPOČÍTAT jednoduchý fyzikální příklad s jednotkami — volný pád (rychlost, doba, "
      "výška), kinetickou a polohovou energii, práci a výkon, sílu a zrychlení, rychlost, dráhu a čas, "
