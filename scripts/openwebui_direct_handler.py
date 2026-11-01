@@ -2326,7 +2326,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         from scripts.hans_vypocty_model import vypocet_modelem as _vyp_model
                         _vm = _vyp_model(self.config, ctx._raw_message)
                         if _vm:
-                            _fz = ("vypocet", _vm)
+                            _fz = ("vypocet_model", _vm)   # HANS_VYPOCTY_VETOU_V1
                     except Exception as _vme:
                         logging.getLogger(__name__).debug('HANS_VYPOCTY_MODEL_V1: %s', _vme)
                 if _fz and _fz[0] == "priklad":
@@ -2338,6 +2338,14 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     _vp = _fz[1]
                     ctx.system += (("\n\nPŘEVOD JEDNOTEK (spočítal program, výsledek je přesný — řekni ho "
                                     "i s jednotkou, nepočítej znovu): %s\n" if _fz[0] == "prevod" else
+                                    # HANS_VYPOCTY_VETOU_V1 (1. 11.) — výraz s funkcemi (dny, datum,
+                                    # vek) model opisoval jako odpověď („Výpočet: Dny(datum(…)) →
+                                    # výsledek = 2422 dní“), jednou i se špatným číslem
+                                    "\n\nVÝPOČET (spočítal program, výsledek je přesný): %s\n"
+                                    "Řekni výsledek celou českou větou, čísla číslicemi, a když jsou "
+                                    "uvedené údaje z Wikidat, zmiň data, ze kterých vychází. Výraz s názvy "
+                                    "funkcí (datum, dny, vek, procento…) NEVYPISUJ a nepočítej znovu.\n"
+                                    if _fz[0] == "vypocet_model" else
                                     "\n\nPOSTUP VÝPOČTU (spočítal program, čísla jsou přesná — vysvětli "
                                     "postup a řekni přesně tyto výsledky i s jednotkami, čísla piš číslicemi, "
                                     "konstanty jmenuj česky (ne kódová jména jako M_earth), "
@@ -2697,7 +2705,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     ctx.on_sentence(ctx.response)   # ať to TTS vysloví
                 except Exception:
                     pass
-        elif (getattr(ctx, "_zpravy", None)
+        elif (getattr(ctx, "_zpravy", None) and not getattr(ctx, "_vypocet", None)   # HANS_VYPOCTY_VETOU_V1: výpočet > titulky
               and (self.config.get("zpravy", {}) or {}).get("prevypraveni", True)):
             # HANS_ZPRAVY_RETELL_V1 (7. 10.) — otázka má podklad ze zpráv → místo
             # volné odpovědi krátké převyprávění titulků (viz `hans_zpravy.prevypravej`)
@@ -3388,6 +3396,19 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # koma osm metrů za sekundu“ místo 19,8 m/s). Chybí-li → krátký řádek navíc.
             try:
                 _vyp = getattr(ctx, '_vypocet', None)
+                # HANS_VYPOCTY_VETOU_V1 — opsaný výraz („Výpočet: dny(…) → výsledek = 40 dní“)
+                # → výsledek z PROGRAMU (model ho opsal i se špatným číslem)
+                if _vyp and ctx.response and "→ výsledek =" in _vyp:
+                    _vys = _vyp.split("→ výsledek =")[-1].strip().rstrip(".")
+                    _r2 = re.sub(r"(?i)(?:výpočet:\s*)?[a-z_]+\((?:[^()\n]|\([^()\n]*\))*\)[^\n→]{0,60}?→\s*výsledek\s*=\s*[^\n.]*",
+                                 "výsledek je " + _vys, ctx.response)
+                    # zbytek výrazu v závorce: „Výpočet věku (datum(1890, 1, 9), datum(1938, 12, 25)) dává…“
+                    _r2 = re.sub(r"\s*\((?:\s*,?\s*(?:datum\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)|dnes\(\s*\)))+\s*\)",
+                                 "", _r2)
+                    if _r2 != ctx.response:
+                        _r2 = re.sub(r"(^|[.!?]\s+|\n)výsledek je", lambda m_: m_.group(1) + "Výsledek je", _r2)
+                        ctx.response = _r2
+                        logging.getLogger(__name__).info("HANS_VYPOCTY_VETOU_V1: opsaný výraz → %s", _vys[:60])
                 if _vyp and ctx.response:   # HANS_VYPOCTY_NAHRATI_V1: i HANS_POCTY_V1 (7 % z 350 → „22,5“)
                     _seg = _vyp.split("→")[-1] if "→" in _vyp else _vyp.split("=")[-1]
                     _seg = re.split(r"\s\(předpoklad", _seg)[0].strip()

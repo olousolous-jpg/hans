@@ -45,6 +45,93 @@ def _cislo(tok: str) -> Optional[float]:
     return None
 
 
+# HANS_CISLA_SLOVY_V1 (1. 11., /tazatel B) — celé číslovky slovy → číslice, i v pádech:
+# „sedm procent z tří set padesáti“ (dřív 7 % z 3), „čtyřicet pět ze sto osmdesáti“,
+# „tři miliony“, „sto tisíc“, „pětačtyřicet“. Jen pro výpočty (tady, hans_vypocty_model).
+_CS_J = {"jeden": 1, "jedna": 1, "jedno": 1, "jednoho": 1, "jedne": 1, "jednomu": 1, "jednim": 1,
+         "dva": 2, "dve": 2, "dvou": 2, "dvema": 2, "tri": 3, "trech": 3, "trem": 3, "tremi": 3,
+         "ctyri": 4, "ctyr": 4, "ctyrech": 4, "ctyrem": 4, "ctyrmi": 4}
+for _k, _v in (("pet", 5), ("sest", 6), ("sedm", 7), ("osm", 8), ("devet", 9)):
+    _CS_J[_k] = _v
+    _CS_J[_k.replace("devet", "devit") + "i"] = _v
+_CS_N = {}
+for _k, _v in (("deset", 10), ("jedenact", 11), ("dvanact", 12), ("trinact", 13), ("ctrnact", 14),
+               ("patnact", 15), ("sestnact", 16), ("sedmnact", 17), ("osmnact", 18), ("devatenact", 19),
+               ("dvacet", 20), ("tricet", 30), ("ctyricet", 40), ("padesat", 50), ("sedesat", 60),
+               ("sedmdesat", 70), ("osmdesat", 80), ("devadesat", 90)):
+    _CS_N[_k] = _v
+    _CS_N[_k + "i"] = _v
+_CS_STO = {"sto", "sta", "stu", "stem", "stech"}            # i samo („ze sta osob“)
+_CS_STO_PO = {"set", "ste"}                                 # jen za jednotkou („pět set“, „dvě stě“)
+_CS_NAS = {"tisic": 1000, "tisice": 1000, "tisici": 1000, "tisicu": 1000, "tisicem": 1000,
+           "milion": 10 ** 6, "miliony": 10 ** 6, "milionu": 10 ** 6, "milionem": 10 ** 6,
+           "milionech": 10 ** 6, "miliard": 10 ** 9, "miliarda": 10 ** 9, "miliardy": 10 ** 9}
+_CS_DES = "|".join(sorted((k for k in _CS_N if k.endswith(("cet", "sat"))), key=len, reverse=True))
+_CS_SLOZ = re.compile(r"(jedn|dva|tri|ctyri|pet|sest|sedm|osm|devet)a(" + _CS_DES + r")i?")
+_CS_STOVKY = re.compile(r"(dve|tri|ctyri|pet|sest|sedm|osm|devet)(ste|sta|set)")
+
+
+def _cs_tok(w: str):
+    """(druh, hodnota): j jednotka, n desítky/náctky, s sto, p „set/stě“, m násobič."""
+    if w in _CS_J:
+        return "j", _CS_J[w]
+    if w in _CS_N:
+        return "n", _CS_N[w]
+    if w in _CS_STO:
+        return "s", 100
+    if w in _CS_STO_PO:
+        return "p", 100
+    if w in _CS_NAS:
+        return "m", _CS_NAS[w]
+    m = _CS_SLOZ.fullmatch(w)
+    if m:
+        return "n", _CS_J.get(m.group(1) if m.group(1) != "jedn" else "jeden", 1) + _CS_N[m.group(2)]
+    m = _CS_STOVKY.fullmatch(w)
+    if m:
+        return "h", {"dve": 2, "tri": 3, "ctyri": 4}.get(m.group(1), _CS_J.get(m.group(1), 0)) * 100
+    return None
+
+
+def cisla_slovy(text: str) -> str:
+    """Souvislé číslovky slovy nahradí číslicemi; ostatní text beze změny."""
+    if not text:
+        return text
+    toks = list(re.finditer(r"[^\W\d_]+", text))
+    out, kon, i = [], 0, 0
+    while i < len(toks):
+        run, j = [], i
+        while j < len(toks):
+            if j > i and text[toks[j - 1].end():toks[j].start()].strip():
+                break                                   # jen mezery mezi slovy
+            k = _cs_tok(_f(toks[j].group(0)))
+            if not k or (k[0] == "p" and not (run and run[-1][0] == "j")):
+                break
+            run.append(k)
+            j += 1
+        if not run:
+            i += 1
+            continue
+        total, cur, ok = 0, 0, True
+        for druh, v in run:
+            if druh in ("j", "n", "h"):
+                cur += v
+            elif druh in ("s", "p"):
+                cur = (cur or 1) * 100 if cur < 10 else -1
+            elif druh == "m":
+                total += (cur or 1) * v
+                cur = 0
+            if cur < 0:
+                ok = False
+                break
+        if ok:
+            out.append(text[kon:toks[i].start()])
+            out.append(str(total + cur))
+            kon = toks[j - 1].end()
+        i = j
+    out.append(text[kon:])
+    return "".join(out)
+
+
 _OP = [
     (re.compile(r"\b" + _CIS + r"\s*(?:krat|x|×|\*|nasobeno)\s*" + _CIS + r"\b"), "×", lambda a, b: a * b),
     (re.compile(r"\b" + _CIS + r"\s*(?:plus|\+)\s*" + _CIS + r"\b"), "+", lambda a, b: a + b),
@@ -68,7 +155,7 @@ def _fmt(x: float) -> str:
 
 def vypocet(text: str) -> Optional[str]:
     """Řádek „7 × 8 = 56“ pro jednoduchý výpočet v otázce, jinak None."""
-    t = _f(re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", text or ""))
+    t = _f(cisla_slovy(re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", text or "")))   # HANS_CISLA_SLOVY_V1
     if not t or not _OTAZKA.search(t):
         return None
     m = _MOC_RE.search(t) or None

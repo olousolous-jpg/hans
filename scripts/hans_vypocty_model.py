@@ -235,6 +235,16 @@ def _osoba_titul(kus: str):
     return None
 
 
+_VYKANI = {"vy", "vas", "vam", "vami", "vas", "vase", "vasi", "vaseho", "vasemu", "vasim", "vasich",
+           "vasimi", "ty", "tebe", "tobe", "tebou", "pane", "pani"}
+
+
+_BEZNA_SLOVA = {"dekuji", "diky", "prosim", "tak", "takze", "jak", "dobry", "dobre", "ted", "rad", "rada",
+                "ano", "ne", "no", "jo", "a", "ale", "ahoj", "pak", "potom", "jeste", "kdyz", "pokud",
+                "mozna", "vlastne", "mimochodem", "zajimalo", "zajima", "zkuste", "spocitejte", "rekni",
+                "reknete", "vypocitejte", "spocitej", "jaky", "jaka", "jake", "ktery", "ktera", "ktere"}
+
+
 def osoby(q: str, strop: int = 2) -> list:
     """Tituly článků osob zmíněných v otázce (velké počáteční písmeno, 1–3 slova)."""
     return osoby_a_zbytek(q, strop)[0]
@@ -249,8 +259,18 @@ def osoby_a_zbytek(q: str, strop: int = 2):
     try:
         from scripts import hans_wiki_offline as wo
         if not wo.dostupna():
-            return []
-        w = re.findall(r"[^\W\d_][\w\-]*\.?", q or "")
+            return [], []
+        _m = list(re.finditer(r"[^\W\d_][\w\-]*\.?", q or ""))
+        w = [m.group(0) for m in _m]
+        # HANS_VYPOCTY_JMENA_V1 (1. 11., /tazatel B) — velké písmeno na začátku věty
+        # („…, prosím? Kolik let…“, „Děkuji. A kolik…“) a vykání („Vám“) není jméno;
+        # 4 z 20 tahů zdvořilého tazatele tím přišly o data z Wikidat.
+        _zac = {k for k, m in enumerate(_m)
+                if not (q[:m.start()].rstrip()) or q[:m.start()].rstrip()[-1] in ".?!…:;\"„“"}
+        # na začátku věty jméno jen s heslem na Wikipedii a mimo běžná slova
+        # („Schubert, o kolik…“ ano; „Kolik“, „Ještě“ nemají heslo; „Děkuji“ je album)
+        _neni_jmeno = lambda k: (_f(w[k].rstrip(".")) in _VYKANI or (k in _zac and (
+            _f(w[k].rstrip(".")) in _BEZNA_SLOVA or not wo._cil(w[k].rstrip(".")))))
         out, i = [], 0
         while i < len(w) and len(out) < strop:
             hit = None
@@ -272,10 +292,11 @@ def osoby_a_zbytek(q: str, strop: int = 2):
                     out.append(hit[0])
                 i += hit[1]
             else:
-                if i > 0 and w[i][:1].isupper() and len(w[i].rstrip(".")) >= 3:
+                if w[i][:1].isupper() and len(w[i].rstrip(".")) >= 3 and not _neni_jmeno(i):
                     zbytek.append(w[i])
                 i += 1
-        zbytek += [x for x in w[i:] if x[:1].isupper() and len(x.rstrip(".")) >= 3]
+        zbytek += [w[k] for k in range(i, len(w))
+                   if w[k][:1].isupper() and len(w[k].rstrip(".")) >= 3 and not _neni_jmeno(k)]
         return out, zbytek
     except Exception as e:
         _log.debug("HANS_VYPOCTY_WD_V1: osoby: %s", e)
@@ -541,6 +562,11 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
         _log.info("%s: přeskočeno (hra nebo noční dávka)", MARK)
         return None
     q = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", text or "").strip()
+    try:   # HANS_CISLA_SLOVY_V1 — „tři miliony“, „čtyřicet pět ze sto osmdesáti“ → číslice
+        from scripts.hans_pocty import cisla_slovy
+        q = cisla_slovy(q)
+    except Exception:
+        pass
     try:
         import requests
         from scripts.hans_book_summary import _cpu_url
@@ -597,6 +623,12 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
     jed = str(d.get("jednotka") or "").strip()
     jed = {"years": "let", "year": "let", "days": "dní", "day": "dní", "weeks": "týdnů",   # HANS_VYPOCTY_WD_V2b
            "months": "měsíců", "procenta": "%", "procent": "%", "percent": "%"}.get(jed.lower(), jed)
+    if jed.lower() in ("dny", "dní", "dnů", "dni", "days", "day", "den"):   # HANS_VYPOCTY_VETOU_V1 — „17 881 dny“
+        try:
+            _xi = int(round(float(x)))
+            jed = "den" if _xi == 1 else ("dny" if 2 <= _xi <= 4 else "dní")
+        except Exception:
+            pass
     co = str(d.get("co") or "").strip()
     _log.info("%s: veličina %s", MARK, co[:60])
     out = "%svýpočet: %s → výsledek = %s%s" % ((_fo[1] + " · ") if _fo else "", vyraz.replace("**", "^").replace("*", "·"),

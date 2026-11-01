@@ -116,7 +116,10 @@ _PADY_PRIDAVNA = (("ého", "ý"), ("ému", "ý"), ("ém", "ý"), ("ým", "ý"), 
                   ("ou", "á"), ("é", "á"), ("é", "ý"),
                   ("ově", "ův"), ("ovu", "ův"), ("ova", "ův"), ("ovým", "ův"),
                   ("ině", "in"), ("inu", "in"), ("ina", "in"))
-_PADY_PODSTATNA = (("ovi", ""), ("em", ""), ("ii", "ie"), ("ií", "ie"), ("ie", "ie"),
+# HANS_WIKI_PADY_KOVI_V1 (1. 11.) — 3./7. pád příjmení na -ek: „Karlu Čapkovi“ → Čapek
+# (výpočet věku z Wikidat osobu nenašel). 📏 584 kotev z logu: 3 změny, všechny
+# k lepšímu (Karel a Josef Čapek), horší 0 (data/mereni/vypocty_jmena_1_11/).
+_PADY_PODSTATNA = (("kovi", "ek"), ("kem", "ek"), ("ovi", ""), ("em", ""), ("ii", "ie"), ("ií", "ie"), ("ie", "ie"),
                    ("la", "el"), ("lu", "el"), ("lovi", "el"), ("ra", "er"), ("ru", "er"),
                    ("ka", "ek"), ("ku", "ek"),
                    ("y", "a"), ("i", "a"), ("u", "a"), ("ou", "a"), ("e", "a"), ("ě", "a"),

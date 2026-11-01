@@ -785,6 +785,15 @@ def fix_year_words(text: str):
         v = _yw_hodnota(m)
         if v is None:
             return m.group(0)
+        # HANS_YEAR_WORDS_CASTKA_V1 (1. 11.) — před frází číslovka/číslice = částka, ne rok:
+        # „devatenáct tisíc sedm set devadesát osm korun“ → dřív „devatenáct 1798 korun“
+        if _YW_PRED.search(m.string[max(0, m.start() - 30):m.start()]):
+            return m.group(0)
         n += 1
         return str(v)
     return _YW_RE.sub(_sub, text), n
+
+
+_YW_PRED = re.compile(r"(?:\d|\b(?:jed\w*|dva|dvě|dvou|tři|tří|čtyři|čtyř|pět\w*|šest\w*|sedm\w*|osm\w*|"
+                      r"devět|devíti|deset\w*|\w+náct\w*|\w+cet\w*|\w+desát\w*|sto|sta|set|stě))\s*$",
+                      re.IGNORECASE)
