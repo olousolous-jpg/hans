@@ -3403,6 +3403,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # koma osm metrů za sekundu“ místo 19,8 m/s). Chybí-li → krátký řádek navíc.
             try:
                 _vyp = getattr(ctx, '_vypocet', None)
+                # HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1 (1. 11.) — model řekl jiné číslo než program
+                # („57 let“ × 56) → jediné jiné číslo téže jednotky = výsledek programu
+                if _vyp and ctx.response:
+                    from scripts.hans_vypocty_model import srovnej_cislo as _srv
+                    _r3, _zm3 = _srv(ctx.response, _vyp)
+                    if _zm3:
+                        logging.getLogger(__name__).info(
+                            "HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1: číslo v odpovědi ≠ výpočet → opraveno (%s)",
+                            _vyp.split("→")[-1].strip()[:50])
+                        ctx.response = _r3
                 # HANS_VYPOCTY_VETOU_V1 — opsaný výraz („Výpočet: dny(…) → výsledek = 40 dní“)
                 # → výsledek z PROGRAMU (model ho opsal i se špatným číslem)
                 if _vyp and ctx.response and "→ výsledek =" in _vyp:
@@ -3424,7 +3434,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     if _num:
                         _n = _num.group(0).strip()
                         _resp = ctx.response.replace("\u00a0", " ")
-                        if _n not in _resp and _n.replace(",", ".") not in _resp:
+                        try:   # HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1: „padesát šest let“ = 56 → nepřipojovat
+                            from scripts.hans_pocty import cisla_slovy as _csl
+                            _resp = _resp + " " + _csl(_resp)
+                        except Exception:
+                            pass
+                        if _n not in _resp and _n.replace(",", ".") not in _resp and _n.replace(" ", "") not in _resp:
                             ctx.response = ctx.response.rstrip() + "\n\nVýsledek: %s." % _seg.rstrip(".")
                             logging.getLogger(__name__).info(
                                 "HANS_FYZIKA_VYSLEDEK_V1: výsledek v odpovědi chyběl → připojen %s", _seg[:60])

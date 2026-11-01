@@ -656,3 +656,82 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()
                                              _cz(x), (" " + jed) if jed and not isinstance(x, (_dt.date, str)) else "")
     _log.info("%s: %.1f s · %s", MARK, time.time() - t0, out[:200])
     return out
+
+
+# ── HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1 (1. 11.) ────────────────────────────────
+# Model občas vysloví jiné číslo, než spočítal program („Beethovenovi bylo 57 let“,
+# program 56; „o 19 let starší“, program 14) a pojistka pak připojila „Výsledek: 56“
+# → odpověď si protiřečila. Když výsledek v odpovědi chybí a je v ní PRÁVĚ JEDNO jiné
+# číslo se stejnou jednotkou, nahradí se výsledkem. Víc kandidátů = nejisté → beze změny.
+_JEDN_RODINY = [
+    ("let", r"(?:let|roky|roků|rok|roku)"), ("dní", r"(?:dní|dny|dnů|den|dne)"),
+    ("Kč", r"(?:Kč|korun\w*)"), ("%", r"(?:%|procent\w*)"), ("týdnů", r"(?:týdn\w*|týden)"),
+    ("měsíců", r"(?:měsíc\w*)"), ("m/s", r"m/s"), ("km/h", r"km/h"), ("J", r"(?:J|joul\w*)"),
+    ("kJ", r"kJ"), ("W", r"(?:W|watt\w*)"), ("kg", r"kg"), ("m", r"(?:m|metr\w*)"), ("s", r"(?:s|sekund\w*)"),
+]
+_DNY_TYDNE = ("pondělí", "úterý", "středa", "středu", "čtvrtek", "pátek", "sobota", "sobotu", "neděle", "neděli")
+
+
+def _num(s: str):
+    try:
+        return float(re.sub(r"[\s ]", "", s).replace(",", "."))
+    except Exception:
+        return None
+
+
+def srovnej_cislo(odpoved: str, vypocet: str):
+    """(odpověď, změněno) — jedno jiné číslo téže jednotky → výsledek z programu.
+    Číslovky slovy („padesát sedm let“) se zkusí po převodu na číslice."""
+    r, ch = _srovnej_cislo(odpoved, vypocet)
+    if ch:
+        return r, ch
+    try:
+        from scripts.hans_pocty import cisla_slovy
+        o2 = cisla_slovy(odpoved)
+        if o2 != odpoved:
+            r2, ch2 = _srovnej_cislo(o2, vypocet)
+            if ch2:
+                return r2, True
+    except Exception:
+        pass
+    return odpoved, False
+
+
+def _srovnej_cislo(odpoved: str, vypocet: str):
+    try:
+        seg = (vypocet or "").split("→")[-1]
+        seg = re.sub(r"^\s*(?:výsledek\s*=\s*|[a-zA-Z_]\w*\s*=\s*)", "", seg.strip())
+        seg = re.split(r"\s\(předpoklad", seg)[0].strip().rstrip(".")
+        seg = re.sub(r"\s*\([^()]*\)\s*$", "", seg).strip()        # „15 000 J (15 kJ)“
+        if seg.lower() in _DNY_TYDNE:
+            jine = {d for d in _DNY_TYDNE if re.search(r"\b%s\b" % d, odpoved, re.I)}
+            if seg.lower() not in {d.lower() for d in jine} and len(jine) == 1:
+                d = jine.pop()
+                return re.sub(r"\b%s\b" % d, seg, odpoved, flags=re.I), True
+            return odpoved, False
+        m = re.match(r"(-?\d[\d\s ]*(?:,\d+)?)\s*(.*)$", seg)
+        if not m:
+            return odpoved, False
+        hod, jed = _num(m.group(1)), m.group(2).strip()
+        rod = next((rx for k, rx in _JEDN_RODINY if re.fullmatch(rx, jed)), None)
+        if hod is None or not rod:
+            return odpoved, False
+        rx = re.compile(r"(?<![\d,.])(\d{1,3}(?:[  ]\d{3})+|\d+)(?:,(\d+))?\s*(" + rod + r")(?![\w/])")
+        kand = [(mm, _num(mm.group(1) + ("," + mm.group(2) if mm.group(2) else ""))) for mm in rx.finditer(odpoved)]
+        if any(v is not None and abs(v - hod) < 1e-6 for _, v in kand):
+            return odpoved, False                 # výsledek v odpovědi je
+        jine = {v for _, v in kand if v is not None}
+        if len(jine) != 1:
+            return odpoved, False
+        spatne = jine.pop()
+        cil = m.group(1).strip()
+        out, kon = [], 0
+        for mm, v in kand:
+            if v == spatne:
+                out.append(odpoved[kon:mm.start(1)])
+                out.append(cil)
+                kon = mm.end(2) if mm.group(2) else mm.end(1)
+        out.append(odpoved[kon:])
+        return "".join(out), True
+    except Exception:
+        return odpoved, False
