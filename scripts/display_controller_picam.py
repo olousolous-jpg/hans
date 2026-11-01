@@ -1688,6 +1688,21 @@ class PicamDisplayController:
         self._zprava_o_zamavani(_jmeno)
         self._snimek_zamavani(_bbox, _jmeno)
 
+        # HANS_WAVE_GAME_MUTE_V1 (30. 10., uživatel) — při herním módu sedí někdo
+        # u PC přímo před kamerou a ruce na myši/klávesnici dělají „zamávání“:
+        # ~46 dní logu 88 mávnutí při hře (členka domácnosti 48, host 27) × 72 mimo hru.
+        # Při hře BEZ pozdravu a bez zprávy na Matrix; snímek se ukládá dál
+        # (sběr gest). Prahy gest beze změny. Vypínač gesture.wave_mute_in_game.
+        if self.config.get("gesture", {}).get("wave_mute_in_game", True):
+            try:
+                from scripts.ollama_client import game_mode_on as _gm
+                _hra = bool(_gm())
+            except Exception:
+                _hra = False
+            if _hra:
+                _syslog.info("gesto: zamávání při hře → bez pozdravu (%s)", _jmeno)
+                self._snimek_zamavani(_bbox, _jmeno)
+                return
     def _snimek_zamavani(self, bbox, jmeno, slozka="data/gesta"):  # HANS_GESTURE_WAVE_SNAP_V1
         """Ulozi snimek v okamziku zachytu do data/gesta/ (MODRY ramecek
         = co bylo povazovano za dlan).
