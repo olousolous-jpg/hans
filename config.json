@@ -763,7 +763,9 @@
             "enabled": true,
             "min_interval_days": 2,
             "max_age_days": 10
-        }
+        },
+        "flux_prompt": true,
+        "_flux_prompt_note": "HANS_ART_FLUX_PROMPT_V1 (30. 10.) — zadání malby pro FLUX celými větami (bez štítků kvality, médium ve větě, lekce jako věta, negativní lekce kladně jen u člověka). Sny NE (zůstávají snové, uživatel). Měření data/mereni/flux_30_10/ (přemalování na výtku „realisticky“: staré kreslené, nové realistické). Zapnuto uživatelem 30. 10."
     },
     "unknown_tracker": {
         "enabled": false,

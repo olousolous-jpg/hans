@@ -144,8 +144,12 @@ _DREAM_SCENE_SYSTEM_FIGURE = (
     "evocative, painterly. "
     "IMPORTANT: the dreamer tells the dream in FIRST PERSON and HE APPEARS IN "
     "THE IMAGE as a visible human figure: an older gentleman in a dark suit. "
-    "Write him into the scene explicitly (for example 'an older gentleman in a "
-    "dark suit walking up the crumbling staircase'). NEVER address the viewer "
+    # HANS_DREAM_NO_STAIRS_V1 (30. 10.) — příklad „walking up the crumbling
+    # staircase“ model opisoval: schodiště v 10 z 29 snových maleb, ve snech 1 z 30;
+    # obecný příklad: 4 → 1 z 10 (ten jeden sen schody opravdu zmiňuje)
+    "Write him into the scene explicitly (name him as 'an older gentleman in a "
+    "dark suit' and show him doing exactly what the dream says, in the place "
+    "the dream describes). NEVER address the viewer "
     "as 'you' and never use a bare gerund without a subject. "
     "Proper names of people, pets or toys are NAMES: keep them exactly as written and NEVER translate them — a name that happens to look like an ordinary word is still a name. Translate every other concrete noun faithfully and literally; never swap it for something that merely sounds similar. "
         "Keep what the dream literally mentions, render it dreamlike. "
@@ -427,6 +431,15 @@ _KW_SYSTEM = (
     "Diffusion prompt keywords that DESCRIBE THE DESIRED VISUAL RESULT "
     "(e.g. 'warm golden light, asymmetric composition, sharp foreground'). "
     "No verbs like introduce/explore, no negatives, no full sentences. "
+    # HANS_ART_LESSON_KW_TECHNIKA_V1 (31. 10.) — lekce vzniká z obsahu
+    # PŘEDCHOZÍHO obrazu a klíčová slova jdou do DALŠÍHO, jiného: 31 z 87
+    # lekcí neslo předměty („layered books“ u slona, „monkey faces“, „apple“).
+    # Zákaz předmětů: 31 → 11 z 87, pestrost slov zachována. Přísnější přepis
+    # zadání (výčet technik) měl 3/87, ale „shallow depth“ v 31/85 → zamítnut.
+    # Měření data/mereni/art_kw_31_10/.
+    "NEVER name WHAT is depicted (no objects, people, body parts, faces, eyes, "
+    "poses, animals, plants, places or materials from the guidance): the next "
+    "painting has a different subject, so keep only how it is painted. "
     "Output ONLY the keywords.")
 
 
@@ -701,6 +714,7 @@ from scripts.hans_art_hodnoceni import _person_negative   # ROZDELENI_PRIKAZU_V1
 
 
 from scripts.hans_art_hodnoceni import _lesson_negatives   # ROZDELENI_PRIKAZU_V1 — přesunuto
+from scripts.hans_art_hodnoceni import _lesson_positives   # HANS_ART_FLUX_PROMPT_V1
 
 
 def _slug(title: str) -> str:
@@ -851,6 +865,23 @@ def _render_image(config: dict, title: str, reflection: str, db_path: str = "",
                 _ipa_name, float(ref_weight))
             _log.info("art: FLUX+PuLID — podoba z %s (w=%.2f)", ref_image, ref_weight)
         elif _use_flux:
+            # HANS_ART_FLUX_PROMPT_V1 — FLUX negativ nečte: ponaučení „vyhni se
+            # deformovaným rukám“ (dřív `_lesson_negatives`, u FLUXu zahozené) jako
+            # kladná věta na konec promptu
+            if db_path and bool(acfg.get("flux_prompt", False)) and \
+                    scene_system not in (_DREAM_SCENE_SYSTEM, _DREAM_SCENE_SYSTEM_FIGURE):
+                _kl = _lesson_positives(_recent_lessons(db_path))
+                # jen když je v zadání člověk — měření 30. 10.: lekce o rukou
+                # přilepila „hands with five fingers“ i ke slonovi na kole
+                if _kl and not re.search(r"\b(man|men|woman|women|person|people|figure|"
+                                         r"boy|girl|child|children|king|queen|lady|"
+                                         r"musician|violinist|pianist|artist|painter|dancer|"
+                                         r"singer|soldier|knight|warrior|monk|emperor|"
+                                         r"scientist|reader|writer|player|portrait|hands?)s?\b", prompt, re.I):
+                    _kl = ""
+                if _kl:
+                    prompt = prompt.rstrip(" ,") + " " + _kl
+                    _log.info("art: HANS_ART_FLUX_PROMPT_V1 kladně z ponaučení: %s", _kl)
             wf = _comfy_workflow_flux(ckpt, prompt, seed, w, h,
                                       int(acfg.get("flux_steps", 20)),
                                       float(acfg.get("flux_guidance", 3.5)))

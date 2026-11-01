@@ -151,6 +151,53 @@ def _translate_subject(config: dict, subject_cs: str, en_nazev: str = "",
     return (out or "").strip().strip('."\'').splitlines()[0][:60] if out else ""
 
 
+# HANS_ART_FLUX_PROMPT_V1 (30. 10., NAPADY „Zadání pro malování přepsat na
+# FLUX“) — malování jede FLUX.1-dev (`hans_art.use_flux`), ale všechna zadání
+# scén píšou „SDXL prompt“: výčet čárkami a štítky kvality („masterful, rich
+# detail“). FLUX čte přirozený jazyk (T5) a štítky mu nepomáhají; negativ
+# nepoužívá vůbec. Zde se SDXL zadání DOPLNÍ pokynem pro FLUX (osm systémových
+# zadání se nepřepisuje) a výstup se dočistí. Vypínač `hans_art.flux_prompt`.
+_FLUX_SYSTEM_DOPLNEK = (
+    "\n\nIMPORTANT — TARGET MODEL IS FLUX.1, NOT SDXL. FLUX understands natural "
+    "language, so IGNORE any instruction above about keyword lists or ending with "
+    "quality keywords. Write 2-4 flowing English sentences, 40-80 words, in this "
+    "order: the main subject (who/what, concrete appearance) → what is happening → "
+    "the artistic medium and technique → the setting → the light and colour → the "
+    "composition and viewpoint. No comma-separated tag lists, no words like "
+    "masterful, high quality, best quality, highly detailed, 8k, trending. Describe "
+    "what SHOULD be visible; never write what should be absent.")
+_FLUX_STITKY = re.compile(
+    r",?\s*\b(masterful|masterpiece|high quality|best quality|highly detailed|"
+    r"ultra detailed|rich detail|8k|4k|trending on artstation|award[- ]winning|"
+    r"sharp focus|hdr)\b\.?", re.I)
+
+
+def _flux_prompt(config: dict) -> bool:
+    a = _ha._acfg(config)
+    return bool(a.get("use_flux", False)) and bool(a.get("flux_prompt", False))
+
+
+# výchozí koncovky systémových zadání („End with: oil painting…“) — u FLUXu se
+# perou s vybraným médiem (měření 30. 10.: „Ink illustration… oil painting,
+# expressive mood“, „impressionistic… digital painting, atmospheric, detailed“)
+_FLUX_VYCHOZI_KONCE = re.compile(
+    r"(?:^|(?<=[.,;]))\s*(oil painting, (?:atmospheric lighting|expressive mood|dreamlike surreal "
+    r"atmosphere, soft hazy light)|digital painting, atmospheric, detailed, artistic)\b[,.]?", re.I)
+
+
+def _flux_docisti(p: str) -> str:
+    """Pryč štítky kvality, výchozí koncovky a koncový výčet; věty zůstanou."""
+    p = _FLUX_VYCHOZI_KONCE.sub("", p or "")
+    p = _FLUX_STITKY.sub("", p)
+    p = re.sub(r"\s*[;,]\s*(?=[.;,])", "", p)     # „thought., the“ / „;,“ po výřezu
+    p = re.sub(r"\.\s*,\s*", ". ", p)
+    p = re.sub(r"\s{2,}", " ", p).strip(" ,;")
+    p = re.sub(r"\s+,", ",", p)
+    if p and p[-1] not in ".!?":
+        p += "."
+    return p[:900]
+
+
 def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str = "",
                   system: str = None, source_intro: str = None,
                   en_fallback: str = None, prev: dict = None,
@@ -316,13 +363,28 @@ def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str =
         user += ("Craft notes from recent pieces (secondary to the intent above):"
                  "\n- " + "\n- ".join(lessons) + "\n\n")
         _ha._log.info("art: scene prompt zohledňuje %d ponaučení", len(lessons))
+    # HANS_ART_FLUX_PROMPT_V1 — sny NE (uživatel 30. 10.: „sny mají být snové,
+    # starý byl lepší“) → snová zadání zůstávají v dosavadní podobě
+    _flux = _flux_prompt(config) and system not in (
+        getattr(_ha, "_DREAM_SCENE_SYSTEM", None), getattr(_ha, "_DREAM_SCENE_SYSTEM_FIGURE", None))
     if medium:
-        user += ("MEDIUM: render this as %s (or another fine-art medium if it "
-                 "truly suits the subject better). END the SDXL prompt with the "
-                 "chosen medium's keywords — this OVERRIDES any default medium.\n"
-                 % medium)
+        if _flux:
+            user += ("MEDIUM: render this as %s (or another fine-art medium if it "
+                     "truly suits the subject better). Name the medium and its technique "
+                     "INSIDE a sentence — this OVERRIDES any default medium.\n"
+                     % medium.split(",")[0])
+        else:
+            user += ("MEDIUM: render this as %s (or another fine-art medium if it "
+                     "truly suits the subject better). END the SDXL prompt with the "
+                     "chosen medium's keywords — this OVERRIDES any default medium.\n"
+                     % medium)
         _ha._log.info("art: médium malby: %s", medium.split(",")[0])
-    user += "Write the SDXL prompt. Reply in ENGLISH ONLY — no Chinese, Japanese or other non-English words."
+    if _flux:
+        user += ("Write the FLUX prompt as described. Reply in ENGLISH ONLY — no "
+                 "Chinese, Japanese or other non-English words.")
+        system = (system or _ha._PROMPT_SYSTEM) + _FLUX_SYSTEM_DOPLNEK
+    else:
+        user += "Write the SDXL prompt. Reply in ENGLISH ONLY — no Chinese, Japanese or other non-English words."
     try:
         raw = ollama_generate(
             model, user, system=(system or _ha._PROMPT_SYSTEM), config=config,
@@ -367,6 +429,8 @@ def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str =
             _ha._log.warning('art: české slovo „%s" v promptu zůstalo i po přepisu', leak)
         else:
             _ha._log.warning('art: český únik „%s", ale překlad nevyšel', leak)
+    if _flux:
+        return _flux_docisti(p2)
     return p2[:600]
 
 
@@ -427,7 +491,12 @@ def _scene_prompt(config: dict, title: str, reflection: str, db_path: str = "",
                   "poslední lekce vynechána (výtku nese opravený námět)")
         return p
     _l, kw = _ha._lesson_keywords(config, db_path)
-    if kw:
+    _sys = kwargs.get("system") or (args[0] if args else None)
+    if kw and _flux_prompt(config) and _sys not in (
+            getattr(_ha, "_DREAM_SCENE_SYSTEM", None), getattr(_ha, "_DREAM_SCENE_SYSTEM_FIGURE", None)):   # HANS_ART_FLUX_PROMPT_V1 — věta, ne výčet
+        p = p.rstrip(" ,.;") + ". Pay particular attention to: " + kw.strip(" ,.;") + "."
+        _ha._log.info("art: HANS_ART_LESSON_KEYWORDS_V1 (FLUX) → do promptu: %s", kw)
+    elif kw:
         p = p.rstrip(" ,.;") + ", " + kw
         _ha._log.info("art: HANS_ART_LESSON_KEYWORDS_V1 → do promptu: %s", kw)
     return p

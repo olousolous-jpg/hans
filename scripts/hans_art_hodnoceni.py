@@ -640,6 +640,20 @@ def _person_negative(db_path: str) -> str:
     return ", ".join(dict.fromkeys(", ".join(parts).split(", ")))
 
 
+def _lesson_positives(lessons: list) -> str:
+    """HANS_ART_FLUX_PROMPT_V1 — totéž co `_lesson_negatives`, ale kladně (FLUX
+    negativ nečte). Věta nebo ''."""
+    blob = " ".join(lessons).lower()
+    kus = []
+    if any(k in blob for k in ("hand", "finger", "ruce", "ruka", "prst")):
+        kus.append("natural, anatomically correct hands with five fingers")
+    if any(k in blob for k in ("face", "facial", "obličej", "tvář", "anatom")):
+        kus.append("well-formed, natural facial features")
+    if any(k in blob for k in ("figure", "body", "person", "postav", "figur", "limb")):
+        kus.append("a natural, balanced pose with correct proportions")
+    return ("Show " + "; ".join(kus) + ".") if kus else ""
+
+
 def _lesson_negatives(lessons: list) -> str:
     """Deterministicky odvodí extra negativní termy z ponaučení (keyword trigger)."""
     blob = " ".join(lessons).lower()
