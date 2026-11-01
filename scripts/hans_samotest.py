@@ -227,6 +227,17 @@ def ohodnot(odpoved: str, polozka: dict) -> str:
                 # HANS_SAMOTEST_KMEN_PAD_V1 (28. 10.: „v České Lípě“ × „Česká Lípa“
                 # → chybně) — kmen bez koncovky, krátké slovo aspoň 3 znaky
                 ok = ok or any(w[:max(3, min(5, len(w) - 1))] in f for w in slova)
+                # HANS_SAMOTEST_PAD_PALATAL_V1 (1. 11.: „v Praze“ × „Praha“ → chybně) —
+                # v 6. pádě se mění souhláska před koncovkou (h→z, k→c, g→z, ch→š):
+                # kmen se zaměněnou souhláskou + koncovka, celé slovo (ne „prázdný“)
+                for w in slova:
+                    if ok or len(w) < 4 or w[-1] not in "aeiouy":
+                        continue
+                    b = w[:-1]
+                    alt = (b[:-2] + "s") if b.endswith("ch") else \
+                        b[:-1] + {"h": "z", "k": "c", "g": "z"}.get(b[-1], b[-1])
+                    if alt != b and re.search(r"\b%s[aeiouy]\w{0,3}\b" % re.escape(alt), f):
+                        ok = True
             elif slova:
                 ok = ok or slova[-1][:5] in f
     if ok:
