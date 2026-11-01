@@ -98,6 +98,65 @@ def ohlaska(text: str, post: dict = None, rec: dict = None) -> str:
     return ""
 
 
+# HANS_BLUESKY_JMENA_V1 (30. 10., uživatel: „ukládat jména, která tam padnou,
+# a zkusit o nich zjistit víc“) — osoby zmíněné v přečteném příspěvku → Koláčovy
+# podněty (zvenku), dohledají se běžnou cestou podnětů. Agenti píšou i malými
+# („vermeer“, „shadlen's“) → každé slovo / dvojice slov jako přesný článek lokální
+# Wikipedie. 📏 37 příspěvků: jen OSOBY spolehlivé (Caravaggio, Jan Vermeer,
+# Catullus); „dílo“ = šum (running → Running, last night → Last Night, die hard →
+# Smrtonosná past), místa taky (most → Most) → nebrat.
+def jmena_z_textu(text: str) -> list:
+    """[titul článku] osob zmíněných v textu (bez rozcestníků). Nikdy nehází."""
+    out = []
+    try:
+        from scripts import hans_wiki_offline as wo
+        from scripts.kolac_podnety import _typ_clanku
+        if not wo.dostupna():
+            return []
+        slova = re.findall(r"[A-Za-zÀ-ž][\w\-]+(?:['’]s)?", text or "")
+        for i in range(len(slova)):
+            for n in (2, 1):
+                kus = " ".join(re.sub(r"['’]s$", "", w) for w in slova[i:i + n])
+                if len(kus) < 5:
+                    continue
+                r = wo._cil(kus[0].upper() + kus[1:])
+                if not r or r[1] in out:
+                    continue
+                if wo._db().execute("SELECT rozcestnik FROM clanek WHERE id=?",
+                                    (r[0],)).fetchone()[0]:
+                    continue
+                if _typ_clanku(r) == "osoba":
+                    out.append(r[1])
+                    break
+    except Exception as e:
+        _log.debug("HANS_BLUESKY_JMENA_V1: %s", e)
+    return out
+
+
+def uloz_podnety(db: str, jmena: list, agent: str) -> int:
+    """Neznámé osoby do zásoby Koláčových podnětů (tema „zvenku: Bluesky …“)."""
+    if not jmena:
+        return 0
+    from scripts import kolac_podnety as kp
+    n = 0
+    con = _conn(db)
+    try:
+        uz = {r[0].lower() for r in con.execute("SELECT nazev FROM kolac_podnety")}
+        for j in jmena:
+            if j.lower() in uz or kp.v_pameti(db, j):
+                continue
+            con.execute("INSERT INTO kolac_podnety (ts, tema, nazev, typ, stav) "
+                        "VALUES (?,?,?,?,'novy')",
+                        (time.time(), "zvenku: Bluesky (%s)" % agent[:40], j, "osoba"))
+            n += 1
+        con.commit()
+    finally:
+        con.close()
+    if n:
+        _log.info("HANS_BLUESKY_JMENA_V1: z příspěvku %s +%d podnětů: %s", agent, n, jmena)
+    return n
+
+
 def podezrele(shrnuti: str) -> bool:
     return bool(_PODEZRELE.search(shrnuti or ""))
 
@@ -208,6 +267,10 @@ def precti(config: dict, db: str) -> int:
         finally:
             con.close()
         _log.info("HANS_BLUESKY_CTENI_V1: přečteno %s — %.120s", p["autor"], shr)
+        try:   # HANS_BLUESKY_JMENA_V1 — originál i české shrnutí
+            uloz_podnety(db, jmena_z_textu(p["text"] + " " + shr), p["jmeno"])
+        except Exception as _je:
+            _log.debug("HANS_BLUESKY_JMENA_V1: %s", _je)
         n += 1
     return n
 

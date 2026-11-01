@@ -552,7 +552,105 @@ def _vyber_s_podilem(config: dict, db: str):
                 return p
         except Exception as e:
             _log.warning("KOLAC_PODNETY_ZVENKU_V1 selhalo: %s", e)
-    return vyber(db)
+    return vyber_zajimavy(config, db)
+
+
+# KOLAC_PODNET_VYBER_HANS_V1 (30. 10.) — podnět ze zásoby si vybere Hans:
+# program vylosuje několik kandidátů, Hans (hans-czech) zvolí, co ho nejvíc
+# zajímá a na co může navázat (OMNI/Voyager: „zajímavé a zvládnutelné“).
+# Dřív náhodně (ORDER BY RANDOM()). Ohlas podnětů z historie změřit nešlo
+# (shoda slov v deníku = šum: „Účel“, „Sklad“), obecné slovo se nepozná ani
+# z tvaru (polyfonie, golem se píší malým) → soud nechán Hansovi. Selhání
+# modelu = náhodný výběr jako dřív, herní mód = odložit. Vypínač kolac_exam.podnety_vyber_hans.
+_SYS_VYBER = (
+    "Jsi Hans. Kamarád ti nabízí několik věcí, o kterých si můžete povídat a které "
+    "si pak dohledáš. Vyber JEDNU, o které toho víš nejméně a která leží nejdál od "
+    "toho, co už studuješ — chceš poznat něco jiného než obvykle. Musí to být "
+    "konkrétní věc s vlastním jménem (osoba, dílo, místo, událost, pojmenovaná teorie), "
+    "ne obecné slovo jako „účel“, „sklad“ nebo „posun“. Spojitost se svými tématy "
+    "nehledej. Odpověz jen JSON: {\"cislo\": N, \"proc\": \"jedna krátká věta v 1. osobě\"}")
+
+
+def vyber_zajimavy(config: dict, db: str):
+    """Jako `vyber`, ale z `podnety_vyber_kandidatu` (4) kandidátů vybírá Hans;
+    vrací dict řádku + 'proc' a 'kandidati'. Nikdy nehází."""
+    pc = _cfg(config)
+    n = int(pc.get("podnety_vyber_kandidatu", 4))
+    if not bool(pc.get("podnety_vyber_hans", True)) or n < 2:
+        return vyber(db)
+    c = _conn(db)
+    try:
+        rows = [dict(r) for r in c.execute(
+            "SELECT * FROM kolac_podnety WHERE stav='novy' ORDER BY RANDOM() LIMIT ?",
+            (n * 2,))]
+        studuje = [r[0] for r in c.execute(
+            "SELECT topic FROM study_program WHERE status IN ('active','completed') "
+            "ORDER BY id DESC LIMIT 6")]
+        nedavno = [r[0] for r in c.execute(
+            "SELECT coalesce(nullif(heslo,''),nazev) FROM kolac_podnety "
+            "WHERE stav='polozeno' ORDER BY polozeno_ts DESC LIMIT 5")]
+    except Exception as e:
+        _log.debug("KOLAC_PODNET_VYBER_HANS_V1: %s", e)
+        return vyber(db)
+    finally:
+        c.close()
+    kand = []
+    for r in rows:              # bez věcí, které by poloz stejně vyřadil
+        if len(kand) >= n:
+            break
+        if v_pameti(db, r["nazev"]):
+            _oznac(db, r["id"], "v_pameti")
+            continue
+        kand.append(r)
+    if len(kand) < 2:
+        return kand[0] if kand else vyber(db)
+    random.shuffle(kand)
+    try:
+        from scripts.ollama_client import game_mode_on, ollama_generate
+        if game_mode_on():
+            # herní mód → výběr se odloží (uživatel 30. 10.): None = teď nic
+            # nového, podnět zůstane v zásobě na příště
+            _log.info("KOLAC_PODNET_VYBER_HANS_V1: herní mód → výběr odložen")
+            return None
+        def _popis(r):
+            t = (r.get("tema") or "")
+            zdroj = ("z článku „%s“" % t[7:]) if t.startswith("fakta: ") else \
+                    ("k tématu „%s“" % t) if t and not t.startswith("zvenku") else ""
+            return "%s (%s%s)" % (r["nazev"], {"osoba": "osoba", "dilo": "dílo", "misto": "místo"}
+                                  .get(r.get("typ"), "pojem"), ", " + zdroj if zdroj else "")
+        dotaz = ("Co už studuji nebo jsem studoval (od toho chci dál): %s\nO čem jsem mluvil nedávno: %s\n\n"
+                 "Nabídka:\n%s\n\nJSON:" % (
+                     "; ".join(studuje) or "nic", "; ".join(nedavno) or "nic",
+                     "\n".join("%d. %s" % (i + 1, _popis(r)) for i, r in enumerate(kand))))
+        model = ((config.get("evening_reflection", {}) or {}).get("voice_model")
+                 or "hans-czech:latest")
+        raw = ollama_generate(model, dotaz, system=_SYS_VYBER, config=config, timeout=60,
+                              options={"temperature": 0.5, "num_ctx": 4096,
+                                       "num_predict": 120}) or ""
+        m = re.search(r"\{.*?\}", raw, re.S)
+        d = json.loads(m.group(0)) if m else {}
+        i = int(d.get("cislo") or 0)
+        if not 1 <= i <= len(kand):
+            raise ValueError("číslo mimo nabídku: %r" % raw[:80])
+        vol = dict(kand[i - 1])
+        vol["proc"] = " ".join(str(d.get("proc") or "").split())[:240]
+        vol["kandidati"] = [r["nazev"] for r in kand]
+        # zdůvodnění o jiném kandidátovi (měření 30. 10.: 1 z 16 — vybral
+        # Breuera, psal o Saldaňě) → výběr platí, věta ne
+        def _kl(nm):
+            w = [x for x in re.findall(r"\w+", re.sub(r"\(.*?\)", "", nm)) if len(x) >= 4]
+            return w[-1][:5].lower() if w else ""
+        _pl = vol["proc"].lower()
+        if _kl(vol["nazev"]) not in _pl and any(
+                _kl(r["nazev"]) and _kl(r["nazev"]) in _pl for r in kand if r is not kand[i - 1]):
+            _log.info("KOLAC_PODNET_VYBER_HANS_V1: zdůvodnění mluví o jiném kandidátovi → zahozeno")
+            vol["proc"] = ""
+        _log.info("KOLAC_PODNET_VYBER_HANS_V1: z %s vybral „%s“ — %s",
+                  vol["kandidati"], vol["nazev"], vol["proc"])
+        return vol
+    except Exception as e:
+        _log.info("KOLAC_PODNET_VYBER_HANS_V1: výběr modelem nevyšel (%s) → náhodně", e)
+        return kand[0]
 
 
 def vyber(db: str):
@@ -655,6 +753,7 @@ def poloz(config: dict, db: str, asker: str):
                   "noční ověření", p["nazev"], p.get("tema") or "", heslo)
         return {"otazka": ot, "odpoved": odp, "heslo": heslo,
                 "nazev": p["nazev"], "tema": p.get("tema") or "",
-                "uvod": p.get("kontext") or ""}
+                "uvod": p.get("kontext") or "",
+                "proc": p.get("proc") or "", "kandidati": p.get("kandidati") or []}
     _log.info("KOLAC_PODNETY_V1: %d podnětů po sobě nevyšlo → volný hovor", hledano)
     return None

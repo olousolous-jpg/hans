@@ -1272,6 +1272,69 @@ class HansDialog:
             db.close()
         return r
 
+    def _fakta_o_sobe(self, dni: int = 7) -> list:
+        """HANS_FAKTA_O_SOBE_V1 (30. 10.) — pár PRAVDIVÝCH vět o Hansovi, které
+        spočítá program (deník), aby měl v debatě o sobě z čeho brát příklady.
+        Doloženo 30. 10.: Koláč „předlož jeden příklad…“ → Hans uhnul obecnou
+        větou, protože konkrétní příklad o sobě neměl odkud vzít (směl jen
+        „podle toho, co skutečně ví“, ale nic nedostal). Nikdy nehází."""
+        import sqlite3 as _sql, json as _js
+        od = time.time() - dni * 86400
+        out = []
+        try:
+            con = _sql.connect("file:%s?mode=ro" % self._diary_path, uri=True, timeout=3)
+        except Exception:
+            return []
+        try:
+            n = lambda et: con.execute("SELECT count(*) FROM diary WHERE event_type=? "
+                                       "AND ts>=?", (et, od)).fetchone()[0]
+            i = n("introspection")
+            if i:
+                out.append("Za poslední týden jsem si zapsal %d vlastních úvah do deníku, "
+                           "které jsem nikomu neposílal." % i)
+            s = n("dream")
+            if s:
+                out.append("Za týden jsem měl %d snů a zapsal si je." % s)
+            zdroje = {}
+            for (d,) in con.execute("SELECT data FROM diary WHERE event_type='artwork' "
+                                    "AND ts>=?", (od,)):
+                try:
+                    z = _js.loads(d or "{}").get("source") or "?"
+                except Exception:
+                    z = "?"
+                zdroje[z] = zdroje.get(z, 0) + 1
+            if zdroje:
+                out.append("Za týden jsem namaloval %d obrazů%s." % (
+                    sum(zdroje.values()), " (%d podle vlastního snu)" % zdroje["dream"]
+                    if zdroje.get("dream") else ""))
+            r = con.execute("SELECT title FROM diary WHERE event_type IN "
+                            "('book_completion_reflection','study_mastery') AND ts>=? "
+                            "ORDER BY ts DESC LIMIT 2", (od,)).fetchall()
+            if r:
+                out.append("Nedávno jsem dočetl nebo dostudoval: %s." % "; ".join(
+                    _r[0].split(":", 1)[-1].split("—", 1)[-1].strip() for _r in r))
+            r = con.execute("SELECT title, data FROM diary WHERE event_type='kolac_podnet' "
+                            "AND ts>=? AND data LIKE '%\"proc\": \"_%' ORDER BY ts DESC LIMIT 1",
+                            (od,)).fetchone()
+            if r:
+                try:
+                    pr = _js.loads(r[1]).get("proc") or ""
+                except Exception:
+                    pr = ""
+                if pr:
+                    out.append("Z nabídky jsem si sám vybral téma „%s“, protože: %s" % (
+                        r[0].replace("Podnět: ", ""), pr[:160]))
+            l = con.execute("SELECT count(*) FROM diary WHERE event_type='lesson_learned' "
+                            "AND ts>=? AND note LIKE '%nočním ověření%'", (od,)).fetchone()[0]
+            if l:
+                out.append("Při nočních kontrolách jsem u %d svých odpovědí zjistil, že jsem se "
+                           "spletl." % l)
+        except Exception as e:
+            _log.debug("HANS_FAKTA_O_SOBE_V1: %s", e)
+        finally:
+            con.close()
+        return out[:6]
+
     def _run_bluesky_debata(self) -> bool:
         """True = rozhovor o přečteném proběhl."""
         import re as _re
@@ -1300,6 +1363,11 @@ class HansDialog:
                  f"a jestli to platí i pro něj — i on je umělá bytost, která si vede "
                  f"zápisky a deník. O sobě mluvte jen podle toho, co skutečně víte; "
                  f"nevymýšlejte technické podrobnosti ani zážitky.\n")
+        _fos = self._fakta_o_sobe()   # HANS_FAKTA_O_SOBE_V1
+        if _fos:
+            scene += (f"CO O {name.upper()}OVI SKUTEČNĚ VÍME (spočítal program z jeho deníku; "
+                      f"smí se použít jako příklad, nic dalšího o sobě si nevymýšlej):\n"
+                      + "\n".join("  - " + x for x in _fos) + "\n")
         hans_sys = _build_hans_solo_system(self.config, tema)
         km = self._kolac()
         kolac_sys = km.build_system(tema, "") if km else _build_system_prompt(self.config)
@@ -1318,9 +1386,15 @@ class HansDialog:
                 ukol = (f"Teď řekni JEDNU repliku jako {name}: řekni svůj VLASTNÍ názor na "
                         f"tu myšlenku — v čem s ní souhlasíš a v čem ne — a jestli se tě "
                         f"týká.")
+                if _fos:   # HANS_FAKTA_O_SOBE_V1 — jinak jen mlhavě „můj deník…“
+                    ukol += (" Opři se o JEDEN konkrétní údaj z bloku CO O "
+                             f"{name.upper()}OVI SKUTEČNĚ VÍME a řekni ho přesně — číslo napiš ČÍSLICEMI (267, ne slovy).")
             else:
                 ukol = (f"Teď řekni JEDNU repliku jako {name}: uzavři to — k čemu ses "
                         f"dobral? Klidně i k tomu, že nevíš.")
+                if _fos:   # HANS_FAKTA_O_SOBE_V1 — na „předlož příklad“ má z čeho
+                    ukol += (" Když Koláč chce příklad, dej ho z bloku CO O "
+                             f"{name.upper()}OVI SKUTEČNĚ VÍME, nic jiného o sobě nevymýšlej.")
             user = scene + "\nDOSAVADNÍ ROZHOVOR:\n" + convo_txt + "\n\n" + ukol
             line = self._one_line(kolac_model if je_kolac else hans_model,
                                   kolac_sys if je_kolac else hans_sys, user, base)
@@ -1380,7 +1454,10 @@ class HansDialog:
                     (time.time(), "kolac_podnet",
                      "Podnět: %s" % v["nazev"][:80], prepis,
                      __import__("json").dumps(
-                         {"tema": v["tema"], "heslo": v["heslo"]},
+                         {"tema": v["tema"], "heslo": v["heslo"],
+                          # KOLAC_PODNET_VYBER_HANS_V1 — proč si to Hans vybral
+                          "proc": v.get("proc") or "",
+                          "kandidati": v.get("kandidati") or []},
                          ensure_ascii=False)))
                 _db.commit()
         except Exception as e:
