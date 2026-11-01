@@ -1032,6 +1032,9 @@ def _overit(h, otazka, prepis, odpoved) -> list:
                                   "text": "Ještě oprava: podle Wikidat je u „%s“ %s %s, ne %s." % (
                                       x["osoba"], _OPRAVA_POPIS[x["p"]], x["wd"], x["udaj"])}
                         break
+        if oprava and not _oprava_veta_sedi(r["veta"], oprava):   # HANS_OVERENI_OPRAVA_VETA_V1
+            _log.info("HANS_OVERENI_OPRAVA_VETA_V1: oprava nesedí na větu → jen log: %s", oprava.get("text", "")[:140])
+            oprava = None
         out.append({"veta": r["veta"], "kandidati": r["kand"], "clanky": [c[0] for c in r["cl"]],
                     "oprava": oprava,
                     "text": _v(txt), "wikidata": _v(wd), "obe": _v(txt + wd),
@@ -1086,6 +1089,84 @@ def _zaloguj(h, kdo, otazka, prepis, cesta, vysl, t0, pripojeno=False):
 # zaloguje. 📏 odečet 23. 10. (`data/mereni/odecet_opravy_23_10/`): po
 # HANS_OVERENI_PLANE_V1 5 návrhů z 360 vět, 5/5 u skutečné chyby. Vypínač
 # `overeni.opravy`. Volá se PŘED uložením odpovědi do historie.
+# HANS_OVERENI_OPRAVA_VETA_V1 (1. 11.) — odečet 40 navržených oprav od 19. 10.: skutečné
+# 17, plané 23 ve třech třídách: (A) rok jiné osoby ve větě (manželka, dítě, „narodila
+# se“ u Masaryka, Václav III. × článek Václav II.), (B) rok jiné události téže věci
+# (zánik NDR × založení, „plány z 1877“, první zmínka, rozpětí „1921–1923“), (C) neúdaj
+# jako údaj („500 knih“ jako rok narození, „Rychnově“ jako autor, libretisté Carmen).
+# Opravu připojit jen, když věta údaj opravdu tvrdí o osobě/věci článku.
+_UDALOST = {
+    "P569": r"narod\w*|narozen\w*|zrodil\w*",
+    "P570": r"zem[řr]\w*|zahynul\w*|úmrt\w*|umrt\w*|skonal\w*|zesnul(?:a|o)?\b|opustil\w*|smrt\w*|zavražd\w*|popraven\w*",
+    "P571": r"založ\w*|zaloz\w*|postaven\w*|postavil\w*|stavb\w*|stavěn\w*|vznikl\w*|vznik\w*|zbudov\w*|vybudov\w*",
+}
+_PRIBUZNY_V = re.compile(r"\b(syn\w*|dcer\w*|dět\w*|dít\w*|manžel\w*|chot\w*|otc\w*|otec|matk\w*|bratr\w*|"
+                         r"sestr\w*|chlap\w*|potom\w*|vnu\w*)\b", re.I)
+_ROZPETI = re.compile(r"(?:\bv\s+letech|\bmezi|\bdo\s+let|\bod)\s+(?:roku\s+)?\d{3,4}\s*(?:[–—-]|a(?:ž)?\s|do\s)", re.I)
+_ROLE = {"P50": r"napsal\w*|sepsal\w*|autor\w*", "P57": r"režír\w*|natočil\w*|režisér\w*"}
+
+
+def _oprava_veta_sedi(veta: str, op: dict) -> bool:
+    try:
+        p, udaj, kl = op.get("p"), str(op.get("udaj") or ""), str(op.get("clanek") or "")
+        v = re.sub(r"\s+", " ", veta or "")
+        # římská číslice: věta jmenuje jiného panovníka téhož jména (Václav III. × Václav II.)
+        mr = re.match(r"(.*\S)\s+([IVX]+)\.?$", re.sub(r"\s*\(.*\)$", "", kl))
+        if mr:
+            jine = re.findall(re.escape(mr.group(1)) + r"\s+([IVX]+)\.", v)
+            if jine and mr.group(2) not in jine:
+                return False
+        if p in _ROLE:
+            if p == "P50" and re.search(r"libret", v, re.I):
+                return False
+            i = v.find(udaj.split()[0]) if udaj else -1
+            pred = v[max(0, i - 40):i] if i >= 0 else ""
+            return bool(i >= 0 and re.search(r"(?:" + _ROLE[p] + r")(?:\s+\w+){0,2}\s*$", pred, re.I)
+                        and not re.search(r"\bpodle\b", pred, re.I))
+        if p not in _UDALOST:
+            return True
+        i = v.find(udaj)
+        if i < 0:
+            m = re.search(r"\d{3,4}", udaj)
+            i = v.find(m.group(0)) if m else -1
+        if i < 0:
+            return False
+        if not re.search(r"\d{4}", udaj) and not re.search(r"\broku?\s*$", v[:i]):
+            return False                                   # „500 knih“ není rok
+        # zápis délky života hned za jménem osoby článku: „Charlotta G. Masaryková (1878–1923)“
+        _jm = r"\W+".join(re.escape(w[:max(3, len(w) - 2)]) + r"\w*"
+                           for w in re.findall(r"\w+", re.sub(r"\s*\(.*\)$", "", kl)))
+        _rok = (re.search(r"\d{3,4}", udaj) or re.search("", "")).group(0)
+        if _jm and _rok and re.search(_jm + r"\s*\(\s*(?:\d{3,4}\s*[–—-]\s*)?" + _rok + r"(?:\s*[–—-]\s*\d{3,4})?\s*\)", v, re.I):
+            return True
+        # část věty s údajem: od poslední hranice (čárka, středník, „ a “, závorka) po údaj
+        _hr = [m.start() for m in re.finditer(r",|;|\s+a\s+|\(|:|(?<![\dIVX])[.!?]\s", v[:i])]
+        zac = _hr[-1] if _hr else -1
+        cast = v[zac + 1:i]
+        if re.match(r"\s*(?:kter\w+|jenž|jež|jehož|jejíž)\b", cast) and len(_hr) >= 1:
+            cast = v[(_hr[-2] + 1 if len(_hr) >= 2 else 0):i]   # „syna Václava, který zemřel…“
+        if mr:   # nejbližší panovník před údajem musí být ten z článku (Ferdinand I. × II.)
+            pred_m = list(re.finditer(re.escape(mr.group(1)) + r"\s+([IVX]+)\.", v[:i]))
+            if pred_m and pred_m[-1].group(1) != mr.group(2):
+                return False
+        if _ROZPETI.search(v[max(0, i - 25):i + len(udaj) + 12]):
+            return False
+        if _PRIBUZNY_V.search(cast) or (p in ("P569", "P570") and re.search(r"\bjej[íi]\w*\b", cast, re.I)):
+            return False
+        if not re.search(r"\b(?:" + _UDALOST[p] + r")", cast, re.I):
+            return False
+        # rod slovesa × rod osoby článku (P21): „narodila se 1878“ u Masaryka
+        q = ((_c().get(kl) or {}).get("p") or {}).get("P21") or []
+        sl = re.search(r"\b(narodil|zemřel|zahynul|zesnul|skonal|opustil)(a|o)?\b", cast, re.I)
+        if sl and q:
+            zena = (sl.group(2) or "").lower() == "a"
+            if (zena and "Q6581097" in q) or (not zena and "Q6581072" in q):
+                return False
+        return True
+    except Exception:
+        return True
+
+
 def opravit(h, ctx) -> None:
     c = (h.config.get("overeni", {}) or {})
     if not (bool(c.get("stin", True)) and bool(c.get("opravy", True))):
