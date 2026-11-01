@@ -193,14 +193,20 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
         url = _cpu_url(config)
         q = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", text or "").strip()
         body = {"model": c.get("model", "qwen3:30b"), "stream": False, "format": "json",
-                "think": False, "keep_alive": c.get("keep_alive", "10m"),
+                "think": False, "keep_alive": c.get("keep_alive", "30m"),
                 "messages": [{"role": "system", "content": _SYS}, {"role": "user", "content": q}],
                 "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 300}}
         t0 = time.time()
-        r = requests.post(url + "/api/chat", json=body, timeout=timeout)
+        r = requests.post(url + "/api/chat", json=body, timeout=max(timeout, float(c.get("timeout", 45))))   # HANS_VYPOCTY_NAHRATI_V1
         d = json.loads(r.json().get("message", {}).get("content", "") or "{}")
     except Exception as e:
         _log.info("%s: model nedostupný (%s)", MARK, str(e)[:80])
+        if "timed out" in str(e):   # HANS_VYPOCTY_NAHRATI_V1 — týž model jako výpočty
+            try:
+                from scripts.hans_vypocty_model import nahrej_na_pozadi
+                nahrej_na_pozadi(config, "timeout fyziky")
+            except Exception:
+                pass
         return None
     vyraz = str(d.get("vyraz") or "").strip()
     _bez = _konstanty_s_oporou(vyraz, q)

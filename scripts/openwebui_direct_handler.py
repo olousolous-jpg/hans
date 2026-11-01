@@ -1133,6 +1133,14 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             pass
         # ── /note příkaz ──────────────────────────────────────────────────
         ctx.stripped = ctx.user_message.strip()
+        # HANS_VYPOCTY_NAHRATI_V1 (1. 11.) — zpráva od člověka → qwen3 pro výpočty nahřát na
+        # pozadí (načtení ~73 s; výpočet čeká jen 25 s). Ne zkoušky Koláče a samotest.
+        if ctx.channel != "zkouska":
+            try:
+                from scripts.hans_vypocty_model import nahrej_na_pozadi
+                nahrej_na_pozadi(self.config, "zpráva v chatu")
+            except Exception:
+                pass
         _r = self._sc_read(ctx)
         if _r is not _POKRACUJ:
             return _r
@@ -2340,7 +2348,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     _vp_fyz = True
             if _vp and not _vp_fyz:
                 ctx.system += ("\n\nVÝPOČET (spočítal program, výsledek je přesný — řekni přesně "
-                               "tento výsledek, nepočítej znovu): %s\n" % _vp)
+                               "tento výsledek, čísla piš číslicemi, nepočítej znovu): %s\n" % _vp)
                 ctx._vypocet = _vp
                 logging.getLogger(__name__).info('HANS_POCTY_V1: %s', _vp)
             if getattr(self, '_grounding_outcome', '') == 'factual_nofacts' and not _vp:
@@ -3380,7 +3388,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # koma osm metrů za sekundu“ místo 19,8 m/s). Chybí-li → krátký řádek navíc.
             try:
                 _vyp = getattr(ctx, '_vypocet', None)
-                if _vyp and ctx.response and getattr(ctx, '_vypocet_fyz', False):
+                if _vyp and ctx.response:   # HANS_VYPOCTY_NAHRATI_V1: i HANS_POCTY_V1 (7 % z 350 → „22,5“)
                     _seg = _vyp.split("→")[-1] if "→" in _vyp else _vyp.split("=")[-1]
                     _seg = re.split(r"\s\(předpoklad", _seg)[0].strip()
                     _seg = re.sub(r"^výsledek\s*=\s*", "", _seg)

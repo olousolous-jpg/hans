@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import re
+import threading
 import time
 import unicodedata
 from typing import Optional
@@ -382,8 +383,8 @@ def fakta_osob(q: str):
 _SYS_OSOBA = (   # HANS_VYPOCTY_WD_V2 — jen když jsou data osoby
     " Write a date of the person ALWAYS as the full datum(...) given above, never as a bare "
     "year. Age at death or how long someone lived = vek(birth, death); age today = vek(birth, "
-    "dnes()); years since death = vek(death, dnes()); years since birth = vek(birth, dnes()); age "
-    "in year Y = Y - birth_year; lifespan in days = dny(birth, death); weekday of birth = "
+    "dnes()); years since death ('kolik je to let, co zemřel', 'kolik let uplynulo od smrti') = vek(death, dnes()) — not the age at death; years since birth = vek(birth, dnes()); age "
+    "in year Y = Y - birth_year; how many years A was older or younger than B = vek(earlier birth, later birth) (compare BIRTH dates, not lifespans); lifespan in days = dny(birth, death); weekday of birth = "
     "den_v_tydnu(birth). Use these dates only for the person they belong to. If the question needs "
     "any other date or fact (e.g. when someone became president, won a prize, wrote a work or "
     "started something), output {\"vyraz\": \"\"}.")
@@ -463,6 +464,63 @@ _SYS = (
     "from its own numbers and today's date (e.g. needs facts about a person), output {{\"vyraz\": \"\"}}.")
 
 
+# HANS_VYPOCTY_NAHRATI_V1 (1. 11.) — qwen3:30b se na CPU Ollamě načítá ~73 s, výpočet čeká
+# 25 s a Ollama při odpojení klienta načítání ZRUŠÍ → po 10 min nečinnosti model už nikdy
+# nenaskočil (test 1. 11.: 12/12 volání „Read timed out“, Hans pak počítal z hlavy).
+# Proto: nahřát na pozadí při zprávě v chatu a po timeoutu, s vlastním dlouhým čekáním.
+_NAHR = {"bezi": False, "ts": 0.0}
+
+
+def _render_bezi() -> bool:
+    try:
+        import sqlite3
+        c = sqlite3.connect("data/hans_diary.db", timeout=2)
+        try:
+            return bool(c.execute("SELECT 1 FROM heavy_jobs WHERE status='running' LIMIT 1").fetchone())
+        finally:
+            c.close()
+    except Exception:
+        return False
+
+
+def nahrej_na_pozadi(config: dict, duvod: str = "") -> bool:
+    """Načte (nebo jen prodlouží) qwen3 na CPU Ollamě ve vlákně; nečeká. Ne při hře,
+    noční dávce ani renderu (RAM na PC)."""
+    c = (config or {}).get("vypocty_model", {}) or {}
+    if not c.get("enabled", True) or not c.get("nahrivat", True):
+        return False
+    if _NAHR["bezi"] or time.time() - _NAHR["ts"] < 60:
+        return False
+    if not _volno() or _render_bezi():
+        return False
+    try:
+        from scripts.hans_book_summary import _cpu_url
+        url = _cpu_url(config)
+    except Exception:
+        return False
+    if not url:
+        return False
+    _NAHR.update(bezi=True, ts=time.time())
+    model, ka = c.get("model", "qwen3:30b"), c.get("keep_alive", "30m")
+
+    def _run():
+        t0 = time.time()
+        try:
+            import requests
+            requests.post(url + "/api/generate", json={"model": model, "keep_alive": ka,
+                          # stejné okno jako výpočet a fyzika — jiné num_ctx = nové načtení
+                          "options": {"num_ctx": 2048}}, timeout=240)
+            if time.time() - t0 > 5:
+                _log.info("HANS_VYPOCTY_NAHRATI_V1: %s načten za %.0f s (%s)", model, time.time() - t0, duvod)
+        except Exception as e:
+            _log.info("HANS_VYPOCTY_NAHRATI_V1: nahřátí selhalo (%s): %s", duvod, str(e)[:80])
+        finally:
+            _NAHR["bezi"] = False
+
+    threading.Thread(target=_run, daemon=True, name="vypocty-nahrati").start()
+    return True
+
+
 def _volno() -> bool:
     try:
         from scripts.ollama_client import game_mode_on, base_slot_busy
@@ -487,7 +545,7 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
         import requests
         from scripts.hans_book_summary import _cpu_url
         body = {"model": c.get("model", "qwen3:30b"), "stream": False, "format": "json", "think": False,
-                "keep_alive": c.get("keep_alive", "10m"),
+                "keep_alive": c.get("keep_alive", "30m"),
                 "messages": [{"role": "system", "content": (_SYS if not _fo else _SYS.replace(
                                  "(e.g. needs facts about a person)", "(e.g. needs facts that are not given)").replace(
                                  "Use ONLY numbers that appear in the question", "Use ONLY numbers that appear "
@@ -497,10 +555,13 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
                                  q + "\n\n" + _fo[0] + _SYS_OSOBA)}],
                 "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 300}}
         t0 = time.time()
-        r = requests.post(_cpu_url(config) + "/api/chat", json=body, timeout=timeout)
+        # HANS_VYPOCTY_NAHRATI_V1: v provozu se na PC přetahuje o CPU (25 s nestačilo, sólo 5–10 s)
+        r = requests.post(_cpu_url(config) + "/api/chat", json=body, timeout=max(timeout, float(c.get("timeout", 45))))
         d = json.loads(r.json().get("message", {}).get("content", "") or "{}")
     except Exception as e:
         _log.info("%s: model nedostupný (%s)", MARK, str(e)[:80])
+        if "timed out" in str(e):
+            nahrej_na_pozadi(config, "timeout výpočtu")   # HANS_VYPOCTY_NAHRATI_V1
         return None
     vyraz = str(d.get("vyraz") or "").strip()
     if not vyraz:
