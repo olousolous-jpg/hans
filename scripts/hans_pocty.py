@@ -104,8 +104,19 @@ def cisla_slovy(text: str) -> str:
             if j > i and text[toks[j - 1].end():toks[j].start()].strip():
                 break                                   # jen mezery mezi slovy
             k = _cs_tok(_f(toks[j].group(0)))
+            # „tři sta a padesát“: „a“ jen mezi stovkami/tisíci a desítkami/jednotkami
+            if (not k and run and _f(toks[j].group(0)) == "a" and run[-1][0] in "sphm"
+                    and j + 1 < len(toks) and (_cs_tok(_f(toks[j + 1].group(0))) or ("",))[0] in ("j", "n")):
+                j += 1
+                continue
             if not k or (k[0] == "p" and not (run and run[-1][0] == "j")):
                 break
+            # pořadí: „čtyři pět“ ani „pět dvacet“ není jedno číslo
+            if run:
+                pk, pv = run[-1]
+                if (k[0] == "j" and (pk == "j" or (pk == "n" and (pv < 20 or pv % 10)))) or \
+                   (k[0] == "n" and pk in ("j", "n")) or (k[0] in ("s", "h") and pk in ("n", "s", "h")):
+                    break
             run.append(k)
             j += 1
         if not run:

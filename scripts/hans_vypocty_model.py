@@ -228,7 +228,8 @@ def _wd_cache() -> dict:
 def _osoba_titul(kus: str):
     from scripts import hans_wiki_offline as wo
     from scripts.kolac_podnety import _typ_clanku
-    for z in [kus] + (wo._prvni_pad_vic(kus) if " " in kus else wo._tvary_slova(kus)):
+    tvary = [kus] + (wo._prvni_pad_vic(kus) if " " in kus else wo._tvary_slova(kus))
+    for z in tvary:
         r = wo._cil(z[0].upper() + z[1:])
         if not r:
             continue
@@ -239,7 +240,78 @@ def _osoba_titul(kus: str):
                 continue
         if _typ_clanku(r) == "osoba":
             return r[1]
+    if " " not in kus:                                   # HANS_VYPOCTY_PRIJMENI_V1
+        for z in tvary:
+            t = _prijmeni_slavna(z[0].upper() + z[1:])
+            if t:
+                return t
     return None
+
+
+# HANS_VYPOCTY_PRIJMENI_V1 (1. 11.) — samotné příjmení („kolik by bylo Havlovi“, „od
+# smrti Smetany“): kandidáti ze stránky „X (příjmení)“ / rozcestníku, sláva = počet
+# Wikipedií osoby (sitelinks, jeden dotaz). Vezme se, jen když má nejslavnější aspoň 40
+# a 3× víc než druhý — 📏 28 příjmení: Havel 144:17, Smetana 93:10, Kafka 242:14 ✓;
+# Neruda (Pablo 167 : Jan 66), Kennedy, Čapek (110:54), Hašek, Curie → nic (radši žádný
+# výpočet než cizí osoba). Výsledek do mezipaměti data/wd_zivot.json („P:<příjmení>“).
+def _prijmeni_slavna(p: str):
+    try:
+        if len(p) < 3 or not p[:1].isupper():
+            return None
+        c = _wd_cache()
+        if "P:" + p in c:
+            return c["P:" + p] or None
+        from scripts import hans_wiki_offline as wo
+        from scripts.kolac_podnety import _typ_clanku
+        db = wo._db()
+        txt = ""
+        for tt in (p + " (příjmení)", p + " (rozcestník)", p):
+            r = wo._cil(tt)
+            if r:
+                row = db.execute("SELECT rozcestnik, text, titul FROM clanek WHERE id=?", (r[0],)).fetchone()
+                if row and (row[0] or "příjmení" in row[2]):
+                    txt = row[1] or ""
+                    break
+        kand = []
+        for ln in txt.splitlines():
+            m = re.match(r"\s*([^–\n(]{3,60}?)\s*(?:\(|–|,)", ln)
+            if not m:
+                continue
+            tt = m.group(1).strip(" .\"")
+            if _f(p)[:4] not in _f(tt) or len(tt.split()) < 2:
+                continue
+            r = wo._cil(tt)
+            if r and r[1] not in kand and _typ_clanku(r) == "osoba":
+                kand.append(r[1])
+        vys = None
+        if kand:
+            import requests
+            from scripts.hans_facts import USER_AGENT
+            rq = requests.get("https://www.wikidata.org/w/api.php", timeout=4, headers={"User-Agent": USER_AGENT},
+                              params={"action": "wbgetentities", "sites": "cswiki", "titles": "|".join(kand[:50]),
+                                      "props": "sitelinks", "format": "json"})
+            if rq.status_code != 200:
+                _log.info("HANS_VYPOCTY_PRIJMENI_V1: Wikidata %r: HTTP %s", p, rq.status_code)
+                return None                              # neukládat — zkusí se příště
+            sl = []
+            for e in (rq.json().get("entities") or {}).values():
+                s = e.get("sitelinks") or {}
+                cs = (s.get("cswiki") or {}).get("title")
+                if cs:
+                    sl.append((len(s), cs))
+            sl.sort(reverse=True)
+            if sl and sl[0][0] >= 40 and (len(sl) == 1 or sl[0][0] >= 3 * sl[1][0]):
+                vys = sl[0][1]
+            _log.info("HANS_VYPOCTY_PRIJMENI_V1: %r → %r (%s)", p, vys, sl[:3])
+        c["P:" + p] = vys or ""
+        try:
+            json.dump(c, open(_WD_CACHE, "w", encoding="utf-8"), ensure_ascii=False)
+        except Exception:
+            pass
+        return vys
+    except Exception as e:
+        _log.debug("HANS_VYPOCTY_PRIJMENI_V1: %s", e)
+        return None
 
 
 _VYKANI = {"vy", "vas", "vam", "vami", "vas", "vase", "vasi", "vaseho", "vasemu", "vasim", "vasich",
@@ -380,6 +452,15 @@ def fakta_osob(q: str, predchozi=()):
     if _PRIBUZNI.search(_f(q)):
         _log.info("HANS_VYPOCTY_ZAJMENO_V1: otázka na příbuzného → bez faktů")
         return None
+    # HANS_VYPOCTY_UDALOST_V1 (1. 11.) — věk při jiné události než narození/úmrtí („začal
+    # skládat“, „když dostal Nobelovu cenu / složil / se stal…“): data té události nemáme;
+    # model to dřív poznal jen někdy (Mozart „začal skládat“ → 270 let)
+    _fq = _f(q)
+    if re.search(r"\bzac(?:al|ala|ali|alo)\b", _fq) or (
+            re.search(r"\b(?:kdyz|v\s+dobe\s+kdy|pri\s+(?:udeleni|nastupu|vydani|zalozeni|svatbe))\b", _fq)
+            and not re.search(r"\b(?:zemrel\w*|umrel\w*|zahynul\w*|narodil\w*|zesnul\w*|zavrazd\w*|popraven\w*|upalen\w*|upalili)\b", _fq)):
+        _log.info("HANS_VYPOCTY_UDALOST_V1: věk při jiné události → bez faktů")
+        return None
     rad, cz, cis, jul, trojice = [], [], set(), False, set()
     if re.search(r"\b(vladl\w*|kraloval\w*|panoval\w*|uradoval\w*|prezident\w*|ve\s+funkci|na\s+trune)", _f(q)):
         _log.info("HANS_VYPOCTY_WD_V2b: otázka na úřad/vládu → bez faktů")   # „kolik let vládl Karel IV.“ ≠ délka života
@@ -424,7 +505,7 @@ def fakta_osob(q: str, predchozi=()):
 
 _SYS_OSOBA = (   # HANS_VYPOCTY_WD_V2 — jen když jsou data osoby
     " Write a date of the person ALWAYS as the full datum(...) given above, never as a bare "
-    "year. Age at death or how long someone lived = vek(birth, death); age today = vek(birth, "
+    "year. Age at death or how long someone lived = vek(birth, death); age today (also 'kolik let by dnes bylo X' for a dead person) = vek(birth, "
     "dnes()); years since death ('kolik je to let, co zemřel', 'kolik let uplynulo od smrti') = vek(death, dnes()) — not the age at death; years since birth = vek(birth, dnes()); age "
     "in year Y = Y - birth_year; how many years A was older or younger than B = vek(earlier birth, later birth) (compare BIRTH dates, not lifespans); lifespan in days = dny(birth, death); weekday of birth = "
     "den_v_tydnu(birth). Use these dates only for the person they belong to. If the question needs "
@@ -687,14 +768,56 @@ def srovnej_cislo(odpoved: str, vypocet: str):
         return r, ch
     try:
         from scripts.hans_pocty import cisla_slovy
-        o2 = cisla_slovy(odpoved)
+        o2 = _desetinna(cisla_slovy(odpoved))
         if o2 != odpoved:
             r2, ch2 = _srovnej_cislo(o2, vypocet)
             if ch2:
                 return r2, True
+        r3, ch3 = _srovnej_bez_jednotky(o2, vypocet)
+        if ch3:
+            return r3, True
     except Exception:
         pass
     return odpoved, False
+
+
+def _desetinna(s: str) -> str:
+    """„21 bod 4 5“, „24 celých 5 desetin“, „24 koma 5“ → „21,45“, „24,5“ (po cisla_slovy)."""
+    s = re.sub(r"\b(\d+)\s+(?:celých|celé|celá|bod|koma|čárka)\s+(?:a\s+)?(\d(?:\s\d)*|\d+)(?:\s+(?:desetin\w*|setin\w*|tisícin\w*))?\b",
+               lambda m: m.group(1) + "," + re.sub(r"\s", "", m.group(2)), s)
+    return re.sub(r"\b(\d+)\s+a\s+půl\b", r"\1,5", s)
+
+
+def _srovnej_bez_jednotky(odpoved: str, vypocet: str):
+    """HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1 — výsledek bez jednotky („7 % z 350 = 24,5“):
+    čísla ze zadání se vynechají; zbude-li v odpovědi právě jedno jiné číslo → výsledek."""
+    if "→" in (vypocet or ""):
+        lev, prav = vypocet.rsplit("→", 1)
+    elif "=" in (vypocet or ""):
+        lev, prav = vypocet.rsplit("=", 1)
+    else:
+        return odpoved, False
+    prav = re.sub(r"^\s*(?:výsledek\s*=\s*)?", "", prav).strip().rstrip(".")
+    if not re.fullmatch(r"-?\d[\d\s\u00a0]*(?:,\d+)?", prav):
+        return odpoved, False
+    hod = _num(prav)
+    zadani = {_num(x) for x in re.findall(r"\d+(?:[.,]\d+)?", lev)}
+    rx = re.compile(r"(?<![\d,.])(\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:,(\d+))?(?![\d])")
+    kand = [(mm, _num(mm.group(1) + ("," + mm.group(2) if mm.group(2) else ""))) for mm in rx.finditer(odpoved)]
+    if any(v is not None and abs(v - hod) < 1e-6 for _, v in kand):
+        return odpoved, False
+    jine = {v for _, v in kand if v is not None and v not in zadani}
+    if len(jine) != 1:
+        return odpoved, False
+    spatne = jine.pop()
+    out, kon = [], 0
+    for mm, v in kand:
+        if v == spatne:
+            out.append(odpoved[kon:mm.start(1)])
+            out.append(prav)
+            kon = mm.end(2) if mm.group(2) else mm.end(1)
+    out.append(odpoved[kon:])
+    return "".join(out), True
 
 
 def _srovnej_cislo(odpoved: str, vypocet: str):
