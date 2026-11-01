@@ -2084,8 +2084,10 @@ def verify_pending(config: dict, db_path: str, curiosity=None,
             # HANS_CLAIM_CHECK_V1 — provizorní odpověď UŽ je v paměti (deník
             # human_chat + reflexe rozhovoru). Samotné neuložení nálezu ji
             # nezruší → oprava do paměti stejnou cestou jako tvrzení z úvahy.
+            # HANS_ART_PO_MALBE_CTENI_V1 — dohledání po malbě nikomu nic
+            # neodpovědělo → zamítnutí není omyl v hovoru (žádná lekce)
             try:
-                _promitni_opravu(config, db_path, row, [{
+                if (row.get("asker") or "") != "malba": _promitni_opravu(config, db_path, row, [{
                     "entity": row.get("topic") or "",
                     "claim": "o „%s“ jsem odpověděl podle narychlo nalezeného hesla "
                              "„%s“: %s" % (row.get("topic") or "",

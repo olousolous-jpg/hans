@@ -744,7 +744,8 @@
             "_pulid_note": "HANS_ART_PULID_V1: znama osoba + scena/akce ('<jmeno osoby> na motorce') -> FLUX+PuLID: podoba z ref fota + scena z promptu (cele telo). Vyzaduje use_flux=true + custom node ComfyUI_PuLID_Flux_ll + modely (pulid_flux/EVA-CLIP/antelopev2) na PC. use_pulid=false -> legacy img2img (jen portret, drzi kompozici). pulid_weight 0-1.5: vyssi=vernejsi podoba, nizsi=volnejsi scena. Render ~330s (cold FLUX+PuLID).",
             "_denoise_note": "Ladeno nazivo 4.8. na portretu zname osoby: 0.50 = premalovana fotka, 0.65 jeste popisne, 0.70 = drzi podobu a uz je to malba (zvoleno), 0.75 zacina posouvat rysy. Cte JEN img2img vetev - PuLID jede na pulid_weight.",
             "portrait_img2img": true,
-            "_portrait_img2img_note": "HANS_ART_PORTRAIT_IMG2IMG_V1 - hole jmeno (namaluj <jmeno osoby>) se prekresli z REALNE fotky (img2img, denoise) = drzi podobu; namet s akci/mistem (<jmeno osoby> na motorce) jde na FLUX+PuLID, ktery slozi scenu. false = vse pres PuLID."
+            "_portrait_img2img_note": "HANS_ART_PORTRAIT_IMG2IMG_V1 - hole jmeno (namaluj <jmeno osoby>) se prekresli z REALNE fotky (img2img, denoise) = drzi podobu; namet s akci/mistem (<jmeno osoby> na motorce) jde na FLUX+PuLID, ktery slozi scenu. false = vse pres PuLID.",
+            "holy_cinnost": true
         },
         "self_portrait": {
             "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors",

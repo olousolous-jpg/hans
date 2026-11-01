@@ -8,11 +8,47 @@ from __future__ import annotations
 
 from typing import Optional
 import json
+import re
 import os
 import sqlite3
 import time
 import urllib.request
 import uuid
+
+MARK_CINNOST = "HANS_ART_OSOBA_CINNOST_V1"
+
+
+def _kdo_je(config: dict, db_path: str, name: str) -> str:
+    """HANS_ART_OSOBA_CINNOST_V1 — z popisu entity jen „kdo to byl“: roky
+    a vše za slovesem „byl/je“ („(1844–1906) rakouský fyzik, zakladatel…“).
+    Celé jméno, rodné jméno a tituly vynechá. Nic nenajde → ""."""
+    try:
+        from scripts.hans_entities import EntityStore as _ES
+        e = _ES(config, db_path).resolve(name, loose=False) or {}
+        g = (e.get("gloss") or "").strip()
+        if not g or e.get("etype") not in ("osoba", "postava"):
+            return ""
+        m = re.search(r"\s(byl|byla|bylo|je|jsou|byli)\s+", g)
+        if not m:
+            return ""
+        head, rest = g[:m.start()], g[m.end():]
+        roky = re.findall(r"\b(1\d{3}|20\d{2})\b", head)
+        rest = rest[:300]
+        if not rest.rstrip().endswith("."):
+            if "." in rest[60:]:
+                rest = rest[:60 + rest[60:].rfind(".") + 1]
+            else:
+                rest = rest[:rest.rfind(",")] if "," in rest[60:] else rest[:rest.rfind(" ")]
+        pre = ""
+        if len(roky) >= 2:
+            pre = "(%s–%s) " % (roky[0], roky[-1])
+        elif roky:
+            pre = "(nar. %s) " % roky[0]
+        return (pre + rest).strip()
+    except Exception as ex:
+        _ha._log.debug("art: kdo je selhal: %s", ex)
+        return ""
+
 
 def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
                             ref_path: str, style: str = "",
@@ -65,7 +101,12 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
     # `pulid_weight`, tahle hodnota mu nesahá do scén.
     # HANS_ART_POSTAVA_PULID_V1 — u postavy vždy scéna (i holé jméno): img2img
     # by jen překreslil civilní fotku herce.
-    _wants_scene = force_scene or _ha._subject_beyond_name(subject, nm)
+    # HANS_ART_OSOBA_CINNOST_V1 (31. 10.) — holé jméno může jít na scénu
+    # s tím, čím byla osoba známá (vypínač `person_likeness.holy_cinnost`,
+    # výchozí vypnuto: img2img drží věrnější tvář, PuLID jen „na první pohled“).
+    _holy = not _ha._subject_beyond_name(subject, nm)
+    _wants_scene = (force_scene or not _holy
+                    or bool(pcfg.get("holy_cinnost", False)))
     _use_pulid = (bool(pcfg.get("use_pulid", False))
                   and bool(acfg.get("use_flux", False))
                   and (_wants_scene or not pcfg.get("portrait_img2img", True)))
@@ -79,6 +120,26 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
                   "person and describe era-appropriate clothing, the action and "
                   "the setting. The exact face is supplied separately, so focus on "
                   "scene, pose, attire and atmosphere.\n\n" % subject)
+        # HANS_ART_OSOBA_CINNOST_V1 — kdo to je (povolání, roky) z Wikipedie:
+        # bez toho model hádal dobu a oblečení (Radecký na motorce v klobouku
+        # pod neony, Rimmer v uniformě z Battlestar Galactica). Jméno a tituly
+        # z článku se nepředávají — model je opisoval do zadání.
+        _kdo = _kdo_je(config, diary_db_path, nm) if pcfg.get("gloss", True) else ""
+        if _kdo:
+            _intro = ("Subject to depict (described in Czech): %s\n\n"
+                      "WHO THIS IS (from Wikipedia, in Czech): %s\n\n"
+                      "Write ONE vivid English image prompt of THIS scene. Call the "
+                      "person only \"%s\" (no other names or titles); use the facts "
+                      "above for era-appropriate clothing and context. "
+                      % (subject, _kdo, nm))
+            if _holy:
+                _intro += ("The request is only the name, so show the person doing "
+                           "what they were known for, in a setting typical for "
+                           "their work or role (e.g. a chemist in a laboratory, "
+                           "a general on a battlefield). ")
+            _intro += ("The exact face is supplied separately, so focus on scene, "
+                       "pose, attire and atmosphere.\n\n")
+            _ha._log.info("art: %s kdo je '%s': %.120s", MARK_CINNOST, nm, _kdo)
         prompt = _ha._scene_prompt(config, subject, "", diary_db_path,
                                system=_ha._SUBJECT_SCENE_SYSTEM, source_intro=_intro)
         w = int(acfg.get("width", 896)); h = int(acfg.get("height", 1152))
@@ -107,7 +168,7 @@ def paint_person_from_photo(config: dict, diary_db_path: str, subject: str,
                 int(acfg.get("flux_steps", 20)),
                 float(acfg.get("flux_guidance", 3.5)), img_name,
                 float(pcfg.get("pulid_weight", 0.9)))
-            _ha._log.info("art: podoba osoby FLUX+PuLID start (%s) — %.90s", nm, prompt)
+            _ha._log.info("art: podoba osoby FLUX+PuLID start (%s) — %s", nm, prompt)  # HANS_ART_OSOBA_CINNOST_V1 — celé zadání (brýle z promptu, nebo z modelu obrazu?)
         else:
             _pneg = _ha._person_negative(diary_db_path)
             wf = _ha._comfy_workflow_img2img(ckpt, prompt, seed, img_name, dn, steps,
@@ -414,7 +475,7 @@ def paint_self(config: dict, diary_db_path: str, full_figure: bool = True,
     return (rel_path, caption)
 
 
-def paint_subject(config: dict, diary_db_path: str, subject: str,
+def _paint_subject_core(config: dict, diary_db_path: str, subject: str,
                   style: str = "", zadal: str = "", _retry: bool = False,
                   source: str = "subject",
                   source_label: str = "tím, oč jsem byl požádán"):
@@ -640,6 +701,83 @@ def paint_subject(config: dict, diary_db_path: str, subject: str,
         _ha._log.warning("art: log subject artwork failed: %s", e)
     _ha._log.info('art: Hans namaloval na téma „%s" → %s', title, rel_path)
     return rel_path, caption
+
+
+# ── HANS_ART_PO_MALBE_CTENI_V1 (31. 10.) — po malbě si o námětu přečti ────────
+# Podnět uživatele 30. 10.: „když dám namalovat osobu, Hans si ji najde na
+# internetu, ale už si o ní nezjistí další informace.“ Malba čte jen 1 500 zn
+# a uloží entitu; z 20 veřejných osob namalovaných na žádost neměl Hans o
+# žádné četbu ani výpis faktů. A protože entita existuje, `kolac_podnety.
+# v_pameti` ji bere jako známou → ani Koláč se na ni nezeptá. Teď po malbě
+# na námět (source 'subject') stejné dohledání jako Koláčův podnět
+# (`hans_findings.lookup_now` → noční ověření zapíše článek, fakta, RAG).
+# Jen osoba / postava / místo s článkem na Wikipedii (pojmy a díla dělaly šum:
+# „mrože na ledu“ → „LED TV“), ne domácnost, ne co už četl. Tazatel „malba“ —
+# opravu po ověření nikdo nedostane. Vypínač `hans_art.po_malbe_cteni`.
+_PO_MALBE_TAZATEL = "malba"
+_PO_MALBE_ETYPY = ("osoba", "postava", "místo")
+
+
+def po_malbe_dohledat(config: dict, diary_db_path: str, subject: str,
+                      spustit: bool = True):
+    """Vrátí název entity, kterou dohledá (nebo None). `spustit=False` jen
+    rozhodne — pro měření a test."""
+    if not _ha._acfg(config).get("po_malbe_cteni", True):
+        return None
+    from scripts.hans_entities import EntityStore
+    e = EntityStore(config, diary_db_path).resolve(subject, loose=False)
+    if not e or e.get("etype") not in _PO_MALBE_ETYPY:
+        return None
+    if "wikipedia.org" not in (e.get("source") or ""):
+        return None
+    jmeno = (e.get("name") or "").strip()
+    if not jmeno:
+        return None
+    dom = set()
+    for k, v in (config.get("known_persons") or {}).items():
+        dom.add(str(k).lower())
+        if isinstance(v, dict):
+            dom |= {str(v.get(x)).lower() for x in ("nom", "acc", "voc", "full") if v.get(x)}
+    if any(t in dom for t in (jmeno.lower().split() + subject.lower().split())):
+        return None
+    try:
+        con = sqlite3.connect(diary_db_path, timeout=5.0)
+        cetl = con.execute(
+            "SELECT 1 FROM diary WHERE event_type IN ('web_read','reading_takeaway',"
+            "'study_note') AND title=? LIMIT 1", (jmeno,)).fetchone()
+        con.close()
+    except Exception:
+        cetl = None
+    if cetl:
+        _ha._log.info("art: HANS_ART_PO_MALBE_CTENI_V1 '%s' už četl → nedohledávám", jmeno)
+        return None
+    otazka = ("Kdo je %s?" if e.get("etype") in ("osoba", "postava") else "Co je %s?") % jmeno
+    if spustit:
+        def _bez():
+            try:
+                from scripts import hans_findings as _hf
+                odp = _hf.lookup_now(config, diary_db_path, jmeno, otazka,
+                                     asker=_PO_MALBE_TAZATEL)
+                _ha._log.info("art: HANS_ART_PO_MALBE_CTENI_V1 '%s' → %s", jmeno,
+                              "dohledáno, čeká na noční ověření" if odp
+                              else "nedohledáno (mozek dole / bez článku)")
+            except Exception as _le:
+                _ha._log.warning("art: HANS_ART_PO_MALBE_CTENI_V1 '%s': %s", jmeno, _le)
+        import threading
+        threading.Thread(target=_bez, daemon=True, name="po_malbe_cteni").start()
+    return jmeno
+
+
+def paint_subject(config: dict, diary_db_path: str, subject: str, *args, **kwargs):
+    """Obal `_paint_subject_core` (HANS_ART_PO_MALBE_CTENI_V1)."""
+    res = _paint_subject_core(config, diary_db_path, subject, *args, **kwargs)
+    try:
+        src = kwargs.get("source", args[3] if len(args) > 3 else "subject")
+        if res and src == "subject":
+            po_malbe_dohledat(config, diary_db_path, (subject or "").strip())
+    except Exception as _pe:
+        _ha._log.debug("art: HANS_ART_PO_MALBE_CTENI_V1: %s", _pe)
+    return res
 
 # ROZDELENI_PRIKAZU_V1 — až na konci, viz hlavička
 from scripts import hans_art as _ha  # noqa: E402
