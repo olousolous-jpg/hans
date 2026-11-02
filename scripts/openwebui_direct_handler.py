@@ -3398,6 +3398,53 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         "HANS_YEAR_WORDS_V1: číslovka slovy → číslice (%d×)", _nrok)
             except Exception:
                 pass
+            # HANS_FYZIKA_VYSLEDEK_V1 (31. 10.) — výsledek výpočtu z programu musí být
+            # v odpovědi číslicemi; model ho občas přepíše slovy a zkomolí („devatenicet
+            # koma osm metrů za sekundu“ místo 19,8 m/s). Chybí-li → krátký řádek navíc.
+            try:
+                _vyp = getattr(ctx, '_vypocet', None)
+                # HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1 (1. 11.) — model řekl jiné číslo než program
+                # („57 let“ × 56) → jediné jiné číslo téže jednotky = výsledek programu
+                if _vyp and ctx.response:
+                    from scripts.hans_vypocty_model import srovnej_cislo as _srv
+                    _r3, _zm3 = _srv(ctx.response, _vyp)
+                    if _zm3:
+                        logging.getLogger(__name__).info(
+                            "HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1: číslo v odpovědi ≠ výpočet → opraveno (%s)",
+                            _vyp.split("→")[-1].strip()[:50])
+                        ctx.response = _r3
+                # HANS_VYPOCTY_VETOU_V1 — opsaný výraz („Výpočet: dny(…) → výsledek = 40 dní“)
+                # → výsledek z PROGRAMU (model ho opsal i se špatným číslem)
+                if _vyp and ctx.response and "→ výsledek =" in _vyp:
+                    _vys = _vyp.split("→ výsledek =")[-1].strip().rstrip(".")
+                    _r2 = re.sub(r"(?i)(?:výpočet:\s*)?[a-z_]+\((?:[^()\n]|\([^()\n]*\))*\)[^\n→]{0,60}?→\s*výsledek\s*=\s*[^\n.]*",
+                                 "výsledek je " + _vys, ctx.response)
+                    # zbytek výrazu v závorce: „Výpočet věku (datum(1890, 1, 9), datum(1938, 12, 25)) dává…“
+                    _r2 = re.sub(r"\s*\((?:\s*,?\s*(?:datum\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)|dnes\(\s*\)))+\s*\)",
+                                 "", _r2)
+                    if _r2 != ctx.response:
+                        _r2 = re.sub(r"(^|[.!?]\s+|\n)výsledek je", lambda m_: m_.group(1) + "Výsledek je", _r2)
+                        ctx.response = _r2
+                        logging.getLogger(__name__).info("HANS_VYPOCTY_VETOU_V1: opsaný výraz → %s", _vys[:60])
+                if _vyp and ctx.response:   # HANS_VYPOCTY_NAHRATI_V1: i HANS_POCTY_V1 (7 % z 350 → „22,5“)
+                    _seg = _vyp.split("→")[-1] if "→" in _vyp else _vyp.split("=")[-1]
+                    _seg = re.split(r"\s\(předpoklad", _seg)[0].strip()
+                    _seg = re.sub(r"^výsledek\s*=\s*", "", _seg)
+                    _num = re.search(r"\d[\d ]*(?:,\d+)?", _seg)
+                    if _num:
+                        _n = _num.group(0).strip()
+                        _resp = ctx.response.replace("\u00a0", " ")
+                        try:   # HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1: „padesát šest let“ = 56 → nepřipojovat
+                            from scripts.hans_pocty import cisla_slovy as _csl
+                            _resp = _resp + " " + _csl(_resp)
+                        except Exception:
+                            pass
+                        if _n not in _resp and _n.replace(",", ".") not in _resp and _n.replace(" ", "") not in _resp:
+                            ctx.response = ctx.response.rstrip() + "\n\nVýsledek: %s." % _seg.rstrip(".")
+                            logging.getLogger(__name__).info(
+                                "HANS_FYZIKA_VYSLEDEK_V1: výsledek v odpovědi chyběl → připojen %s", _seg[:60])
+            except Exception:
+                pass
             # HANS_GREETING_OUTPUT_TRIM_V1 (19. 9.) — nadbytecny pozdrav
             # v NAVAZUJICI replice. Vstupni cisteni okna (`_orez_pozdravy`)
             # na to NESTACI: meni jen pohled do promptu, ne odpoved —
@@ -3474,53 +3521,6 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 except Exception as _e:
                     print(f"[Chat] human_chat log_entry failed: {_e}")
                     _hi_log = None
-            # HANS_FYZIKA_VYSLEDEK_V1 (31. 10.) — výsledek výpočtu z programu musí být
-            # v odpovědi číslicemi; model ho občas přepíše slovy a zkomolí („devatenicet
-            # koma osm metrů za sekundu“ místo 19,8 m/s). Chybí-li → krátký řádek navíc.
-            try:
-                _vyp = getattr(ctx, '_vypocet', None)
-                # HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1 (1. 11.) — model řekl jiné číslo než program
-                # („57 let“ × 56) → jediné jiné číslo téže jednotky = výsledek programu
-                if _vyp and ctx.response:
-                    from scripts.hans_vypocty_model import srovnej_cislo as _srv
-                    _r3, _zm3 = _srv(ctx.response, _vyp)
-                    if _zm3:
-                        logging.getLogger(__name__).info(
-                            "HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1: číslo v odpovědi ≠ výpočet → opraveno (%s)",
-                            _vyp.split("→")[-1].strip()[:50])
-                        ctx.response = _r3
-                # HANS_VYPOCTY_VETOU_V1 — opsaný výraz („Výpočet: dny(…) → výsledek = 40 dní“)
-                # → výsledek z PROGRAMU (model ho opsal i se špatným číslem)
-                if _vyp and ctx.response and "→ výsledek =" in _vyp:
-                    _vys = _vyp.split("→ výsledek =")[-1].strip().rstrip(".")
-                    _r2 = re.sub(r"(?i)(?:výpočet:\s*)?[a-z_]+\((?:[^()\n]|\([^()\n]*\))*\)[^\n→]{0,60}?→\s*výsledek\s*=\s*[^\n.]*",
-                                 "výsledek je " + _vys, ctx.response)
-                    # zbytek výrazu v závorce: „Výpočet věku (datum(1890, 1, 9), datum(1938, 12, 25)) dává…“
-                    _r2 = re.sub(r"\s*\((?:\s*,?\s*(?:datum\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)|dnes\(\s*\)))+\s*\)",
-                                 "", _r2)
-                    if _r2 != ctx.response:
-                        _r2 = re.sub(r"(^|[.!?]\s+|\n)výsledek je", lambda m_: m_.group(1) + "Výsledek je", _r2)
-                        ctx.response = _r2
-                        logging.getLogger(__name__).info("HANS_VYPOCTY_VETOU_V1: opsaný výraz → %s", _vys[:60])
-                if _vyp and ctx.response:   # HANS_VYPOCTY_NAHRATI_V1: i HANS_POCTY_V1 (7 % z 350 → „22,5“)
-                    _seg = _vyp.split("→")[-1] if "→" in _vyp else _vyp.split("=")[-1]
-                    _seg = re.split(r"\s\(předpoklad", _seg)[0].strip()
-                    _seg = re.sub(r"^výsledek\s*=\s*", "", _seg)
-                    _num = re.search(r"\d[\d ]*(?:,\d+)?", _seg)
-                    if _num:
-                        _n = _num.group(0).strip()
-                        _resp = ctx.response.replace("\u00a0", " ")
-                        try:   # HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1: „padesát šest let“ = 56 → nepřipojovat
-                            from scripts.hans_pocty import cisla_slovy as _csl
-                            _resp = _resp + " " + _csl(_resp)
-                        except Exception:
-                            pass
-                        if _n not in _resp and _n.replace(",", ".") not in _resp and _n.replace(" ", "") not in _resp:
-                            ctx.response = ctx.response.rstrip() + "\n\nVýsledek: %s." % _seg.rstrip(".")
-                            logging.getLogger(__name__).info(
-                                "HANS_FYZIKA_VYSLEDEK_V1: výsledek v odpovědi chyběl → připojen %s", _seg[:60])
-            except Exception:
-                pass
             if not _hi_log and not _skip_mem:
                 # Fallback — přímý SQL
                 try:
