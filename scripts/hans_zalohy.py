@@ -91,13 +91,46 @@ def _stav_sluzby(c: dict) -> list:
             % (kod, unit)]
 
 
+def _stav_wiki(ted: float) -> list:
+    """HANS_WIKI_OBNOVA_HLIDAC_V1 (2. 11.) — měsíční obnova lokální Wikipedie
+    (`tools/wiki_obnova.py`) zapisuje výsledek do data/wiki/obnova_stav.json.
+    Hlásí poslední neúspěšnou obnovu a výpis starší než 70 dní (obnova neběží)."""
+    import json, re, sqlite3
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = []
+    try:
+        with open(os.path.join(root, "data", "wiki", "obnova_stav.json"), encoding="utf-8") as f:
+            st = json.load(f)
+        if st.get("vysledek") == "chyba":
+            out.append("Měsíční obnova lokální Wikipedie selhala (%s: %s); Hans dál čte výpis %s "
+                       "(podrobnosti: journalctl --user -u hans-wiki)."
+                       % (st.get("krok", "?"), str(st.get("chyba", ""))[:120], st.get("vypis") or "?"))
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        _log.debug("hlídač záloh: stav obnovy wiki: %s", e)
+    try:
+        c = sqlite3.connect("file:%s?mode=ro" % os.path.join(root, "data", "wiki", "cswiki.db"), uri=True)
+        r = c.execute("SELECT hodnota FROM meta WHERE klic='vypis'").fetchone()
+        c.close()
+        m = re.search(r"(\d{8})", (r or [""])[0] or "")
+        if m:
+            stari = (ted - time.mktime(time.strptime(m.group(1), "%Y%m%d"))) / 86400
+            if stari > 70 and not out:
+                out.append("Lokální Wikipedie je z výpisu %s (%.0f dní) — měsíční obnova "
+                           "zřejmě neběží (systemctl --user status hans-wiki.timer)." % (m.group(1), stari))
+    except Exception as e:
+        _log.debug("hlídač záloh: stáří wiki: %s", e)
+    return out
+
+
 def zkontroluj(config: dict, ted: float | None = None) -> list:
     """Seznam problémů (česky, pro člověka). Prázdný = vše v pořádku."""
     c = _cfg(config)
     if not c.get("enabled", True):
         return []
     ted = ted or time.time()
-    problemy = _stav_sluzby(c)
+    problemy = _stav_sluzby(c) + _stav_wiki(ted)   # HANS_WIKI_OBNOVA_HLIDAC_V1
     pi_dir = str(c.get("pi_nas_dir", "/mnt/nas-hans/Hans_backups"))
     pi_max = float(c.get("pi_max_dni", 3))
     pc_ok = str(c.get("pc_ok_file", "/mnt/nas-hans/hans_pc_restic/POSLEDNI_OK"))

@@ -7,8 +7,9 @@ tahle malá tabulka se staví znovu po každé obnově výpisu:
 """
 import os, sqlite3, sys, time, unicodedata
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "data", "wiki", "cswiki.db")
-DST = os.path.join(ROOT, "data", "wiki", "tituly_fold.db")
+# WIKI_OBNOVA_V1 (2. 11.) — při obnově se staví vedle běžící DB
+SRC = os.environ.get("WIKI_DB") or os.path.join(ROOT, "data", "wiki", "cswiki.db")
+DST = os.environ.get("WIKI_FOLD_DB") or os.path.join(ROOT, "data", "wiki", "tituly_fold.db")
 
 
 def fold(s):

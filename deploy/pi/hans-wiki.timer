@@ -1,0 +1,10 @@
+[Unit]
+Description=Obnova lokální Wikipedie — 5.–12. den v měsíci v 1:30 (hotový výpis bývá do 3. dne; když už je nainstalovaný, skončí hned)
+
+[Timer]
+OnCalendar=*-*-05..12 01:30:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

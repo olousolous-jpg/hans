@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 
 _log = logging.getLogger(__name__)
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,12 +26,37 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").replace("_", " ")).strip().lower()
 
 
+def _vymeneno(klic: str, cesta: str) -> bool:
+    """HANS_WIKI_OBNOVA_RECONNECT_V1 (2. 11.) — měsíční obnova (`tools/wiki_obnova.py`)
+    vymění soubor DB za běhu; otevřené spojení by dál četlo starý (přejmenovaný)
+    soubor až do restartu. Nejvýš jednou za minutu se porovná inode souboru."""
+    ted = time.time()
+    if ted - getattr(_tls, klic + "_kontrola", 0.0) < 60:
+        return False
+    setattr(_tls, klic + "_kontrola", ted)
+    try:
+        ino = os.stat(cesta).st_ino
+    except OSError:
+        return False
+    stary = getattr(_tls, klic + "_ino", None)
+    setattr(_tls, klic + "_ino", ino)
+    return stary is not None and stary != ino
+
+
 def _db():
     c = getattr(_tls, "db", None)
+    if c is not None and _vymeneno("db", DB):
+        _log.info("HANS_WIKI_OBNOVA_RECONNECT_V1: DB lokální Wikipedie vyměněna → otevírám novou")
+        try:
+            c.close()
+        except Exception:
+            pass
+        c = None
     if c is None:
         c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True,
                             check_same_thread=False)
         _tls.db = c
+        _vymeneno("db", DB)
     return c
 
 
@@ -720,9 +746,16 @@ def _fold_tzv(s: str) -> str:
 
 def _fold_db():
     c = getattr(_tls, "fold_db", None)
+    if c is not None and _vymeneno("fold", _FOLD_DB):   # HANS_WIKI_OBNOVA_RECONNECT_V1
+        try:
+            c.close()
+        except Exception:
+            pass
+        c = None
     if c is None:
         c = sqlite3.connect(f"file:{_FOLD_DB}?mode=ro", uri=True, check_same_thread=False)
         _tls.fold_db = c
+        _vymeneno("fold", _FOLD_DB)
     return c
 
 

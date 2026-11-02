@@ -14,7 +14,8 @@ import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 W = os.path.join(ROOT, "data", "wiki")
-DUMP = os.path.join(W, "cswiki-20261001-pages-articles.xml.bz2")
+# WIKI_OBNOVA_V1 (2. 11.) — výpis i z obnovy (`tools/wiki_obnova.py`)
+DUMP = os.environ.get("WIKI_DUMP") or os.path.join(W, "cswiki-20261001-pages-articles.xml.bz2")
 REDIR = os.path.join(W, "presmerovani.tsv")
 INFO = os.path.join(W, "infobox.jsonl")
 META = os.path.join(W, "meta.jsonl")

@@ -1,0 +1,12 @@
+[Unit]
+Description=Měsíční obnova lokální české Wikipedie (WIKI_OBNOVA_V1)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/face-recognition
+# sestavení ~3,5 h na Pi vedle běžícího Hanse → nízká priorita CPU i disku
+Nice=15
+IOSchedulingClass=idle
+ExecStart=/usr/bin/python3 %h/Desktop/face-recognition/tools/wiki_obnova.py
+TimeoutStartSec=8h
