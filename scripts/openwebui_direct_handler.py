@@ -356,7 +356,7 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         self.session_greeted = set()
         self.daily_greeted   = self._load_daily_greetings()
         self._used_hints: list[str] = []   # co už bylo zmíněno v pozdravech
-        self.chat_lock       = threading.Lock()
+        self.chat_lock       = threading.RLock()   # HANS_CHAT_ZAMEK_V1
 
         self.tts_speaker     = None
         self.surroundings_db = None
@@ -1124,88 +1124,102 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         `ch` tag → cross-channel leak (Telegram → web chat „zkus to znova")
         se filtruje. `channel=None` = zpětná kompat.
         """
-        import types as _types_nt
-        ctx = _types_nt.SimpleNamespace(name=name, user_message=user_message, on_sentence=on_sentence, channel=channel)
-        # HANS_CHAT_CHANNEL_AWARE_V1 — thread-local pro dispatch/chat_commands.
+        # HANS_CHAT_ZAMEK_V1 (2. 11.) — jeden tah naráz. Handler si během tahu
+        # drží stav na `self` (_presny_z_vety, _podklad_tema, _thread_ctx…) a dva
+        # souběžné tahy se promíchaly (samotest „Kdy zemřel Johan Cruijff?“ dostal
+        # téma z cizí otázky o Drakulovi). 📏 22. 9.–2. 11.: 37 souběhů, všechny
+        # testy × samotest/zkoušky Koláče; domácnost 0. Čekají všichni (zkouška
+        # i člověk); strop 180 s → pak tah poběží i bez zámku a zapíše to.
+        _zamek = self.chat_lock.acquire(timeout=180)
+        if not _zamek:
+            logging.getLogger(__name__).warning(
+                'HANS_CHAT_ZAMEK_V1: jiný tah drží zámek 180 s → %s jde bez zámku', name)
         try:
-            _channel_local.channel = ctx.channel
-        except Exception:
-            pass
-        # ── /note příkaz ──────────────────────────────────────────────────
-        ctx.stripped = ctx.user_message.strip()
-        # HANS_VYPOCTY_NAHRATI_V1 (1. 11.) — zpráva od člověka → qwen3 pro výpočty nahřát na
-        # pozadí (načtení ~73 s; výpočet čeká jen 25 s). Ne zkoušky Koláče a samotest.
-        if ctx.channel != "zkouska":
+            import types as _types_nt
+            ctx = _types_nt.SimpleNamespace(name=name, user_message=user_message, on_sentence=on_sentence, channel=channel)
+            # HANS_CHAT_CHANNEL_AWARE_V1 — thread-local pro dispatch/chat_commands.
             try:
-                from scripts.hans_vypocty_model import nahrej_na_pozadi
-                nahrej_na_pozadi(self.config, "zpráva v chatu")
+                _channel_local.channel = ctx.channel
             except Exception:
                 pass
-        _r = self._sc_read(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_note(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_url(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        self._sc_vypadek(ctx)
-        _r = self._sc_prikazy(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_malovani_brana(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_stav_tazatele(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_cizi_cas(ctx)   # HANS_STRANGER_CAS_SLEDOVANI_V1
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_kniha(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_znalosti(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_pamatujes(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_zdroje(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_prohloubeni(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_ceka_malba(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        _r = self._sc_agent(ctx)
-        if _r is not _POKRACUJ:
-            return _r
-        self._sc_podklad(ctx)
-        self._sc_nazor(ctx)
-        self._sc_a1(ctx)
-        self._sc_pojistky(ctx)
-        self._sc_overeni_tvrzeni(ctx)
-        self._sc_doporuceni(ctx)   # HANS_DOPORUCENI_OVERENI_V1
-        # HANS_OVERENI_OPRAVA_V2 (23. 10.) — jasný rozpor s Wikidaty připsat
-        # k odpovědi (≤ 4 s čekání), PŘED uložením do historie
-        try:
-            from scripts import hans_overeni as _ovr
-            _ovr.opravit(self, ctx)
-        except Exception as _ope:
-            logging.getLogger(__name__).debug('HANS_OVERENI_OPRAVA_V2: %s', _ope)
-        self._sc_ulozeni(ctx)
-        # HANS_OVERENI_STIN_V1 (17. 10.) — ověření údajů kódem (lokální
-        # Wikipedie + Wikidata) na pozadí, jen záznam; odpověď beze změny.
-        try:
-            from scripts import hans_overeni as _ovr
-            _ovr.stin(self, ctx)
-        except Exception as _ove:
-            logging.getLogger(__name__).debug('HANS_OVERENI_STIN_V1: %s', _ove)
-        return ctx.response
+            # ── /note příkaz ──────────────────────────────────────────────────
+            ctx.stripped = ctx.user_message.strip()
+            # HANS_VYPOCTY_NAHRATI_V1 (1. 11.) — zpráva od člověka → qwen3 pro výpočty nahřát na
+            # pozadí (načtení ~73 s; výpočet čeká jen 25 s). Ne zkoušky Koláče a samotest.
+            if ctx.channel != "zkouska":
+                try:
+                    from scripts.hans_vypocty_model import nahrej_na_pozadi
+                    nahrej_na_pozadi(self.config, "zpráva v chatu")
+                except Exception:
+                    pass
+            _r = self._sc_read(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_note(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_url(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            self._sc_vypadek(ctx)
+            _r = self._sc_prikazy(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_malovani_brana(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_stav_tazatele(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_cizi_cas(ctx)   # HANS_STRANGER_CAS_SLEDOVANI_V1
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_kniha(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_znalosti(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_pamatujes(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_zdroje(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_prohloubeni(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_ceka_malba(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            _r = self._sc_agent(ctx)
+            if _r is not _POKRACUJ:
+                return _r
+            self._sc_podklad(ctx)
+            self._sc_nazor(ctx)
+            self._sc_a1(ctx)
+            self._sc_pojistky(ctx)
+            self._sc_overeni_tvrzeni(ctx)
+            self._sc_doporuceni(ctx)   # HANS_DOPORUCENI_OVERENI_V1
+            # HANS_OVERENI_OPRAVA_V2 (23. 10.) — jasný rozpor s Wikidaty připsat
+            # k odpovědi (≤ 4 s čekání), PŘED uložením do historie
+            try:
+                from scripts import hans_overeni as _ovr
+                _ovr.opravit(self, ctx)
+            except Exception as _ope:
+                logging.getLogger(__name__).debug('HANS_OVERENI_OPRAVA_V2: %s', _ope)
+            self._sc_ulozeni(ctx)
+            # HANS_OVERENI_STIN_V1 (17. 10.) — ověření údajů kódem (lokální
+            # Wikipedie + Wikidata) na pozadí, jen záznam; odpověď beze změny.
+            try:
+                from scripts import hans_overeni as _ovr
+                _ovr.stin(self, ctx)
+            except Exception as _ove:
+                logging.getLogger(__name__).debug('HANS_OVERENI_STIN_V1: %s', _ove)
+            return ctx.response
+        finally:
+            if _zamek:
+                self.chat_lock.release()
 
     def _sc_read_volba(self, ctx):
         """Volba kroku (nic neprovádí): je to příkaz /read?"""
