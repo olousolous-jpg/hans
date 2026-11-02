@@ -590,6 +590,57 @@ class HansIdle:
                 self._synthesis_hooks.enqueue(event_type, title, note)
             except Exception:
                 pass
+    def _divaci(self, okno_s: float = 1800.0) -> list:
+        """HANS_DIVACI_V1 (30. 10.) — kdo asi kouká: právě viditelní první,
+        pak ostatní z domácnosti viděni v posledních `okno_s` (na gauči kamera
+        vidí jen nejbližšího). Jen v paměti procesu, nic se nezapisuje."""
+        now = time.time()
+        ted = [n for n in (getattr(self, "_present_names", None) or [])
+               if n and n not in ("Unknown", "?", "...", "")]
+        ok = float((self.config.get("film_suggest", {}) or {}).get("divaci_okno_s", okno_s))
+        dal = sorted(((ts, n) for n, ts in (getattr(self, "_videni", None) or {}).items()
+                      if n not in ted and now - ts <= ok), reverse=True)
+        return ted + [n for _ts, n in dal]
+
+    def tvare_poloha(self, boxes, names, postavy=None) -> None:
+        """HANS_GAUC_POLOHA_V1 (30. 10.) — poslední normalizované boxy tváří
+        (x1, y1, x2, y2) + měřicí záznam jednou za minutu do
+        data/mereni/gauc/poloha.jsonl (vypínač hans_idle.gauc_mereni).
+        Jen poloha a velikost — žádný obraz, žádný zápis do deníku."""
+        now = time.time()
+        self._tvare_boxy = (now, [tuple(round(float(v), 3) for v in b[:4]) for b in (boxes or [])])
+        if not (boxes or postavy) or not bool((self.config.get("hans_idle", {}) or {}).get("gauc_mereni", True)):
+            return
+        if now - getattr(self, "_tvare_log_ts", 0.0) < 60:
+            return
+        self._tvare_log_ts = now
+        try:
+            import json as _j
+            os.makedirs("data/mereni/gauc", exist_ok=True)
+            with open("data/mereni/gauc/poloha.jsonl", "a", encoding="utf-8") as f:
+                # štítky pro shluky (uživatel 30. 10.): herní mód = někdo u PC;
+                # Kodi přehrává (z posledního dotazu návrhu filmu) = spíš gauč
+                try:
+                    from scripts.ollama_client import game_mode_on as _gm
+                    _hra = bool(_gm())
+                except Exception:
+                    _hra = None
+                # přímý dotaz á 60 s (stav z návrhu filmu se při neznámé tváři
+                # nezjišťuje → hlásil „hraje“ i nad stojícím Kodi)
+                try:
+                    _kodi = bool(self.kodi.is_playing()) if self.kodi is not None else None
+                except Exception:
+                    _kodi = None
+                f.write(_j.dumps({"ts": round(now), "hra": _hra, "kodi_hraje": _kodi,
+                                  "jmena": [n for n in (names or []) if n],
+                                  "tvare": [[round((b[0] + b[2]) / 2, 3), round((b[1] + b[3]) / 2, 3),
+                                             round(b[2] - b[0], 3)] for b in self._tvare_boxy[1]],
+                                  # postavy: [x1, y1, x2, y2] normalizovaně
+                                  "postavy": [[round(float(v), 3) for v in b[:4]] for b in (postavy or [])]},
+                                 ensure_ascii=False) + "\n")
+        except Exception as e:
+            _log.debug("HANS_GAUC_POLOHA_V1: %s", e)
+
     def person_seen(self, names: list[str]):
         """Zavolej když kamera vidí osobu."""
         known = [n for n in names if n not in ("Unknown", "...", "?", "")]
@@ -626,6 +677,13 @@ class HansIdle:
                 except Exception as _coe:
                     _log.debug('lookup correction: %s', _coe)
             self._present_names = known
+            # HANS_DIVACI_V1 — kdy koho kamera viděla naposledy (na gauči je
+            # vidět jen nejbližší, ostatní za ním ne — uživatel 30. 10.)
+            _vid = getattr(self, "_videni", None)
+            if _vid is None:
+                _vid = self._videni = {}
+            for _n in known:
+                _vid[_n] = time.time()
             # Mood: příchod osoby
             if hasattr(self, '_mood'):
                 for name in known:
@@ -1686,6 +1744,7 @@ class HansIdle:
         recency = float(cfg.get("present_recency_s", 600))
         if not names or (now - self._last_seen) > recency:
             return
+        names = self._divaci() or names          # HANS_DIVACI_V1
         # nic nehraje + sleduj jak dlouho
         try:
             playing = self.kodi.is_playing()
@@ -1844,8 +1903,8 @@ class HansIdle:
     def _decide_next(self, cfg: dict, item: dict):
         """Vrať (next_item, line, streak_intent) co pustit po aktuálním titulu.
         Seriál → další díl (max N po sobě, pak film); film → další film (dle diváka)."""
-        names = [n for n in (getattr(self, "_present_names", None) or [])
-                 if n and n not in ("Unknown", "?", "")]
+        names = self._divaci() or [n for n in (getattr(self, "_present_names", None) or [])
+                                   if n and n not in ("Unknown", "?", "")]   # HANS_DIVACI_V1
         mtype = item.get("type", "")
         is_series = (mtype == "episode" and item.get("tvshowid") is not None
                      and item.get("season") is not None
@@ -1879,7 +1938,24 @@ class HansIdle:
                         ("reset",))
             return (None, None, None)
         # film / neznámo → další film
-        m = self.kodi.pick_suggestion()
+        # HANS_AUTOPLAY_FILM_VOLBA_V1 (30. 10., uživatel: „navrhovat film, co se
+        # pustí, až aktuální skončí“) — dřív náhodně (`pick_suggestion()` bez
+        # ohledu na diváka); teď stejná cesta jako návrh filmu: kandidáti podle
+        # přítomných osob (`_pick_next_film`) a vybere Hans (`hans_film_volba`)
+        m, self._autoplay_proc = None, ""
+        try:
+            _fc = self._fcfg()
+            m = self._pick_next_film(names, _fc) if names else None
+            if m and _fc.get("hans_voli", True):
+                from scripts import hans_film_volba as _fv
+                m, self._autoplay_proc, _k = _fv.vyber_hansem(
+                    self, self.config,
+                    (self.config.get("hans_idle", {}) or {}).get("diary_db",
+                                                                 "data/hans_diary.db"),
+                    names, _fc, m)
+        except Exception as _ae:
+            _log.warning("HANS_AUTOPLAY_FILM_VOLBA_V1: %s", _ae)
+        m = m or self.kodi.pick_suggestion()
         if m:
             return ({"movieid": m.get("movieid"), "type": "movie",
                      "title": m.get("title")},
@@ -1933,7 +2009,9 @@ class HansIdle:
                         self._apply_streak(armed.get("streak"))
                         self._log_entry("autoplay_next",
                                         title=(armed["next"].get("title") or "?"),
-                                        note=u"Autoplay: %s" % (armed["next"].get("title")))
+                                        note=u"Autoplay: %s" % (armed["next"].get("title")),
+                                        data=__import__("json").dumps(   # HANS_AUTOPLAY_FILM_VOLBA_V1
+                                            {"proc": armed.get("proc") or ""}, ensure_ascii=False))
                         _log.info("[AutoPlay] → %s", armed["next"].get("title"))
                 self._autoplay_armed = None
             elif (st.get("item") or {}).get("id") not in (None, armed.get("item_id")):
@@ -1964,6 +2042,7 @@ class HansIdle:
         self._autoplay_armed = {
             "item_id": item_id, "next": nxt, "line": line,
             "streak": intent, "ts": now,
+            "proc": getattr(self, "_autoplay_proc", ""),   # HANS_AUTOPLAY_FILM_VOLBA_V1
         }
         _log.info("[AutoPlay] armed: po konci '%s' → %s",
                   item.get("title"), nxt.get("title"))
