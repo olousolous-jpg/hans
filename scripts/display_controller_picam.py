@@ -596,6 +596,18 @@ class PicamDisplayController:
                 if hasattr(self, '_hans_idle'):
                     self._hans_idle.person_seen(
                         [n for n, c in identities])
+                    # HANS_GAUC_POLOHA_V1 (30. 10.) — poloha tváří pro oblast gauče
+                    try:
+                        self._hans_idle.tvare_poloha(
+                            [b for b, l in zip(boxes or [], box_labels or []) if l == 0],
+                            [n for n, c in identities],
+                            # postavy ze stopy postavy (pose, celý záběr): na gauči
+                            # jsou lidé z profilu, tvář se nemusí chytit (uživatel 30. 10.)
+                            [s.box for s in list(getattr(getattr(self._pipeline, "_body_track", None),
+                                                         "_stopy", None) or [])
+                             if now - getattr(s, "t", 0.0) < 3.0])
+                    except Exception:
+                        pass
 
                 # HANS_MENU_PRESELECT_V1 — předvybraná osoba v menu dle detekce
                 _known_now = [n for n, c in identities
@@ -1676,18 +1688,6 @@ class PicamDisplayController:
         # Prazdne jmeno by v conv_store vyrobilo soubor ".json" (skryte
         # smeti), proto neznamy dostane klic "host".
         _jmeno = _jmeno or "host"
-        _syslog.info("gesto: zamávání → pozdrav (%s)", _jmeno)
-        try:
-            import threading as _th
-            _th.Thread(target=_ow._send_greeting_async,
-                       args=(_jmeno, _conf),
-                       kwargs={"duvod": "zamával ti na pozdrav"},
-                       daemon=True).start()
-        except Exception as _e:
-            _syslog.error("gesto: pozdrav selhal: %s", _e)
-        self._zprava_o_zamavani(_jmeno)
-        self._snimek_zamavani(_bbox, _jmeno)
-
         # HANS_WAVE_GAME_MUTE_V1 (30. 10., uživatel) — při herním módu sedí někdo
         # u PC přímo před kamerou a ruce na myši/klávesnici dělají „zamávání“:
         # ~46 dní logu 88 mávnutí při hře (členka domácnosti 48, host 27) × 72 mimo hru.
@@ -1703,6 +1703,18 @@ class PicamDisplayController:
                 _syslog.info("gesto: zamávání při hře → bez pozdravu (%s)", _jmeno)
                 self._snimek_zamavani(_bbox, _jmeno)
                 return
+        _syslog.info("gesto: zamávání → pozdrav (%s)", _jmeno)
+        try:
+            import threading as _th
+            _th.Thread(target=_ow._send_greeting_async,
+                       args=(_jmeno, _conf),
+                       kwargs={"duvod": "zamával ti na pozdrav"},
+                       daemon=True).start()
+        except Exception as _e:
+            _syslog.error("gesto: pozdrav selhal: %s", _e)
+        self._zprava_o_zamavani(_jmeno)
+        self._snimek_zamavani(_bbox, _jmeno)
+
     def _snimek_zamavani(self, bbox, jmeno, slozka="data/gesta"):  # HANS_GESTURE_WAVE_SNAP_V1
         """Ulozi snimek v okamziku zachytu do data/gesta/ (MODRY ramecek
         = co bylo povazovano za dlan).
@@ -1742,7 +1754,8 @@ class PicamDisplayController:
             # HANS_GESTURE_REJECT_SNAP_CAP_V1 (15. 9.) — ODMITNUTI maji vlastni
             # strop. Pri 40 smazala rotace 13. 9. 178 z 218 snimku vcetne
             # jedine zajimave kategorie; odmitnuti je radove vic nez prijatych.
-            _strop = 40
+            _strop = int(self.config.get("gesture", {}).get(   # HANS_GESTA_STITKY_V1
+                "wave_snapshot_max", 40))
             if slozka != "data/gesta":
                 _strop = int(self.config.get("gesture", {}).get(
                     "reject_snapshot_max", 300))
