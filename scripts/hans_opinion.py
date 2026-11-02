@@ -83,8 +83,31 @@ def is_opinion_query(text: str) -> bool:
         # zkouška #87) šlo cestou názoru a odpověď si vymyslela datum scény
         if _phil_jen_v_titulu(msg):
             return False
+        # HANS_OPINION_FAKT_JMENO_V1 (2. 11.) — faktická otázka (kdo/kdy/kde/kolik…)
+        # s vlastním jménem, kde filosofické slovo jen popisuje děj: „Kdo převzal
+        # správu říše po smrti Rudolfa Habsburského?“ (Koláčova zkouška #170) šla
+        # cestou názoru a odpověď si vymyslela panovníka i listinu. Žádost o názor
+        # („jak vnímáte smrt“, „podle vás“) má přednost. Změřeno: 1 420 vět lidí
+        # → 1 změna (příjmení Svoboda), 132 zkoušek → 1 změna (#170).
+        # HANS_OPINION_FAKT_JMENO_V1: bez předpony — produkce posílá větu
+        # jako „<jméno> se ptá: …“ (týž ořez jako hans_intent)
+        _bez = re.sub(r"^[^\W\d_]+ se ptá:\s*", "", msg)
+        if (_FAKT_ZACATEK.match(_bez) and not _OSOBNI_NAZOR.search(_bez)
+                and _VLASTNI_JMENO.search(_bez[1:])):
+            return False
         return True
     return False
+
+
+# HANS_OPINION_FAKT_JMENO_V1 — viz is_opinion_query
+_FAKT_ZACATEK = re.compile(
+    r"^\s*(a\s+)?(kdo|kdy|kde|kolik|v\s+kter[ée]m\s+roce|v\s+jak[ée]m\s+roce|"
+    r"jak\s+se\s+jmenoval\w*|jak\s+dlouho)\b", re.IGNORECASE)
+_OSOBNI_NAZOR = re.compile(
+    r"\b(vním[áa](te|š)|mysl[íi](te|š)|soud[íi](te|š)|c[íi]t[íi](te|š)|"
+    r"podle\s+(v[áa]s|tebe)|v[áa][šs]\s+n[áa]zor|tv[ůu]j\s+n[áa]zor)\b", re.IGNORECASE)
+_VLASTNI_JMENO = re.compile(
+    r"(?<![.!?]\s)\b[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]{2,}")
 
 
 def _phil_jen_v_titulu(msg: str) -> bool:
