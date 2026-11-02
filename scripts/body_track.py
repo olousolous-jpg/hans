@@ -62,6 +62,7 @@ class _Stopa:
         self.mela_tvar = False
         self.kriz_t = 0.0            # poslední křížení s jinou stopou
         self.pohyb = 0.0             # uražená dráha středu
+        self.skore = 0.0             # HANS_CINNOSTI_SKORE_V1 — skóre poslední detekce
 
     def stred(self, b=None):
         b = b or self.box
@@ -308,9 +309,11 @@ class BodyTrackShadow:
             s.v = (0.5 * s.v[0] + 0.5 * vx, 0.5 * s.v[1] + 0.5 * vy)
             s.pohyb += abs(x1 - x0) + abs(y1 - y0)
             s.box, s.kp, s.t = list(o[1]), o[2], t
+            s.skore = float(o[0])    # HANS_CINNOSTI_SKORE_V1
         for oi, o in enumerate(osoby):
             if oi not in uo:
                 self._stopy.append(_Stopa(o[1], o[2], t))
+                self._stopy[-1].skore = float(o[0])   # HANS_CINNOSTI_SKORE_V1
         ziva = []
         for s in self._stopy:
             if t - s.t > self.grace_s:

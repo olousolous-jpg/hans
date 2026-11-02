@@ -1775,7 +1775,18 @@ class PicamDisplayController:
         cfg = self.config.get("frame_sampling", {})
         if not cfg.get("enabled", False) or frame is None:
             return
-        if cfg.get("only_with_person", True) and not face_visible:
+        # HANS_CINNOSTI_SBER_V1 (30. 10.) — stačí i postava ze stopy postavy:
+        # na gauči jsou lidé z profilu a tvář se nechytí (uživatel 30. 10.)
+        # HANS_CINNOSTI_SKORE_V1 (31. 10.) — jen postava s jistou detekcí: polštář
+        # na levém konci gauče vidí pose model jako postavu (skóre 0,36–0,52,
+        # i 16 kloubů) → snímky prázdné místnosti; lidé na gauči 0,50–0,82.
+        # Změřeno na 33 označených snímcích (`data/mereni/cinnosti_pose_31_10.txt`).
+        _min_sk = float(cfg.get("postava_min_skore", 0.55))
+        _postava = any(now - getattr(s, "t", 0.0) < 3.0
+                       and getattr(s, "skore", 1.0) >= _min_sk
+                       for s in list(getattr(
+            getattr(getattr(self, "_pipeline", None), "_body_track", None), "_stopy", None) or []))
+        if cfg.get("only_with_person", True) and not (face_visible or _postava):
             return
         if now - getattr(self, "_last_frame_sample", 0.0) < float(
                 cfg.get("interval_s", 120)):
