@@ -1127,6 +1127,12 @@ def _kmen(w: str) -> str:
 
 
 def _kmen_sedi(topic: str, title: str) -> bool:
+    # HANS_LOOKUP_ALIGN_ASCII_V1 (2. 11., /tazatel A: „Prodanou nevestu“ → heslo „Prodaná
+    # nevěsta“ s poznámkou „přesně jsem nenašel“) — dotaz psaný CELÝ bez diakritiky se
+    # porovná s titulem také bez ní (rozlišení „Jana“ × „Ján“ platí, jen když háčky píše)
+    import unicodedata as _ud
+    _bez = lambda s: "".join(c for c in _ud.normalize("NFD", s) if _ud.category(c) != "Mn")
+    _ascii = (topic or "").isascii()
     tt = [w for w in re.findall(r"\w+", re.sub(r"\(.*?\)", "", title or "").lower())
           if w not in _KMEN_STOP]
     qt = [w for w in re.findall(r"\w+", (topic or "").lower()) if w not in _KMEN_STOP]
@@ -1134,7 +1140,9 @@ def _kmen_sedi(topic: str, title: str) -> bool:
         return False
     for w in qt:
         k = _kmen(w)
-        if not any(t == w or (t.startswith(k) and t[len(k):] in _KMEN_NOM) for t in tt):
+        # slovo od 5 písmen v dotazu celém bez diakritiky smí sedět i na titul bez ní
+        tts = tt + ([_bez(x) for x in tt] if _ascii and len(w) >= 5 else [])
+        if not any(t == w or (t.startswith(k) and t[len(k):] in _KMEN_NOM) for t in tts):
             return False
     return True
 
