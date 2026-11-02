@@ -1634,3 +1634,10 @@ def podnety_vyroci(datum: str, typ_kontextu: str = "nazev") -> list:
     if typ_kontextu == "typ":
         return ["%s:%s" % (x["nazev"], x["typ"]) for x in k]
     return [x["nazev"] for x in k]
+
+
+# ── HANS_VYPOCTY_CUE_V2 (2. 11.) ─────────────────────────────────────────────
+def vypocty_cue_osoba(veta: str) -> bool:
+    """Pozná výpočet otázku na věk / roky osoby (CUE_OSOBA nad složenou větou)?"""
+    from scripts import hans_vypocty_model as V
+    return bool(V.CUE_OSOBA.search(V._f(veta)))

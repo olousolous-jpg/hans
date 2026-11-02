@@ -43,6 +43,8 @@ def _velikonoce(r: int) -> _dt.date:
 
 
 def _vek(a, b):
+    if isinstance(b, (int, float)):            # HANS_VYPOCTY_JEN_ROK_V1 — i druhý jen rok
+        return int(b) - (int(a) if isinstance(a, (int, float)) else a.year)
     if isinstance(a, (int, float)):            # jen rok („od roku 1918“)
         return b.year - int(a)
     return b.year - a.year - ((b.month, b.day) < (a.month, a.day))
@@ -204,7 +206,12 @@ CUE_OSOBA = re.compile(
     r"jak\s+dlouho\s+(?:zil|zila|zili)|kolik\s+(?:dni|tydnu|mesicu|roku)\s+(?:zil|zila)|"
     r"o\s+kolik\s+(?:let|roku)|kolik\s+(?:je|bylo|bude)\s+(?:to\s+)?let|"
     r"(?:jaky|ktery|v\s+jaky)\s+den|den\s+v\s+tydnu|kolik\s+dni|"
-    r"kolik\s+by\s+(?:mu|ji|jim|jemu)\s+(?:bylo|bude))\b")   # HANS_VYPOCTY_ZAJMENO_V1
+    r"kolik\s+by\s+(?:mu|ji|jim|jemu)\s+(?:bylo|bude)|"   # HANS_VYPOCTY_ZAJMENO_V1
+    # HANS_VYPOCTY_CUE_V2 (2. 11., /tazatel A+B) — „kolik by dnes bylo Karlu Čapkovi“,
+    # „kolik mu (tehdy) bylo, když zemřel“, „kolik by mu dnes bylo“: výpočet se nespustil
+    # a model počítal z hlavy (53 let, „narozen 2024“). 📏 3 979 vět: 5 nových, všechny na věk.
+    r"kolik\s+(?:by\s+)?(?:(?:mu|ji|jim|jemu|dnes|tehdy|ted|vlastne|asi|zhruba)\s+){1,3}(?:bylo|bude|je)|"
+    r"kolik\s+by\s+(?:(?:dnes|ted|asi)\s+)?bylo)\b")
 # HANS_VYPOCTY_ZAJMENO_V1 (1. 11., /tazatel) — navazující „a kolik by mu bylo dnes?“:
 # osoba z předchozích otázek (jako rok u „tehdy“, HANS_YEAR_EVENTS_V1); příbuzní
 # („jeho otec“, „manželce“) ne — jejich data nemáme, model by vzal data osoby.
@@ -444,7 +451,7 @@ def _wd_cz(d) -> str:
     return ("%d. %d. %d" % (d[2], d[1], d[0]) if d[2] else "roku %d" % d[0])
 
 
-def fakta_osob(q: str, predchozi=()):
+def fakta_osob(q: str, predchozi=(), f1=None, odpoved=""):
     """(věta pro model, věta pro Hanse, povolená čísla, juliánský, data, osoba z historie)
     nebo None. `predchozi` = dřívější otázky téhož člověka, nejnovější první."""
     if not CUE_OSOBA.search(_f(q)):
@@ -466,10 +473,29 @@ def fakta_osob(q: str, predchozi=()):
         _log.info("HANS_VYPOCTY_WD_V2b: otázka na úřad/vládu → bez faktů")   # „kolik let vládl Karel IV.“ ≠ délka života
         return None
     _os, _zb = osoby_a_zbytek(q)
+    _z_hist = ""
+    # HANS_VYPOCTY_F1_OSOBA_V1 (2. 11., /tazatel) — jméno v jiném pádě nebo bez háčků
+    # („Capek“, „Karlu Capkovi“) a osoba jen z Hansovy odpovědi („ten autor“) najde až
+    # přepis otázky F1. Přepis si ale jméno umí vymyslet (2. 11.: Cimrman → Šternberk),
+    # proto osoba z přepisu jen s kotvou: kmen jména ve větě, v dřívějších otázkách
+    # nebo v Hansově poslední odpovědi. 📏 přepisy tazatele: 24 vět s nenalezenou osobou
+    # → 5 vezme přepis; Edison/žárovka (bez jména i zájmena ve větě) se nebere.
+    def _z_prepisu(duvod):
+        if not f1:
+            return None
+        _o1, _z1 = osoby_a_zbytek(f1)
+        _kt = _f(" ".join([q] + list(predchozi or ())[:4] + [odpoved or ""]))
+        if _o1 and not _z1 and all(any(_f(w)[:4] in _kt for w in o.split() if len(w) > 3) for o in _o1):
+            _log.info("HANS_VYPOCTY_F1_OSOBA_V1: osoba z přepisu %s (věta: %s)", _o1, duvod)
+            return _o1
+        return None
+    if _zb:
+        _o1 = _z_prepisu(_zb)
+        if _o1:
+            _os, _zb = _o1, []
     if _zb:
         _log.info("HANS_VYPOCTY_WD_V2: jména bez dat %s → bez faktů", _zb[:4])
         return None
-    _z_hist = ""
     if not _os and _ZAJMENO.search(_f(q)):
         for p in list(predchozi or ())[:4]:
             _po, _pz = osoby_a_zbytek(p)
@@ -478,6 +504,11 @@ def fakta_osob(q: str, predchozi=()):
                     _os, _z_hist = _po, _po[0]
                     _log.info("HANS_VYPOCTY_ZAJMENO_V1: zájmeno → %s (z předchozí otázky)", _z_hist)
                 break
+        if not _os:
+            _o1 = _z_prepisu("zájmeno")
+            if _o1:
+                _os = _o1
+                _z_hist = _o1[0] if len(_o1) == 1 else ""
     for o in _os:
         z = zivot(o)
         if not z or not (z.get("nar") or z.get("zem")):
@@ -652,12 +683,14 @@ def _volno() -> bool:
         return True
 
 
-def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()) -> Optional[str]:
+def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=(),
+                    f1=None, odpoved="") -> Optional[str]:
     c = (config or {}).get("vypocty_model", {}) or {}
     if not c.get("enabled", True):
         return None
     q0 = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", text or "").strip()
-    _fo = fakta_osob(q0, predchozi) if c.get("wikidata", True) else None   # HANS_VYPOCTY_WD_V1
+    _fo = (fakta_osob(q0, predchozi, f1=f1, odpoved=odpoved)   # HANS_VYPOCTY_F1_OSOBA_V1
+           if c.get("wikidata", True) else None)   # HANS_VYPOCTY_WD_V1
     if not _fo and not vypada_jako_vypocet(text):
         return None
     if not _volno():
@@ -705,6 +738,19 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()
         if _v2 != vyraz:
             _log.info("%s: X %% z Y → %s", MARK, _v2[:80])
             vyraz = _v2
+    # HANS_VYPOCTY_JEN_ROK_V1 (2. 11., /tazatel B) — u osoby s jen rokem narození/úmrtí
+    # ve Wikidatech (Vermeer: jen 1632) model psal datum(1632, 1, 1) i přes pokyn
+    # „use the year number“ a kontrola výpočet zahodila (Vermeer, Rembrandt × Vermeer).
+    # Takové datum se převede na holý rok — věk pak vyjde na rok přesně.
+    if _fo:
+        _yo = {int(x) for x in _fo[2] if x > 31 and x == int(x)
+               and not any(tr[0] == int(x) for tr in _fo[4])}
+        if _yo:
+            _v2 = re.sub(r"datum\(\s*(\d{3,4})\s*,\s*\d+\s*,\s*\d+\s*\)",
+                         lambda m: m.group(1) if int(m.group(1)) in _yo else m.group(0), vyraz)
+            if _v2 != vyraz:
+                _log.info("HANS_VYPOCTY_JEN_ROK_V1: %s → %s", vyraz[:80], _v2[:80])
+                vyraz = _v2
     bez = _cisla_bez_opory(vyraz, q, _fo[2] if _fo else ())
     if _fo and _fo[3] and "den_v_tydnu" in vyraz:
         _log.info("%s: den v týdnu z juliánského data → zahazuji: %.120r", MARK, vyraz)
