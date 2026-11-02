@@ -198,6 +198,44 @@ def _flux_docisti(p: str) -> str:
     return p[:900]
 
 
+# HANS_ART_REPAINT_SAME_MEDIUM_V1 (30. 10., uživatel: „při výtce použít stejný
+# styl, pokud se neřekne jinak“) — měření FLUX: výtka „slon realisticky jako na
+# fotce“ + vylosované „art nouveau linework“ šly proti sobě. Při přemalování
+# (žádost o opakování ≤ 15 min) se médium nelosuje: stejné jako původní obraz;
+# když výtka mluví o stylu, nevnucuje se žádné.
+_VYTKA_STYL = re.compile(
+    r"styl|realisti|fotk|foto\b|kreslen|kresb|kreslen|komiks|anime|abstrakt|olej|akvarel|"
+    r"kva[sš]|tu[sš]|uhl|pastel|digit|malb[auy]? jako|[cč]ernob[ií]l|barevn|cartoon|realisti", re.I)
+
+
+def _medium_pro_premalovani(db_path: str):
+    """(je_přemalování, médium) — médium '' = nevnucovat. Nikdy nehází."""
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=3.0)
+        try:
+            fb = con.execute(
+                "SELECT data FROM diary WHERE event_type='art_feedback' AND ts > ? "
+                "AND data LIKE '%\"matrix_opakuj\"%' ORDER BY ts DESC LIMIT 1",
+                (time.time() - 900,)).fetchone()
+            if not fb:
+                return False, ""
+            d = json.loads(fb[0] or "{}")
+            if _VYTKA_STYL.search(_ha._ascii_fold(d.get("comment") or "") + " " + (d.get("comment") or "")):
+                return True, ""
+            r = con.execute("SELECT data FROM diary WHERE rowid=?",
+                            (int(d.get("artwork_rowid") or 0),)).fetchone()
+        finally:
+            con.close()
+        pr = (json.loads(r[0] or "{}").get("prompt") or "").lower() if r else ""
+        for m in _ha._MEDIA:
+            if m.split(",")[0].lower() in pr:
+                return True, m
+        return True, ""
+    except Exception as e:
+        _ha._log.debug("HANS_ART_REPAINT_SAME_MEDIUM_V1: %s", e)
+        return False, ""
+
+
 def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str = "",
                   system: str = None, source_intro: str = None,
                   en_fallback: str = None, prev: dict = None,
@@ -209,6 +247,12 @@ def _scene_prompt_core(config: dict, title: str, reflection: str, db_path: str =
     _novary = {globals().get(n) for n in (
         "_HOME_SCENE_SYSTEM", "_STYLE_SCENE_SYSTEM", "_MOCKUP_SCENE_SYSTEM")}
     medium = _ha._pick_medium() if (system not in _novary) else ""
+    if medium and db_path:   # HANS_ART_REPAINT_SAME_MEDIUM_V1
+        _pre, _med = _medium_pro_premalovani(db_path)
+        if _pre:
+            _ha._log.info("art: HANS_ART_REPAINT_SAME_MEDIUM_V1 přemalování → médium %s",
+                          (_med.split(",")[0] if _med else "nevnucuji (styl určuje výtka)"))
+            medium = _med
     _tail = medium if medium else "oil painting, atmospheric lighting, rich detail, masterful"
     # HANS_ART_FALLBACK_NEUTRAL_V1 — když scene-prompt LLM selže, sestav
     # SCENE-NEUTRÁLNÍ fallback řízený NÁMĚTEM (dřív „soft window light" =
