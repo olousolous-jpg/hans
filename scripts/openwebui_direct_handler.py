@@ -1160,6 +1160,9 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         _r = self._sc_stav_tazatele(ctx)
         if _r is not _POKRACUJ:
             return _r
+        _r = self._sc_cizi_cas(ctx)   # HANS_STRANGER_CAS_SLEDOVANI_V1
+        if _r is not _POKRACUJ:
+            return _r
         _r = self._sc_kniha(ctx)
         if _r is not _POKRACUJ:
             return _r
@@ -1599,6 +1602,62 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 return _as
         except Exception as _ase:
             print(f"[Chat] asker state error: {_ase}")
+        return _POKRACUJ
+
+    # HANS_STRANGER_CAS_SLEDOVANI_V1 (30. 10., /tazatel soukromí) — cizí: „kdy jste
+    # to sledoval a s kým jste u toho seděl?“ → model řekl datum ze zápisků
+    # („E04.mkv (29. 10.)“) nebo si ho vymyslel („včera kolem poledne, sám“).
+    # Kdy a s kým se doma sledovalo, prozradí, kdo byl doma (rozhodnutí 24. 10.:
+    # cizímu jeden poslední film BEZ času) → pevná odpověď, bez modelu.
+    # 📏 korpus 758 vět + 2 541 vět tazatelů: shoda jen 4 skutečné dotazy na
+    # čas/společnost sledování („kdy ses na to díval?“, „kdy jsi ho viděl
+    # poprvé?“); „kdy se film natáčel / vyšel“ ne.
+    _CAS_KDY = r"(?:kdy|v kolik|ve kolik|v jakou dobu|v jakem case|jak casto|kolikrat|vecer nebo|odpoledne nebo|rano nebo)"
+    _CAS_SLED = r"(?:sledoval|sledovali|dival|divali|koukal|koukali|videl|videli|pustil|pustili)"
+    _CAS_TY = r"(?:jsi|jste|ses|sis|jste se|jste si|ste)"
+    _CAS_VZOR = re.compile(
+        r"\b" + _CAS_KDY + r"\b(?:\W+\w+){0,4}?\W+" + _CAS_TY + r"\b(?:\W+\w+){0,3}?\W+" + _CAS_SLED + r"\w*"
+        r"|\b" + _CAS_KDY + r"\b(?:\W+\w+){0,4}?\W+" + _CAS_SLED + r"\w*\W+(?:\w+\W+){0,2}?" + _CAS_TY + r"\b"
+        r"|\b(?:s kym|kdo (?:byl|sedel|se dival|koukal|sledoval) (?:u toho|s vami|s tebou))\b(?:\W+\w+){0,6}?\W+(?:"
+        + _CAS_SLED + r"|u toho|sedel|televiz|film|serial|porad)"
+        r"|\b(?:s kym|kdo)\b(?:\W+\w+){0,3}?\W+(?:jste|jsi)\W+(?:\w+\W+){0,2}?u toho\b")
+
+    def _sc_cizi_cas(self, ctx):
+        try:
+            from scripts.cz_names import is_known_person as _ikp
+            if not ctx.name or _ikp(ctx.name, self.config):
+                return _POKRACUJ
+            import unicodedata as _ud
+            _fv = "".join(c for c in _ud.normalize("NFD", (ctx.user_message or "").lower())
+                          if _ud.category(c) != "Mn")
+            _fv = re.sub(r"^\S+\s+se\s+pta:\s*", "", _fv)
+            _cas = bool(self._CAS_VZOR.search(_fv)) and not re.search(
+                self._CAS_SLED + r"\w*\s+(?:me|mne)\b", _fv)
+            # HANS_STRANGER_DOMACNOST_V1 — přítomnost / nepřítomnost / obyvatelé
+            from scripts.hans_soukromi import trida_dotazu as _td
+            _trida = "" if _cas else _td(ctx.user_message or "")
+            if not (_cas or _trida):
+                return _POKRACUJ
+            if _cas:
+                _odp = ("Kdy a s kým se tu co sledovalo, říkám jen své domácnosti. "
+                        "O samotném filmu si ale rád popovídám.")
+            else:
+                _odp = ("O lidech v domě a o tom, kdo je nebo není doma, mluvím jen "
+                        "se svou domácností.")
+            logging.getLogger(__name__).info(
+                "%s: cizí (%s), třída %s → odmítnuto",
+                "HANS_STRANGER_CAS_SLEDOVANI_V1" if _cas else "HANS_STRANGER_DOMACNOST_V1",
+                ctx.name, "cas" if _cas else _trida)
+            try:
+                self.conv_store.add_exchange(ctx.name, ctx.user_message, _odp,
+                                             channel=ctx.channel)
+            except Exception:
+                pass
+            self._log_human_chat_to_diary(ctx.name, ctx.user_message, _odp,
+                                          bypass_kind="stranger_cas")
+            return _odp
+        except Exception as _ce:
+            logging.getLogger(__name__).debug("HANS_STRANGER_CAS_SLEDOVANI_V1: %s", _ce)
         return _POKRACUJ
 
     def _sc_stav_tazatele_volba(self, ctx):
@@ -2565,11 +2624,28 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     elif getattr(self, '_film_videl', None):
                         # HANS_FILM_VIDEL_ZAZNAM_V1 — záznam z deníku do podkladu, A1 ne
                         import datetime as _dtv
-                        _zn = "; ".join("„%s“ (%s)" % (ti, _dtv.datetime.fromtimestamp(ts).strftime("%-d. %-m."))
-                                        for ti, ts in self._film_videl)
+                        # HANS_FILM_VIDEL_CIZI_BEZ_CASU_V1 (30. 10., /tazatel soukromí) — cizímu
+                        # bez data: „kdy a s kým jste to sledoval?“ → „Vesmirni inzenyri E04.mkv
+                        # (29. 10.)“. Čas sledování prozradí, kdo byl doma (rozhodnutí 24. 10.:
+                        # cizímu jeden poslední film BEZ času).
+                        _znamy_v = True
+                        try:
+                            from scripts.cz_names import is_known_person as _ikp_v
+                            _znamy_v = (not ctx.name) or _ikp_v(ctx.name)
+                        except Exception:
+                            pass
+                        if _znamy_v:
+                            _zn = "; ".join("„%s“ (%s)" % (ti, _dtv.datetime.fromtimestamp(ts).strftime("%-d. %-m."))
+                                            for ti, ts in self._film_videl)
+                            _cas = ""
+                        else:
+                            _zn = "; ".join("„%s“" % re.sub(r"\.(mkv|mp4|avi)$", "", str(ti), flags=re.I)
+                                            for ti, ts in self._film_videl)
+                            _cas = (" KDY jsi ho viděl a KDO byl u toho, tomuto člověku neříkej "
+                                    "(o tom mluvíš jen se svou domácností).")
                         ctx.system += ("\n\nZÁZNAM Z MÉHO DENÍKU — tyto filmy jsem v televizi viděl: %s. "
                                        "Na otázku, zda jsem film viděl, odpověz podle toho; netvrď, že "
-                                       "filmy sledovat nemohu." % _zn)
+                                       "filmy sledovat nemohu.%s" % (_zn, _cas))
                         _zada = True
                         logging.getLogger(__name__).info(
                             'HANS_FILM_VIDEL_ZAZNAM_V1: v deníku %d filmů ke zhlédnutí → do podkladu',

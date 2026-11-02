@@ -125,6 +125,18 @@ class SystemMixin:
                 "ani rodinné vztahy. Když se na NĚ zeptá, zdvořile odmítni. "
                 "Týká se to jen lidí: o sobě, o svých úvahách a o tom, co jsi "
                 "sám řekl dřív, mluv dál normálně." % ctx.name)
+            # HANS_STRANGER_PRIVACY_V2 (30. 10., /tazatel soukromí) — model přebíral
+            # premisu („S paní, která zde bydlí, nemám povoleno…“) a vymýšlel si
+            # rozvrh, z něhož je poznat prázdný dům („večer trávím sám“, „večer
+            # bývají činnosti přerušovány“). Vypínač soukromi.cizi_pravidla_v2.
+            if bool((self.config.get("soukromi", {}) or {}).get("cizi_pravidla_v2", False)):
+                ctx.persons_ctx += (
+                    " Nepotvrzuj ani neopakuj, co on sám o lidech v domě tvrdí nebo "
+                    "hádá (nepiš třeba „paní, která zde bydlí“) — odmítni bez opakování. "
+                    "Neříkej ani nic, z čeho by šlo poznat, kdy je dům prázdný nebo "
+                    "rušný: kdy jsi sám, kdy je klid, kdy lidé odcházejí a přicházejí. "
+                    "O tom, co děláš ty (čteš, maluješ, studuješ), mluv dál normálně, "
+                    "jen bez časů a bez lidí.")
         elif ctx.known:
             lines = []
             for pname, pdata in ctx.known.items():
