@@ -361,7 +361,7 @@ def osoby_a_zbytek(q: str, strop: int = 2):
         while i < len(w) and len(out) < strop:
             hit = None
             if w[i][:1].isupper():
-                for n in (3, 2, 1):
+                for n in (4, 3, 2, 1):   # HANS_VYPOCTY_JMENO4_V1 — „Johann Wolfgang von Goethe“
                     if i + n > len(w):
                         continue
                     kus = " ".join(w[i:i + n])
@@ -438,6 +438,61 @@ def zivot(titul: str, timeout: float = 4.0):
         os.replace(_WD_CACHE + ".tmp", _WD_CACHE)
     except Exception:
         pass
+    return out
+
+
+# ── HANS_VYPOCTY_UDALOST_ROK_V1 (2. 11., /tazatel A) ───────────────────────
+# „kolik let uplynulo od konce druhé světové války?“ — rok 1945 v otázce není, kontrola ho
+# zahodila a model pak počítal z hlavy („dnes je 2024, 79 let“). Rok mimo otázku teď projde,
+# jen když je to datum UDÁLOSTI za „od …“ ve Wikidatech (začátek, konec, okamžik, vznik,
+# zánik, otevření, vydání) u článku, který se našel podle té fráze a sdílí s ní slovo.
+_UDAL_PROP = (("P582", "konec"), ("P580", "začátek"), ("P585", "datum"), ("P571", "vznik"),
+              ("P576", "zánik"), ("P1619", "otevření"), ("P577", "vydání"))
+_UDAL_UVOD = re.compile(r"^(?:konce|skončení|ukončení|začátku|zahájení|vypuknutí|vzniku|založení|"
+                        r"stavby|dostavby|otevření|podpisu|vydání)\s+", re.I)
+
+
+def roky_udalosti(q: str, f1=None, timeout: float = 4.0) -> dict:
+    """{rok: (titul článku, popis vlastnosti)} pro událost za „od …“ v otázce, nebo {}."""
+    out = {}
+    try:
+        from scripts import hans_wiki_offline as wo
+        if not wo.dostupna():
+            return out
+        frazy = []
+        for zdroj in (f1, q):
+            m = re.search(r"\bod\s+(?:roku\s+)?(.{4,80}?)\s*(?:\?|$|,|\s+do\s)", zdroj or "")
+            if m and not re.match(r"\d", m.group(1)):
+                frazy.append(m.group(1).strip())
+        kand = []
+        for fr in frazy:
+            holo = _UDAL_UVOD.sub("", fr)
+            for t in (wo.srsearch(fr, 3) or []) + (wo.srsearch(holo, 3) or []) + (wo.prefixsearch(holo, 2) or []):
+                kmeny = {_f(w)[:4] for w in re.findall(r"\w{4,}", holo)}
+                if t not in kand and kmeny & {_f(w)[:4] for w in re.findall(r"\w{4,}", t)}:
+                    kand.append(t)
+        kand = kand[:4]
+        if not kand:
+            return out
+        import requests
+        from scripts.hans_facts import USER_AGENT
+        r = requests.get("https://www.wikidata.org/w/api.php",
+                         params={"action": "wbgetentities", "sites": "cswiki", "titles": "|".join(kand),
+                                 "props": "claims|sitelinks", "sitefilter": "cswiki", "format": "json"},
+                         headers={"User-Agent": USER_AGENT}, timeout=timeout)
+        if r.status_code != 200:
+            _log.info("HANS_VYPOCTY_UDALOST_ROK_V1: Wikidata HTTP %s", r.status_code)
+            return out
+        for q_id, e in (r.json().get("entities") or {}).items():
+            if not q_id.startswith("Q"):
+                continue
+            tit = ((e.get("sitelinks") or {}).get("cswiki") or {}).get("title") or q_id
+            for prop, lab in _UDAL_PROP:
+                d = _datum_wd((e.get("claims") or {}).get(prop) or [])
+                if d and d[0] and d[0] not in out:
+                    out[d[0]] = (tit, lab)
+    except Exception as e:
+        _log.info("HANS_VYPOCTY_UDALOST_ROK_V1: %s", str(e)[:80])
     return out
 
 
@@ -691,7 +746,12 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()
     q0 = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", text or "").strip()
     _fo = (fakta_osob(q0, predchozi, f1=f1, odpoved=odpoved)   # HANS_VYPOCTY_F1_OSOBA_V1
            if c.get("wikidata", True) else None)   # HANS_VYPOCTY_WD_V1
-    if not _fo and not vypada_jako_vypocet(text):
+    # HANS_VYPOCTY_UDALOST_ROK_V1 — data události za „od …“ předem jako známá fakta
+    # (model jinak rok buď vymyslel, nebo poslechl zákaz a nevrátil nic — Bílá hora)
+    _ru = {}
+    if not _fo and re.search(r"\bod\b", _f(q0)) and (CUE_OSOBA.search(_f(q0)) or vypada_jako_vypocet(text)):
+        _ru = roky_udalosti(q0, f1)
+    if not _fo and not _ru and not vypada_jako_vypocet(text):
         return None
     if not _volno():
         _log.info("%s: přeskočeno (hra nebo noční dávka)", MARK)
@@ -707,13 +767,18 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()
         from scripts.hans_book_summary import _cpu_url
         body = {"model": c.get("model", "qwen3:30b"), "stream": False, "format": "json", "think": False,
                 "keep_alive": c.get("keep_alive", "30m"),
-                "messages": [{"role": "system", "content": (_SYS if not _fo else _SYS.replace(
+                "messages": [{"role": "system", "content": (_SYS if not (_fo or _ru) else _SYS.replace(
                                  "(e.g. needs facts about a person)", "(e.g. needs facts that are not given)").replace(
                                  "Use ONLY numbers that appear in the question", "Use ONLY numbers that appear "
                                  "in the question or in the known facts")).format(
                                  dnes=_dt.date.today().isoformat(), rok=_dt.date.today().year)},
-                             {"role": "user", "content": q if not _fo else (
-                                 q + "\n\n" + _fo[0] + _SYS_OSOBA)}],
+                             {"role": "user", "content": (q + "\n\n" + _fo[0] + _SYS_OSOBA) if _fo else (
+                                 (q + "\n\nKnown facts from Wikidata about the event: " + "; ".join(
+                                     "%s: %s = %d" % (v[0], {"konec": "end", "začátek": "start", "datum": "date",
+                                                             "vznik": "inception", "zánik": "dissolution",
+                                                             "otevření": "opening", "vydání": "publication"}[v[1]], k)
+                                     for k, v in sorted(_ru.items())) + ". Use the year that fits the question.")
+                                 if _ru else q)}],
                 "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 300}}
         t0 = time.time()
         # HANS_VYPOCTY_NAHRATI_V1: v provozu se na PC přetahuje o CPU (25 s nestačilo, sólo 5–10 s)
@@ -757,6 +822,16 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()
         return None
     if not bez and _fo:
         bez = _data_bez_opory(vyraz, q, _fo)
+    _ud_popis = ""
+    if bez and not _fo and all(re.fullmatch(r"\d{3,4}", b_) for b_ in bez):   # HANS_VYPOCTY_UDALOST_ROK_V1
+        _ru = _ru or roky_udalosti(q, f1)
+        if all(int(b_) in _ru for b_ in bez):
+            _ud_popis = "údaje z Wikidat: " + "; ".join(
+                "%s – %s %s" % (_ru[int(b_)][0], _ru[int(b_)][1], b_) for b_ in dict.fromkeys(bez))
+            _log.info("HANS_VYPOCTY_UDALOST_ROK_V1: rok %s doložen (%s)", bez, _ud_popis)
+            bez = []
+        else:
+            _log.info("HANS_VYPOCTY_UDALOST_ROK_V1: rok %s nedoložen (Wikidata %s)", bez, sorted(_ru)[:8])
     if bez:
         _log.info("%s: čísla bez opory v otázce %s → zahazuji: %.120r", MARK, bez, vyraz)
         return None
@@ -779,7 +854,7 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()
             pass
     co = str(d.get("co") or "").strip()
     _log.info("%s: veličina %s", MARK, co[:60])
-    out = "%svýpočet: %s → výsledek = %s%s" % ((_fo[1] + " · ") if _fo else "", vyraz.replace("**", "^").replace("*", "·"),
+    out = "%svýpočet: %s → výsledek = %s%s" % ((_fo[1] + " · ") if _fo else ((_ud_popis + " · ") if _ud_popis else ""), vyraz.replace("**", "^").replace("*", "·"),
                                              _cz(x), (" " + jed) if jed and not isinstance(x, (_dt.date, str)) else "")
     _log.info("%s: %.1f s · %s", MARK, time.time() - t0, out[:200])
     return out
