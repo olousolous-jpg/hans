@@ -96,6 +96,127 @@ def gather(db_path: str, period_days: int = 7, min_importance: int = 6) -> dict:
     return out
 
 
+# NARRATIVE_KEY_SCENES_V1 (30. 10.) — klíčové scény (McAdams: zlomy, vrcholy,
+# nezdary) z UDÁLOSTÍ, které se skutečně staly, ne z Hansovy prózy o nich
+# (top-16 epizod bylo skoro jen „Velmi mě zasáhlo…“ k četbě a o lidech nic).
+# Věty skládá kód; jen čte (read-only). Pořadí = přednost odezvy okolí.
+def _jmeno(o: str, config) -> tuple:
+    try:
+        from scripts.cz_names import display_name, person_gender
+        return display_name(o, config) or o, ("a" if person_gender(o, config) == "žena" else "")
+    except Exception:
+        return o, ""
+
+
+def klicove_sceny(db_path: str, period_days: int = 7, config: dict = None,
+                  max_scen: int = 8) -> list:
+    """[věta] skutečných událostí období (nejvýš `max_scen`). Nikdy nehází."""
+    import json as _j
+    since = (datetime.now() - timedelta(days=period_days)).timestamp()
+    cfg = config or {}
+    test = {str(x).lower() for x in (cfg.get("test_persons") or [])}
+    out = []
+    try:
+        con = _ro(db_path)
+    except Exception:
+        return []
+    def rows(et, cols="title, coalesce(note,''), coalesce(data,'')"):
+        try:
+            return con.execute("SELECT %s FROM diary WHERE event_type=? AND ts>=? "
+                               "ORDER BY ts" % cols, (et, since)).fetchall()
+        except Exception:
+            return []
+    try:
+        # 1) ohlas na obraz
+        for ti, _n, d in rows("art_feedback"):
+            try:
+                dd = _j.loads(d or "{}")
+            except Exception:
+                dd = {}
+            o = str(dd.get("person") or "")
+            if not o or o.lower() in test:
+                continue
+            jm, a = _jmeno(o, cfg)
+            r = int(dd.get("rating") or 0)
+            kom = " a napsal%s: „%s“" % (a, dd["comment"][:80]) if dd.get("comment") else ""
+            out.append("%s ohodnotil%s můj obraz „%s“ %s%s." % (
+                jm, a, ti, "kladně" if r > 0 else "záporně" if r < 0 else "", kom))
+        # 2) s kým jsem mluvil
+        from collections import Counter
+        c = Counter(str(t).lower() for t, _n, _d in rows("human_chat")
+                    if t and str(t).lower() not in test)
+        for o, n in c.most_common(3):
+            jm, _a = _jmeno(o, cfg)
+            out.append("Rozhovory se mnou: %s — %d %s za týden." % (
+                jm, n, "zpráva" if n == 1 else "zprávy" if n < 5 else "zpráv"))
+        # 3) filmy, které jsem navrhl, a jak je lidé přijali
+        try:
+            from scripts.hans_film_volba import historie
+            _fl = []
+            for o in sorted({str(t) for t, _n, _d in rows("film_suggestion") if t}):
+                if o.lower() in test:
+                    continue
+                h = [x for x in historie(db_path, o, n=200, dni=period_days)]
+                if h:
+                    jm, _a = _jmeno(o, cfg)
+                    pri = [x["titul"] for x in h if x["prijato"]]
+                    _fl.append("%s %d× (přijato %s)" % (
+                        jm, len(h), ("%d: %s" % (len(pri), ", ".join(pri[:3]))) if pri else "0"))
+            if _fl:
+                out.append("Navrhoval jsem filmy: %s." % "; ".join(_fl))
+        except Exception as e:
+            _log.debug("klicove_sceny filmy: %s", e)
+        # 4) zastavený návrh Severky
+        for ti, n, _d in rows("severka_zamitnuto"):
+            role = ti.split(":", 1)[-1].strip()
+            proc = ""
+            if "Proč zastaveno:" in n:
+                proc = n.split("Proč zastaveno:", 1)[1].split("Navržený", 1)[0].strip()
+            # jednoznačně: měření 30. 10. — model četl „zastaven — jen jiné
+            # pojmenování role X“ jako „role se změnila na X“
+            out.append("Severka navrhla změnit mou roli na „%s“, ale návrh nebyl přijat%s; "
+                       "moje role zůstává stejná." % (
+                role, (" (" + proc[:140] + ")") if proc else ""))
+        # 5) omyly zjištěné při noční kontrole + opravy
+        ll = [n for _t, n, _d in rows("lesson_learned") if "nočním ověření" in n]
+        if ll:
+            import re as _re
+            pr = [m.group(1) for m in (_re.search(r"hesl[ao] „([^“\"]+)", x) for x in ll) if m]
+            out.append("Při nočních kontrolách jsem u %d svých odpovědí zjistil, že jsem se spletl%s." % (
+                len(ll), (" (např. heslo „%s“ nesedělo na otázku)" % pr[0]) if pr else ""))
+        kor = [t for t, _n, _d in rows("correction")]
+        if kor:
+            out.append("Opravil jsem své dřívější zápisy (%d): %s." % (
+                len(kor), "; ".join(x.replace("Oprava ", "")[:60] for x in kor[:2])))
+        # 6) Koláčovy zkoušky
+        vv = Counter()
+        for _t, _n, d in rows("kolac_exam"):
+            try:
+                vv[_j.loads(d or "{}").get("verdikt") or "?"] += 1
+            except Exception:
+                pass
+        if sum(vv.values()) >= 3:
+            ok = vv.get("ok", 0)
+            spatne = sum(n for k, n in vv.items() if k not in ("ok", "neposouzeno", "?"))
+            out.append("Koláč mě %d× zkoušel z toho, co jsem četl: obstál jsem %d×, neobstál %d×." % (
+                sum(vv.values()), ok, spatne))
+        # 7) dokončené studium a díla
+        for ti, _n, _d in rows("study_mastery"):
+            out.append("Dostudoval jsem téma „%s“." % ti.split(":", 1)[-1].strip())
+        for ti, _n, _d in rows("writing_completed"):
+            out.append("Dopsal jsem dílo „%s“." % ti)
+        # 8) uzavřené případy (nové schopnosti ne: věty o sobě, useknuté)
+        cc = {t for t, _n, _d in rows("case_closed") if t}
+        if cc:
+            out.append("S Koláčem jsme uzavřeli %d případ%s (%s)." % (
+                len(cc), "" if len(cc) == 1 else "y" if len(cc) < 5 else "ů", ", ".join(sorted(cc)[:2])))
+    except Exception as e:
+        _log.debug("klicove_sceny: %s", e)
+    finally:
+        con.close()
+    return out[:max_scen]
+
+
 def latest_chapter(db_path: str) -> str:
     """Nejnovější narativní kapitola (text) nebo '' — pro Severku/personu."""
     try:
@@ -117,8 +238,15 @@ def _build_prompt(m: dict, name: str) -> str:
     ho = block(m["hobbies"], lambda x: f"- {x[0]} (×{x[1]})")
     pe = block(m["people"], lambda x: f"- {x[0]} ({x[1]}): {x[2]}")
     go = block(m["goals"], lambda x: f"- {x[0]} [{x[1]}]")
-    prev = m["prev"] or "(zatím žádná předchozí kapitola)"
-    return (f"MINULÁ KAPITOLA (naváž na ni, kontinuita):\n{prev}\n\n"
+    # NARRATIVE_NO_PREV_V1 (30. 10.) — minulá kapitola s „naváž na ni“ byla
+    # rohatka: 12., 19. i 26. 10. začínalo „Kopeckého smrt…“ (zpráva z 10. 10.),
+    # dřív 6.→13. 7., 21. 9.→5. 10. tytéž úvody. Měření na podkladu 30. 10.
+    # (data/mereni/kapitola_30_10/, 2 série): A dnešní 2/2 Kopecký; B „neopakuj“
+    # stále opisuje celé věty; C bez minulé kapitoly 0 převzatých, nejvíc z týdne.
+    # Zvoleno C (uživatel 30. 10.). `m["prev"]` zůstává pro jiné čtenáře.
+    # NARRATIVE_KEY_SCENES_V1 — skutečné události období jako první blok
+    sc = "\n".join("- " + s for s in (m.get("scenes") or [])) or "(žádné)"
+    return (f"KLÍČOVÉ UDÁLOSTI období (skutečně se staly):\n{sc}\n\n"
             f"PIVOTNÍ EPIZODY období:\n{ep}\n\n"
             f"POSTOJE:\n{st}\n\nKONÍČKY:\n{ho}\n\nLIDÉ:\n{pe}\n\nCÍLE:\n{go}")
 
@@ -171,7 +299,8 @@ def consolidate(config: dict, db_path: str, model: str = None,
     from scripts.hans_persona import persona_name as _pn
     name = _pn(config)
     m = gather(db_path, period_days)
-    if not m["episodes"] and not m["stances"]:
+    m["scenes"] = klicove_sceny(db_path, period_days, config)   # NARRATIVE_KEY_SCENES_V1
+    if not m["episodes"] and not m["stances"] and not m["scenes"]:
         _log.info("narrative: málo materiálu, skip")
         return ""
     if not model:
@@ -182,7 +311,10 @@ def consolidate(config: dict, db_path: str, model: str = None,
         f"Jsi {name}ova autobiografická paměť. Z materiálu napiš KRÁTKOU reflektivní "
         f"kapitolu {name}ova životního příběhu v 1. OSOBĚ ({name} mluví o sobě). "
         "Shrň, co ho v tomto období formovalo, k čemu inklinuje, kým se POSTUPNĚ stává "
-        "a jak se vyvíjejí jeho vztahy. Naváž na minulou kapitolu (kontinuita příběhu). "
+        "a jak se vyvíjejí jeho vztahy. "   # NARRATIVE_NO_PREV_V1 — bez „naváž na minulou kapitolu“
+        # NARRATIVE_KEY_SCENES_V1 — měření 30. 10.: s událostmi 6–7 z 8 v kapitole, bez nich 0–1
+        "Kapitolu postav hlavně na KLÍČOVÝCH UDÁLOSTECH — co se povedlo, co ne, jak "
+        "reagovali lidé; úvahy z četby jen doplňují. "
         "STRIKTNĚ vycházej z materiálu — nic si nevymýšlej. Důstojný, střídmý, "
         "introspektivní tón. 4-7 vět, souvislý odstavec, žádné odrážky.")
     try:
