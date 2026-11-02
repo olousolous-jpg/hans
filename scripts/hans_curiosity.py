@@ -672,6 +672,20 @@ class HansCuriosity:
 
     def _read_async(self, fn, topic: str, key: str):
         """Spustí čtení na pozadí — neblokuje hlavní smyčku."""
+        # HANS_CURIOSITY_GPU_BUSY_V1 (31. 10.) — při malování nečíst: shrnutí
+        # článku nahraje jazykový model do grafiky a ComfyUI spadne bez hlášky
+        # („Memory access fault“; 29. 10. 3:26 čtení „Supervulkán“ → pád o 5 s
+        # později; čtení v renderu 4 ze 105 od 22. 9.). Tutéž sdílenou pojistku
+        # (HANS_GPU_BUSY_SHARED_V1) už mají dialog, introspekce, syntéza a
+        # pozorovatel místnosti. Odstup se nespotřebuje → zkusí se v dalším kole.
+        try:
+            from scripts.ollama_client import gpu_busy, gpu_busy_label
+            if gpu_busy():
+                _log.info("HANS_CURIOSITY_GPU_BUSY_V1: čtení %s:%s odloženo (%s)",
+                          topic, key, gpu_busy_label() or "grafika obsazena")
+                return
+        except Exception:
+            pass
         with self._lock:
             if self._busy:
                 _log.debug("WebReader busy — skipping %s:%s", topic, key)
