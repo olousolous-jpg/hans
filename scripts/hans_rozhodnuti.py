@@ -26,7 +26,7 @@ import inspect
 import re
 import types
 
-_VOLANI = re.compile(r"^\s*(_r = )?self\.(_sc_\w+)\(ctx\)\s*$")
+_VOLANI = re.compile(r"^\s*(_r = )?self\.(_sc_\w+)\(ctx\)\s*(?:#.*)?$")   # HANS_KROKOVAC_KOMENTAR_V1: i s komentářem na řádku
 _poradi_cache: dict = {}
 
 # co z návratu volby znamená „beru“ (výchozí: cokoli pravdivého)

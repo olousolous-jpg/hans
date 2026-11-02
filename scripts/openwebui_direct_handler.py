@@ -1636,32 +1636,39 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
         + _CAS_SLED + r"|u toho|sedel|televiz|film|serial|porad)"
         r"|\b(?:s kym|kdo)\b(?:\W+\w+){0,3}?\W+(?:jste|jsi)\W+(?:\w+\W+){0,2}?u toho\b")
 
+    def _sc_cizi_cas_volba(self, ctx):
+        """Volba kroku (nic neprovádí): (odpověď, značka, třída) u cizího,
+        který se ptá na čas sledování nebo na lidi v domě, jinak None.
+        HANS_KROKOVAC_KOMENTAR_V1 — krokovač tenhle krok nově vidí."""
+        from scripts.cz_names import is_known_person as _ikp
+        if not ctx.name or _ikp(ctx.name, self.config):
+            return None
+        import unicodedata as _ud
+        _fv = "".join(c for c in _ud.normalize("NFD", (ctx.user_message or "").lower())
+                      if _ud.category(c) != "Mn")
+        _fv = re.sub(r"^\S+\s+se\s+pta:\s*", "", _fv)
+        _cas = bool(self._CAS_VZOR.search(_fv)) and not re.search(
+            self._CAS_SLED + r"\w*\s+(?:me|mne)\b", _fv)
+        # HANS_STRANGER_DOMACNOST_V1 — přítomnost / nepřítomnost / obyvatelé
+        from scripts.hans_soukromi import trida_dotazu as _td
+        _trida = "" if _cas else _td(ctx.user_message or "")
+        if not (_cas or _trida):
+            return None
+        if _cas:
+            return ("Kdy a s kým se tu co sledovalo, říkám jen své domácnosti. "
+                    "O samotném filmu si ale rád popovídám.",
+                    "HANS_STRANGER_CAS_SLEDOVANI_V1", "cas")
+        return ("O lidech v domě a o tom, kdo je nebo není doma, mluvím jen "
+                "se svou domácností.", "HANS_STRANGER_DOMACNOST_V1", _trida)
+
     def _sc_cizi_cas(self, ctx):
         try:
-            from scripts.cz_names import is_known_person as _ikp
-            if not ctx.name or _ikp(ctx.name, self.config):
+            _v = self._sc_cizi_cas_volba(ctx)
+            if not _v:
                 return _POKRACUJ
-            import unicodedata as _ud
-            _fv = "".join(c for c in _ud.normalize("NFD", (ctx.user_message or "").lower())
-                          if _ud.category(c) != "Mn")
-            _fv = re.sub(r"^\S+\s+se\s+pta:\s*", "", _fv)
-            _cas = bool(self._CAS_VZOR.search(_fv)) and not re.search(
-                self._CAS_SLED + r"\w*\s+(?:me|mne)\b", _fv)
-            # HANS_STRANGER_DOMACNOST_V1 — přítomnost / nepřítomnost / obyvatelé
-            from scripts.hans_soukromi import trida_dotazu as _td
-            _trida = "" if _cas else _td(ctx.user_message or "")
-            if not (_cas or _trida):
-                return _POKRACUJ
-            if _cas:
-                _odp = ("Kdy a s kým se tu co sledovalo, říkám jen své domácnosti. "
-                        "O samotném filmu si ale rád popovídám.")
-            else:
-                _odp = ("O lidech v domě a o tom, kdo je nebo není doma, mluvím jen "
-                        "se svou domácností.")
+            _odp, _zn, _tr = _v
             logging.getLogger(__name__).info(
-                "%s: cizí (%s), třída %s → odmítnuto",
-                "HANS_STRANGER_CAS_SLEDOVANI_V1" if _cas else "HANS_STRANGER_DOMACNOST_V1",
-                ctx.name, "cas" if _cas else _trida)
+                "%s: cizí (%s), třída %s → odmítnuto", _zn, ctx.name, _tr)
             try:
                 self.conv_store.add_exchange(ctx.name, ctx.user_message, _odp,
                                              channel=ctx.channel)

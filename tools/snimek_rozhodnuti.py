@@ -528,7 +528,7 @@ def _pracuj():
 
 # kroky, které nevracejí rozhodnutí (běží vždy, až za modelem)
 _BEZ_NAVRATU = ("_sc_vypadek", "_sc_podklad", "_sc_nazor", "_sc_a1",
-                "_sc_pojistky", "_sc_overeni_tvrzeni", "_sc_ulozeni")
+                "_sc_pojistky", "_sc_overeni_tvrzeni", "_sc_doporuceni", "_sc_ulozeni")
 
 
 # ── porovnání ────────────────────────────────────────────────────────────────
