@@ -1641,3 +1641,11 @@ def vypocty_cue_osoba(veta: str) -> bool:
     """Pozná výpočet otázku na věk / roky osoby (CUE_OSOBA nad složenou větou)?"""
     from scripts import hans_vypocty_model as V
     return bool(V.CUE_OSOBA.search(V._f(veta)))
+
+
+# ── HANS_ENTITY_DELSI_JMENO_V1 (2. 11.) ─────────────────────────────────────
+def entita_z_vety(veta: str) -> str:
+    """Jméno entity, kterou resolve najde ve větě ('' = žádná)."""
+    from scripts import config_io
+    from scripts.hans_entities import EntityStore
+    return str((EntityStore(config_io.load()).resolve(veta) or {}).get("name") or "")

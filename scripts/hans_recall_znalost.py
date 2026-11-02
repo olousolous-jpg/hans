@@ -586,6 +586,14 @@ def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
                   r"(?<!\w)%s" % re.escape(ft[:max(4, len(ft) - 2)]))
             if not re.search(vz, fv):
                 continue
+            # HANS_ENTITY_DELSI_JMENO_V1 (2. 11.) — jednoslovný titul na začátku delšího
+            # jména s vlastním článkem („Marie Stuartovna“ × výpis „Maria (matka Ježíšova)“)
+            try:
+                from scripts.hans_entities import _delsi_jmeno, ENTITY_DELSI_JMENO
+                if ENTITY_DELSI_JMENO and ft.split() and _delsi_jmeno(veta, ft.split()[0], t):
+                    continue
+            except Exception:
+                pass
         out.append(t)
     return [t for t in out
             if not any(t != u and tituly[t] < tituly[u] for u in out)]

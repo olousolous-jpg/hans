@@ -21,6 +21,34 @@ import json
 import logging
 import re
 ENTITY_DISTINCT = True   # HANS_ENTITY_DISTINCT_TOKENS_V1 (vypínač pro měření)
+ENTITY_DELSI_JMENO = True   # HANS_ENTITY_DELSI_JMENO_V1 (vypínač pro měření)
+
+
+def _delsi_jmeno(query: str, key_tok: str, ent_name: str):
+    """HANS_ENTITY_DELSI_JMENO_V1 (2. 11., /tazatel B: „…skotská královna Marie Stuartovna…“
+    → klíč „Maria (matka Ježíšova)“ scvrklý na „maria“ sedl na „Marie“). Slovo dotazu, na
+    které sedl JEDNOSLOVNÝ klíč, je začátek delšího jména s vlastním článkem lokální
+    Wikipedie („Marie Stuartovna“) jiného než entita → vrátí ten titul, jinak None."""
+    try:
+        from scripts import hans_wiki_offline as wo
+        if not wo.dostupna():
+            return None
+        w = re.findall(r"[^\W\d_][\w\-]*", query or "")
+        jm = _tokens(re.sub(r"\s*\([^)]*\)", " ", ent_name or ""))
+        for i in range(len(w) - 1):
+            tk = _tokens(w[i])
+            if not tk or not tk[0].startswith(key_tok[:4]) or not w[i + 1][:1].isupper():
+                continue
+            for n in (3, 2):
+                if i + n > len(w) or not all(x[:1].isupper() for x in w[i + 1:i + n]):
+                    continue
+                r = wo._cil(" ".join(w[i:i + n]))
+                tit = r[1] if r else None
+                if tit and _tokens(re.sub(r"\s*\([^)]*\)", " ", tit)) != jm:
+                    return tit
+    except Exception:
+        return None
+    return None
 import sqlite3
 import time
 import unicodedata
@@ -722,6 +750,13 @@ class EntityStore:
                            and qt.startswith(_k[:4])
                            and _ADJ_KONCOVKA_Q.search(qt)
                            for qt in q_tokens):
+                        continue
+                # HANS_ENTITY_DELSI_JMENO_V1 — jednoslovný klíč na začátku delšího
+                # jména s vlastním článkem („Marie Stuartovna“) tu entitu nebere
+                if (full or ends) and len(kt) == 1 and ENTITY_DELSI_JMENO:
+                    _dj = _delsi_jmeno(query, kt[0], k)
+                    if _dj:
+                        _log.info("HANS_ENTITY_DELSI_JMENO_V1: klíč %r ve větě je začátek jména %r → nebrat", k, _dj)
                         continue
                 if full or ends:
                     score = sum(len(t) for t in matched)
