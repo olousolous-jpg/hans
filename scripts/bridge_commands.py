@@ -89,6 +89,8 @@ def handle(text: str, ctx: BridgeCtx) -> bool:
             # doručí proaktivní vrstva mostu (state['paint']).
             ctx.state.setdefault("paint", {})["pending"] = time.time()
             return False
+        if intent == "snimek":   # HANS_SNIMEK_NA_POZADANI_V1
+            _cmd_snimek(ctx); return True
         if intent == "artwork":
             _cmd_artwork(ctx, _pick_mode(text)); return True
         if intent == "diary":
@@ -109,6 +111,8 @@ def handle_command(text: str, ctx: BridgeCtx) -> bool:
     cmd = (text or "").lower().lstrip("/").split()[0] if text else ""
     if cmd in ("obraz", "foto", "malba", "obrázek", "obrazek"):
         _cmd_artwork(ctx, _pick_mode(text)); return True
+    if cmd in ("snimek", "snímek", "kamera"):   # HANS_SNIMEK_NA_POZADANI_V1
+        _cmd_snimek(ctx); return True
     if cmd in ("denik", "deník", "diary"):
         _cmd_diary(ctx); return True
     if cmd in ("uvaha", "úvaha", "myslenka", "myšlenka"):
@@ -257,11 +261,46 @@ _VYSVETLUJE = re.compile(
         r"|\bupravuji\b|\btu\s+je\s+vysv[eě]tl)", re.IGNORECASE)
 
 
+# HANS_SNIMEK_NA_POZADANI_V1 (3. 11., uživatel) — snímek z kamery na Matrix na žádost
+# („pošli snímek“, „co je na kameře“, „ukaž kameru“). Jen role full (domácnost).
+_SNIMEK_RE = re.compile(
+    r"\b(?:po[sš]li|po[sš]lete|uka[zž]|uka[zž]te|ud[eě]lej|ud[eě]lejte|vyfo[tť]\w*)\b.{0,25}"
+    r"\b(?:sn[ií]m\w*|kamer\w*|z[aá]b[eě]r\w*)"
+    r"|\bco\s+(?:je|vid[ií][sš]|vid[ií]te)\s+(?:na|v|p[rř]ed)\s+kame\w*")
+
+
+def _cmd_snimek(ctx: BridgeCtx):
+    """Požádá smyčku kamery o aktuální snímek (`data/.snimek_req`) a pošle ho."""
+    req, out = "data/.snimek_req", "data/snimek_ted/snimek.jpg"
+    try:
+        pred = os.path.getmtime(out) if os.path.exists(out) else 0.0
+        open(req, "w").write(str(time.time()))
+        for _ in range(40):                      # ~8 s
+            time.sleep(0.2)
+            if os.path.exists(out) and os.path.getmtime(out) > pred:
+                break
+        else:
+            try:
+                os.remove(req)
+            except OSError:
+                pass
+            ctx.send("Snímek se mi teď nepodařilo pořídit — kamera neodpovídá.")
+            return
+        from datetime import datetime as _d
+        if not ctx.send_photo(out, "📷 Kamera — %s" % _d.now().strftime("%d.%m. %H:%M:%S")):
+            ctx.send("Snímek mám, ale odeslat se ho nepodařilo.")
+    except Exception as e:
+        _log.warning("HANS_SNIMEK_NA_POZADANI_V1: %s", e)
+        ctx.send("Snímek se mi teď nepodařilo pořídit.")
+
+
 def detect_intent(text: str):
     t = (text or "").lower()
     if not t:
         return None
     _vys = bool(_VYSVETLUJE.search(t))   # HANS_ART_EXPLAIN_NOT_REQUEST_V1
+    if _SNIMEK_RE.search(t) and not re.search(r"obraz|obrázek|obrazek|malb|namal", t):
+        return "snimek"   # HANS_SNIMEK_NA_POZADANI_V1
     if re.search(r"namaluj|nakresli|namalovat|nakreslit|vytvoř\w*\s+obr", t) \
             and not _vys:
         return "paint"

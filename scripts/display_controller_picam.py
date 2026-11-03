@@ -13,6 +13,8 @@ import json
 import os
 from pathlib import Path
 from scripts.fisheye_corrector import FisheyeCorrector
+_SNIMEK_REQ = "data/.snimek_req"            # HANS_SNIMEK_NA_POZADANI_V1
+_SNIMEK_OUT = "data/snimek_ted/snimek.jpg"
 from scripts.picam_helpers import (
     box_color, draw_hand_skeleton as _draw_hand_skeleton,
     box_area as _box_area, hq_crop as _hq_crop,
@@ -562,6 +564,9 @@ class PicamDisplayController:
                     self._guard_tick(main_frame)
                 except Exception:
                     pass
+                # HANS_SNIMEK_NA_POZADANI_V1 — žádost o snímek (Matrix /snimek)
+                if os.path.exists(_SNIMEK_REQ):
+                    self._snimek_na_pozadani(main_frame)
             # HANS_GESTURE_WAVE_SNAP_V1 — reference na posledni frame, aby
             # sel pri zachytu mavani ulozit snimek (jen odkaz, zadna kopie).
             if main_frame is not None:
@@ -1887,6 +1892,22 @@ class PicamDisplayController:
                 except: pass
             self._frame_q.put((main, lores))
         except Exception:
+            pass
+
+    def _snimek_na_pozadani(self, frame):
+        """HANS_SNIMEK_NA_POZADANI_V1 (3. 11., uživatel) — aktuální snímek z kamery na
+        žádost (soubor `_SNIMEK_REQ` založí příkaz /snimek na Matrixu). Jako hlídání
+        běží i ve spánku; ukládá se jediný soubor, přepisuje se."""
+        try:
+            os.makedirs(os.path.dirname(_SNIMEK_OUT), exist_ok=True)
+            cv2.imwrite(_SNIMEK_OUT + ".tmp.jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            os.replace(_SNIMEK_OUT + ".tmp.jpg", _SNIMEK_OUT)
+            _syslog.info("HANS_SNIMEK_NA_POZADANI_V1: snímek uložen")
+        except Exception as e:
+            _syslog.warning("HANS_SNIMEK_NA_POZADANI_V1: snímek se neuložil: %s", e)
+        try:
+            os.remove(_SNIMEK_REQ)
+        except OSError:
             pass
 
     def _guard_tick(self, frame):  # HANS_GUARD_V1

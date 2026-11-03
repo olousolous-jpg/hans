@@ -174,6 +174,9 @@ _CAPABILITIES = [
      "(Wake-on-LAN)", "vypni počítač; /vypnipc; /wol"),
     ("guard", "Umím HLÍDAT místnost, když nejste doma — při pohybu nebo náhlé "
      "změně světla pošlu snímek a video na Matrix", "hlídej dům; /hlidej [stop|stav]"),
+    # HANS_SNIMEK_NA_POZADANI_V1 (3. 11.)
+    ("camera_snapshot", "Umím na požádání poslat AKTUÁLNÍ snímek z kamery na Matrix "
+     "(jen členům domácnosti, ve webovém chatu ne)", "/snimek; pošli snímek; co je na kameře"),
     # HANS_ROUTER_LEAK_CHECK_V1 (15. 10.) — router/VPN tu dosud chyběly úplně.
     ("router_vpn", "Hlídám domácí INTERNET a VPN na routeru: když VPN server "
      "přestane odpovídat a linka jde, sám přepnu na další server téhož státu "
