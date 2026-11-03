@@ -151,6 +151,9 @@ _PADY_PODSTATNA = (("kovi", "ek"), ("kem", "ek"), ("ovi", ""), ("em", ""), ("ii"
                    ("y", "a"), ("i", "a"), ("u", "a"), ("ou", "a"), ("e", "a"), ("ě", "a"),
                    ("i", "e"),   # HANS_WIKI_TZV_PADY_V1 — „mši“ → „mše“ (měkký ženský vzor)
                    ("a", "us"), ("ovi", "us"), ("em", "us"),   # latinská jména (Julia → Julius) PŘED středním rodem
+                   # HANS_OSOBA_DRUH_INFOBOXU_V1 (3. 11.) — 3. pád latinských jmen „Marku Aureliu“,
+                   # „Gaiu Juliu Caesarovi“, „Titu Liviu“. 📏 605 kotev z logu: 4 změny, všechny k lepšímu.
+                   ("u", "us"),
                    ("a", "o"), ("u", "o"), ("e", "o"), ("em", "o"),   # střední rod („divadla“ → „divadlo“)
                    ("a", ""), ("u", ""), ("e", ""), ("ě", ""), ("i", ""),
                    # HANS_WIKI_PADY_A_E_V1 (22. 10.) — cizí příjmení na -e mají

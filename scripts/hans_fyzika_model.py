@@ -187,6 +187,12 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
     if not _gpu_cpu_volno():
         _log.info("%s: přeskočeno (hra nebo noční dávka)", MARK)
         return None
+    try:   # HANS_VYPOCTY_RAM_V1 — týž qwen3 jako výpočty
+        from scripts.hans_vypocty_model import pamet_pro_qwen3
+        if not pamet_pro_qwen3(config, "fyzika"):
+            return None
+    except Exception:
+        pass
     try:
         import requests
         from scripts.hans_book_summary import _cpu_url

@@ -176,6 +176,21 @@ _DRUH_DILO = {"film", "kniha", "album", "skladba", "opera", "videohra", "televiz
 _DRUH_MISTO = {"sídlo světa", "české sídlo", "česká obec", "region", "hora", "vodní tok",
                "budova", "kostel", "chráněné území", "vodní plocha", "hrad", "zámek",
                "stát", "zaniklý stát"}
+# HANS_OSOBA_DRUH_INFOBOXU_V1 (3. 11.) — osoba podle druhu infoboxu. Samotná první věta
+# nestačila: Marie Curie („Maria Salomea…“, v první závorce „nepřechýleně“), Gaudí
+# („Ctihodný Antoni…“), Stalin, Purkyně byli „pojem“ → výpočet věku je nenašel.
+# Druhy = podíl osob podle staré první věty ≥ 0,55 (vzorek 113 322 článků) + světec,
+# faraon, youtuber; ⛔ „hudební umělec“ (i kapely), „známé zvíře“. 📏 vzorek: 3 900 změn
+# pojem → osoba, ukázky všechny osoby; Koláčovi kandidáti 23 změn (vše osoby),
+# Bluesky 8 příspěvků 0 změn. Uvolnit první větu (Caesar bez infoboxu) ⛔ — roky
+# „486 př. n. l.“, „BeBox“, „Lancasterové“ (~13 z 60 omylů).
+_DRUH_OSOBA = {"osoba", "osoba 2", "politik", "fotbalista", "umělec", "panovník", "křesťanský vůdce",
+               "herec", "spisovatel", "hokejista", "světec", "tenista", "atlet", "vědec",
+               "vojenský velitel", "sportovec", "lyžař", "režisér", "cyklista", "basketbalista",
+               "orientační běžec", "vrah", "hráč amerického fotbalu", "filosof", "jezdec rallye",
+               "krasobruslař", "judista", "kosmonaut", "šachista", "pornohvězda", "ekonom",
+               "zápasník", "plavec", "rychlobruslař", "pilot F1", "rabín", "volejbalista", "model",
+               "vojenský pilot", "faraon", "youtuber"}
 _PORADI_TYP = {"osoba": 0, "dilo": 1, "pojem": 2, "misto": 3}
 
 
@@ -188,6 +203,8 @@ def _typ_clanku(r) -> str:
         return "dilo"
     if druh in _DRUH_MISTO:
         return "misto"
+    if druh in _DRUH_OSOBA:     # HANS_OSOBA_DRUH_INFOBOXU_V1
+        return "osoba"
     z = re.sub(r"\s*\(.*?\)$", "", r[1]).split()[0]
     for ln in (text or "").split("\n")[:4]:
         if ln.strip().startswith(z):

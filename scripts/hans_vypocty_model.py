@@ -247,6 +247,19 @@ def _osoba_titul(kus: str):
                 continue
         if _typ_clanku(r) == "osoba":
             return r[1]
+    if " " in kus:
+        # HANS_OSOBA_DRUH_INFOBOXU_V1 (3. 11.) — 1. pád bez ohledu na háčky: „Antonímu
+        # Gaudímu“ → „Antoní Gaudí“ ≠ titul „Antoni Gaudí“; jen JEDINÝ článek (ne rozcestník)
+        try:
+            for z in tvary[1:]:
+                ts = [x for (x,) in wo._fold_db().execute(
+                    "SELECT titul FROM t WHERE fold=? AND rozcestnik=0 LIMIT 3", (wo._fold_tzv(z),))]
+                if len(ts) == 1:
+                    r = wo._cil(ts[0])
+                    if r and _typ_clanku(r) == "osoba":
+                        return r[1]
+        except Exception as e:
+            _log.debug("HANS_OSOBA_DRUH_INFOBOXU_V1: %s", e)
     if " " not in kus:                                   # HANS_VYPOCTY_PRIJMENI_V1
         for z in tvary:
             t = _prijmeni_slavna(z[0].upper() + z[1:])
@@ -715,6 +728,8 @@ def nahrej_na_pozadi(config: dict, duvod: str = "") -> bool:
     def _run():
         t0 = time.time()
         try:
+            if not pamet_pro_qwen3(config, "nahřátí: " + duvod):   # HANS_VYPOCTY_RAM_V1
+                return
             import requests
             requests.post(url + "/api/generate", json={"model": model, "keep_alive": ka,
                           # stejné okno jako výpočet a fyzika — jiné num_ctx = nové načtení
@@ -727,6 +742,32 @@ def nahrej_na_pozadi(config: dict, duvod: str = "") -> bool:
             _NAHR["bezi"] = False
 
     threading.Thread(target=_run, daemon=True, name="vypocty-nahrati").start()
+    return True
+
+
+# HANS_VYPOCTY_RAM_V1 (3. 11.) — ráno 3. 11. PC zamrzlo: qwen3:30b (~18 GB RAM na CPU)
+# nahřátý zprávou v chatu vedle hans-czech a mezipamětí promptů → swap → uváznutí
+# ovladače grafiky (amdgpu SVM). Než se qwen3 NAČTE (už načtený jen prodlouží), musí
+# mít PC dost volné RAM (stejné měření jako `HANS_BOOK_SUMMARY_RAM_V1`). Každé
+# rozhodnutí do logu (povoleno i odmítnuto), ať jde spočítat, jak často to brzdí.
+def pamet_pro_qwen3(config: dict, kde: str = "") -> bool:
+    c = (config or {}).get("vypocty_model", {}) or {}
+    model = str(c.get("model", "qwen3:30b"))
+    try:
+        from scripts.hans_book_summary import _ps, _cpu_url
+        if any(m == model or m == model + ":latest" for m in _ps(_cpu_url(config))):
+            return True
+        from scripts import pc_remote
+        volno = (pc_remote.telemetry(config) or {}).get("ram_avail_gb")
+    except Exception as e:
+        _log.info("HANS_VYPOCTY_RAM_V1: %s — RAM nejde změřit (%s), nenačítám", kde, str(e)[:60])
+        return False
+    need = float(c.get("min_ram_gb_nacteni", 22))
+    if volno is None or volno < need:
+        _log.info("HANS_VYPOCTY_RAM_V1: %s — nenačítám %s, volná RAM na PC %s < %.0f GB",
+                  kde, model, "?" if volno is None else "%.1f GB" % volno, need)
+        return False
+    _log.info("HANS_VYPOCTY_RAM_V1: %s — načítám %s, volná RAM na PC %.1f GB", kde, model, volno)
     return True
 
 
@@ -762,6 +803,8 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()
         q = cisla_slovy(q)
     except Exception:
         pass
+    if not pamet_pro_qwen3(config, "výpočet"):   # HANS_VYPOCTY_RAM_V1
+        return None
     try:
         import requests
         from scripts.hans_book_summary import _cpu_url
