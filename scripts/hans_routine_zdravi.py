@@ -152,6 +152,29 @@ class ZdraviMixin:
                     _ltth.Thread(target=_letaky_prace, name="letaky", daemon=True).start()
             except Exception as _lte:
                 _rt._log.warning("letáky: %s", _lte)
+            # HANS_COMFY_GPUCORE_V1 (3. 11.) — výpisy paměti GPU po pádu ComfyUI pryč
+            # (`hans_health.uklid_gpucore`), á 6 h; když PC spí, zkusí se za 10 min.
+            try:
+                import time as _gct
+                if (_gct.time() - getattr(self, "_gpucore_ts", 0.0) > 6 * 3600
+                        and _gct.time() - getattr(self, "_gpucore_pokus_ts", 0.0) > 600
+                        and not getattr(self, "_gpucore_bezi", False)):
+                    self._gpucore_pokus_ts = _gct.time()
+                    self._gpucore_bezi = True
+
+                    def _gpucore_prace():
+                        try:
+                            from scripts import hans_health as _hh
+                            if _hh.uklid_gpucore(self.config) is not None:
+                                self._gpucore_ts = _gct.time()
+                        except Exception as _gce:
+                            _rt._log.warning("HANS_COMFY_GPUCORE_V1: %s", _gce)
+                        finally:
+                            self._gpucore_bezi = False
+                    import threading as _gcth
+                    _gcth.Thread(target=_gpucore_prace, name="gpucore", daemon=True).start()
+            except Exception as _gce:
+                _rt._log.warning("HANS_COMFY_GPUCORE_V1: %s", _gce)
             # BODY_TRACK_ROZPOR_HLIDAC_V1 (4. 10.) — snímky rozporů stopy postavy
             # a tváře (BODY_TRACK_ROZPOR_SNIMEK_V1): až jich je dost a aspoň ze
             # dvou dní, JEDNOU dát vědět na Matrix, že je čas je označit.

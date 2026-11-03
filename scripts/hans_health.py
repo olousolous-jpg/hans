@@ -802,3 +802,36 @@ if __name__ == "__main__":
         print("věta:", summary_sentence(res["health"], res["healed"]))
     else:
         print("\nvše ok")
+
+
+# HANS_COMFY_GPUCORE_V1 (3. 11.) — když proces ComfyUI spadne na chybě grafiky, ROCm
+# uloží do jeho pracovní složky výpis paměti GPU `gpucore.<pid>` (ELF core, 3–8 GB;
+# 3. 11. jich tam leželo 4 = 24 GB na systémovém disku PC s 39 GB volna). Nikdo je
+# nečte (uživatel: „nejsou potřeba, jen zabírají místo“) → smazat; starší než 30 min,
+# ať se nesahá na výpis, který se zrovna zapisuje. Každý úklid do logu (počet, velikost,
+# data) — zároveň počítadlo pádů ComfyUI na grafice.
+def uklid_gpucore(config: dict):
+    """Smaže výpisy `gpucore.*` ve složce ComfyUI na PC. Vrátí seznam (velikost, datum,
+    jméno) smazaných, [] když nic, None když PC nejde."""
+    c = (config or {}).get("comfy_gpucore", {}) or {}
+    if not c.get("enabled", True):
+        return []
+    import shlex
+    from scripts import pc_remote
+    slozka = str(c.get("dir", "~/ComfyUI")).rstrip("/")
+    slozka = slozka.replace("~", "$HOME", 1) if slozka.startswith("~") else shlex.quote(slozka)
+    out = pc_remote.run(config, "find %s -maxdepth 1 -type f -name 'gpucore.*' -mmin +30 "
+                        "-printf '%%s %%TY-%%Tm-%%Td %%f\\n' -delete 2>/dev/null; true" % slozka,
+                        timeout=30)
+    if out is None:
+        return None
+    smazano = []
+    for r in out.splitlines():
+        p = r.split()
+        if len(p) == 3 and p[0].isdigit():
+            smazano.append((int(p[0]), p[1], p[2]))
+    if smazano:
+        _log.info("HANS_COMFY_GPUCORE_V1: smazáno %d výpisů GPU z ComfyUI, %.1f GB (%s)",
+                 len(smazano), sum(s[0] for s in smazano) / 1e9,
+                 ", ".join("%s %s" % (s[2], s[1]) for s in smazano))
+    return smazano
