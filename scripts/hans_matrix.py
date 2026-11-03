@@ -756,6 +756,20 @@ class MatrixBridge:
                                    asset == "m.self", db)
         if odp:
             await self._a_send(odp, room.room_id)
+            # HANS_MISTA_MAPA_V1 — mapa s očíslovanými body; dočasný soubor hned pryč
+            if odp.startswith("Zajímavá místa"):
+                import tempfile
+                fd, cesta = tempfile.mkstemp(prefix="hans_mapa_", suffix=".png")
+                os.close(fd)
+                try:
+                    if await self._s_psanim(room.room_id, _hm.mapa_k_mistum, geo[0], geo[1], cesta):
+                        await self._a_send_file(cesta, "Mapa míst (čísla jako v seznamu)",
+                                                room.room_id, "m.image")
+                finally:
+                    try:
+                        os.remove(cesta)
+                    except OSError:
+                        pass
 
     async def _on_image(self, room, event):
         """Přijme fotku (i E2E šifrovanou), uloží ji do data/foto/ (nic do deníku

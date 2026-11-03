@@ -54,7 +54,7 @@ def _wikidata(lat: float, lon: float, r_km: float, timeout: float = 30.0) -> lis
     """[(titul cs, vzdálenost km, {druhy})] z Wikidat (jen položky s českým článkem)."""
     import requests
     from scripts.hans_facts import USER_AGENT
-    q = ("SELECT ?cs ?dist ?typLabel WHERE { SERVICE wikibase:around { ?item wdt:P625 ?loc . "
+    q = ("SELECT ?cs ?dist ?loc ?typLabel WHERE { SERVICE wikibase:around { ?item wdt:P625 ?loc . "
          "bd:serviceParam wikibase:center \"Point(%.5f %.5f)\"^^geo:wktLiteral . "
          "bd:serviceParam wikibase:radius \"%g\" . bd:serviceParam wikibase:distance ?dist . } "
          "?cs schema:about ?item ; schema:isPartOf <https://cs.wikipedia.org/> . "
@@ -74,9 +74,11 @@ def _wikidata(lat: float, lon: float, r_km: float, timeout: float = 30.0) -> lis
     out: dict = {}
     for b in r.json().get("results", {}).get("bindings", []):
         t = requests.utils.unquote(b["cs"]["value"].rsplit("/", 1)[1]).replace("_", " ")
-        d, ty = out.setdefault(t, [float(b["dist"]["value"]), set()])
-        ty.add((b.get("typLabel") or {}).get("value", ""))
-    return [(t, v[0], v[1]) for t, v in out.items()]
+        m = re.search(r"Point\(\s*(-?[\d.]+)\s+(-?[\d.]+)", (b.get("loc") or {}).get("value", ""))
+        v = out.setdefault(t, [float(b["dist"]["value"]), set(),
+                               (float(m.group(2)), float(m.group(1))) if m else None])
+        v[1].add((b.get("typLabel") or {}).get("value", ""))
+    return [(t, v[0], v[1], v[2]) for t, v in out.items()]
 
 
 def _delka_clanku(titul: str) -> int:
@@ -117,7 +119,7 @@ def mista(lat: float, lon: float, r_km: float = 15.0, kolik: int = 6) -> list:
         seznam = c[1]
     else:
         seznam = []
-        for titul, km, druhy in _wikidata(lat, lon, r_km):
+        for titul, km, druhy, poloha in _wikidata(lat, lon, r_km):
             vahy = [(_DRUHY[d], d) for d in druhy if d in _DRUHY]
             if not vahy:
                 continue
@@ -126,7 +128,8 @@ def mista(lat: float, lon: float, r_km: float = 15.0, kolik: int = 6) -> list:
             if delka < 600:                                 # pahýl — nic k vyprávění
                 continue
             skore = w * (1 + math.log10(delka / 600)) / (1 + km / 6)
-            seznam.append({"titul": titul, "km": km, "druh": druh, "skore": skore})
+            seznam.append({"titul": titul, "km": km, "druh": druh, "skore": skore,
+                           "poloha": poloha})
         seznam.sort(key=lambda x: -x["skore"])
         _mezipamet[klic] = (time.time(), seznam)
     out = []
@@ -171,6 +174,91 @@ def _cetl(db: str, titul: str) -> bool:
             _precteno.update(ts=time.time(), db=db, tituly=tit)
         return titul in _precteno["tituly"]
     except Exception:
+        return False
+
+
+# ── HANS_MISTA_MAPA_V1 (3. 11.) — mapa s očíslovanými body z dlaždic OpenStreetMap ──
+# Pár map denně podmínky OSM dovolují (vlastní User-Agent, uvedení zdroje, žádné hromadné
+# stahování). Dlaždice ani obrázek se neukládají natrvalo (mapa jde do dočasného souboru,
+# volající ho po odeslání smaže).
+_DLAZDICE = "https://tile.openstreetmap.org/%d/%d/%d.png"
+_dlazdice_ram: dict = {}
+
+
+def _px(lat: float, lon: float, z: int):
+    n = 256 * 2 ** z
+    x = (lon + 180.0) / 360.0 * n
+    y = (1 - math.log(math.tan(math.radians(lat)) + 1 / math.cos(math.radians(lat))) / math.pi) / 2 * n
+    return x, y
+
+
+def _dlazdice(z: int, x: int, y: int):
+    from io import BytesIO
+    from PIL import Image
+    import requests
+    from scripts.hans_facts import USER_AGENT
+    k = (z, x, y)
+    if k not in _dlazdice_ram:
+        r = requests.get(_DLAZDICE % k, headers={"User-Agent": USER_AGENT}, timeout=15)
+        r.raise_for_status()
+        if len(_dlazdice_ram) > 300:
+            _dlazdice_ram.clear()
+        _dlazdice_ram[k] = r.content
+    return Image.open(BytesIO(_dlazdice_ram[k])).convert("RGB")
+
+
+def mapa(lat: float, lon: float, body: list, cesta: str, w: int = 900, h: int = 700) -> bool:
+    """Obrázek mapy: střed = poloha (modrý bod), `body` = [(lat, lon)] očíslované 1…N."""
+    from PIL import Image, ImageDraw, ImageFont
+    vse = [(lat, lon)] + [b for b in body if b]
+    z = 15
+    while z > 7:                                   # největší přiblížení, kam se vše vejde
+        xs, ys = zip(*(_px(a, b, z) for a, b in vse))
+        if max(xs) - min(xs) < w - 120 and max(ys) - min(ys) < h - 120:
+            break
+        z -= 1
+    xs, ys = zip(*(_px(a, b, z) for a, b in vse))
+    cx, cy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
+    x0, y0 = cx - w / 2, cy - h / 2
+    img = Image.new("RGB", (w, h), (235, 235, 235))
+    for tx in range(int(x0 // 256), int((x0 + w) // 256) + 1):
+        for ty in range(int(y0 // 256), int((y0 + h) // 256) + 1):
+            if 0 <= ty < 2 ** z:
+                img.paste(_dlazdice(z, tx % 2 ** z, ty), (int(tx * 256 - x0), int(ty * 256 - y0)))
+    d = ImageDraw.Draw(img)
+    try:
+        f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 17)
+        fm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+    except Exception:
+        f = fm = ImageFont.load_default()
+    px, py = _px(lat, lon, z)
+    px, py = px - x0, py - y0
+    d.ellipse((px - 9, py - 9, px + 9, py + 9), fill=(30, 110, 230), outline="white", width=3)
+    for i, b in enumerate(body, 1):
+        if not b:
+            continue
+        bx, by = _px(b[0], b[1], z)
+        bx, by = bx - x0, by - y0
+        d.ellipse((bx - 14, by - 14, bx + 14, by + 14), fill=(200, 30, 40), outline="white", width=2)
+        tw = d.textlength(str(i), font=f)
+        d.text((bx - tw / 2, by - 11), str(i), fill="white", font=f)
+    pozn = "© přispěvatelé OpenStreetMap"
+    tw = d.textlength(pozn, font=fm)
+    d.rectangle((w - tw - 10, h - 20, w, h), fill=(255, 255, 255))
+    d.text((w - tw - 5, h - 17), pozn, fill=(60, 60, 60), font=fm)
+    img.save(cesta, "PNG")
+    return True
+
+
+def mapa_k_mistum(lat: float, lon: float, cesta: str, r_km: float = 15.0) -> bool:
+    """Mapa k poslednímu seznamu míst (z mezipaměti `mista`). Nikdy nehází."""
+    try:
+        mm = mista(lat, lon, r_km)
+        if not any(x.get("poloha") for x in mm):
+            return False
+        return mapa(lat, lon, [x.get("poloha") for x in mm], cesta)
+    except Exception as e:
+        _log.warning("HANS_MISTA_MAPA_V1: mapa se nepovedla: %s", str(e)[:120])
         return False
 
 
