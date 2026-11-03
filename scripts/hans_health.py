@@ -577,6 +577,49 @@ def degraded_services(health: dict) -> list:
             if s.get("status") in (WEDGED, DOWN)]
 
 
+# ── HANS_HEALTH_GPU_ZASEK_V1 (3. 11.) — zaseknutý ovladač grafiky na PC ─────────
+# 3. 11. ~07:47 se na PC zasekl ovladač amdgpu (jádro: „blocked for more than … s“,
+# `svm_range_restore_work`, `dma_fence_wait_timeout`; llama-server ve stavu D, zátěž
+# ~100, `ps` visel). Hlídač hlásil „Ollama WEDGED“ a dvakrát ji restartoval — marně,
+# pomůže jen restart PC (a ten bez hesla nejde; vynucené vypnutí pak zabilo i WOL).
+# Teď: před restartem Ollamy krátký pohled do logu jádra; zásek ovladače → nerestartovat
+# a ohlásit (volající, nejvýš 1× za 6 h). `ps` se nevolá — při záseku visí.
+_GPU_ZASEK_CMD = ("cat /proc/loadavg; nproc; timeout 8 journalctl -k --since '-30 min' -q "
+                  "--no-pager 2>/dev/null | grep -E 'blocked for more than|amdgpu|dma_fence|"
+                  "svm_range|kfd_|ttm' | tail -60")
+posledni_zasek_gpu = None      # (ts, popis) — čte hlídač pro oznámení
+
+
+def rozbor_zaseku_gpu(text: str):
+    """Výstup `_GPU_ZASEK_CMD` → krátký popis záseku ovladače grafiky, nebo None."""
+    import re as _re
+    radky = (text or "").splitlines()
+    blok = [l for l in radky if "blocked for more than" in l]
+    # jen řádky ze zásobníku zaseknutého volání; hlášky ze startu („amdgpu 0000:…“) ne
+    gpu = [l for l in radky if _re.search(r"\[amdgpu|dma_fence|svm_range|kfd_", l)]
+    if not blok or not gpu:
+        return None
+    zat = ""
+    try:
+        la, nc = float(radky[0].split()[0]), int(radky[1].strip())
+        zat = ", zátěž %.0f na %d jader" % (la, nc)
+    except Exception:
+        pass
+    return "jádro hlásí zablokované úlohy v ovladači grafiky (%d×)%s" % (len(blok), zat)
+
+
+def zasek_ovladace_gpu(config: dict):
+    """Popis záseku ovladače grafiky na PC (přes SSH), nebo None (není / nejde zjistit)."""
+    try:
+        from scripts import pc_remote
+        if not pc_remote.enabled(config):
+            return None
+        return rozbor_zaseku_gpu(pc_remote.run(config, _GPU_ZASEK_CMD, timeout=20) or "")
+    except Exception as e:
+        _log.debug("HANS_HEALTH_GPU_ZASEK_V1: %s", e)
+        return None
+
+
 # ── self-heal ────────────────────────────────────────────────────────────────
 def heal_ollama(config: dict) -> bool:
     """Restart zaseklé Ollamy na PC přes SSH. Vyžaduje na PC scoped sudoers:
@@ -591,6 +634,13 @@ def heal_ollama(config: dict) -> bool:
             return False
         cmd = _cfg(config).get("ollama_restart_cmd",
                                "sudo -n systemctl restart ollama")
+        global posledni_zasek_gpu
+        _z = zasek_ovladace_gpu(config)      # HANS_HEALTH_GPU_ZASEK_V1
+        if _z:
+            posledni_zasek_gpu = (time.time(), _z)
+            _log.warning("HANS_HEALTH_GPU_ZASEK_V1: %s → Ollamu nerestartuji "
+                         "(pomůže jen restart PC)", _z)
+            return False
         _log.warning("health: Ollama WEDGED → restartuji na PC (%s)", cmd)
         out = pc_remote.run(config, cmd, timeout=30)
         _log.info("health: restart Ollamy odeslán (out=%r)", out)

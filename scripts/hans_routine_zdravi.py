@@ -62,7 +62,28 @@ class ZdraviMixin:
             _os.remove(STUCK_FLAG)
         except Exception:
             pass
-        return bool(hans_health.heal_ollama(self.config))
+        _ok = bool(hans_health.heal_ollama(self.config))
+        if not _ok:
+            self._hlas_zasek_gpu()   # HANS_HEALTH_GPU_ZASEK_V1
+        return _ok
+
+    def _hlas_zasek_gpu(self):
+        """HANS_HEALTH_GPU_ZASEK_V1 — čerstvý zásek ovladače grafiky (z `heal_ollama`)
+        → jedna zpráva na Matrix, nejvýš 1× za 6 h."""
+        from scripts import hans_health
+        z = hans_health.posledni_zasek_gpu
+        if not z or time.time() - z[0] > 300 or not self._notifier:
+            return
+        if time.time() - getattr(self, "_gpu_zasek_hlaseno_ts", 0.0) < 6 * 3600:
+            return
+        self._gpu_zasek_hlaseno_ts = time.time()
+        try:
+            self._notifier("Na počítači se zasekl ovladač grafiky (%s). Můj mozek "
+                           "(Ollama) kvůli tomu neodpovídá a restart Ollamy nepomůže — "
+                           "počítač je potřeba restartovat (vypínačem; vzdálené vypnutí "
+                           "se při tomhle záseku zasekne taky)." % z[1])
+        except Exception as e:
+            _rt._log.warning("HANS_HEALTH_GPU_ZASEK_V1: oznámení selhalo: %s", e)
 
     def _health_watcher_loop(self):
         """HANS_HEALTH_V1 — periodická probe závislostí + self-heal zaseklé
@@ -187,6 +208,8 @@ class ZdraviMixin:
                                                    "restartoval jsem ho.")
                                 except Exception:
                                     pass
+                        else:
+                            self._hlas_zasek_gpu()   # HANS_HEALTH_GPU_ZASEK_V1
                 else:
                     self._health_wedge_strikes = 0
                 # HANS_OLLAMA_MODEL_STUCK_V1 — zásek per model (značka od
