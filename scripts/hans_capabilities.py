@@ -177,7 +177,9 @@ _CAPABILITIES = [
     # HANS_MISTA_V1 (3. 11.)
     ("mista_v_okoli", "Když mi člen domácnosti pošle na Matrix POLOHU (Element X: + → Poloha), "
      "najdu zajímavá místa do 15 km — hrady, zámky, kostely, muzea, přírodu — podle svých zájmů "
-     "a toho, co jsem četl, a pošlu k tomu mapu s očíslovanými body; polohu si neukládám", "pošli mi polohu přes Matrix"),
+     "a toho, co jsem četl, a pošlu k tomu mapu s očíslovanými body; polohu si neukládám. Na otázku „co je zajímavého "
+     "v okolí?“ použiju polohu z poslední 2 hodin (sám si ji vyžádat neumím) a „co je zajímavého "
+     "u Kutné Hory?“ zvládnu i bez polohy", "pošli mi polohu přes Matrix; co je zajímavého u <místo>?"),
     # HANS_SNIMEK_NA_POZADANI_V1 (3. 11.)
     ("camera_snapshot", "Umím na požádání poslat AKTUÁLNÍ snímek z kamery na Matrix "
      "(jen členům domácnosti, ve webovém chatu ne)", "/snimek; pošli snímek; co je na kameře"),

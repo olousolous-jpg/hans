@@ -83,6 +83,8 @@ def handle(text: str, ctx: BridgeCtx) -> bool:
             return True
         if _appearance(text, ctx):          # HANS_ENTITY_IMAGE_CHAT_V1
             return True
+        if _cmd_mista(text, ctx):           # HANS_MISTA_DOTAZ_V1
+            return True
         intent = detect_intent(text)
         if intent == "paint":
             # namaluj NOVÝ obraz → padni do chatu (render na pozadí), obraz
@@ -267,6 +269,35 @@ _SNIMEK_RE = re.compile(
     r"\b(?:po[sš]li|po[sš]lete|uka[zž]|uka[zž]te|ud[eě]lej|ud[eě]lejte|vyfo[tť]\w*)\b.{0,25}"
     r"\b(?:sn[ií]m\w*|kamer\w*|z[aá]b[eě]r\w*)"
     r"|\bco\s+(?:je|vid[ií][sš]|vid[ií]te)\s+(?:na|v|p[rř]ed)\s+kame\w*")
+
+
+def _cmd_mista(text: str, ctx: BridgeCtx) -> bool:
+    """HANS_MISTA_DOTAZ_V1 — „co je zajímavého v okolí / u X?“ → seznam + mapa."""
+    try:
+        from scripts import hans_mista as _hm
+        if _hm.je_dotaz(text) is None:
+            return False
+        r = _hm.odpoved_na_dotaz(text, ctx.person, _diary_path(ctx.config))
+        if not r:
+            return False
+        odp, geo = r
+        ctx.send(odp)
+        if geo:
+            import tempfile
+            fd, cesta = tempfile.mkstemp(prefix="hans_mapa_", suffix=".png")
+            os.close(fd)
+            try:
+                if _hm.mapa_k_mistum(geo[0], geo[1], cesta):
+                    ctx.send_photo(cesta, "Mapa míst (čísla jako v seznamu)")
+            finally:
+                try:
+                    os.remove(cesta)
+                except OSError:
+                    pass
+        return True
+    except Exception as e:
+        _log.warning("HANS_MISTA_DOTAZ_V1: %s", e)
+        return False
 
 
 def _cmd_snimek(ctx: BridgeCtx):

@@ -209,6 +209,14 @@ def main():
         _stav(vysledek="chyba", krok=krok, chyba=str(e)[:300], vypis=ted, novy=fn)
         _log("OBNOVA SELHALA (%s): %s — Hans dál používá %s" % (krok, e, ted))
         return 1
+    # HANS_WIKI_SOURADNICE_V1 — souřadnice článků (geo_tags, ~6 MB) spolu s novým výpisem;
+    # selhání obnovu nezruší (zůstanou staré souřadnice, id stránek se nemění)
+    try:
+        subprocess.run([sys.executable, os.path.join(ROOT, "tools", "wiki_souradnice.py")],
+                       check=True, timeout=900)
+        _log("souřadnice obnoveny")
+    except Exception as e:
+        _log("souřadnice se neobnovily (zůstávají staré):", e)
     _stav(vysledek="ok", vypis=fn, predchozi=ted, clanku=pocet, dosud=stary,
           zaloha=os.path.basename(zaloha))
     _log("HOTOVO", fn)

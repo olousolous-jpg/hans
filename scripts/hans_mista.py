@@ -81,6 +81,106 @@ def _wikidata(lat: float, lon: float, r_km: float, timeout: float = 30.0) -> lis
     return [(t, v[0], v[1], v[2]) for t, v in out.items()]
 
 
+# ── HANS_MISTA_OFFLINE_V1 (3. 11.) — souřadnice z `data/wiki/souradnice.db` ─────────
+# (`tools/wiki_souradnice.py`, geo_tags z výpisu české Wikipedie; id = clanek.id)
+_TYP_INFOBOX = {"hrad": "hrad", "zřícenina": "zřícenina hradu", "zámek": "zámek", "tvrz": "tvrz",
+                "pp": "přírodní památka v Česku", "pr": "přírodní rezervace v Česku",
+                "npp": "národní přírodní památka v Česku", "npr": "národní přírodní rezervace v Česku",
+                "chko": "chráněná krajinná oblast v Česku", "np": "národní park"}
+_TYP_DRUH = {"kostel": "kostel", "klášter": "klášter", "muzeum": "muzeum", "rozhledna": "rozhledna",
+             "synagoga": "synagoga", "hrad": "hrad", "zámek": "zámek", "jeskyně": "jeskyně"}
+_TYP_NAZEV = {"kostel": "kostel", "klášter": "klášter", "kaple": "kaple", "rozhledna": "rozhledna",
+              "muzeum": "muzeum", "synagoga": "synagoga", "katedrála": "katedrála",
+              "bazilika": "bazilika minor", "chrám": "katedrála", "hrad": "hrad", "zámek": "zámek", "tvrz": "tvrz",
+              "hradiště": "hradiště", "jeskyně": "jeskyně", "hvězdárna": "hvězdárna",
+              "viadukt": "viadukt", "pomník": "pomník", "památník": "památník", "sousoší": "sousoší",
+              "socha": "socha", "vodopád": "vodopád", "skanzen": "skanzen", "galerie": "galerie",
+              "zřícenina": "zřícenina hradu", "zahrada": "zahrada", "vyhlídka": "vyhlídka",
+              "přírodní památka": "přírodní památka v Česku",
+              "přírodní rezervace": "přírodní rezervace v Česku"}
+
+
+def _sdb():
+    import os
+    import sqlite3
+    from scripts import hans_wiki_offline as wo
+    cesta = os.path.join(os.path.dirname(wo.DB), "souradnice.db")
+    if not os.path.exists(cesta):
+        return None
+    return sqlite3.connect("file:%s?mode=ro" % cesta, uri=True, timeout=3)
+
+
+def _druh_lokalne(titul: str, druh: str, infobox: str):
+    m = re.search(r"\(([^)]*)\)$", titul)
+    if m and m.group(1).lower() in _TYP_NAZEV:
+        return _TYP_NAZEV[m.group(1).lower()]
+    mt = re.search(r"(?m)^typ:\s*([^\n]+)", infobox or "")
+    if mt:
+        v = re.sub(r"&nbsp;|\[.*?\]", " ", mt.group(1)).strip().lower()
+        if v in _TYP_INFOBOX:
+            return _TYP_INFOBOX[v]
+        for k in ("zřícenina", "hrad", "zámek", "tvrz"):
+            if v.startswith(k):
+                return _TYP_INFOBOX[k]
+    if (druh or "") in _TYP_DRUH:
+        return _TYP_DRUH[druh]
+    prvni = titul.split()[0].lower() if titul else ""
+    return _TYP_NAZEV.get(prvni)
+
+
+def _lokalne(lat: float, lon: float, r_km: float) -> list:
+    """Totéž co `_wikidata`, jen z lokálních dat: [(titul, km, {druh}, (lat, lon))]."""
+    from scripts import hans_wiki_offline as wo
+    g = _sdb()
+    if g is None:
+        raise RuntimeError("chybí data/wiki/souradnice.db")
+    try:
+        dl = r_km / 111.0
+        do = r_km / (111.0 * max(0.2, math.cos(math.radians(lat))))
+        body = g.execute("SELECT id, lat, lon FROM s WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
+                         (lat - dl, lat + dl, lon - do, lon + do)).fetchall()
+    finally:
+        g.close()
+    out = []
+    db = wo._db()
+    for i, a, b in body:
+        km = _vzdal(lat, lon, a, b)
+        if km > r_km:
+            continue
+        r = db.execute("SELECT titul, infobox_druh, substr(infobox,1,400) FROM clanek "
+                       "WHERE id=? AND rozcestnik=0", (i,)).fetchone()
+        if not r:
+            continue
+        d = _druh_lokalne(r[0], r[1], r[2])
+        if d:
+            out.append((r[0], km, {d}, (a, b)))
+    return out
+
+
+def _vzdal(a1, o1, a2, o2) -> float:
+    p1, p2 = math.radians(a1), math.radians(a2)
+    dp, do = p2 - p1, math.radians(o2 - o1)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(do / 2) ** 2
+    return 2 * 6371.0 * math.asin(math.sqrt(h))
+
+
+def souradnice_lokalne(titul: str):
+    """(lat, lon) článku z offline souřadnic, nebo None."""
+    try:
+        from scripts import hans_wiki_offline as wo
+        r = wo._cil(titul)
+        g = _sdb()
+        if not r or g is None:
+            return None
+        try:
+            x = g.execute("SELECT lat, lon FROM s WHERE id=?", (r[0],)).fetchone()
+        finally:
+            g.close()
+        return (x[0], x[1]) if x else None
+    except Exception:
+        return None
+
+
 def _delka_clanku(titul: str) -> int:
     try:
         from scripts import hans_wiki_offline as wo
@@ -119,7 +219,13 @@ def mista(lat: float, lon: float, r_km: float = 15.0, kolik: int = 6) -> list:
         seznam = c[1]
     else:
         seznam = []
-        for titul, km, druhy, poloha in _wikidata(lat, lon, r_km):
+        try:
+            zdroj = _wikidata(lat, lon, r_km)
+        except Exception as e:      # HANS_MISTA_OFFLINE_V1 — Wikidata dole → lokálně
+            _log.info("HANS_MISTA_OFFLINE_V1: Wikidata nedostupná (%s) → lokální souřadnice",
+                      str(e)[:80])
+            zdroj = _lokalne(lat, lon, r_km)
+        for titul, km, druhy, poloha in zdroj:
             vahy = [(_DRUHY[d], d) for d in druhy if d in _DRUHY]
             if not vahy:
                 continue
@@ -291,6 +397,104 @@ def uloz_podnety(db: str, mm: list, strop: int = 3) -> int:
     if n:
         _log.info("HANS_MISTA_PODNETY_V1: +%d podnětů z míst v okolí", n)
     return n
+
+
+# ── HANS_MISTA_DOTAZ_V1 (3. 11.) — „co je zajímavého v okolí / u Kutné Hory?“ ──────
+# Bot si polohu z telefonu vyžádat nemůže (Matrix to neumí, Element X posílá jen na
+# pokyn uživatele) → (1) nedávná poloha z paměti (≤ 2 h, i živé sdílení), (2) jinak
+# prosba o polohu, (3) s názvem místa souřadnice z Wikidat (P625) podle článku.
+_DOTAZ_RE = re.compile(
+    r"\b(?:co|něco|neco|cokoli|cokoliv)\b[^?!.]{0,30}?\bzaj[ií]mav\w*[^?!.]{0,25}?"
+    r"(?:\b(?:v\s+oko[a-zíi]{1,3}|okolo|kolem|pobl[ií][zž]|nabl[ií]zku|nedaleko|tady|tu)\b"
+    r"|\b(?:u|v|ve|na)\s+(?=(?-i:[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])))\s*"
+    r"(?P<misto>(?-i:[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])[^?!.,]{1,40})?", re.I)
+_CERSTVA_S = 2 * 3600
+_souradnice_ram: dict = {}      # titul → (lat, lon, titul) — souřadnice obcí a míst, ne osob
+
+
+def je_dotaz(text: str):
+    """None = není dotaz na místa; jinak (název místa nebo '')."""
+    m = _DOTAZ_RE.search(text or "")
+    if not m:
+        return None
+    jm = (m.group("misto") or "").strip()
+    # „co zajímavého je u nás / tady“ ≠ název
+    if jm and not jm[:1].isupper():
+        jm = ""
+    return jm
+
+
+def souradnice(nazev: str):
+    """(lat, lon, titul) místa podle názvu (i v jiném pádě: „Kutné Hory“), nebo None."""
+    try:
+        from scripts import hans_wiki_offline as wo
+        import requests
+        from scripts.hans_facts import USER_AGENT
+        tvary = [nazev] + (wo._prvni_pad_vic(nazev) if " " in nazev else wo._tvary_slova(nazev))
+        for z in tvary:
+            r = wo._cil(z[:1].upper() + z[1:])
+            if not r:
+                continue
+            if wo._db().execute("SELECT rozcestnik FROM clanek WHERE id=?", (r[0],)).fetchone()[0]:
+                continue
+            if r[1] in _souradnice_ram:
+                return _souradnice_ram[r[1]]
+            _sl = souradnice_lokalne(r[1])          # HANS_MISTA_OFFLINE_V1
+            if _sl:
+                _souradnice_ram[r[1]] = (_sl[0], _sl[1], r[1])
+                return _souradnice_ram[r[1]]
+            js = None
+            for pokus in (1, 2, 3):           # přetížení / limit dotazů → chvíli počkat
+                q = requests.get("https://www.wikidata.org/w/api.php", timeout=10,
+                                 headers={"User-Agent": USER_AGENT},
+                                 params={"action": "wbgetentities", "sites": "cswiki",
+                                         "titles": r[1], "props": "claims", "format": "json"})
+                if q.status_code == 200:
+                    try:
+                        js = q.json()
+                        break
+                    except ValueError:
+                        pass
+                time.sleep(2 * pokus)
+            if js is None:
+                return None
+            for e in (js.get("entities") or {}).values():
+                for c in ((e.get("claims") or {}).get("P625") or []):
+                    v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value") or {}
+                    if "latitude" in v:
+                        _souradnice_ram[r[1]] = (float(v["latitude"]), float(v["longitude"]), r[1])
+                        return _souradnice_ram[r[1]]
+    except Exception as e:
+        _log.warning("HANS_MISTA_DOTAZ_V1: souřadnice %r: %s", nazev, str(e)[:100])
+    return None
+
+
+def odpoved_na_dotaz(text: str, osoba: str, db: str = "data/hans_diary.db"):
+    """(text odpovědi, (lat, lon) pro mapu nebo None) — nebo None, když nejde o dotaz."""
+    jm = je_dotaz(text)
+    if jm is None:
+        return None
+    if jm:
+        s = souradnice(jm)
+        if not s:
+            # „co je zajímavého na Kafkovi?“ — žádné místo se souřadnicemi → běžný hovor
+            _log.info("HANS_MISTA_DOTAZ_V1: %r není místo se souřadnicemi → hovor", jm)
+            return None
+        lat, lon, titul = s
+        odp = zprava(lat, lon, "", vlastni=False, db=db)
+        odp = odp.replace("kolem toho bodu", "kolem místa %s" % _jmeno(titul), 1)
+        if osoba and osoba != "test" and odp.startswith("Zajímavá místa"):
+            try:
+                uloz_podnety(db, mista(lat, lon))
+            except Exception:
+                pass
+        return odp, ((lat, lon) if odp.startswith("Zajímavá místa") else None)
+    p = posledni.get(osoba)
+    if p and time.time() - p[2] < _CERSTVA_S:
+        odp = zprava(p[0], p[1], osoba, vlastni=True, db=db)
+        return odp, ((p[0], p[1]) if odp.startswith("Zajímavá místa") else None)
+    return ("Polohu si sám vyžádat neumím — pošlete mi ji prosím: + → Poloha → Sdílet "
+            "moji polohu. Nebo napište název místa, třeba „co je zajímavého u Kutné Hory?“", None)
 
 
 def _km(k: float) -> str:
