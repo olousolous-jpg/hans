@@ -262,6 +262,37 @@ def mapa_k_mistum(lat: float, lon: float, cesta: str, r_km: float = 15.0) -> boo
         return False
 
 
+def uloz_podnety(db: str, mm: list, strop: int = 3) -> int:
+    """HANS_MISTA_PODNETY_V1 (3. 11., uživatel) — místa ze seznamu, o kterých Hans nic
+    nečetl, do zásoby Koláčových podnětů (Koláč se zeptá, Hans si článek dohledá).
+    Téma bez osoby a polohy — z dialogu se nesmí dát vyčíst, kde kdo byl."""
+    import sqlite3
+    n = 0
+    try:
+        from scripts import kolac_podnety as kp
+        con = sqlite3.connect(db, timeout=10)
+        try:
+            uz = {(r[0] or "").lower() for r in con.execute("SELECT nazev FROM kolac_podnety")}
+            for x in mm:
+                if n >= strop:
+                    break
+                t = x["titul"]
+                if t.lower() in uz or _cetl(db, t) or kp.v_pameti(db, _jmeno(t)):
+                    continue
+                con.execute("INSERT INTO kolac_podnety (ts, tema, nazev, typ, stav) "
+                            "VALUES (?,?,?,?,'novy')",
+                            (time.time(), "zvenku: zajímavá místa v okolí", t, "misto"))
+                n += 1
+            con.commit()
+        finally:
+            con.close()
+    except Exception as e:
+        _log.warning("HANS_MISTA_PODNETY_V1: %s", str(e)[:120])
+    if n:
+        _log.info("HANS_MISTA_PODNETY_V1: +%d podnětů z míst v okolí", n)
+    return n
+
+
 def _km(k: float) -> str:
     return ("%.1f km" % k).replace(".", ",") if k < 10 else "%d km" % round(k)
 
@@ -288,4 +319,6 @@ def zprava(lat: float, lon: float, osoba: str = "", vlastni: bool = True,
             i, jm, x["druh"], _km(x["km"]),
             (". " + x["veta"]) if x["veta"] else "",
             " (o tomhle jsem si četl)" if cetl else ""))
+    if osoba and osoba != "test":
+        uloz_podnety(db, mm)
     return "\n".join(radky)
