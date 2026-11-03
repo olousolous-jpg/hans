@@ -180,6 +180,12 @@ _CAPABILITIES = [
      "a toho, co jsem četl, a pošlu k tomu mapu s očíslovanými body; polohu si neukládám. Na otázku „co je zajímavého "
      "v okolí?“ použiju polohu z poslední 2 hodin (sám si ji vyžádat neumím) a „co je zajímavého "
      "u Kutné Hory?“ zvládnu i bez polohy", "pošli mi polohu přes Matrix; co je zajímavého u <místo>?"),
+    # HANS_AKCE_V1 (3. 11.)
+    ("akce_v_okoli", "Na Matrixu umím najít KULTURNÍ AKCE v okolí — z kalendářů akcí na webech "
+     "nejbližších obcí (koncerty, výstavy, trhy…); každou akci ověřím, že na stránce opravdu "
+     "stojí, nic nedomýšlím. Použiju polohu z posledních 2 hodin nebo název místa; potřebuju "
+     "k tomu mozek na počítači, a když obec kalendář na webu nemá, nenajdu nic",
+     "jaké akce jsou v okolí?; jaké akce jsou v Litomyšli?"),
     # HANS_SNIMEK_NA_POZADANI_V1 (3. 11.)
     ("camera_snapshot", "Umím na požádání poslat AKTUÁLNÍ snímek z kamery na Matrix "
      "(jen členům domácnosti, ve webovém chatu ne)", "/snimek; pošli snímek; co je na kameře"),

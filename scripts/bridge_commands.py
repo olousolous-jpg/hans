@@ -83,6 +83,8 @@ def handle(text: str, ctx: BridgeCtx) -> bool:
             return True
         if _appearance(text, ctx):          # HANS_ENTITY_IMAGE_CHAT_V1
             return True
+        if _cmd_akce(text, ctx):            # HANS_AKCE_V1 (před místy: „akce v okolí“)
+            return True
         if _cmd_mista(text, ctx):           # HANS_MISTA_DOTAZ_V1
             return True
         intent = detect_intent(text)
@@ -269,6 +271,22 @@ _SNIMEK_RE = re.compile(
     r"\b(?:po[sš]li|po[sš]lete|uka[zž]|uka[zž]te|ud[eě]lej|ud[eě]lejte|vyfo[tť]\w*)\b.{0,25}"
     r"\b(?:sn[ií]m\w*|kamer\w*|z[aá]b[eě]r\w*)"
     r"|\bco\s+(?:je|vid[ií][sš]|vid[ií]te)\s+(?:na|v|p[rř]ed)\s+kame\w*")
+
+
+def _cmd_akce(text: str, ctx: BridgeCtx) -> bool:
+    """HANS_AKCE_V1 — „jaké jsou akce v okolí / v Litomyšli?“ → akce z webů obcí."""
+    try:
+        from scripts import hans_akce as _ha
+        if _ha.je_dotaz(text) is None:
+            return False
+        odp = _ha.odpoved_na_dotaz(ctx.config, text, ctx.person)
+        if not odp:
+            return False
+        ctx.send(odp)
+        return True
+    except Exception as e:
+        _log.warning("HANS_AKCE_V1: %s", e)
+        return False
 
 
 def _cmd_mista(text: str, ctx: BridgeCtx) -> bool:
