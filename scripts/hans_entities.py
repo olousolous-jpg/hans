@@ -37,15 +37,29 @@ def _delsi_jmeno(query: str, key_tok: str, ent_name: str):
         jm = _tokens(re.sub(r"\s*\([^)]*\)", " ", ent_name or ""))
         for i in range(len(w) - 1):
             tk = _tokens(w[i])
-            if not tk or not tk[0].startswith(key_tok[:4]) or not w[i + 1][:1].isupper():
+            if not tk or not tk[0].startswith(key_tok[:4]):
                 continue
-            for n in (3, 2):
-                if i + n > len(w) or not all(x[:1].isupper() for x in w[i + 1:i + n]):
-                    continue
-                r = wo._cil(" ".join(w[i:i + n]))
-                tit = r[1] if r else None
-                if tit and _tokens(re.sub(r"\s*\([^)]*\)", " ", tit)) != jm:
-                    return tit
+            if w[i + 1][:1].isupper():
+                for n in (3, 2):
+                    if i + n > len(w) or not all(x[:1].isupper() for x in w[i + 1:i + n]):
+                        continue
+                    r = wo._cil(" ".join(w[i:i + n]))
+                    tit = r[1] if r else None
+                    if tit and _tokens(re.sub(r"\s*\([^)]*\)", " ", tit)) != jm:
+                        return tit
+            elif not w[i][:1].isupper():
+                # HANS_ENTITY_DELSI_JMENO_MALA_V1 (3. 11., samotest: „kde zemrel marino
+                # moretti“ → Panna Maria) — věta psaná malými písmeny, často bez háčků:
+                # fráze bez diakritiky musí být titul JEDINÉHO článku (ne rozcestníku).
+                # 📏 2 427 vět (lidé, samotest, zkoušky, totéž bez háčků): 9 změn, všechny k lepšímu.
+                for n in (3, 2):
+                    if i + n > len(w) or any(x[:1].isupper() for x in w[i + 1:i + n]):
+                        continue
+                    ts = [x for (x,) in wo._fold_db().execute(
+                        "SELECT titul FROM t WHERE fold=? AND rozcestnik=0 LIMIT 3",
+                        (wo._fold_tzv(" ".join(w[i:i + n])),))]
+                    if len(ts) == 1 and _tokens(re.sub(r"\s*\([^)]*\)", " ", ts[0])) != jm:
+                        return ts[0]
     except Exception:
         return None
     return None
