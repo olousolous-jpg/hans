@@ -368,6 +368,14 @@ class MatrixBridge:
             self._client.add_event_callback(self._on_image, (_RMI, _REI))
         except Exception as _fe:
             _log.warning("matrix: fotky nepůjde přijímat: %s", _fe)
+        # HANS_POLOHA_DIAG_V1 (3. 11.) — zjistit, v jakém tvaru chodí poloha z Element X
+        # (m.location jako neznámý msgtype, živá poloha jako beacon události). Jen log
+        # typu, BEZ souřadnic.
+        try:
+            from nio import RoomMessageUnknown as _RMU, UnknownEvent as _UE
+            self._client.add_event_callback(self._on_poloha_diag, (_RMU, _UE))
+        except Exception as _pe:
+            _log.warning("matrix: diagnostika polohy: %s", _pe)
         # auto-přijetí pozvánky (jen od povolených user_id, nebo když seznam
         # prázdný = důvěřuj — jednouživatelský setup). Bez toho by se bot
         # musel do místnosti připojit ručně.
@@ -690,6 +698,65 @@ class MatrixBridge:
         return None
 
     # ── HANS_FOTO_V1 (27. 9.) — fotky od známých osob ────────────────────────
+    async def _on_poloha_diag(self, room, event):
+        """HANS_POLOHA_DIAG_V1 — zapíše typ neznámé události (poloha?), bez obsahu.
+        HANS_MISTA_V1 — `m.location` od člena domácnosti → zajímavá místa v okolí."""
+        try:
+            if event.sender == self._client.user_id:
+                return
+            src = getattr(event, "source", {}) or {}
+            co = src.get("content", {}) or {}
+            if co.get("msgtype") == "m.location":
+                await self._on_poloha(room, event, co)
+                return
+            # HANS_MISTA_LIVE_V1 — živá poloha (MSC3672): na PRVNÍ aktualizaci sdílení
+            # odpovědět, další jen tiše uložit jako poslední polohu
+            if str(src.get("type", "")).endswith(("msc3672.beacon", "m.beacon")):
+                _loc = co.get("org.matrix.msc3488.location") or co.get("m.location") or {}
+                _sez = ((co.get("m.relates_to") or {}).get("event_id")) or ""
+                _vid = getattr(self, "_mista_live_sezeni", set())
+                self._mista_live_sezeni = _vid
+                if _sez in _vid:
+                    from scripts import hans_mista as _hm
+                    _g = _hm.parse_geo(_loc.get("uri") or "")
+                    if _g and (not self._users or event.sender in self._users):
+                        _hm.posledni[self._person_for(event.sender)] = (_g[0], _g[1], time.time())
+                    return
+                _vid.add(_sez)
+                await self._on_poloha(room, event, {"geo_uri": _loc.get("uri") or "",
+                                                    "org.matrix.msc3488.asset": {"type": "m.self"}})
+                return
+            _log.info("HANS_POLOHA_DIAG_V1: od %s typ %r msgtype %r klíče %s geo %s",
+                      self._person_for(event.sender), src.get("type"), co.get("msgtype"),
+                      sorted(co.keys())[:12], "ano" if ("geo_uri" in co or any(
+                          "location" in k or "beacon" in k for k in co)) else "ne")
+        except Exception as e:
+            _log.debug("HANS_POLOHA_DIAG_V1: %s", e)
+
+    async def _on_poloha(self, room, event, co):
+        """HANS_MISTA_V1 (3. 11.) — poloha z Element X → seznam zajímavých míst.
+        Jen povolený člen domácnosti s plnou rolí; souřadnice se nelogují ani neukládají."""
+        if getattr(event, "server_timestamp", 0) / 1000.0 < self._started_ts:
+            return
+        uid = event.sender
+        if (self._users and uid not in self._users) or not self._is_full(uid):
+            _log.warning("HANS_MISTA_V1: poloha od %s bez oprávnění — ignoruji", uid)
+            return
+        from scripts import hans_mista as _hm
+        geo = _hm.parse_geo(co.get("geo_uri") or "")
+        if not geo:
+            await self._a_send("Polohu se mi nepodařilo přečíst.", room.room_id)
+            return
+        asset = ((co.get("org.matrix.msc3488.asset") or {}).get("type") or "m.self")
+        person = self._person_for(uid)
+        db = ((self.config.get("hans_idle", {}) or {}).get("diary_db") or "data/hans_diary.db")
+        _log.info("HANS_MISTA_V1: poloha od %s (%s) → hledám místa", person,
+                  "vlastní" if asset == "m.self" else "bod")
+        odp = await self._s_psanim(room.room_id, _hm.zprava, geo[0], geo[1], person,
+                                   asset == "m.self", db)
+        if odp:
+            await self._a_send(odp, room.room_id)
+
     async def _on_image(self, room, event):
         """Přijme fotku (i E2E šifrovanou), uloží ji do data/foto/ (nic do deníku
         ani paměti) a buď hned odpoví na popisek, nebo se zeptá, co s ní."""
