@@ -779,6 +779,35 @@ def _volno() -> bool:
         return True
 
 
+# HANS_VYPOCTY_PRISTI_DATUM_V1 (4. 11.) — „kolik dní zbývá do 1. května?“ v listopadu:
+# model napíše datum(letošní rok, 5, 1) a `dny` (bez znaménka) vrátí dny OD minulého
+# května (183 místo 179; chyba všech měřených modelů 31. 10. i 3. 11.). Otázka bez
+# roku, která míří dopředu, myslí nejbližší budoucí výskyt → letošní datum, které už
+# bylo, posune kód o rok. Otázka do minulosti („od“, „uplynulo“, „před“) beze změny.
+_DOPREDU_RE = re.compile(r"(?:zb[yý]v|\bdo\b|za\s+kolik|kdy\s+bude|p[rř][ií][sš]t[ií])", re.I)
+_DOZADU_RE = re.compile(r"(?:\bod\b|uplynul|ub[eě]hl|\bp[rř]ed\b|\bbylo\b|\bbyl[ao]?\b)", re.I)
+
+
+def pristi_datum(vyraz: str, q: str) -> str:
+    if not vyraz or re.search(r"\b\d{4}\b", q or "") or not _DOPREDU_RE.search(q or "") \
+            or _DOZADU_RE.search(q or ""):
+        return vyraz
+    dnes = _dt.date.today()
+
+    def _sub(m):
+        r, me, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            if r == dnes.year and _dt.date(r, me, d) < dnes:
+                return "datum(%d, %d, %d)" % (r + 1, me, d)
+        except ValueError:
+            pass
+        return m.group(0)
+    v2 = re.sub(r"datum\(\s*(\d{4})\s*,\s*(\d{1,2})\s*,\s*(\d{1,2})\s*\)", _sub, vyraz)
+    if v2 != vyraz:
+        _log.info("HANS_VYPOCTY_PRISTI_DATUM_V1: datum už bylo → příští rok: %s → %s", vyraz[:80], v2[:80])
+    return v2
+
+
 def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=(),
                     f1=None, odpoved="") -> Optional[str]:
     c = (config or {}).get("vypocty_model", {}) or {}
@@ -878,6 +907,8 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0, predchozi=()
     if bez:
         _log.info("%s: čísla bez opory v otázce %s → zahazuji: %.120r", MARK, bez, vyraz)
         return None
+    if not _fo:   # HANS_VYPOCTY_PRISTI_DATUM_V1
+        vyraz = pristi_datum(vyraz, q)
     if re.fullmatch(r"[\d\s.,]+", vyraz):   # HANS_VYPOCTY_WD_V2 — holé číslo není výpočet
         _log.info("%s: výraz je jen číslo → zahazuji: %.60r", MARK, vyraz)
         return None
