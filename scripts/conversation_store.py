@@ -196,6 +196,8 @@ class ConversationStore:
         msgs = data.get("messages", [])
         if channel is not None:
             msgs = [m for m in msgs if m.get("ch") in (None, channel)]
+        if channel is not None and channel != "voice":
+            msgs = self._bez_pozdravu_kamery(msgs)  # HANS_CONV_CAMERA_GREETING_V1
         msgs = self._sbal_monolog(msgs)   # HANS_CONV_GREETING_ECHO_V1
         msgs = self._orez_pozdravy(msgs)  # HANS_CONV_GREETING_DIALOG_V1
         msgs = self._orez_pane(name, msgs)  # HANS_CONV_PANE_ECHO_V1
@@ -220,6 +222,35 @@ class ConversationStore:
         r"(dobr[\u00fdy]\s+den|dobr[\u00e9e]\s+r[\u00e1a]no|"
         r"dobr[\u00fdy]\s+ve[\u010dc]er|dobr[\u00e9e]\s+odpoledne)"
         r"[\s,]*[^.!?]{0,24}[.!?]\s*", _re_g4d.IGNORECASE)
+
+    @staticmethod
+    def _bez_pozdravu_kamery(msgs: list) -> list:
+        """HANS_CONV_CAMERA_GREETING_V1 (4. 11.) — pozdrav z kamery (replika
+        bez kanálu a bez otázky těsně před ní) do psaného chatu nepatří.
+
+        PROČ: hlasový pozdrav „Dobrý večer, <Jméno> — během Vaší nepřítomnosti
+        jsem…“ se ukládá do téže historie; model na Matrixu kopíroval jeho
+        tvar na začátek odpovědí na nesouvisející otázky (3. 11. 20:29–20:34
+        třikrát po sobě; v uložené historii 7 z 31 odpovědí v chatu, 29 z 31
+        mělo pozdrav z kamery v okně). Hlasový kanál ho dál vidí — tam na
+        něj člověk může odpovídat (HANS_QUESTION_CONTINUITY_V1).
+        ⚠️ Mění JEN pohled do promptu, v úložišti zůstává vše."""
+        out = []
+        for i, m in enumerate(msgs or []):
+            if (m.get("role") == "assistant" and not m.get("ch")
+                    and not (i > 0 and (msgs[i - 1] or {}).get("role") == "user")):
+                continue
+            out.append(m)
+        return out
+
+    # HANS_CONV_CAMERA_GREETING_V1 — tvar „Dobrý večer, <Jméno> — …“ (pozdrav
+    # zakončený pomlčkou, ne tečkou) `_POZDRAV_RE` nevidí; jen pro pohled do
+    # historie, sdílený `_POZDRAV_RE` (i výstupní ořez) beze změny.
+    _POZDRAV_POMLCKA_RE = _re_g4d.compile(
+        r"^\s*(?:[^\s.,!?]{2,20},\s*){0,2}"
+        r"(dobr[\u00fdy]\s+den|dobr[\u00e9e]\s+r[\u00e1a]no|"
+        r"dobr[\u00fdy]\s+ve[\u010dc]er|dobr[\u00e9e]\s+odpoledne)"
+        r"[^.!?\u2014\u2013]{0,30}\s[\u2014\u2013]\s*", _re_g4d.IGNORECASE)
 
     def _orez_pozdravy(self, msgs):
         """HANS_CONV_GREETING_DIALOG_V1 (12. 9.) — pozdrav nech jen u NEJNOVEJSI
@@ -250,6 +281,16 @@ class ConversationStore:
             if m.get("role") == "assistant":
                 _t = m.get("content") or ""
                 _n = self._POZDRAV_RE.sub("", _t, count=1)
+                if _n == _t:   # HANS_CONV_CAMERA_GREETING_V1
+                    # celá první věta: za pomlčkou je Hansova věta o sobě
+                    # (opsaná z pozdravu), ne odpověď
+                    _m = self._POZDRAV_POMLCKA_RE.match(_t)
+                    if _m:
+                        _z = _re_g4d.match(r"[^.!?]*[.!?]+\s*", _t[_m.end():])
+                        _n = _t[_m.end() + (_z.end() if _z else 0):]
+                        if not _n.strip():
+                            _n = _t[_m.end():]
+                        _n = _n[:1].upper() + _n[1:]
                 if _n.strip() and _n != _t:
                     m = dict(m); m["content"] = _n
             out.append(m)

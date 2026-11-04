@@ -2156,7 +2156,30 @@ class FaktaMixin:
             logging.getLogger(_h.__name__).debug("HANS_F1_PREDMET_V1: %s", e)
         return ""
 
-    def _f1_o_tazateli(self, novy: str, kdo: str = "") -> bool:
+    # HANS_F1_PRIDAL_TAZATELE_V1 (4. 11.) — přepis přidal jméno tazatele, které
+    # v původní větě není, a původní věta nemá 1. osobu (já/mě/můj/jsem…), takže
+    # jméno nemá co nahrazovat → vymyšlený předmět. Doloženo 3. 11.: „umis najit
+    # akce v okoli?“ → „Umíš najít kulturní akce v okolí <Jméno>?“ → klasifikátor
+    # „osoba“ → A1 „nevím“ (s háčky přepis bez jména → schopnosti). _f1_o_tazateli
+    # to nechytí (přepis má 2. osobu „umíš“). 📏 2 699 přepisů z logu: zasáhne 6,
+    # všech 6 s vymyšleným tazatelem v roli předmětu/podmětu.
+    _F1_JA = re.compile(
+        r"(?<![a-z])(ja|me|mi|mne|mnou|muj|moje|moji|mou|meho|mem|mym|nas|nam|nami|my|"
+        r"nasi|nase|naseho|jsem|bych|budu|jsme|mam|chci|potrebuji|potrebuju)(?![a-z])")
+
+    def _f1_pridal_tazatele(self, puvodni: str, novy: str, kdo: str = "") -> bool:
+        try:
+            import unicodedata as _ud
+            _p = self._bez_tazatele(puvodni)
+            _pf = "".join(c for c in _ud.normalize("NFKD", _p.lower()) if not _ud.combining(c))
+            if self._F1_JA.search(_pf):
+                return False
+            return (self._f1_o_tazateli(novy, kdo, jen_jmeno=True)
+                    and not self._f1_o_tazateli(_p, kdo, jen_jmeno=True))
+        except Exception:
+            return False
+
+    def _f1_o_tazateli(self, novy: str, kdo: str = "", jen_jmeno: bool = False) -> bool:
         """HANS_F1_NOT_ABOUT_ASKER_V1 (16. 9.) — prehodil prepis podmet na tazatele?
 
         Vraci True jen kdyz prepis (a) jmenuje tazatele nebo mluvi o
@@ -2214,6 +2237,8 @@ class FaktaMixin:
                         r"(?<![a-z,])(?<!,\s)" + re.escape(_km + "u") + r"(?![a-z])(?!\s*[?.!]*\s*$)", _txt))
             if not _jmenuje:
                 return False
+            if jen_jmeno:   # HANS_F1_PRIDAL_TAZATELE_V1
+                return True
             # V2: jméno tazatele v 1. pádě = podmět věty, i když vedlejší věta
             # mluví ve 2. osobě („Kolikrát musí <Jméno> čistit…, o kterém jsi mluvil?“)
             if _kdo and len(_kdo) >= 4 and re.search(

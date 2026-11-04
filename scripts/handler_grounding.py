@@ -767,6 +767,10 @@ class GroundingMixin:
                         logging.getLogger(_h.__name__).info(
                             'HANS_F1_NOT_ABOUT_ASKER_V1: prepis %r prehodil '
                             'podmet na tazatele — drzim original', _rw[:60])
+                    elif self._f1_pridal_tazatele(str(ctx._text), _rw, ctx.name):
+                        logging.getLogger(_h.__name__).info(   # HANS_F1_PRIDAL_TAZATELE_V1
+                            'HANS_F1_PRIDAL_TAZATELE_V1: prepis %r pridal tazatele, '
+                            'ktery ve vete neni — drzim original', _rw[:60])
                     elif bool((self.config.get("rewriter", {}) or {}).get("hlidat_predmet", True)) \
                             and (_ztr := self._f1_ztratil_predmet(str(ctx._text), _rw, _hist, ctx.name or "")):
                         logging.getLogger(_h.__name__).info(

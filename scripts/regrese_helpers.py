@@ -1649,3 +1649,42 @@ def entita_z_vety(veta: str) -> str:
     from scripts import config_io
     from scripts.hans_entities import EntityStore
     return str((EntityStore(config_io.load()).resolve(veta) or {}).get("name") or "")
+
+
+def osm_dotaz(text):
+    """HANS_OSM_KONTEXT_V1 — `hans_osm.je_dotaz` jako seznam (JSON nezná n-tice)."""
+    from scripts import hans_osm
+    r = hans_osm.je_dotaz(text)
+    return list(r) if r else None
+
+
+def pozdrav_kamery_v_historii(msgs: list, kanal: str) -> str:
+    """HANS_CONV_CAMERA_GREETING_V1 (4. 11.) — které Hansovy repliky zůstanou
+    v pohledu do historie pro daný kanál (bez zápisu do úložiště)."""
+    from scripts.conversation_store import ConversationStore
+    out = ConversationStore._bez_pozdravu_kamery(msgs) if kanal != "voice" else msgs
+    return " | ".join(m["content"] for m in out if m.get("role") == "assistant")
+
+
+def pristi_datum_posun(q: str) -> str:
+    """HANS_VYPOCTY_PRISTI_DATUM_V1 — letošní 1. leden (už byl) v otázce bez roku:
+    posune se o rok? Relativně k dnešku, ať případ nezávisí na datu běhu."""
+    import datetime as _d
+    from scripts.hans_vypocty_model import pristi_datum
+    r = _d.date.today().year
+    if _d.date.today() == _d.date(r, 1, 1):
+        return "posun"
+    v = "dny(dnes(), datum(%d, 1, 1))" % r
+    return "posun" if pristi_datum(v, q) != v else "beze změny"
+
+
+def f1_pridal_tazatele(puvodni: str, prepis: str, kdo: str) -> bool:
+    """HANS_F1_PRIDAL_TAZATELE_V1 — přidal přepis tazatele, který ve větě není?"""
+    from scripts import openwebui_direct_handler as h
+    cls = next(c for c in vars(h).values()
+               if isinstance(c, type) and hasattr(c, "_f1_pridal_tazatele")
+               and c.__module__ == h.__name__)
+    o = cls.__new__(cls)
+    o.config = {}
+    return bool(o._f1_pridal_tazatele(puvodni, prepis, kdo))
+
