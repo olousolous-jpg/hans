@@ -1688,3 +1688,16 @@ def f1_pridal_tazatele(puvodni: str, prepis: str, kdo: str) -> bool:
     o.config = {}
     return bool(o._f1_pridal_tazatele(puvodni, prepis, kdo))
 
+
+def mista_titul(nazev: str) -> str:
+    """HANS_MISTA_ROZCESTNIK_OBEC_V1 — titul článku místa podle názvu (i v jiném pádě)."""
+    from scripts import hans_mista
+    s = hans_mista.souradnice(nazev)
+    return s[2] if s else ""
+
+
+def osm_zacatek(text: str, n: int = 40) -> str:
+    """HANS_OSM_ZOO_V1 — začátek odpovědi `hans_osm` (bez sítě; mapa je lokální)."""
+    from scripts import hans_osm
+    return (hans_osm.odpoved_na_dotaz(text, "regrese") or "")[:n]
+

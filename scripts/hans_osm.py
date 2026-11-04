@@ -58,7 +58,8 @@ def cesky_cas(oh: str) -> str:
     return s
 
 
-def oteviraci_doba(nazev: str, lat: float, lon: float, r_km: float = 1.0) -> str:
+def oteviraci_doba(nazev: str, lat: float, lon: float, r_km: float = 1.0, druhy=None,
+                   presne: bool = False) -> str:
     """Otevírací doba místa podle názvu v okolí souřadnic (OSM), nebo ''."""
     c = _db()
     if c is None:
@@ -70,16 +71,20 @@ def oteviraci_doba(nazev: str, lat: float, lon: float, r_km: float = 1.0) -> str
         for r in _okolo(c, "poi", lat, lon, r_km, "AND otevreno != ''"):
             if r[2] in _JIDLO or r[2] == "parkoviště":
                 continue                  # „Hotel Podkost“ není hrad Kost
+            if druhy and not str(r[2]).startswith(tuple(druhy)):   # HANS_OSM_ZOO_V1
+                continue
             n = _f(r[3])
             vz = r"(?<!\w)%s(?!\w)"
-            if n and (n == jm or re.search(vz % re.escape(jm), n) or re.search(vz % re.escape(n), jm)):
+            if n and (n == jm or (not presne and (re.search(vz % re.escape(jm), n)
+                                                  or re.search(vz % re.escape(n), jm)))):
                 kand.append((_vzdal(lat, lon, r[0], r[1]), r[4]))
         return cesky_cas(min(kand)[1]) if kand else ""
     finally:
         c.close()
 
 
-def web_mista(nazev: str, lat: float, lon: float, r_km: float = 1.0) -> str:
+def web_mista(nazev: str, lat: float, lon: float, r_km: float = 1.0, druhy=None,
+              presne: bool = False) -> str:
     """HANS_OSM_ZAMEK_V1 — web místa podle názvu v okolí (OSM `website`), nebo ''."""
     c = _db()
     if c is None:
@@ -91,9 +96,12 @@ def web_mista(nazev: str, lat: float, lon: float, r_km: float = 1.0) -> str:
         for r in _okolo(c, "poi", lat, lon, r_km, "AND web != ''"):
             if r[2] in _JIDLO or r[2] == "parkoviště":
                 continue
+            if druhy and not str(r[2]).startswith(tuple(druhy)):   # HANS_OSM_ZOO_V1
+                continue
             n = _f(r[3])
             vz = r"(?<!\w)%s(?!\w)"
-            if n and (n == jm or re.search(vz % re.escape(jm), n) or re.search(vz % re.escape(n), jm)):
+            if n and (n == jm or (not presne and (re.search(vz % re.escape(jm), n)
+                                                  or re.search(vz % re.escape(n), jm)))):
                 kand.append((_vzdal(lat, lon, r[0], r[1]), r[5]))
         return min(kand)[1] if kand else ""
     finally:
@@ -219,12 +227,35 @@ def je_dotaz(text: str):
     if co == "pocasi" and not re.search(r"\btam\b", t, re.I):
         return None                      # obecné počasí = doma (agent), ne poslední místo
     if not m and co == "otevreno":       # „kdy je otevřený Kokořín?“, „kdy otevírá Kost“
-        m = re.search(r"\botev\w*\s+(?:je\s+)?(?:(?P<d>hrad|z[aá]mek|muzeum|z[rř][ií]cenin\w*|kl[aá][sš]ter|galerie|rozhledn\w*)\s+)?(?P<m>(?-i:[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])[^?!.,]{1,40})", t, re.I)
+        m = re.search(r"\botev\w*\s+(?:je\s+)?(?:(?P<d>hrad|z[aá]mek|muzeum|z[rř][ií]cenin\w*|kl[aá][sš]ter|galerie|rozhledn\w*|zoo|zoologick\w*\s+zahrad\w*)\s+)?(?P<m>(?-i:[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])[^?!.,]{1,40})", t, re.I)
     if m:                                # HANS_OSM_ZAMEK_V1 — druh i tady („zámek Lednice“)
         return co, m.group("m").strip(), _druh(m.group("d") or ""), ""
     if _OKOLI.search(t):
         return co, "", "", "u"
     return None
+
+
+_STAVBY = ("castle", "ruins", "fort", "manor", "monastery")
+_ZOO = re.compile(r"\b(?:zoo|zoologick\w*\s+zahrad\w*|zoologi\w*)\b", re.I)
+
+
+def zoo_u(lat: float, lon: float, r_km: float = 15.0):
+    """HANS_OSM_ZOO_V1 — nejbližší zoo (vzdálenost, název, opening_hours, web), nebo None."""
+    c = _db()
+    if c is None:
+        return None
+    try:
+        rows = [r for r in _okolo(c, "poi", lat, lon, r_km, "AND druh = 'zoo'") if r[3]]
+    finally:
+        c.close()
+    # skutečná zoo před motýlím domem a minizoo: „zoo/zoologická“ v názvu, heslo ve Wikidatech
+    kand = []
+    for r in rows:
+        k = _vzdal(lat, lon, r[0], r[1])
+        if k <= r_km:
+            kand.append(((not re.search(r"\bzoo|zoologick", _f(r[3])), not r[6], k),
+                         (k, r[3], r[4] or "", r[5] or "")))
+    return min(kand)[1] if kand else None
 
 
 def odpoved_na_dotaz(text: str, osoba: str):
@@ -266,6 +297,21 @@ def odpoved_na_dotaz(text: str, osoba: str):
         return ("Počasí %s %s: %s" % (pr, kde, pp)) if pp else "Předpověď pro %s teď nemám." % kde
     if _db() is None:
         return "Mapová data OpenStreetMap ještě nemám stažená."
+    if _ZOO.search(text or ""):            # HANS_OSM_ZOO_V1 — „zoo u Hluboké“
+        z = zoo_u(lat, lon)
+        if not z:
+            return "Zoologickou zahradu do 15 km od %s v mapových datech nemám." % (kde if titul else "vás")
+        k, nz, oh, wb = z
+        if co == "otevreno":
+            if oh:
+                return ("%s (%s od %s): %s (podle OpenStreetMap — před cestou raději ověřte%s)."
+                        % (nz, _km(k), ("místa " + hm._jmeno(titul)) if titul else "vás", cesky_cas(oh),
+                           (" na webu: " + wb) if wb else ""))
+            return ("%s (%s): otevírací dobu v mapových datech nemám%s"
+                    % (nz, _km(k), (" — aktuální bude na webu: " + wb) if wb else "."))
+        zz = hm.souradnice_lokalne(nz) or None
+        if co in ("jidlo", "parkovani", "trasy") and zz:
+            lat, lon, kde, pr = zz[0], zz[1], nz, "u"
     if co == "otevreno":
         if not titul:
             return "Napište prosím, o které místo jde, třeba „kdy je otevřený Kokořín?“"
@@ -279,8 +325,11 @@ def odpoved_na_dotaz(text: str, osoba: str):
         for kand in dict.fromkeys(kandidati):
             s2 = hm.souradnice_lokalne(kand)
             if s2:
-                o = oteviraci_doba(kand, s2[0], s2[1])
-                web = web or web_mista(kand, s2[0], s2[1])
+                # HANS_OSM_ZOO_V1 (4. 11.) — „Praha (hrad)“ sedlo na „Kunsthalle Praha“:
+                # kandidát s druhem smí jen na stavbu, holý název jen přesně
+                _dr = (_STAVBY if re.search(r"\((?:hrad|zámek)\)$", kand) else None)
+                o = oteviraci_doba(kand, s2[0], s2[1], druhy=_dr, presne=_dr is None)
+                web = web or web_mista(kand, s2[0], s2[1], druhy=_dr, presne=_dr is None)
                 if o or web:
                     jm1 = hm._jmeno(kand)
                     zdr = re.search(r"\((hrad|zámek)\)$", kand)   # druh z článku, ne z otázky
@@ -289,8 +338,8 @@ def odpoved_na_dotaz(text: str, osoba: str):
                         jm1 = "%s %s" % (d1, jm1)
                     break
         if not o and not web:
-            o = oteviraci_doba(titul, lat, lon)
-            web = web_mista(titul, lat, lon)
+            o = oteviraci_doba(titul, lat, lon, presne=True)
+            web = web_mista(titul, lat, lon, presne=True)
         _gen = {"hrad": "hradu", "zámek": "zámku"}
         d0 = jm1.split(" ", 1)[0].lower()
         jm_gen = ("%s %s" % (_gen[d0], jm1.split(" ", 1)[1])) if d0 in _gen and " " in jm1 else "místa " + jm1

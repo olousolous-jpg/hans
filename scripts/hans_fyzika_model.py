@@ -56,7 +56,11 @@ _SYS = ("Available named constants (SI, use these names in vyraz instead of typi
         "is not a numeric physics calculation, output {\"vyraz\": \"\"}. Use a named constant ONLY for "
         "exactly the quantity it names (never d_moon for the Sun distance, never M_moon for another "
         "mass); values given in the question go in as numbers; every name in vyraz must be one of "
-        "the constants above.")
+        "the constants above. "
+        # HANS_FYZIKA_VZORCE_V1 (4. 11.) — oběh ISS: model psal 2*pi*r/sqrt(G*M) (chybí r^3/2)
+        "For a circular orbit use the functions orbital_period(r, M) (seconds) and "
+        "orbital_speed(r, M) (m/s), where r is the distance from the CENTRE of the body "
+        "(its radius + altitude, in m) and M its mass.")
 
 
 def _f(s: str) -> str:
@@ -92,10 +96,14 @@ def vypada_jako_vypocet(text: str) -> bool:
 # ── výraz → číslo ────────────────────────────────────────────────────────────
 def spocti(vyraz: str) -> Optional[float]:
     import sympy as sp
-    v = (vyraz or "").replace("^", "**").replace("×", "*").replace("·", "*").replace(",", ".")
-    if not v.strip() or len(v) > 300 or re.search(r"[^0-9eE+\-*/().\s A-Za-z_]", v):
+    v = (vyraz or "").replace("^", "**").replace("×", "*").replace("·", "*")
+    v = re.sub(r"(?<=\d),(?=\d)", ".", v)   # HANS_FYZIKA_VZORCE_V1: desetinná čárka, ne oddělovač argumentů
+    if not v.strip() or len(v) > 300 or re.search(r"[^0-9eE+\-*/().,\s A-Za-z_]", v):
         return None
     fn = {"sqrt": sp.sqrt, "pi": sp.pi, "exp": sp.exp, "log": sp.log, "sin": sp.sin, "cos": sp.cos}
+    _Gs = sp.Float(KONST["G"])   # HANS_FYZIKA_VZORCE_V1 — pojmenované vzorce oběhu
+    fn["orbital_period"] = lambda r, M: 2 * sp.pi * sp.sqrt(r ** 3 / (_Gs * M))
+    fn["orbital_speed"] = lambda r, M: sp.sqrt(_Gs * M / r)
     for w in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", v):
         if w not in fn and w not in KONST and not re.fullmatch(r"e\d*", w):
             return None
@@ -179,6 +187,23 @@ def _gpu_cpu_volno() -> bool:
         return True
 
 
+# HANS_FYZIKA_LITRY_V1 (4. 11.) — „ohřátí 2 litrů vody“: model psal 2 · 1000 · 4186 · 80
+# (litry jako gramy → 670 MJ místo 670 kJ); tutéž chybu měl i qwen3:30b 31. 10., ačkoli
+# zadání převod litrů na kg výslovně chce. Litry/mililitry VODY převede kód předem.
+def litry_vody_na_kg(q: str) -> str:
+    def _r(m):
+        try:
+            v = float(m.group(1).replace(",", "."))
+        except ValueError:
+            return m.group(0)
+        if m.group(2).lower().startswith("m"):
+            v /= 1000.0
+        s = ("%g" % v).replace(".", ",")
+        return "%s kg %s" % (s, m.group(3))
+    return re.sub(r"(\d+(?:[.,]\d+)?)\s*(ml|mililitr\w*|l|litr\w*)\.?\s+(vod\w*)", _r, q or "",
+                  flags=re.I)
+
+
 def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[str]:
     """Řádek „výraz s konstantami → výsledek“, nebo None (nevýpočet, chyba, pomalé)."""
     c = (config or {}).get("fyzika_model", {}) or {}
@@ -198,6 +223,7 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
         from scripts.hans_book_summary import _cpu_url
         url = _cpu_url(config)
         q = re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", text or "").strip()
+        q = litry_vody_na_kg(q)   # HANS_FYZIKA_LITRY_V1
         body = {"model": c.get("model", "qwen3:30b"), "stream": False, "format": "json",
                 "think": False, "keep_alive": c.get("keep_alive", "30m"),
                 "messages": [{"role": "system", "content": _SYS}, {"role": "user", "content": q}],

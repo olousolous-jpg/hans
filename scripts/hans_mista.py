@@ -451,7 +451,7 @@ def souradnice(nazev: str):
         # „Karlových Varech“); ze všech nalezených obcí ta s nejdelším článkem (Brno, ne Brná)
         _ext = [("ě", "o"), ("ni", "eň"), ("ci", "ec"), ("ích", "e"), ("ých", "é"), ("ých", "y"),
                 ("ech", "y"), ("ách", "a"), ("ích", "ice"), ("ově", "ov"), ("íně", "ín"), ("ně", "eň"),
-                ("ze", "ha"), ("ek", "ky"),
+                ("ze", "ha"), ("ek", "ky"), ("é", "á"),
                 # totéž bez diakritiky („Ceskych Budejovicich“, „Karlovych Varech“) — titul
                 # pak najde rejstřík bez háčků (HANS_MISTA_BEZ_HACKU_V1)
                 ("e", "o"), ("ych", "e"), ("ych", "y"), ("ich", "e"), ("ich", "ice"),
@@ -473,6 +473,17 @@ def souradnice(nazev: str):
                     # přes rejstřík titulů bez háčků, jen jediný článek (ne rozcestník);
                     # i když přesná shoda je rozcestník („Tabor“ × obec Tábor)
                     r0 = _bez_hacku(zz) or r0
+                if r0 and seznam is obce and wo._db().execute(
+                        "SELECT rozcestnik FROM clanek WHERE id=?", (r0[0],)).fetchone()[0]:
+                    # HANS_MISTA_ROZCESTNIK_OBEC_V1 (4. 11.) — „u Hluboké“ → „Hluboká“ je
+                    # rozcestník, obec je „Hluboká nad Vltavou“: obce, jejichž název tím
+                    # jménem začíná (rozhodne délka článku jako u Brna × Brné)
+                    _zn = z.lower()
+                    for _tt, _ln in wo._db().execute(
+                            "SELECT titul, length(text) FROM clanek WHERE titul_norm >= ? AND "
+                            "titul_norm < ? AND infobox_druh='česká obec' AND rozcestnik=0",
+                            (_zn + " ", _zn + "!")).fetchall():
+                        obce.append((_ln, _tt))
                 if not r0:
                     continue
                 x = wo._db().execute("SELECT length(text), infobox_druh FROM clanek WHERE id=? "
