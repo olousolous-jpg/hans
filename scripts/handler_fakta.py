@@ -82,12 +82,16 @@ def _tema_po_osobe(prepis, tema):
 # noc, Marvelovské mstitele, vlastní díla Hanse, 1 zkomolený pád).
 _ND_DRUH = (r"(?:rom[aá]n\w{0,3}|knih\w{0,3}|knize|film\w{0,3}|seri[aá]l\w{0,3}|oper[auy]|ope[rř]e|"
             r"b[aá]s[eň]\w{0,3}|p[ií]s[eň]\w{0,3}|novel\w{0,2}|pov[ií]dk\w{0,2}|symfoni\w{0,2}|"
-            r"sb[ií]rk\w{0,2}|album|alba|albu|dokument\w{0,3}|div[aá]deln[ií]\s+hr\w{0,2})")
+            r"sb[ií]rk\w{0,2}|album|alba|albu|dokument\w{0,3}|div[aá]deln[ií]\s+hr\w{0,2}|"
+            # HANS_NEZNAME_DILO_HRA_V1 (4. 11., /tazatel B) — „hra Těžká kavalerie“ (bez
+            # „divadelní“) → vymyšlená premiéra; 📏 6 549 vět a přepisů: 9 nových titulů, vše známá díla
+            r"hr[auy]|h[rř]e)")
 _ND_TITUL = re.compile(r"\b" + _ND_DRUH + r"\s+(?:[„\"])?([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ0-9][^?,.;:!“\"()]{0,70})")
 _ND_STOP = set("""je jsou byl byla bylo byli bude poprve vydan vydana vydano vydal vysel vysla vyslo
 napsal napsala natocil natocila slozil slozila namaloval od podle skutecne opravdu kdo kdy kde jak
 ktery ktera ktere kterou vubec nebo ne a ze se si to ten ta tu ti tim tom jeho jeji jejich hraje hral
-hrala reziroval rezirovala znate znas vite vis ma mel mela""".split())
+hrala reziroval rezirovala znate znas vite vis ma mel mela
+premieru premiera premiery premierou uvedena uvedeno uvedli hrali hraje hrala hrana mela meli""".split())
 _ND_PRED = set("na nad pod z ze v ve o u za pred a i s se do od k ke pro mezi bez po pri".split())
 
 

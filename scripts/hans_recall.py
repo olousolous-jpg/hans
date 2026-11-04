@@ -865,14 +865,20 @@ _DRUHA_OS = re.compile(r"\b(?:jsi|jste|sis|t[eě]|ti|tob[eě]|tv[uůoáé]\w*|v[
                        r"va[sš]\w*)\b", re.IGNORECASE)
 _VLASTNI_STOP = {"proc", "jsi", "jste", "sis", "vybral", "zvolil", "zaujalo",
                  "zaujal", "nejvice", "pravy", "prave", "tvorbe", "tvorbu", "vas",
-                 "tebe", "kdyz", "jste", "vytvarel", "stranku", "stranky"}
+                 "tebe", "kdyz", "jste", "vytvarel", "stranku", "stranky",
+                 # HANS_A1_OWN_WORK_STOP_V2 (4. 11., /tazatel B) — „Těžkou kavalerii JSEM nikdy
+                 # neviděl. Víte, kdy měla premiéru?“ → předmět „jsem“ → A1 přeskočena → vymyšlená
+                 # premiéra „1932 v Divadle U Nasich“. 📏 4 111 vět: pojistka 61×, z toho „jsem“ 16×.
+                 "jsem", "jsme", "jsou", "nich", "nikdy", "mohl", "mohla", "bych", "byste",
+                 "zacal", "zacala", "osobni", "pripojit"}
 
 
 # obecná slova nic neukotví („obraz“ ~ „s obrázky“ v přehledu → falešná shoda)
 _VLASTNI_OBECNE = ("obraz", "podtem", "tvor", "stud", "tema", "dil", "prac",
                    "esej", "knih", "clan", "sekc", "hotov",
                    "kter",   # HANS_SELF_STATE_MORE_V1: „která“ v popisu obrazu ≠ předmět
-                   "zprav", "titul", "medi", "odkaz", "sbir", "kazdou", "hodin")  # HANS_SELF_STATE_NEWS_V1
+                   "zprav", "titul", "medi", "odkaz", "sbir", "kazdou", "hodin",  # HANS_SELF_STATE_NEWS_V1
+                   "cesk")   # HANS_A1_OWN_WORK_STOP_V2 — „český/české“
 
 
 from scripts.hans_recall_osebe import predmet_vlastniho_dila   # ROZDELENI_PRIKAZU_V1 — přesunuto
