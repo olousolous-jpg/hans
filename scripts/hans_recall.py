@@ -467,6 +467,8 @@ _STOPWORDS = {"něco", "neco", "dnes", "dneska", "včera", "vcera", "naposledy",
               # o tah později je na „o cem to bylo?" vypsal správně.
               # Změřeno na 1028 reálných větách: ani jedné se tím téma nerozbije.
               "novýho", "novyho", "dobrýho", "dobryho", "hezkýho", "hezkyho",
+              # HANS_READING_CELY_STOP_V1 (4. 11., /tazatel) — „četl jsi ji celý?“ → téma „cely“
+              "celý", "cely", "celou", "celej", "celá", "cela", "celé", "cele",
               "zajímavýho", "zajimavyho", "pěknýho", "peknyho",
               "víc", "vic", "více", "vice", "rád", "rada", "bych", "dozvěděl",
               "dozvedel",

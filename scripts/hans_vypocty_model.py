@@ -604,7 +604,7 @@ def fakta_osob(q: str, predchozi=(), f1=None, odpoved=""):
 
 _SYS_OSOBA = (   # HANS_VYPOCTY_WD_V2 — jen když jsou data osoby
     " Write a date of the person ALWAYS as the full datum(...) given above, never as a bare "
-    "year. Age at death or how long someone lived = vek(birth, death); age today (also 'kolik let by dnes bylo X' for a dead person) = vek(birth, "
+    "year. Age at death or how long someone lived = vek(birth, death); age today (also 'kolik let by dnes bylo X' and 'kolik let by bylo X' — the conditional means TODAY — for a dead person) = vek(birth, "
     "dnes()); years since death ('kolik je to let, co zemřel', 'kolik let uplynulo od smrti') = vek(death, dnes()) — not the age at death; years since birth = vek(birth, dnes()); age "
     "in year Y = Y - birth_year; how many years A was older or younger than B = vek(earlier birth, later birth) (compare BIRTH dates, not lifespans); lifespan in days = dny(birth, death); weekday of birth = "
     "den_v_tydnu(birth). Use these dates only for the person they belong to. If the question needs "
@@ -633,7 +633,7 @@ _CUE = re.compile(
     r"kolik\s+zaplatim|kolik\s+usetr\w*|kolik\s+(?:je|bude|vyjde|stoji)\s+\d|rozdel\w*\s+(?:na|mezi|do)|kazdy\s+dostane|"
     r"za\s+kus|na\s+osobu|kolikrat|pomer\w*|kazdy|zbude|zbyde)\b|%")
 _OTAZ = re.compile(r"\b(kolik\w*|jak\w*|jaky|jaka|jake|ktery|kdy|vypocit\w*|spocit\w*|spocti|vyres\w*|urci)\b|\?")
-_NE = re.compile(r"\b(hodin\s+je|je\s+hodin|kolik\s+je\s+ti|kolik\s+ti\s+je|tvuj|tve|tobe|vas\b|vam\b|"
+_NE = re.compile(r"\b(hodin\s+je|je\s+hodin|kolik\s+je\s+ti(?!\s+(?:\w+\s+)?(?:dni|tydnu|mesicu|do)\b)|kolik\s+ti\s+je(?!\s+(?:\w+\s+)?(?:dni|tydnu|mesicu|do)\b)|tvuj|tve|tobe|vas\b|vam\b|"
                  r"umis|umite|umel\w*|dokazes|dokazete|zvladnes|zvladnete|muzes\s+spocit\w*|muzete\s+spocit\w*)\b")
 
 
@@ -1033,6 +1033,10 @@ _RADOVE["jednatřicátého"] = 31
 # (Smetana): tvar „Výsledek je X“ z předchozí odpovědi model opsal i s vlastním číslem.
 def srovnej_vysledek_je(odpoved: str, vypocet: str):
     if not odpoved or "→ výsledek =" not in (vypocet or ""):
+        return odpoved, False
+    # víc „výsledek je“ = víc otázek v jedné větě („do Silvestra a do Štědrého dne?“): program
+    # spočítal jen jednu → nepřepisovat (přepsalo by i druhé číslo)
+    if len(re.findall(r"\b[Vv]ýsledek\s+je\b", odpoved)) != 1:
         return odpoved, False
     seg = vypocet.split("→ výsledek =")[-1].strip()
     m = re.match(r"(-?\d+(?:[  ]\d{3})*(?:,\d+)?)", seg)

@@ -199,6 +199,13 @@ def _gpu_cpu_volno() -> bool:
 # (litry jako gramy → 670 MJ místo 670 kJ); tutéž chybu měl i qwen3:30b 31. 10., ačkoli
 # zadání převod litrů na kg výslovně chce. Litry/mililitry VODY převede kód předem.
 def litry_vody_na_kg(q: str) -> str:
+    try:   # „pěti litrů vody“ (přepis F1 píše čísla slovy, /tazatel 4. 11.)
+        from scripts.hans_pocty import cisla_slovy
+        if re.search(r"\blitr|\bml\b|mililitr", q or "", re.I):
+            q = cisla_slovy(q or "")
+    except Exception:
+        pass
+
     def _r(m):
         try:
             v = float(m.group(1).replace(",", "."))
@@ -272,6 +279,14 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
         _log.info("%s: výraz nelze spočítat: %.100r", MARK, vyraz)
         return None
     jed = str(d.get("jednotka") or "").strip()
+    _kwh_navic = ""
+    # HANS_FYZIKA_KWH_V1 (4. 11., /tazatel) — „a v kWh to je kolik?“ → výraz 5·1000·4186·50 (v J)
+    # s jednotkou „kWh“ → kód násobil 3,6·10^6 (3,77·10^15 J). Výraz s měrnou tepelnou kapacitou
+    # nebo jinou SI konstantou je v joulech → nepřevádět, jen připsat kWh.
+    if jed.lower().replace(" ", "") in ("kwh", "kj", "mj") and re.search(
+            r"(?<![A-Za-z_])(?:c_water|4186|g0|G|h_planck|k_B|R_gas|c_light|e_charge)(?![A-Za-z_0-9])", vyraz):
+        jed = "J"
+        _kwh_navic = " (= %s kWh)" % _cz(x / 3.6e6)
     k = _JED.get(jed.lower().replace(" ", ""))
     if k:
         x, jed = x * k[0], k[1]
@@ -291,6 +306,6 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
     out = "%s%s%s → výsledek = %s %s%s" % (
         "", "výpočet: %s" % zapis,
         ("; dosazené konstanty: %s" % konst) if konst else "", _cz(x), jed,
-        (" (slovy: %s %s)" % (_sl, jed)) if _sl else "")
+        (" (slovy: %s %s)" % (_sl, jed)) if _sl else "") + _kwh_navic
     _log.info("%s: %.1f s · %s", MARK, time.time() - t0, out[:200])
     return out

@@ -2468,7 +2468,11 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                     try:
                         from scripts.hans_vypocty_model import vypada_jako_vypocet as _vjv
                         from scripts.hans_fyzika_model import vypada_jako_vypocet as _fjv
-                        if _vjv(ctx._raw_message) or _fjv(ctx._raw_message):
+                        from scripts.hans_vypocty_model import CUE_OSOBA as _cuo, _NE as _vne, _f as _vf
+                        _vt = _vf(ctx._raw_message or "")
+                        if _vjv(ctx._raw_message) or _fjv(ctx._raw_message) \
+                                or (_cuo.search(_vt) and not _vne.search(_vt) and not re.search(
+                                    r"\b(jsi|jste|ti|tobe|vam|vas|tvuj|tve|tvoje|vase|vasi)\b", _vt)):
                             ctx._vypocet_nevysel = True
                     except Exception:
                         pass
