@@ -2966,6 +2966,11 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                                 return _k.group(0) if _k else ""
                             return w
                         _r = re.sub(r"\S*https?://\S*", _slovo, ctx.response)
+                        # HANS_URL_PRAZDNY_ZDROJ_V1 (4. 11.) — po vyškrtnutí zůstalo
+                        # „(z mého čtení, zdroj:.“ (Gaudí 3. 11.) → celá závorka pryč
+                        _r = re.sub(r"\s*\((?:[^()\n]{0,30}?,\s*)?zdroj\w*:\s*(?:\)|(?=[.,;\n]|$))",
+                                    "", _r)
+                        _r = re.sub(r"(?<!\.)\.\.(?!\.)", ".", _r)
                         _r = re.sub(r"[ \t]{2,}", " ", _r)
                         _r = re.sub(r"\s+([.,;:!?])", r"\1", _r).strip()
                         logging.getLogger(__name__).info(
@@ -3453,6 +3458,19 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 _vyp = getattr(ctx, '_vypocet', None)
                 # HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1 (1. 11.) — model řekl jiné číslo než program
                 # („57 let“ × 56) → jediné jiné číslo téže jednotky = výsledek programu
+                if _vyp and ctx.response:   # HANS_VYPOCTY_DATA_Z_WD_V1
+                    from scripts.hans_vypocty_model import srovnej_data as _srd
+                    _r4, _zm4 = _srd(ctx.response, _vyp)
+                    from scripts.hans_vypocty_model import srovnej_letos as _srl
+                    _r4, _zm5 = _srl(_r4, _vyp)   # HANS_VYPOCTY_LETOS_V1
+                    if _zm5:
+                        logging.getLogger(__name__).info(
+                            "HANS_VYPOCTY_LETOS_V1: letopočet „teď“ ≠ letos → opraveno")
+                        ctx.response = _r4
+                    if _zm4:
+                        logging.getLogger(__name__).info(
+                            "HANS_VYPOCTY_DATA_Z_WD_V1: datum osoby ≠ Wikidata → opraveno")
+                        ctx.response = _r4
                 if _vyp and ctx.response:
                     from scripts.hans_vypocty_model import srovnej_cislo as _srv
                     _r3, _zm3 = _srv(ctx.response, _vyp)

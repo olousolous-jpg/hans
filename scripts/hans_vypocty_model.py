@@ -948,6 +948,101 @@ _JEDN_RODINY = [
 _DNY_TYDNE = ("pondělí", "úterý", "středa", "středu", "čtvrtek", "pátek", "sobota", "sobotu", "neděle", "neděli")
 
 
+# ── HANS_VYPOCTY_DATA_Z_WD_V1 (4. 11.) ──────────────────────────────────────
+# „A kolik by dnes bylo Antonímu Gaudímu?“ (3. 11.): výpočet měl z Wikidat „datum
+# úmrtí 10. 6. 1926“, model přesto napsal „– 10. listopadu 1926“ (opsal tvar
+# předchozí odpovědi s úvodem článku). Datum osoby v odpovědi se stejným ROKEM jako
+# datum z Wikidat, ale jiným dnem/měsícem → přepsat na datum z Wikidat (týž tvar).
+_MESICE_2 = ("ledna", "února", "března", "dubna", "května", "června", "července",
+             "srpna", "září", "října", "listopadu", "prosince")
+
+
+def srovnej_data(odpoved: str, vypocet: str):
+    """(odpověď, změněno) — data osoby v odpovědi podle údajů z Wikidat ve výpočtu."""
+    if not odpoved or not vypocet or "údaje z Wikidat" not in vypocet:
+        return odpoved, False
+    wd = {}
+    for d, m, r in re.findall(r"datum (?:narození|úmrtí) (\d{1,2})\. (\d{1,2})\. (-?\d{1,4})", vypocet):
+        wd.setdefault(int(r), set()).add((int(d), int(m)))
+    jiste = {r: next(iter(s)) for r, s in wd.items() if len(s) == 1}
+    if not jiste:
+        return odpoved, False
+    zmena = False
+
+    def _slovy(mt):
+        nonlocal zmena
+        d, mes, r = int(mt.group(1)), mt.group(2).lower(), int(mt.group(3))
+        if r not in jiste or mes not in _MESICE_2:
+            return mt.group(0)
+        sd, sm = jiste[r]
+        if (d, _MESICE_2.index(mes) + 1) == (sd, sm):
+            return mt.group(0)
+        zmena = True
+        return "%d. %s %d" % (sd, _MESICE_2[sm - 1], r)
+
+    def _cisly(mt):
+        nonlocal zmena
+        d, m, r = int(mt.group(1)), int(mt.group(2)), int(mt.group(3))
+        if r not in jiste or (d, m) == jiste[r] or not (1 <= m <= 12):
+            return mt.group(0)
+        zmena = True
+        return "%d. %d. %d" % (jiste[r][0], jiste[r][1], r)
+    def _radove(mt):   # „desátého července roku 1926“
+        nonlocal zmena
+        d = _RADOVE.get(mt.group(1).lower().replace(" ", ""))
+        mes, r = mt.group(2).lower(), int(mt.group(3))
+        if d is None or r not in jiste or mes not in _MESICE_2:
+            return mt.group(0)
+        if (d, _MESICE_2.index(mes) + 1) == jiste[r]:
+            return mt.group(0)
+        zmena = True
+        sd, sm = jiste[r]
+        return "%d. %s %d" % (sd, _MESICE_2[sm - 1], r)
+    out = re.sub(r"\b(\d{1,2})\.\s*(%s)\s+(\d{3,4})\b" % "|".join(_MESICE_2), _slovy, odpoved,
+                 flags=re.I)
+    out = re.sub(r"\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{3,4})\b", _cisly, out)
+    out = re.sub(r"\b((?:[a-zá-ž]+(?:ého|ýho))(?:\s+(?:prvního|druhého|třetího|čtvrtého|pátého|šestého|"
+                 r"sedmého|osmého|devátého))?)\s+(%s)\s+(?:roku\s+)?(\d{3,4})\b" % "|".join(_MESICE_2),
+                 _radove, out, flags=re.I)
+    return out, zmena
+
+
+_RAD_JEDN = ("prvního", "druhého", "třetího", "čtvrtého", "pátého", "šestého", "sedmého",
+             "osmého", "devátého")
+_RADOVE = {w: i + 1 for i, w in enumerate(_RAD_JEDN)}
+_RADOVE.update({w: i + 10 for i, w in enumerate((
+    "desátého", "jedenáctého", "dvanáctého", "třináctého", "čtrnáctého", "patnáctého",
+    "šestnáctého", "sedmnáctého", "osmnáctého", "devatenáctého"))})
+for _des, _z in (("dvacátého", 20), ("třicátého", 30)):
+    _RADOVE[_des] = _z
+    for _i, _w in enumerate(_RAD_JEDN):
+        _RADOVE[_des + _w] = _z + _i + 1                       # „dvacátého prvního“ (bez mezery)
+for _i, _p in enumerate(("jedna", "dva", "tři", "čtyři", "pět", "šest", "sedm", "osm", "devět")):
+    _RADOVE[_p + "advacátého"] = 21 + _i                       # „pětadvacátého“
+_RADOVE["jednatřicátého"] = 31
+
+
+# HANS_VYPOCTY_LETOS_V1 (4. 11.) — „kdyby žila dosud, v tomto roce, tedy v roce 2024,
+# by jí bylo 158 let“: model si letopočet „teď“ vzal z tréninku. U výpočtu od dneška
+# rok u slov „dnes/letos/v tomto roce/dosud“ (do 40 zn) = letošní rok.
+def srovnej_letos(odpoved: str, vypocet: str):
+    if not odpoved or "dnes()" not in (vypocet or ""):
+        return odpoved, False
+    rok = _dt.date.today().year
+    zmena = False
+
+    def _r(mt):
+        nonlocal zmena
+        y = int(mt.group(2))
+        if rok - 5 <= y < rok:
+            zmena = True
+            return mt.group(1) + str(rok)
+        return mt.group(0)
+    out = re.sub(r"(\b(?:dnes\w*|letos\w*|v\s+tomto\s+roce|tento\s+rok|leto[sš]n\w+\s+rok\w*|dosud|nyní|"
+                 r"v\s+současnosti)[^.!?\n\d]{0,40}?)(20\d\d)\b", _r, odpoved, flags=re.I)
+    return out, zmena
+
+
 def _num(s: str):
     try:
         return float(re.sub(r"[\s ]", "", s).replace(",", "."))

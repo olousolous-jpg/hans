@@ -224,6 +224,15 @@ _POCASI_PODNET = re.compile(
     r"hezk\w*|pekn\w*|oskliv\w*|vikend\w*)\b")
 
 
+def _je_vypocet_veku(msg: str) -> bool:
+    """HANS_AGENT_VEK_NE_KARTA_V1 — podnět výpočtu věku/dat osoby (CUE_OSOBA)."""
+    try:
+        from scripts.hans_vypocty_model import CUE_OSOBA, _f as _vf
+        return bool(CUE_OSOBA.search(_vf(msg or "")))
+    except Exception:
+        return False
+
+
 def _jmenuje_sport(msg: str) -> bool:
     """HANS_AGENT_SPORT_NE_DUM_V1 — sportovní obor ve větě (i s překlepem)."""
     try:
@@ -2156,6 +2165,13 @@ class AgentRouter:
         # HANS_AGENT_SPORT_NE_DUM_V1 (4. 11.) — „stali se dnes ve sportu něco
         # zajímavého?“ (překlep) → report_home_status „Doma je klid…“; „…ve sprotu…“
         # → report_household. Věta jmenující sportovní obor se na dům neptá.
+        # HANS_AGENT_VEK_NE_KARTA_V1 (4. 11.) — „Kolik by dnes bylo Marii Curie?“ →
+        # report_person (0,95) → karta osoby a model sám dopočítal „156 let … v roce
+        # 2024“ (výpočet neproběhl); šablona karty pak v historii vedla k výmyslu
+        # u Gaudího. Otázka na věk/data osoby = výpočet, ne karta.
+        dict(marker="HANS_AGENT_VEK_NE_KARTA_V1", akce=("report_person",),
+             podminka=lambda s, aid, msg, dec, h: _je_vypocet_veku(msg),
+             verdikt=None, duvod="ptá se na věk / data osoby — počítá výpočet"),
         dict(marker="HANS_AGENT_SPORT_NE_DUM_V1",
              akce=("report_home_status", "report_household", "report_who_is_home"),
              podminka=lambda s, aid, msg, dec, h: _jmenuje_sport(msg),

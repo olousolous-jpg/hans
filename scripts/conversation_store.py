@@ -205,6 +205,11 @@ class ConversationStore:
         msgs = [dict(m, content=orez_technickych_radku(   # HANS_CMD_TECH_LINE_ECHO_V1
                     orez_ramce_dohledani(m["content"])))       # HANS_CONV_LOOKUP_ECHO_V1
                 if m.get("role") == "assistant" else m for m in msgs]
+        # HANS_CONV_ZDROJ_ECHO_V1 (4. 11.) — šablona karty osoby „Jméno: úvod článku
+        # (z mého čtení, zdroj: …)“ v historii; model ji 3. 11. u Gaudího napodobil
+        # i s vymyšleným datem. Technická závorka pryč (jen pohled do promptu).
+        msgs = [dict(m, content=_re_g4d.sub(r"\s*\(z mého čtení, zdroj:[^()\n]*\)", "", m["content"]))
+                if m.get("role") == "assistant" else m for m in msgs]
         return [{"role": m["role"],
                  "content": (dedup_address_g4d(m["content"], name, self.config)
                              if m["role"] == "assistant" else m["content"])}
