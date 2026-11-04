@@ -1601,6 +1601,37 @@ class Proposal:
         self.hash = _args_hash(action.id, {k: args.get(k) for k in action.args})
 
 
+
+def _zadani_v2(catalog: str) -> str:
+    """HANS_AGENT_ZADANI_V2 — zadání routeru akcí (viz `AgentRouter._route`)."""
+    return (
+        "Jsi router akcí pro domácího společníka Hanse. Rozhodni, jestli POSLEDNÍ zpráva uživatele "
+        "je POKYN k jedné akci ze seznamu, nebo DOTAZ na stav domu ze seznamu. Vrať POUZE JSON.\n\n"
+        "NEJDŮLEŽITĚJŠÍ PRAVIDLO: většina zpráv je běžný hovor nebo otázka na svět → action=null.\n"
+        "- Akce report_* použij JEN na dotaz o tomto domě a domácnosti: kdo je doma, co hraje na TV, "
+        "jak je v místnosti, stav počítače, počasí venku i předpověď (dnes, zítra, o víkendu), Koláč, kdo v domě bydlí, kdo je člen domácnosti "
+        "nebo konkrétní člověk („kdo je X“, „co víš o X“).\n"
+        "- Otázka na SVĚT (sport, zprávy, ceny, kurzy, výpočty, věk osob, fyzika, kdo napsal knihu, "
+        "kdo režíroval, dějiny, místa, zajímavosti v okolí) → action=null, Hans odpoví sám.\n"
+        "- Otázka na HANSE samotného (jak se máš, co děláš, co je u tebe nového, jsi v režimu spánku?, "
+        "jak šlo malování) → action=null.\n"
+        "- kodi_play_film JEN na povel pustit/přehrát („pusť X“, „přehraj X“, „vyber film a pusť ho“); "
+        "„doporučil bys film?“, „bavil by ji ten film?“, „řekni víc o tom filmu“, „už se dodívala?“ → null.\n"
+        "- hans_sleep / hans_wake / pc_shutdown / guard_toggle / game_mode_toggle JEN na jasný povel, "
+        "nikdy na otázku na stav.\n"
+        "- add_note na „připomeň mi…“, „poznamenej si…“; add_study_topic na „nastuduj / nauč se / "
+        "zjisti si o X“ — NE na „co víš o X“, „řekni mi o X“, „povíš mi něco o X?“.\n\n"
+        "AKCE (jen z tohoto seznamu):\n" + catalog +
+        "\n\nPříklady:\n"
+        "„kdo je doma?“ → report_who_is_home · „pusť Zlaté oko“ → kodi_play_film · "
+        "„připomeň mi dnes v 17:00 zkontrolovat zálohy“ → add_note · „jaké bude zítra počasí?“ → report_weather · „jake bude zitra pocasi?“ → report_weather · „zjisti si o Českém ráji“ → add_study_topic · „nikdo se nedívá na televizi?“ → report_now_playing · "
+        "„stalo se dnes ve sportu něco?“ → null · „kolik by dnes bylo Marii Curie?“ → null · "
+        "„doporučil bys mi film na večer?“ → null · „co je u tebe nového?“ → null · "
+        "„kolik tepla na ohřátí 5 l vody?“ → null · „kdo napsal Babičku?“ → null\n\n"
+        "JSON formát: {\"action\": <id akce nebo null>, \"args\": {...}, \"confidence\": <0.0-1.0>, "
+        "\"reason\": \"<krátce proč>\", \"propose_text\": \"<jak se Hans zeptá, česky, uctivě>\"}\n"
+        "Při pochybnosti action=null.")
+
 class AgentRouter:
     """LLM router + confirm smyčka + cooldown + deník. Instanci drží handler."""
 
@@ -2659,7 +2690,16 @@ class AgentRouter:
             f"- {a.id}: {a.desc} Argumenty: {a.args or 'žádné'}."
             for a in ACTIONS.values())
         ctx = self._context(handler, name)
-        system = (
+        # HANS_AGENT_ZADANI_V2 (4. 11.) — zadání s pravidlem „otázka na svět / na Hanse ≠ akce“
+        # a krátkými příklady. 📏 data/mereni/agent_podmnozina_4_11/: sada 101 skutečných vět
+        # (deník agenta 7.–11. + /tazatel 3.–4. 11.) 79 → 92 správně (akce omylem 21 → 5),
+        # nezávislá sada 42 vět 38 → 41 (pokyny 23/23 obě, omylem 4 → 1), 4,0 → 1,9 s.
+        # Podmnožina akcí podle vektorů (6 / 10) změřena a NEnasazena — ztrácí pokyny (59 → 56).
+        # Vypínač `agent.zadani_v2` (false = původní zadání níž).
+        if (self.config.get("agent", {}) or {}).get("zadani_v2", True):
+            system = _zadani_v2(catalog)
+        else:
+          system = (
             "Jsi router akcí pro domácího společníka Hanse. Z POSLEDNÍ zprávy "
             "uživatele (a kontextu) rozhodni, zda si uživatel PŘEJE nějakou "
             "konkrétní AKCI ze seznamu níže. Vrať POUZE JSON, nic jiného.\n\n"
