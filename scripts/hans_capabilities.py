@@ -360,6 +360,34 @@ def capabilities_summary() -> str:
 def _load_known() -> set:
     try:
         with open(_KNOWN_FILE, encoding="utf-8") as f:
+def capabilities_summary_dalsi() -> str:
+    """HANS_CAP_DALSI_V1 (4. 11.) — navazující „a co další věci, třeba zjišťování
+    informací?“ po shrnutí. 3. 11. 20:29 tuhle otázku zodpověděl model z bloku
+    schopností a PŘIDAL si neexistující („analyzovat data … ceny komodit“, „sestavit
+    jídelníček“). Ručně sestaveno nad řádky `_CAPABILITIES` (lookup, fact_check,
+    zpravy, demagog, slevy, pocty, vypocty, fyzika, mista_v_okoli, akce_v_okoli,
+    vylet_vikend, camera_snapshot, photo, send_images, guard, pc_power, game_mode,
+    router_vpn, films, translate_doc, knihy, study, authorship, kolac) — při změně
+    těch řádků upravit i tady."""
+    return (
+        "Kromě toho, co jsem zmínil, umím také:\n\n"
+        "Zjišťovat informace — co nemám v paměti, dohledám na Wikipedii (česky, "
+        "případně anglicky) a údaje jako data či autory porovnám s Wikidaty. Sleduji "
+        "zprávy z českých i zahraničních médií za poslední tři dny (i sport a ekonomiku, "
+        "ale jen z titulků — přesné ceny ani grafy nemám), vyhledám ověřené výroky "
+        "politiků z Demagog.cz a hlídám slevy z letáků u zboží ze seznamu.\n\n"
+        "Počítat — příklady, procenta, splátky, slovní úlohy, dny do data a věk osob "
+        "z Wikidat, i jednoduchou fyziku s jednotkami.\n\n"
+        "Na Matrixu — zajímavá místa v okolí s mapou (podle polohy nebo názvu), kde se "
+        "najíst, otevírací dobu, parkování a turistické trasy podle OpenStreetMap, "
+        "kulturní akce z webů obcí a v pátek návrh výletu na víkend; pošlu snímek "
+        "z kamery, posoudím nebo upravím fotku a pošlu své obrazy.\n\n"
+        "Doma — pohlídám místnost, vypnu a probudím počítač, uvolním grafiku pro hru, "
+        "hlídám VPN, pouštím filmy v Kodi a k cizojazyčnému dokumentu připravím "
+        "českou zvukovou stopu.\n\n"
+        "Učit se — čtu knihy, týdny studuji témata a píšu vlastní povídku na pokračování.")
+
+
             return set(json.load(f))
     except Exception:
         return set()

@@ -901,6 +901,25 @@ from scripts.chat_cmd_pamet import _cmd_jakto   # ROZDELENI_PRIKAZU_V1 — přes
 
 
 from scripts.chat_cmd_zaklad import _cmd_schopnosti   # ROZDELENI_PRIKAZU_V1 — přesunuto
+from scripts.chat_cmd_zaklad import _cmd_schopnosti_dalsi   # HANS_CAP_DALSI_V1
+
+_CAP_SHRNUTI_ZACATEK = "Jsem Hans — a dělám hlavně tři věci"
+_CAP_DALSI_PAT = re.compile(
+    r"\b(dal[šs]\w*|je[šs]t[ěe]|v[íi]c|jin[éeýa]\w*|tak[ée]|taky|t[řr]eba|nap[řr][íi]klad|"
+    r"um[íi][šs]|um[íi]te|dok[áa][žz]e[šs]|dok[áa][žz]ete|zvl[áa]dne[šs]|zvl[áa]dnete)\b", re.I)
+
+
+def thread_schopnosti(message: str, turns):
+    """HANS_CAP_DALSI_V1 — argument pro /schopnosti_dalsi, když věta navazuje na
+    shrnutí schopností („a co další věci, třeba zjišťování informací?“); jinak None."""
+    msg = (message or "").strip()
+    if not msg or len(msg) > 160 or not _CAP_DALSI_PAT.search(msg):
+        return None
+    for role, text in reversed(list(turns or [])):
+        if role != "assistant":
+            continue
+        return msg if str(text or "").lstrip().startswith(_CAP_SHRNUTI_ZACATEK) else None
+    return None
 
 
 

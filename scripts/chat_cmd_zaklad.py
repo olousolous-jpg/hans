@@ -278,6 +278,19 @@ def _cmd_schopnosti(handler, name, args) -> str:
         return "Přehled schopností nedostupný: %s" % e
 
 
+def _cmd_schopnosti_dalsi(handler, name, args) -> str:
+    """HANS_CAP_DALSI_V1 — navazující otázka po shrnutí schopností: konkrétní
+    schopnost (`capability_for`) nebo ručně sestavené „co ještě umím“."""
+    try:
+        from scripts.hans_capabilities import capability_for, capabilities_summary_dalsi
+        c = capability_for(args or "")
+        if c:
+            return c[:1].upper() + c[1:]
+        return capabilities_summary_dalsi()
+    except Exception as e:
+        return "Přehled schopností nedostupný: %s" % e
+
+
 def _cmd_pripady(handler, name, args) -> str:
     """Běžící případ, poslední tři uzavřené a souhrn — z `kolac_cases`."""
     import json

@@ -1406,6 +1406,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         'HANS_DEMAGOG_FOLLOWUP_V1: vlákno → /demagog (%.60s)', _dma)
             except Exception as _dme:
                 logging.getLogger(__name__).debug('demagog vlákno: %s', _dme)
+        if not _cmd:   # HANS_CAP_DALSI_V1 — „a co další věci…?“ po shrnutí schopností
+            try:
+                from scripts.chat_commands import thread_schopnosti
+                _sch = thread_schopnosti(ctx.user_message, _t_turns)
+                if _sch:
+                    _cmd = ("schopnosti_dalsi", _sch)
+                    logging.getLogger(__name__).info(
+                        'HANS_CAP_DALSI_V1: vlákno → /schopnosti_dalsi (%.60s)', _sch)
+            except Exception as _sce:
+                logging.getLogger(__name__).debug('schopnosti vlákno: %s', _sce)
         if not _cmd:   # HANS_ZPRAVY_OBOR_V1 — „a co fotbal?“ po výpisu zpráv
             try:
                 from scripts.chat_commands import thread_zpravy_obor

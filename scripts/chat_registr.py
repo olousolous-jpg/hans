@@ -787,6 +787,14 @@ def zaregistruj(_cc):
     )
 
     _cc.register(
+        "schopnosti_dalsi",
+        slash_aliases=["schopnosti_dalsi"],
+        nl_patterns=[],            # jen z vlákna (thread_schopnosti), samo nesepne
+        handler=_cc._cmd_schopnosti_dalsi,
+        help_text="Další schopnosti po shrnutí (HANS_CAP_DALSI_V1)",
+    )
+
+    _cc.register(
         "odkazy_zprav",
         slash_aliases=["odkazy_zprav"],
         nl_patterns=[],            # jen z vlákna (thread_zpravy), samo nesepne
