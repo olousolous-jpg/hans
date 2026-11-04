@@ -1380,6 +1380,49 @@ def obor_dotazu(dotaz: str):
     return None
 
 
+# Překlepy ve slově oboru („sprotu“, „hokjei“, „fotbl“): přehozená sousední písmena,
+# jedno chybějící nebo přebývající. ZÁMĚRNĚ ne záměna písmene — „spory“ ≠ „sport“.
+_OBOR_KMENY_PREKLEP = ("sport", "hokej", "fotbal", "extral", "tenis", "formul")
+_OBOR_SKUTECNA_SLOVA = ("spor", "tenk", "teni", "formal", "format", "fotba")   # spor, tenký, tenisky…
+
+
+def _jedna_uprava(a: str, b: str) -> bool:
+    if a == b:
+        return False
+    if len(a) == len(b):
+        d = [i for i in range(len(a)) if a[i] != b[i]]
+        return len(d) == 2 and d[1] == d[0] + 1 and a[d[0]] == b[d[1]] and a[d[1]] == b[d[0]]
+    if abs(len(a) - len(b)) != 1:
+        return False
+    k, d = (a, b) if len(a) < len(b) else (b, a)
+    return any(d[:i] + d[i + 1:] == k for i in range(len(d)))
+
+
+def oprav_preklepy_oboru(dotaz: str):
+    """Věta s opraveným slovem oboru, nebo None (nic k opravě)."""
+    zmena = False
+
+    def _slovo(m):
+        nonlocal zmena
+        w = m.group(0)
+        wf = _bez_diakritiky(w)
+        for k in _OBOR_KMENY_PREKLEP:
+            if wf.startswith(k):
+                return w
+        if wf.startswith(_OBOR_SKUTECNA_SLOVA):
+            return w
+        for k in _OBOR_KMENY_PREKLEP:
+            for L in (len(k), len(k) + 1, len(k) - 1):
+                pr = wf[:L]
+                if (5 <= L <= len(wf) and pr[0] == k[0] and pr != k[:-1]
+                        and _jedna_uprava(pr, k)):
+                    zmena = True
+                    return k + wf[L:]
+        return w
+    out = re.sub(r"[^\W\d_]{4,}", _slovo, dotaz or "")
+    return out if zmena else None
+
+
 def zpravy_obor(podobor: str, path: str = DB, hodin: float = 36.0, limit: int = 5) -> dict:
     """Titulky z oboru (rubrika v adrese nebo sportovní slovo v titulku) — PO TITULCÍCH,
     ne po událostech: shluk události nese i nesportovní titulky (stávka v ČT měla

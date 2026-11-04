@@ -758,7 +758,7 @@ def zaregistruj(_cc):
              r"mas\s+rad|mate\s+rad|bavi\s+te|bavi\s+vas|umis|umite)\b)"
              r"(?=[^?!]*\b(?:dnes\w*|vcera\w*|ted\b|nyni|aktualn\w*|posledn\w*|tento\s+tyden|tydnu|"
              r"vikend\w*|nov[eyc]\w*|nejnov\w*)"
-             r")(?=[^?!]*\b(?:stal[oa]?|deje|udal\w*|nov[eo]ho|novinky|zajimav\w*|dopadl\w*|hral[oyai]?|"
+             r")(?=[^?!]*\b(?:stal[oa]?|deje|udal\w*|nov[eoy]ho|novinky|zajimav\w*|dopadl\w*|hral[oyai]?|"
              r"hraly|vysledk\w*|vyhral\w*|prohral\w*|zapas\w*|utkani))"
              r"[^?!]*\b(?:sport\w*|hokej\w*|fotbal\w*|extral\w*|tenis(?!k)\w*|formul[ie]\b|formule\b|"
              r"f1|nhl|lig[aeyu]\s+mistr\w*|biatlon\w*|atleti\w*)\b"),

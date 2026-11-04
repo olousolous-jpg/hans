@@ -224,6 +224,15 @@ _POCASI_PODNET = re.compile(
     r"hezk\w*|pekn\w*|oskliv\w*|vikend\w*)\b")
 
 
+def _jmenuje_sport(msg: str) -> bool:
+    """HANS_AGENT_SPORT_NE_DUM_V1 — sportovní obor ve větě (i s překlepem)."""
+    try:
+        from scripts.hans_zpravy import obor_dotazu, oprav_preklepy_oboru
+        return obor_dotazu(msg) is not None or bool(oprav_preklepy_oboru(msg))
+    except Exception:
+        return False
+
+
 def _ma_pocasi_podnet(msg: str) -> bool:
     import unicodedata as _ud
     f = "".join(c for c in _ud.normalize("NFD", (msg or "").lower())
@@ -2144,6 +2153,13 @@ class AgentRouter:
              akce=("kodi_pause", "kodi_stop", "kodi_resume"),
              podminka=lambda s, aid, msg, dec, h: not _ma_kodi_ovladani(msg),
              verdikt=None, duvod="věta neříká nic o ovládání přehrávání"),
+        # HANS_AGENT_SPORT_NE_DUM_V1 (4. 11.) — „stali se dnes ve sportu něco
+        # zajímavého?“ (překlep) → report_home_status „Doma je klid…“; „…ve sprotu…“
+        # → report_household. Věta jmenující sportovní obor se na dům neptá.
+        dict(marker="HANS_AGENT_SPORT_NE_DUM_V1",
+             akce=("report_home_status", "report_household", "report_who_is_home"),
+             podminka=lambda s, aid, msg, dec, h: _jmenuje_sport(msg),
+             verdikt=None, duvod="věta jmenuje sportovní obor, ne dům"),
         # HANS_AGENT_WEATHER_CUE_V1 (7. 10.) — viz `_ma_pocasi_podnet`.
         dict(marker="HANS_AGENT_WEATHER_CUE_V1", akce=("report_weather",),
              podminka=lambda s, aid, msg, dec, h: not _ma_pocasi_podnet(msg),

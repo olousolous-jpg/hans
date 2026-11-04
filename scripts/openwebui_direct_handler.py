@@ -1416,6 +1416,19 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         'HANS_ZPRAVY_OBOR_V1: vlákno → /zpravy (%.60s)', _zob)
             except Exception as _zoe:
                 logging.getLogger(__name__).debug('zpravy obor vlákno: %s', _zoe)
+        if not _cmd:   # HANS_ZPRAVY_OBOR_PREKLEP_V1 — „stalo se dnes ve sprotu…?“
+            try:
+                from scripts.hans_zpravy import oprav_preklepy_oboru
+                from scripts.chat_commands import parse_command as _pc_ob
+                _opr = oprav_preklepy_oboru(ctx.user_message)
+                _rop = _pc_ob(_opr) if _opr else None
+                if _rop and _rop[0] == "zpravy":
+                    _cmd = ("zpravy", _opr)
+                    logging.getLogger(__name__).info(
+                        'HANS_ZPRAVY_OBOR_PREKLEP_V1: %r → %r → /zpravy',
+                        ctx.user_message[:50], _opr[:50])
+            except Exception as _zpe2:
+                logging.getLogger(__name__).debug('zpravy překlep: %s', _zpe2)
         # HANS_ZPRAVY_ODKAZY_V1 (4. 10.) — „pošli odkaz…“ po výpisu zpráv;
         # předbíhá i /zdroje (ten by vypsal zdroje Hansovy četby, ne zpráv)
         if not _cmd or _cmd[0] == "zdroje":
