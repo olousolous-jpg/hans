@@ -636,7 +636,8 @@ class MatrixBridge:
                         send=lambda t, _r=rid: self.send(t, _r),
                         send_photo=lambda p, c="", _r=rid: self.send_photo(p, c, _r),
                         person=person, is_full=True, handler=self._handler,
-                        config=self.config, state=self._cmd_state)
+                        config=self.config, state=self._cmd_state,
+                        channel="matrix")   # HANS_BRIDGE_HISTORIE_V1
                     loop = asyncio.get_event_loop()
                     handled = await loop.run_in_executor(None, _bc.handle, text, ctx)
                     if handled:

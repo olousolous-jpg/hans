@@ -424,6 +424,21 @@ def je_dotaz(text: str):
     return jm
 
 
+def _bez_hacku(zz: str):
+    """HANS_MISTA_BEZ_HACKU_V1 — titul přes rejstřík bez diakritiky: jediný článek
+    (článek + přesměrování na něj = jeden); víc různých → jediná česká obec mezi nimi."""
+    from scripts import hans_wiki_offline as wo
+    try:
+        rows = wo._fold_db().execute("SELECT titul, infobox FROM t WHERE fold=? AND rozcestnik=0 "
+                                     "LIMIT 40", (wo._fold_tzv(zz),)).fetchall()
+    except Exception:
+        return None
+    ts = list(dict.fromkeys(t for t, _ in rows))
+    if len(ts) > 1:
+        ts = list(dict.fromkeys(t for t, ib in rows if ib == "česká obec"))
+    return wo._cil(ts[0]) if len(ts) == 1 else None
+
+
 def souradnice(nazev: str):
     """(lat, lon, titul) místa podle názvu (i v jiném pádě: „Kutné Hory“), nebo None."""
     try:
@@ -431,8 +446,46 @@ def souradnice(nazev: str):
         import requests
         from scripts.hans_facts import USER_AGENT
         tvary = [nazev] + (wo._prvni_pad_vic(nazev) if " " in nazev else wo._tvary_slova(nazev))
+        # HANS_MISTA_OBEC_PADY_V1 — koncovky názvů obcí, které obecný převod nemá
+        # („Brně“ → Brno, „Plzni“ → Plzeň, „Hradci Králové“, „Českých Budějovicích“,
+        # „Karlových Varech“); ze všech nalezených obcí ta s nejdelším článkem (Brno, ne Brná)
+        _ext = [("ě", "o"), ("ni", "eň"), ("ci", "ec"), ("ích", "e"), ("ých", "é"), ("ých", "y"),
+                ("ech", "y"), ("ách", "a"), ("ích", "ice"), ("ově", "ov"), ("íně", "ín"), ("ně", "eň"),
+                ("ze", "ha"), ("ek", "ky"),
+                # totéž bez diakritiky („Ceskych Budejovicich“, „Karlovych Varech“) — titul
+                # pak najde rejstřík bez háčků (HANS_MISTA_BEZ_HACKU_V1)
+                ("e", "o"), ("ych", "e"), ("ych", "y"), ("ich", "e"), ("ich", "ice"),
+                ("ach", "a"), ("ove", "ov"), ("ine", "in"), ("ne", "en"), ("i", "e")]
+        vary = []
+        for w in nazev.split():
+            vary.append([w] + [w[:-len(a_)] + b_ for a_, b_ in _ext if w.endswith(a_)
+                               and len(w) - len(a_) >= 2] + wo._tvary_slova(w)[1:])
+        import itertools
+        obce, stavby = [], []
+        for kombinace in itertools.islice(itertools.product(*vary), 400):
+            z = " ".join(kombinace)
+            z = z[:1].upper() + z[1:]
+            for zz, seznam in ((z, obce), (z + " (hrad)", stavby), (z + " (zámek)", stavby)):
+                r0 = wo._cil(zz)
+                if not r0 or wo._db().execute("SELECT rozcestnik FROM clanek WHERE id=?",
+                                              (r0[0],)).fetchone()[0]:
+                    # HANS_MISTA_BEZ_HACKU_V1 — „u Kuneticke hory“ (bez diakritiky) → titul
+                    # přes rejstřík titulů bez háčků, jen jediný článek (ne rozcestník);
+                    # i když přesná shoda je rozcestník („Tabor“ × obec Tábor)
+                    r0 = _bez_hacku(zz) or r0
+                if not r0:
+                    continue
+                x = wo._db().execute("SELECT length(text), infobox_druh FROM clanek WHERE id=? "
+                                     "AND rozcestnik=0", (r0[0],)).fetchone()
+                if x and (x[1] == "česká obec" or seznam is stavby):
+                    seznam.append((x[0], r0[1]))
+        for kand in (obce, stavby):          # obec má přednost („u Kosti“ → hrad, „v Praze“ → Praha)
+            for _d, _t in sorted(kand, reverse=True):
+                _s = souradnice_lokalne(_t)
+                if _s:
+                    return _s[0], _s[1], _t
         for z in tvary:
-            r = wo._cil(z[:1].upper() + z[1:])
+            r = wo._cil(z[:1].upper() + z[1:]) or _bez_hacku(z[:1].upper() + z[1:])
             if not r:
                 continue
             if wo._db().execute("SELECT rozcestnik FROM clanek WHERE id=?", (r[0],)).fetchone()[0]:
@@ -464,6 +517,18 @@ def souradnice(nazev: str):
                     if "latitude" in v:
                         _souradnice_ram[r[1]] = (float(v["latitude"]), float(v["longitude"]), r[1])
                         return _souradnice_ram[r[1]]
+        # HANS_MISTA_OBEC_KMEN_V1 — pád, který převod neumí („v Pardubicích“, „v Plzni“):
+        # kmen bez koncovky → JEDINÁ česká obec, jejíž název tak začíná
+        sl = nazev.split()
+        if sl and len(sl[-1]) >= 5:
+            km = wo._norm(" ".join(sl[:-1] + [sl[-1][:max(4, len(sl[-1]) - 3)]]))
+            ts = [x for (x,) in wo._db().execute(
+                "SELECT titul FROM clanek WHERE titul_norm >= ? AND titul_norm < ? AND "
+                "infobox_druh='česká obec' LIMIT 3", (km, km + "\U0010ffff")).fetchall()]
+            if len(ts) == 1:
+                s = souradnice_lokalne(ts[0])
+                if s:
+                    return s[0], s[1], ts[0]
     except Exception as e:
         _log.warning("HANS_MISTA_DOTAZ_V1: souřadnice %r: %s", nazev, str(e)[:100])
     return None
@@ -481,6 +546,11 @@ def odpoved_na_dotaz(text: str, osoba: str, db: str = "data/hans_diary.db"):
             _log.info("HANS_MISTA_DOTAZ_V1: %r není místo se souřadnicemi → hovor", jm)
             return None
         lat, lon, titul = s
+        try:                             # HANS_OSM_KONTEXT_V1 — „a kde se tam najíst?“
+            from scripts.hans_osm import zapamatuj
+            zapamatuj(osoba, jm, lat, lon, titul)
+        except Exception:
+            pass
         odp = zprava(lat, lon, "", vlastni=False, db=db)
         odp = odp.replace("kolem toho bodu", "kolem místa %s" % _jmeno(titul), 1)
         if osoba and osoba != "test" and odp.startswith("Zajímavá místa"):
@@ -525,4 +595,20 @@ def zprava(lat: float, lon: float, osoba: str = "", vlastni: bool = True,
             " (o tomhle jsem si četl)" if cetl else ""))
     if osoba and osoba != "test":
         uloz_podnety(db, mm)
+    p = pocasi(lat, lon)                 # HANS_MISTA_POCASI_V1
+    if p:
+        radky.append("Počasí tam: " + p)
     return "\n".join(radky)
+
+
+def pocasi(lat: float, lon: float, dni: int = 2) -> str:
+    """HANS_MISTA_POCASI_V1 (3. 11.) — předpověď na dnes a zítra pro místo (Open-Meteo,
+    tatáž třída jako Hansovo počasí). Prázdné = nedostupné."""
+    try:
+        import datetime as _d
+        from scripts.weather_chmu import WeatherCHMU
+        dnes = _d.date.today()
+        return WeatherCHMU(lat, lon).get_days_string([dnes + _d.timedelta(days=i) for i in range(dni)])
+    except Exception as e:
+        _log.info("HANS_MISTA_POCASI_V1: %s", str(e)[:80])
+        return ""

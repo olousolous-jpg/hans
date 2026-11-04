@@ -32,7 +32,9 @@ except Exception:
 
 
 class BridgeCtx:
-    def __init__(self, send, send_photo, person, is_full, handler, config, state):
+    def __init__(self, send, send_photo, person, is_full, handler, config, state,
+                 channel=None):
+        self.channel = channel   # HANS_BRIDGE_HISTORIE_V1
         self.send = send
         self.send_photo = send_photo
         self.person = person
@@ -84,6 +86,8 @@ def handle(text: str, ctx: BridgeCtx) -> bool:
         if _appearance(text, ctx):          # HANS_ENTITY_IMAGE_CHAT_V1
             return True
         if _cmd_akce(text, ctx):            # HANS_AKCE_V1 (před místy: „akce v okolí“)
+            return True
+        if _cmd_osm(text, ctx):             # HANS_OSM_V1 (jídlo, otevírací doba, trasy, parkování)
             return True
         if _cmd_mista(text, ctx):           # HANS_MISTA_DOTAZ_V1
             return True
@@ -273,6 +277,25 @@ _SNIMEK_RE = re.compile(
     r"|\bco\s+(?:je|vid[ií][sš]|vid[ií]te)\s+(?:na|v|p[rř]ed)\s+kame\w*")
 
 
+def _do_historie(ctx: BridgeCtx, text: str, odp: str):
+    """HANS_BRIDGE_HISTORIE_V1 (4. 11.) — odpověď příkazu na místo do historie
+    rozhovoru, ať navazující otázka („dá se tam najíst?“) ví, o čem byla řeč.
+    Bez toho F1 3. 11. 17:49 navázal na Kunětickou horu ze 14:40 místo na
+    Pernštejn z příkazu. Jen místa / OSM / akce (otázka → odpověď); výpisy
+    (deník, stav, obrazy) ZÁMĚRNĚ ne — historie je few-shot a model by jejich
+    tvar kopíroval. Zkráceno na 600 zn (název místa je na začátku)."""
+    try:
+        cs = getattr(ctx.handler, "conv_store", None)
+        if cs is None or not ctx.person or not odp:
+            return
+        o = odp.strip()
+        if len(o) > 600:
+            o = o[:600].rsplit("\n", 1)[0].rstrip() + " …"
+        cs.add_exchange(ctx.person, text, o, channel=ctx.channel)
+    except Exception as e:
+        _log.warning("HANS_BRIDGE_HISTORIE_V1: %s", e)
+
+
 def _cmd_akce(text: str, ctx: BridgeCtx) -> bool:
     """HANS_AKCE_V1 — „jaké jsou akce v okolí / v Litomyšli?“ → akce z webů obcí."""
     try:
@@ -283,9 +306,27 @@ def _cmd_akce(text: str, ctx: BridgeCtx) -> bool:
         if not odp:
             return False
         ctx.send(odp)
+        _do_historie(ctx, text, odp)   # HANS_BRIDGE_HISTORIE_V1
         return True
     except Exception as e:
         _log.warning("HANS_AKCE_V1: %s", e)
+        return False
+
+
+def _cmd_osm(text: str, ctx: BridgeCtx) -> bool:
+    """HANS_OSM_V1 — „kde se najíst u Kosti / kdy je otevřený Kokořín / trasy / parkování“."""
+    try:
+        from scripts import hans_osm as _ho
+        if _ho.je_dotaz(text) is None:
+            return False
+        odp = _ho.odpoved_na_dotaz(text, ctx.person)
+        if not odp:
+            return False
+        ctx.send(odp)
+        _do_historie(ctx, text, odp)   # HANS_BRIDGE_HISTORIE_V1
+        return True
+    except Exception as e:
+        _log.warning("HANS_OSM_V1: %s", e)
         return False
 
 
@@ -300,6 +341,7 @@ def _cmd_mista(text: str, ctx: BridgeCtx) -> bool:
             return False
         odp, geo = r
         ctx.send(odp)
+        _do_historie(ctx, text, odp)   # HANS_BRIDGE_HISTORIE_V1
         if geo:
             import tempfile
             fd, cesta = tempfile.mkstemp(prefix="hans_mapa_", suffix=".png")

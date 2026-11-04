@@ -156,7 +156,7 @@ class WeatherCHMU:
                 tmin = tmins[i] if i < len(tmins) else None
                 tmax = tmaxs[i] if i < len(tmaxs) else None
                 if tmin is not None and tmax is not None:
-                    cast += " %.0f–%.0f°C" % (tmin, tmax)
+                    cast += " %d–%d°C" % (round(tmin) + 0, round(tmax) + 0)   # bez „-0“
                 casti.append(cast)
             return ("; ".join(casti) + ".") if casti else ""
         except Exception as e:
