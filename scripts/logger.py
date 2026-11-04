@@ -13,6 +13,7 @@ Usage:
 import logging
 import logging.handlers
 import os
+import sys
 from pathlib import Path
 
 # HANS_LOG_SINGLE_WRITER_V1 (15. 9.) — cestu smí přepsat samostatný proces.
@@ -57,11 +58,20 @@ def get_logger(name: str = "facerecog") -> logging.Logger:
         )
 
         # File handler — INFO and above → data/system.log
-        fh = logging.handlers.RotatingFileHandler(
-            _LOG_PATH, maxBytes=_MAX_BYTES,
-            backupCount=_BACKUP_COUNT, encoding="utf-8"
-        )
-        fh.namer = _rot_namer   # HANS_LOG_RETENTION_V1
+        # HANS_LOG_ONLY_MAIN_ROTATES_V1 (4. 11.) — 3. 11. 21:23 web_admin.py
+        # (přepnutí herního módu → import ollama_client) přetočil system.log
+        # Hansovi pod rukama a celá noc skončila v logs/system.log.1. Točí
+        # jen hlavní proces (main.py) nebo proces s vlastním HANS_LOG_FILE;
+        # ostatní jen připisují a po přetočení si soubor znovu otevřou.
+        if os.environ.get("HANS_LOG_FILE") or \
+                os.path.basename(sys.argv[0] if sys.argv else "") == "main.py":
+            fh = logging.handlers.RotatingFileHandler(
+                _LOG_PATH, maxBytes=_MAX_BYTES,
+                backupCount=_BACKUP_COUNT, encoding="utf-8"
+            )
+            fh.namer = _rot_namer   # HANS_LOG_RETENTION_V1
+        else:
+            fh = logging.handlers.WatchedFileHandler(_LOG_PATH, encoding="utf-8")
         fh.setLevel(logging.INFO)
         fh.setFormatter(fmt)
 
