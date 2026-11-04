@@ -1516,6 +1516,26 @@ def thread_zpravy(message: str, turns):
     return None
 
 
+def thread_zpravy_obor(message: str, turns):
+    """HANS_ZPRAVY_OBOR_V1 (4. 11.) — „a co fotbal?“ po výpisu zpráv → /zpravy
+    s tou větou. Bez toho F1 přepsal na „Jaké zápasy se hrály ve fotbale?“, příkaz
+    nesepnul (rozhoduje holá věta) a model ZOPAKOVAL tvar výpisu z historie."""
+    msg = (message or "").strip()
+    if not msg or len(msg) > 120:
+        return None
+    try:
+        from scripts.hans_zpravy import obor_dotazu
+        if obor_dotazu(msg) is None:
+            return None
+    except Exception:
+        return None
+    for role, text in reversed(list(turns or [])):
+        if role != "assistant":
+            continue
+        return msg if _ZP_PATICKA in str(text or "") else None
+    return None
+
+
 from scripts.chat_cmd_zpravy import _cmd_odkazy_zprav   # ROZDELENI_PRIKAZU_V1 — přesunuto
 
 

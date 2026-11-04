@@ -1346,6 +1346,90 @@ def _zp_jmena(dotaz: str) -> list:
     return out if _zp_deni(dotaz) else []
 
 
+# ── HANS_ZPRAVY_OBOR_V1 (4. 11.) — zprávy z OBORU (sport) podle rubriky ──────
+# „stalo se dnes ve sportu něco zajímavého?“ hledáním podle významu našlo jen
+# anglický komentář „Do sports stars have the right to free speech?“ a „extraliga“
+# nic; české sportovní zprávy slovo „sport“ v titulku nemají, mají ho v ADRESE
+# (iROZHLAS /sport/hokej/, Seznam clanek/sport-fotbal-, BBC /sport/, Al Jazeera
+# /sports/). 4. 11.: 100 českých titulků se sportem v adrese za 3 dny.
+_OBOR_SPORT_URL = re.compile(r"(?:/sports?/|/clanek/sport-|sport\.)", re.I)
+_OBOR_PODOBOR = {
+    # podobor: (vzor v titulku bez diakritiky, kusy adresy)
+    "hokej": (r"(?<![a-z])(?:hokej|extral|nhl\b)", ("hokej", "hockey")),
+    "fotbal": (r"(?<![a-z])(?:fotbal|lig[aiey]\s+mistr|lize\s+mistr|fortuna\s+lig)",
+               ("fotbal", "football", "soccer")),
+    "tenis": (r"(?<![a-z])(?:tenis(?!k)|wimbledon|davis\s+cup|turnaj\w*\s+mistr)", ("tenis", "tennis")),
+    "formule 1": (r"(?<![a-z])(?:formul[ie]\b|formula\s*1|f1\b|velk[ae]\s+cen|grand\s+prix)",
+                  ("formul", "/f1", "formula-1", "formula1")),
+}
+_OBOR_SLOVO = (("hokej", "hokej"), ("extral", "hokej"), ("nhl", "hokej"),
+               ("fotbal", "fotbal"), ("liga mistr", "fotbal"), ("ligy mistr", "fotbal"),
+               ("lize mistr", "fotbal"), ("tenis", "tenis"), ("formul", "formule 1"),
+               ("f1", "formule 1"), ("sport", ""))
+_OBOR_TITUL = re.compile(r"(?<![a-z])(?:sport|hokej|extral|fotbal|tenis(?!k)|formul[ie]\b|biatlon|"
+                         r"atlet|olympi|lig[aiey]\s+mistr|lize\s+mistr)")
+
+
+def obor_dotazu(dotaz: str):
+    """'' = sport obecně, 'hokej'/'fotbal'/… = podobor, None = věta se na obor neptá."""
+    f = _bez_diakritiky(dotaz or "")
+    for kmen, ob in _OBOR_SLOVO:
+        if re.search(r"(?<![a-z])" + re.escape(kmen)
+                     + {"f1": r"(?![a-z])", "tenis": r"(?!k)", "sport": r"(?!ega)"}.get(kmen, ""), f):
+            return ob
+    return None
+
+
+def zpravy_obor(podobor: str, path: str = DB, hodin: float = 36.0, limit: int = 5) -> dict:
+    """Titulky z oboru (rubrika v adrese nebo sportovní slovo v titulku) — PO TITULCÍCH,
+    ne po událostech: shluk události nese i nesportovní titulky (stávka v ČT měla
+    v sobě „Tři stovky sportovců podpořily ČT“)."""
+    c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+    try:
+        od = time.time() - hodin * 3600
+        rows = c.execute(
+            """SELECT t.id, t.zdroj, t.url, t.titulek, t.jazyk, COALESCE(t.publikovano, t.prvni_ts),
+                      tu.udalost_id, COALESCE(u.pocet_zdroju, 1)
+               FROM titulky t LEFT JOIN titulek_udalost tu ON tu.titulek_id=t.id
+               LEFT JOIN udalosti u ON u.id=tu.udalost_id
+               WHERE t.posledni_ts >= ?""", (od,)).fetchall()
+    finally:
+        c.close()
+    vzor, url_kus = _OBOR_PODOBOR.get(podobor, (None, ()))
+    nazvy = {z[0]: z[1] for z in ZDROJE}
+    kand = []
+    for tid, zdr, url, tit, jaz, cas, uid, poc in rows:
+        if not tit or _f(zdr or "") in BULVAR:
+            continue
+        f = _bez_diakritiky(tit)
+        ul = (url or "").lower()
+        if not (_OBOR_SPORT_URL.search(ul) or _OBOR_TITUL.search(f)):
+            continue
+        if vzor and not (re.search(vzor, f) or any(k in ul for k in url_kus)):
+            continue
+        kand.append(((jaz == "cs", min(poc or 1, 30), cas or 0),
+                     {"titulek": tit, "zdroj": nazvy.get(zdr, zdr), "cas": cas, "prvni": cas,
+                      "medii": poc or 1, "cesky": jaz == "cs", "trefa": None, "url": url,
+                      "id": -tid, "skore": 0.0, "podle_jmena": False, "_uid": uid}))
+    kand.sort(key=lambda x: x[0], reverse=True)
+    out, uidy = [], set()
+    for _, d in kand:
+        if d["_uid"] is not None and d["_uid"] in uidy:
+            continue                      # jedna událost = jeden řádek
+        if any(_norm_tit(d["titulek"]) == _norm_tit(x["titulek"]) for x in out):
+            continue
+        uidy.add(d["_uid"])
+        out.append(d)
+        if len(out) >= limit:
+            break
+    for d in out:
+        d.pop("_uid", None)
+    _log.info("HANS_ZPRAVY_OBOR_V1: sport%s → %d kandidátů, %d zpráv",
+              (" / " + podobor) if podobor else "", len(kand), len(out))
+    return {"rezim": "obor" if out else "nic", "hledano": "obor", "udalosti": out,
+            "tema": True, "obor": podobor or "sport"}
+
+
 def zpravy_hledej(dotaz: str, config: dict = None, hodin: float = 72.0, limit: int = 4,
                   path: str = DB, zaloha_prehled: bool = False,
                   bez_klauzi: bool = False) -> dict:

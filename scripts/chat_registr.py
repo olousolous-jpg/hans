@@ -748,6 +748,24 @@ def zaregistruj(_cc):
              r"syst[ée]m|po[čc][íi]ta|pc\b)\w{3,}"),
             # HANS_ZPRAVY_SVET_NE_DENIK_V1 — „co se dneska událo ve světě“
             r"\bco\s+se\s+(?:\w+\s+){0,2}(?:stalo|d[ěe]je|d[ěe]lo|ud[áa]lo)\w*\s+(?:\w+\s+){0,2}ve?\s+sv[ěe]t",
+            # HANS_ZPRAVY_OBOR_V1 (4. 11.) — aktuální dění ve SPORTU: „stalo se dnes ve
+            # sportu něco zajímavého?“ šlo do zápisků o sportu (vymyšlený zápas Real–City),
+            # „jaké se hrály zápasy v extralize?“ na Wikipedii (heslo Česko). Jen s časovým
+            # slovem A slovesem dění, nebo „jak dopadl zápas“ / „výsledky extraligy“; ne
+            # „máš rád hokej“, „hraješ fotbal“, „namaluj hokejový zápas“, roky (dějiny).
+            # 📏 3 995 vět lidí a tazatele: 3 shody, všechny tyhle tři skutečné dotazy.
+            (r"^(?![^?!]*\b(?:namaluj\w*|nakresli\w*|hrajes|hrajete|hral\s+jsi|hral\s+jste|"
+             r"mas\s+rad|mate\s+rad|bavi\s+te|bavi\s+vas|umis|umite)\b)"
+             r"(?=[^?!]*\b(?:dnes\w*|vcera\w*|ted\b|nyni|aktualn\w*|posledn\w*|tento\s+tyden|tydnu|"
+             r"vikend\w*|nov[eyc]\w*|nejnov\w*)"
+             r")(?=[^?!]*\b(?:stal[oa]?|deje|udal\w*|nov[eo]ho|novinky|zajimav\w*|dopadl\w*|hral[oyai]?|"
+             r"hraly|vysledk\w*|vyhral\w*|prohral\w*|zapas\w*|utkani))"
+             r"[^?!]*\b(?:sport\w*|hokej\w*|fotbal\w*|extral\w*|tenis(?!k)\w*|formul[ie]\b|formule\b|"
+             r"f1|nhl|lig[aeyu]\s+mistr\w*|biatlon\w*|atleti\w*)\b"),
+            r"\b(?:jak\w*|kdo)\s+(?:se\s+)?(?:hral[oyai]?|hraly|dopadl\w*|vyhral\w*)\s+(?:\w+\s+){0,3}?"
+            r"(?:zapas\w*|utkani|derby|zavod\w*|finale)\b",
+            r"\bvysledk\w*\s+(?:\w+\s+){0,2}?(?:sport\w*|hokej\w*|fotbal\w*|extral\w*|tenis\w*|"
+            r"formul[ie]\b|f1|nhl|lig[aeyu]\s+mistr\w*)",
         ],
         handler=_cc._cmd_zpravy,
         help_text="Co je ve zprávách — /zpravy [téma]",

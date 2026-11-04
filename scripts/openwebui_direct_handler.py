@@ -1406,6 +1406,16 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                         'HANS_DEMAGOG_FOLLOWUP_V1: vlákno → /demagog (%.60s)', _dma)
             except Exception as _dme:
                 logging.getLogger(__name__).debug('demagog vlákno: %s', _dme)
+        if not _cmd:   # HANS_ZPRAVY_OBOR_V1 — „a co fotbal?“ po výpisu zpráv
+            try:
+                from scripts.chat_commands import thread_zpravy_obor
+                _zob = thread_zpravy_obor(ctx.user_message, _t_turns)
+                if _zob:
+                    _cmd = ("zpravy", _zob)
+                    logging.getLogger(__name__).info(
+                        'HANS_ZPRAVY_OBOR_V1: vlákno → /zpravy (%.60s)', _zob)
+            except Exception as _zoe:
+                logging.getLogger(__name__).debug('zpravy obor vlákno: %s', _zoe)
         # HANS_ZPRAVY_ODKAZY_V1 (4. 10.) — „pošli odkaz…“ po výpisu zpráv;
         # předbíhá i /zdroje (ten by vypsal zdroje Hansovy četby, ne zpráv)
         if not _cmd or _cmd[0] == "zdroje":
