@@ -177,7 +177,7 @@ def _cisla_otazky(q: str) -> set:
 def _cisla_bez_opory(vyraz: str, q: str, navic=()) -> list:
     z = _cisla_otazky(q) | set(navic)   # HANS_VYPOCTY_WD_V1 — data z Wikidat
     dnes = _dt.date.today()
-    z |= {dnes.year, dnes.month, dnes.day}
+    z |= {dnes.year, dnes.month, dnes.day, dnes.year + 1}   # HANS_VYPOCTY_PRISTI_DATUM_V1: „do 1. května“ = příští rok
     bez = []
     for m in re.finditer(r"(?<![\w.])\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", vyraz or ""):
         x = float(m.group(0))
@@ -643,6 +643,10 @@ def vypada_jako_vypocet(text: str) -> bool:
         return False
     if _CUE.search(t):
         return True
+    # HANS_VYPOCTY_DNY_POREDI_V1 (4. 11., /tazatel) — „a do prvního května kolik dní?“ (opačný
+    # slovosled) výpočet nespustil a model napsal 156 místo 178. 📏 4 030 vět: 1 nová (tahle).
+    if re.search(r"(?=[^?!]*\b(?:do|zbyva|zbyvaji|od|mezi|uplynulo)\b)[^?!]*\bkolik\s+(?:dni|tydnu|mesicu)\b", t):
+        return True
     # slovní úloha bez klíčového slova: aspoň dvě čísla a „kolik“
     return bool(re.search(r"\bkolik", t) and len(re.findall(r"\d+(?:[.,]\d+)?", t)) >= 2)
 
@@ -1025,6 +1029,28 @@ _RADOVE["jednatřicátého"] = 31
 # HANS_VYPOCTY_LETOS_V1 (4. 11.) — „kdyby žila dosud, v tomto roce, tedy v roce 2024,
 # by jí bylo 158 let“: model si letopočet „teď“ vzal z tréninku. U výpočtu od dneška
 # rok u slov „dnes/letos/v tomto roce/dosud“ (do 40 zn) = letošní rok.
+# HANS_VYPOCTY_VYSLEDEK_JE_V1 (4. 11., /tazatel) — „Výsledek je 66 let.“ a vzápětí „60 let“
+# (Smetana): tvar „Výsledek je X“ z předchozí odpovědi model opsal i s vlastním číslem.
+def srovnej_vysledek_je(odpoved: str, vypocet: str):
+    if not odpoved or "→ výsledek =" not in (vypocet or ""):
+        return odpoved, False
+    seg = vypocet.split("→ výsledek =")[-1].strip()
+    m = re.match(r"(-?\d+(?:[  ]\d{3})*(?:,\d+)?)", seg)
+    if not m:
+        return odpoved, False
+    spravne = m.group(1).strip()
+    zmena = False
+
+    def _r(mt):
+        nonlocal zmena
+        if re.sub(r"[\s  ]", "", mt.group(2)) == re.sub(r"[\s  ]", "", spravne):
+            return mt.group(0)
+        zmena = True
+        return mt.group(1) + spravne
+    out = re.sub(r"(\b[Vv]ýsledek\s+je\s+(?:tedy\s+)?(?:přibližně\s+|zhruba\s+)?)(-?\d+(?:[  ]\d{3})*(?:,\d+)?)", _r, odpoved)
+    return out, zmena
+
+
 def srovnej_letos(odpoved: str, vypocet: str):
     if not odpoved or "dnes()" not in (vypocet or ""):
         return odpoved, False
@@ -1122,22 +1148,35 @@ def _srovnej_cislo(odpoved: str, vypocet: str):
                 d = jine.pop()
                 return re.sub(r"\b%s\b" % d, seg, odpoved, flags=re.I), True
             return odpoved, False
-        m = re.match(r"(-?\d[\d\s ]*(?:,\d+)?)\s*(.*)$", seg)
-        if not m:
-            return odpoved, False
-        hod, jed = _num(m.group(1)), m.group(2).strip()
+        # HANS_VYPOCTY_CISLO_SCI_V1 (4. 11., /tazatel B) — fyzika vrací „1,046·10^7 J“ a model
+        # napsal „1 046 500 J“ (o řád méně) → rozpor v jedné odpovědi; vědecký zápis porovnat
+        # s tolerancí zaokrouhlení (4 platné číslice) a špatné číslo nahradit tímto zápisem
+        msci = re.match(r"(-?\d+(?:,\d+)?)·10\^(-?\d+)\s*(.*)$", seg)
+        tol = 1e-6
+        cil_sci = None
+        if msci and _num(msci.group(1)) is not None:
+            hod = _num(msci.group(1)) * 10 ** int(msci.group(2))
+            jed = msci.group(3).strip()
+            cil_sci = "%s·10^%s" % (msci.group(1), msci.group(2))
+            tol = abs(hod) * 0.005
+            m = None
+        else:
+            m = re.match(r"(-?\d[\d\s ]*(?:,\d+)?)\s*(.*)$", seg)
+            if not m:
+                return odpoved, False
+            hod, jed = _num(m.group(1)), m.group(2).strip()
         rod = next((rx for k, rx in _JEDN_RODINY if re.fullmatch(rx, jed)), None)
         if hod is None or not rod:
             return odpoved, False
         rx = re.compile(r"(?<![\d,.])(\d{1,3}(?:[  ]\d{3})+|\d+)(?:,(\d+))?\s*(" + rod + r")(?![\w/])")
         kand = [(mm, _num(mm.group(1) + ("," + mm.group(2) if mm.group(2) else ""))) for mm in rx.finditer(odpoved)]
-        if any(v is not None and abs(v - hod) < 1e-6 for _, v in kand):
+        if any(v is not None and abs(v - hod) <= max(tol, 1e-6) for _, v in kand):
             return odpoved, False                 # výsledek v odpovědi je
         jine = {v for _, v in kand if v is not None}
         if len(jine) != 1:
             return odpoved, False
         spatne = jine.pop()
-        cil = m.group(1).strip()
+        cil = cil_sci or m.group(1).strip()
         out, kon = [], 0
         for mm, v in kand:
             if v == spatne:

@@ -58,9 +58,10 @@ _SYS = ("Available named constants (SI, use these names in vyraz instead of typi
         "mass); values given in the question go in as numbers; every name in vyraz must be one of "
         "the constants above. "
         # HANS_FYZIKA_VZORCE_V1 (4. 11.) — oběh ISS: model psal 2*pi*r/sqrt(G*M) (chybí r^3/2)
-        "For a circular orbit use the functions orbital_period(r, M) (seconds) and "
-        "orbital_speed(r, M) (m/s), where r is the distance from the CENTRE of the body "
-        "(its radius + altitude, in m) and M its mass.")
+        "For ANY orbit (a satellite, the Moon, a planet around the Sun) ALWAYS use the functions "
+        "orbital_period(r, M) (seconds) and orbital_speed(r, M) (m/s) — never write the orbit "
+        "formula yourself; r is the distance from the CENTRE of the central body (its radius + "
+        "altitude, or the orbit distance such as AU, in m) and M the mass of the central body.")
 
 
 def _f(s: str) -> str:
@@ -102,8 +103,15 @@ def spocti(vyraz: str) -> Optional[float]:
         return None
     fn = {"sqrt": sp.sqrt, "pi": sp.pi, "exp": sp.exp, "log": sp.log, "sin": sp.sin, "cos": sp.cos}
     _Gs = sp.Float(KONST["G"])   # HANS_FYZIKA_VZORCE_V1 — pojmenované vzorce oběhu
-    fn["orbital_period"] = lambda r, M: 2 * sp.pi * sp.sqrt(r ** 3 / (_Gs * M))
-    fn["orbital_speed"] = lambda r, M: sp.sqrt(_Gs * M / r)
+    # model občas prohodí argumenty (orbital_speed(M_sun, AU) → 0,077 m/s): hmotnost tělesa
+    # je vždy řádově větší než vzdálenost → pořadí srovná funkce sama
+    def _rm(r, M):
+        try:
+            return (M, r) if float(r) > float(M) else (r, M)
+        except Exception:
+            return r, M
+    fn["orbital_period"] = lambda r, M: (lambda a: 2 * sp.pi * sp.sqrt(a[0] ** 3 / (_Gs * a[1])))(_rm(r, M))
+    fn["orbital_speed"] = lambda r, M: (lambda a: sp.sqrt(_Gs * a[1] / a[0]))(_rm(r, M))
     for w in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", v):
         if w not in fn and w not in KONST and not re.fullmatch(r"e\d*", w):
             return None
@@ -199,9 +207,13 @@ def litry_vody_na_kg(q: str) -> str:
         if m.group(2).lower().startswith("m"):
             v /= 1000.0
         s = ("%g" % v).replace(".", ",")
-        return "%s kg %s" % (s, m.group(3))
-    return re.sub(r"(\d+(?:[.,]\d+)?)\s*(ml|mililitr\w*|l|litr\w*)\.?\s+(vod\w*)", _r, q or "",
-                  flags=re.I)
+        return ("%s kg %s" % (s, m.group(3))).rstrip()
+    out = re.sub(r"(\d+(?:[.,]\d+)?)\s*(ml|mililitr\w*|l|litr\w*)\.?\s+(vod\w*)", _r, q or "",
+                 flags=re.I)
+    # „ohřát vodu, mám 5 litrů“ — voda jinde ve větě (/tazatel 4. 11.)
+    if out == (q or "") and re.search(r"\bvod[auyěeo]\w*", out, re.I):
+        out = re.sub(r"(\d+(?:[.,]\d+)?)\s*(ml|mililitr\w*|litr\w*|l)\b\.?()", _r, out, flags=re.I)
+    return out
 
 
 def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[str]:
@@ -245,6 +257,16 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
     if _bez:
         _log.info("%s: konstanta bez opory v otázce %s → zahazuji: %.100r", MARK, _bez, vyraz)
         return None
+    # HANS_FYZIKA_DT_V1 (4. 11., /tazatel) — „kolik energie zabere ohřát vodu, mám 5 litrů“
+    # (teploty nezazněly) → 5 · c_water bez ΔT → nesmyslný výsledek přebil odpověď.
+    if re.search(r"(?<![A-Za-z_])c_water(?![A-Za-z_0-9])", vyraz):
+        _tq = _f(q)
+        _teploty = re.findall(r"-?\d+(?:[.,]\d+)?\s*(?:°\s*c|stup\w*|°)", _tq)
+        _o = re.search(r"\bo\s+\d+(?:[.,]\d+)?\s*(?:°\s*c|stup\w*|°|k\b|kelvin\w*)", _tq)
+        _rozsah = re.search(r"\b(?:z|ze|od)\s+-?\d+(?:[.,]\d+)?\s+(?:na|do)\s+-?\d+", _tq)
+        if len(_teploty) < 2 and not _o and not _rozsah:
+            _log.info("HANS_FYZIKA_DT_V1: teplo bez rozdílu teplot v otázce → zahazuji: %.100r", vyraz)
+            return None
     x = spocti(vyraz)
     if x is None:
         _log.info("%s: výraz nelze spočítat: %.100r", MARK, vyraz)
@@ -253,6 +275,13 @@ def vypocet_modelem(config: dict, text: str, timeout: float = 25.0) -> Optional[
     k = _JED.get(jed.lower().replace(" ", ""))
     if k:
         x, jed = x * k[0], k[1]
+    # HANS_FYZIKA_ROKY_V1 (4. 11.) — „Kolik pozemských let trvá oběh Marsu?“: orbital_period dá
+    # sekundy, model napsal jednotku „year“ → 5,9·10^7 „let“; dělí-li výraz rokem sám, nic
+    if jed.lower() in ("year", "years", "rok", "roky", "let", "yr") and not re.search(
+            r"/\s*\(?\s*year\b", vyraz):
+        x, jed = x / KONST["year"], "let"
+    elif jed.lower() in ("year", "years", "rok", "roky", "yr"):
+        jed = "let"
     jed = jed.replace("^2", "²").replace("**2", "²").replace("^3", "³").replace("**3", "³")
     pouz = [n for n in KONST if re.search(r"(?<![A-Za-z_])%s(?![A-Za-z_0-9])" % re.escape(n), vyraz)]
     konst = "; ".join("%s = %s (%s)" % (n, _cz(KONST[n]), _POPIS_K.get(n, n)) for n in pouz)

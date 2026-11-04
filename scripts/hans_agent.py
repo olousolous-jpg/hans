@@ -224,6 +224,15 @@ _POCASI_PODNET = re.compile(
     r"hezk\w*|pekn\w*|oskliv\w*|vikend\w*)\b")
 
 
+def _je_fyzika(msg: str) -> bool:
+    """HANS_AGENT_FYZIKA_NE_KLIMA_V1 — fyzikální výpočet s čísly a jednotkami."""
+    try:
+        from scripts.hans_fyzika_model import vypada_jako_vypocet, _CISLO_JED, _f as _ff
+        return vypada_jako_vypocet(msg) and bool(_CISLO_JED.search(_ff(msg or "")))
+    except Exception:
+        return False
+
+
 def _je_vypocet_veku(msg: str) -> bool:
     """HANS_AGENT_VEK_NE_KARTA_V1 — podnět výpočtu věku/dat osoby (CUE_OSOBA)."""
     try:
@@ -2169,6 +2178,11 @@ class AgentRouter:
         # report_person (0,95) → karta osoby a model sám dopočítal „156 let … v roce
         # 2024“ (výpočet neproběhl); šablona karty pak v historii vedla k výmyslu
         # u Gaudího. Otázka na věk/data osoby = výpočet, ne karta.
+        # HANS_AGENT_FYZIKA_NE_KLIMA_V1 (4. 11., /tazatel) — „kolik tepla potřebuju na ohřátí
+        # 5 litrů vody z 10 na 80 stupňů?“ → report_climate (teplota v domě) → cizímu odmítnuto.
+        dict(marker="HANS_AGENT_FYZIKA_NE_KLIMA_V1", akce=("report_climate", "report_weather"),
+             podminka=lambda s, aid, msg, dec, h: _je_fyzika(msg),
+             verdikt=None, duvod="fyzikální výpočet, ne teplota doma"),
         dict(marker="HANS_AGENT_VEK_NE_KARTA_V1", akce=("report_person",),
              podminka=lambda s, aid, msg, dec, h: _je_vypocet_veku(msg),
              verdikt=None, duvod="ptá se na věk / data osoby — počítá výpočet"),

@@ -2426,7 +2426,18 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 if not _fz:
                     try:
                         from scripts.hans_fyzika_model import vypocet_modelem as _fyz_model
-                        _fm = _fyz_model(self.config, ctx._raw_message)
+                        # HANS_FYZIKA_F1_V1 (4. 11., /tazatel) — „kolik energie zabere ohřát
+                        # vodu, mám 5 litrů“ (teploty v předchozím tahu) → výraz bez ΔT a jeho
+                        # výsledek přebil správnou odpověď; „a kolik to bude v kWh?“ → „nerozumím“.
+                        # Přepis F1 nese-li víc čísel než holá věta, počítá se z něj.
+                        _fq = ctx._raw_message
+                        _f1q = getattr(self, '_f1_query', None) or ""
+                        _cis = lambda s: len(re.findall(r"\d+(?:[.,]\d+)?", s or ""))
+                        if _f1q and _cis(_f1q) > _cis(_fq):
+                            logging.getLogger(__name__).info(
+                                'HANS_FYZIKA_F1_V1: fyzika z přepisu %r', _f1q[:80])
+                            _fq = _f1q
+                        _fm = _fyz_model(self.config, _fq)
                         if _fm:
                             _fz = ("vypocet", _fm)
                     except Exception as _fme:
@@ -2453,6 +2464,14 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                             _fz = ("vypocet_model", _vm)   # HANS_VYPOCTY_VETOU_V1
                     except Exception as _vme:
                         logging.getLogger(__name__).debug('HANS_VYPOCTY_MODEL_V1: %s', _vme)
+                if not _fz:   # HANS_VYPOCET_NEVYSEL_V1 — výpočet měl být, program nedal výsledek
+                    try:
+                        from scripts.hans_vypocty_model import vypada_jako_vypocet as _vjv
+                        from scripts.hans_fyzika_model import vypada_jako_vypocet as _fjv
+                        if _vjv(ctx._raw_message) or _fjv(ctx._raw_message):
+                            ctx._vypocet_nevysel = True
+                    except Exception:
+                        pass
                 if _fz and _fz[0] == "priklad":
                     ctx.system += ("\n\nPŘÍKLAD S ČÍSLY (čísla spočítal program a jsou přesná — když "
                                    "uvádíš příklad s čísly, použij tento a jeho čísla, jiná nevymýšlej; "
@@ -3464,6 +3483,28 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
             # HANS_FYZIKA_VYSLEDEK_V1 (31. 10.) — výsledek výpočtu z programu musí být
             # v odpovědi číslicemi; model ho občas přepíše slovy a zkomolí („devatenicet
             # koma osm metrů za sekundu“ místo 19,8 m/s). Chybí-li → krátký řádek navíc.
+            # HANS_VYPOCET_NEVYSEL_V1 (4. 11., /tazatel A+B) — otázka na výpočet, program výsledek
+            # nedal (PC zaneprázdněné, výraz zahozen, chybí údaj z předchozího tahu) → model počítal
+            # z hlavy: Curie 159 let, do Vánoc 41 dní, 1. května 183/156, 200 l vody o řád vedle,
+            # rychlost družice 5× vedle. Číslo s jednotkou, které v otázce není → poctivá věta.
+            try:
+                if getattr(ctx, '_vypocet_nevysel', False) and not getattr(ctx, '_vypocet', None) \
+                        and ctx.response:
+                    _jed_rx = (r"(\d[\d  ]*(?:[,.]\d+)?(?:\s*[·×x*]\s*10\^?-?\d+)?)\s*(?:let|roků|roky|rok|dní|dny|den|"
+                               r"týdnů|měsíců|hodin|minut|sekund|s\b|J\b|kJ|MJ|kWh|Wh|W\b|kW|m/s|km/h|km|m\b|kg|N\b|Pa|"
+                               r"°C|Kč|korun|procent|%)")
+                    _q = ctx._raw_message or ""
+                    _nove = [m_.group(1) for m_ in re.finditer(_jed_rx, ctx.response)
+                             if re.sub(r"\s", "", m_.group(1)) not in re.sub(r"\s", "", _q)]
+                    if _nove:
+                        logging.getLogger(__name__).info(
+                            "HANS_VYPOCET_NEVYSEL_V1: výpočet bez výsledku programu, číslo z hlavy %s → poctivá věta",
+                            _nove[:3])
+                        ctx.response = ("Tohle bych musel spočítat a výpočet se mi teď nepovedl — "
+                                        "číslo z hlavy hádat nechci. Zkuste to prosím za chvíli znovu, "
+                                        "případně i se všemi údaji v jedné větě.")
+            except Exception as _nve:
+                logging.getLogger(__name__).debug("HANS_VYPOCET_NEVYSEL_V1: %s", _nve)
             try:
                 _vyp = getattr(ctx, '_vypocet', None)
                 # HANS_VYPOCTY_CISLO_Z_PROGRAMU_V1 (1. 11.) — model řekl jiné číslo než program
@@ -3471,6 +3512,12 @@ class OpenWebUIDirectHandler(SystemMixin, GroundingMixin, FaktaMixin, ModelMixin
                 if _vyp and ctx.response:   # HANS_VYPOCTY_DATA_Z_WD_V1
                     from scripts.hans_vypocty_model import srovnej_data as _srd
                     _r4, _zm4 = _srd(ctx.response, _vyp)
+                    from scripts.hans_vypocty_model import srovnej_vysledek_je as _srv2
+                    _r4, _zm6 = _srv2(_r4, _vyp)   # HANS_VYPOCTY_VYSLEDEK_JE_V1
+                    if _zm6:
+                        logging.getLogger(__name__).info(
+                            "HANS_VYPOCTY_VYSLEDEK_JE_V1: „výsledek je“ ≠ program → opraveno")
+                        ctx.response = _r4
                     from scripts.hans_vypocty_model import srovnej_letos as _srl
                     _r4, _zm5 = _srl(_r4, _vyp)   # HANS_VYPOCTY_LETOS_V1
                     if _zm5:
