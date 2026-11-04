@@ -1370,6 +1370,39 @@ _OBOR_TITUL = re.compile(r"(?<![a-z])(?:sport|hokej|extral|fotbal|tenis(?!k)|for
                          r"atlet|olympi|lig[aiey]\s+mistr|lize\s+mistr)")
 
 
+# HANS_ZPRAVY_EKONOMIKA_V1 (4. 11.) — „co ceny komodit, co sledovat v posledních dnech?“
+# (Matrix 3. 11.) → volný hovor, A1 přeskočena (klasifikátor: dotaz na Hanse) → VYMYŠLENO
+# „zlato 2370 $, Brent 89 $“. Ve sběru přitom „Ropa prudce zlevňuje“, „Ceny ropy klesají…“,
+# „Nafta i benzín opět zlevní“. Stejná stavba jako sport: rubrika v adrese / slovo v titulku.
+_OBOR_EKON_URL = re.compile(r"(?:/ekonomika/|/clanek/ekonomika-|/economie/|/%C3%A9conomie/|/business/|"
+                            r"/markets?/|/money/|/finance/|/byznys/|/wirtschaft/)", re.I)
+_OBOR_EKON_TITUL = re.compile(r"(?<![a-z])(?:komodit|burz|akci[ei]\b|akcii|akciov|inflac|rop[auyě]\b|ropn|"
+                              r"benzin|naft[aeyu]\b|cen[auy]\s+(?:plyn|elektrin|energi|zlat|rop)|"
+                              r"kurz\w*\s+(?:koruny|eura|dolaru)|cnb\b|urokov\w*\s+sazb)")
+_OBOR_EKON_PODOBOR = {
+    "komodity": (r"(?<![a-z])(?:komodit|rop[auyě]\b|ropn|zlat[oaeu]\b|plyn|benzin|naft[aeyu]\b|elektrin|"
+                 r"obil|psenic|stribr|kakao|oil|gold|brent)", ()),
+    "ropa": (r"(?<![a-z])(?:rop[auyě]\b|ropn|brent|oil|benzin|naft[aeyu]\b)", ()),
+    "zlato": (r"(?<![a-z])(?:zlat[oaeu]\b|gold)", ()),
+    "akcie": (r"(?<![a-z])(?:akci[ei]\b|akcii|akciov|burz|index\w*|stock)", ()),
+    "měny": (r"(?<![a-z])(?:kurz|korun[auy]\b|eur[aou]?\b|dolar|cnb\b)", ()),
+}
+_OBOR_EKON_SLOVO = (("komodit", "komodity"), ("zlat", "zlato"), ("ropa", "ropa"), ("ropy", "ropa"),
+                    ("ropu", "ropa"), ("benzin", "ropa"), ("naft", "ropa"), ("akcie", "akcie"),
+                    ("akcii", "akcie"), ("burz", "akcie"), ("kurz", "měny"), ("inflac", "ekonomika"),
+                    ("ekonomi", "ekonomika"))
+_OBOR_EKON = set(_OBOR_EKON_PODOBOR) | {"ekonomika"}
+
+
+def obor_ekonomika(dotaz: str):
+    """Podobor ekonomiky ('komodity', 'ropa', …, 'ekonomika'), nebo None."""
+    f = _bez_diakritiky(dotaz or "")
+    for kmen, ob in _OBOR_EKON_SLOVO:
+        if re.search(r"(?<![a-z])" + re.escape(kmen), f):
+            return ob
+    return None
+
+
 def obor_dotazu(dotaz: str):
     """'' = sport obecně, 'hokej'/'fotbal'/… = podobor, None = věta se na obor neptá."""
     f = _bez_diakritiky(dotaz or "")
@@ -1439,6 +1472,9 @@ def zpravy_obor(podobor: str, path: str = DB, hodin: float = 36.0, limit: int = 
     finally:
         c.close()
     vzor, url_kus = _OBOR_PODOBOR.get(podobor, (None, ()))
+    ekon = podobor in _OBOR_EKON   # HANS_ZPRAVY_EKONOMIKA_V1
+    if ekon:
+        vzor, url_kus = _OBOR_EKON_PODOBOR.get(podobor, (None, ()))
     nazvy = {z[0]: z[1] for z in ZDROJE}
     kand = []
     for tid, zdr, url, tit, jaz, cas, uid, poc in rows:
@@ -1446,7 +1482,10 @@ def zpravy_obor(podobor: str, path: str = DB, hodin: float = 36.0, limit: int = 
             continue
         f = _bez_diakritiky(tit)
         ul = (url or "").lower()
-        if not (_OBOR_SPORT_URL.search(ul) or _OBOR_TITUL.search(f)):
+        if ekon:
+            if not (_OBOR_EKON_URL.search(ul) or _OBOR_EKON_TITUL.search(f)):
+                continue
+        elif not (_OBOR_SPORT_URL.search(ul) or _OBOR_TITUL.search(f)):
             continue
         if vzor and not (re.search(vzor, f) or any(k in ul for k in url_kus)):
             continue
@@ -1467,8 +1506,8 @@ def zpravy_obor(podobor: str, path: str = DB, hodin: float = 36.0, limit: int = 
             break
     for d in out:
         d.pop("_uid", None)
-    _log.info("HANS_ZPRAVY_OBOR_V1: sport%s → %d kandidátů, %d zpráv",
-              (" / " + podobor) if podobor else "", len(kand), len(out))
+    _log.info("HANS_ZPRAVY_OBOR_V1: %s%s → %d kandidátů, %d zpráv", "ekonomika" if ekon else "sport",
+              (" / " + podobor) if podobor and podobor != "ekonomika" else "", len(kand), len(out))
     return {"rezim": "obor" if out else "nic", "hledano": "obor", "udalosti": out,
             "tema": True, "obor": podobor or "sport"}
 

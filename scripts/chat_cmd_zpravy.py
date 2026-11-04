@@ -41,12 +41,15 @@ def _cmd_zpravy(handler, name, args) -> str:
             cfg = _cl()
         r = None
         try:   # HANS_ZPRAVY_OBOR_V1 — sport podle rubriky, ne podle významu slova
-            from scripts.hans_zpravy import obor_dotazu, zpravy_obor
-            _ob = obor_dotazu(args or "")
+            from scripts.hans_zpravy import obor_dotazu, zpravy_obor, obor_ekonomika
+            _ob = obor_ekonomika(args or "")   # HANS_ZPRAVY_EKONOMIKA_V1
+            _zakl = "ekonomika" if _ob is not None else ""
+            if _ob is None:
+                _ob = obor_dotazu(args or "")
             if _ob is not None:
                 r = zpravy_obor(_ob)
-                if not r["udalosti"] and _ob:
-                    r = zpravy_obor("")
+                if not r["udalosti"] and _ob != _zakl:
+                    r = zpravy_obor(_zakl)
                     r["obor_nic"] = _ob
                 if not r["udalosti"]:
                     r = None
@@ -89,9 +92,17 @@ def _cmd_zpravy(handler, name, args) -> str:
            else "Ve zprávách k tomu mám:"]
     if r.get("obor"):   # HANS_ZPRAVY_OBOR_V1
         _on = {"sport": "ze sportu", "hokej": "z hokeje", "fotbal": "z fotbalu",
-               "tenis": "z tenisu", "formule 1": "z formule 1"}.get(r["obor"], "ze sportu")
-        out = [("O %s jsem v posledních dnech nic nesebral; ze sportu mám:" % r["obor_nic"])
-               if r.get("obor_nic") else "Ve zprávách %s z posledních dnů mám:" % _on]
+               "tenis": "z tenisu", "formule 1": "z formule 1", "ekonomika": "z ekonomiky",
+               "komodity": "o komoditách", "ropa": "o ropě a pohonných hmotách",
+               "zlato": "o zlatě", "akcie": "z burz a o akciích", "měny": "o kurzech měn"
+               }.get(r["obor"], "ze sportu")
+        _zak = "ekonomiky" if r["obor"] in ("ekonomika", "komodity", "ropa", "zlato", "akcie", "měny") else "sportu"
+        if re.search(r"\bgraf", str(args or ""), re.I):   # „nemáš po ruce graf vývoje ceny zlata?“
+            out_graf = "Graf ani přesné ceny nemám, jen titulky zpráv. "
+        else:
+            out_graf = ""
+        out = [out_graf + ("O %s jsem v posledních dnech nic nesebral; z %s mám:" % (r["obor_nic"], _zak))
+               if r.get("obor_nic") else out_graf + "Ve zprávách %s z posledních dnů mám:" % _on]
     for u in r["udalosti"]:
         kolik = (" — píše o tom %d médií" % u["medii"]) if u["medii"] >= 5 else (
             " — píše o tom %d média" % u["medii"] if u["medii"] >= 2 else "")

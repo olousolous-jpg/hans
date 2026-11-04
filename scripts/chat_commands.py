@@ -1523,9 +1523,12 @@ def thread_zpravy_obor(message: str, turns):
     msg = (message or "").strip()
     if not msg or len(msg) > 120:
         return None
+    if re.search(r"\b(um[íi][šs]|um[íi]te|dok[áa][žz]e[šs]|dok[áa][žz]ete|zvl[áa]dne[šs]|zvl[áa]dnete)\b",
+                 msg, re.I):
+        return None          # otázka na schopnost, ne na zprávy
     try:
-        from scripts.hans_zpravy import obor_dotazu
-        if obor_dotazu(msg) is None:
+        from scripts.hans_zpravy import obor_dotazu, obor_ekonomika
+        if obor_dotazu(msg) is None and obor_ekonomika(msg) is None:   # HANS_ZPRAVY_EKONOMIKA_V1
             return None
     except Exception:
         return None

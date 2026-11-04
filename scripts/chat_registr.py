@@ -766,6 +766,21 @@ def zaregistruj(_cc):
             r"(?:zapas\w*|utkani|derby|zavod\w*|finale)\b",
             r"\bvysledk\w*\s+(?:\w+\s+){0,2}?(?:sport\w*|hokej\w*|fotbal\w*|extral\w*|tenis\w*|"
             r"formul[ie]\b|f1|nhl|lig[aeyu]\s+mistr\w*)",
+            # HANS_ZPRAVY_EKONOMIKA_V1 (4. 11.) — aktuální ceny / burza / kurzy: „co ceny komodit,
+            # co sledovat v posledních dnech?“ → volný hovor → vymyšlené „zlato 2370 $, Brent 89 $“.
+            # Časové / vývojové slovo + ekonomické slovo, nebo „cena / vývoj / kolik stojí zlato…“;
+            # ne „co je to inflace“, „jak funguje burza“, „zlato na olympiádě 1998“, „namaluj“.
+            # 📏 3 995 vět: 2 shody, obě skutečné dotazy (3. 11. 20:34, 20:35).
+            (r"^(?![^?!]*\b(?:namaluj\w*|nakresli\w*|mas\s+rad|mate\s+rad|umis|umite|zlaty|"
+             r"zlata\s+(?:medail|kolekc)))"
+             r"(?=[^?!]*\b(?:dnes\w*|vcera\w*|ted\b|nyni|aktualn\w*|posledn\w*|tento\s+tyden|tydnu|"
+             r"nov[eyc]\w*|nejnov\w*|vyvij\w*|vyvoj\w*|sledovat|deje|stalo|zmen\w*|roste|rostou|klesa\w*|"
+             r"zdrazu\w*|zlevnu\w*))"
+             r"[^?!]*\b(?:komodit\w*|zlat[oa]\b|rop[auy]\b|benzin\w*|naft[auy]\b|burz[aeyu]\w*|akci[ie]\b|"
+             r"akcii|kurz\w*\s+(?:koruny|eura|dolaru|men)|inflac\w*|cen[auy]\s+(?:plynu|elektriny|energi\w*|"
+             r"potravin))"),
+            (r"\b(?:cen[auy]|vyvoj\w*|kolik\s+(?:ted\s+)?stoj\w*|kolik\s+je)\s+(?:\w+\s+){0,2}?"
+             r"(?:zlat[oa]|rop[ay]|benzin\w*|naft[ay]|komodit\w*|akcii|eura|dolaru|bitcoin\w*)\b"),
         ],
         handler=_cc._cmd_zpravy,
         help_text="Co je ve zprávách — /zpravy [téma]",

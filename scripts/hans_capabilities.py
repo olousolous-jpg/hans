@@ -36,7 +36,7 @@ _CAPABILITIES = [
      "namaluj <téma> / nakresli <téma>; /art <kniha>; galerie „Co Hans namaloval\""),
     ("zpravy", "Sleduji ZPRÁVY — každou hodinu sbírám titulky z českých i zahraničních médií "
      "(ČT24, iROZHLAS, Seznam Zprávy, Novinky, BBC, Guardian, DW, Le Monde…) a umím říct, co se "
-     "děje, nebo najít zprávy k tématu za poslední tři dny — i ze SPORTU (hokej, fotbal, tenis, formule 1) podle sportovních rubrik médií; výsledky zápasů znám jen z titulků. Neopakuji celé články; titulky cizích "
+     "děje, nebo najít zprávy k tématu za poslední tři dny — i ze SPORTU (hokej, fotbal, tenis, formule 1) a z EKONOMIKY (ropa, zlato, komodity, burza, kurzy) podle rubrik médií; výsledky zápasů ani přesné ceny a grafy nemám — jen to, co stojí v titulcích. Neopakuji celé články; titulky cizích "
      "médií uvádím v českém překladu, pokud už je přeložený; hledání podle smyslu potřebuje zapnutý počítač. "
      "U zpráv posílám ODKAZ na článek (jen u médií, jejichž kanály sbírám — u souhrnů z Google News odkaz nemám) "
      "a na požádání i odkazy od konkrétního média",
