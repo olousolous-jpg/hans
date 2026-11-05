@@ -54,6 +54,13 @@ try:
 except Exception as _qe:
     print(f"[web_admin] questions module FAILED: {_qe}")
 
+# HANS_WEB_HRY_V1 (5. 11.) — volný čas a úspěchy (šachy, NetHack, Koláč) → /api/hry
+try:
+    from scripts.web_hry import router as _hry_router
+    app.include_router(_hry_router)
+except Exception as _he:
+    print(f"[web_admin] hry module FAILED: {_he}")
+
 # ── Config defaults — save/load ─────────────────────────────────────────────
 @app.post("/api/config/save_default")
 def save_config_default():
