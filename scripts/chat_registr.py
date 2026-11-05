@@ -1229,6 +1229,18 @@ def zaregistruj(_cc):
         help_text="Hansovy tipy na zítřejší počasí a jak se trefil (proti oficiální předpovědi)",
     )
 
+    _cc.register(  # HANS_SACHY_V1
+        "sachy",
+        slash_aliases=["sachy", "šachy"],
+        nl_patterns=[
+            r"\bjak\s+(ti|v[áa]m)\s+jdou\s+[šs]achy\b",
+            r"\b(hraje[šs]|hrajete|hr[áa]l\s+jsi|hr[áa]l\s+jste)\s+(n[ěe]kdy\s+|u[žz]\s+)?[šs]achy\b",
+            r"\b[šs]ach(y|ů|ách|ov[éá]\s+parti[ei])\b.{0,30}\bkol[áa][čc]",
+        ],
+        handler=_cc._cmd_sachy,
+        help_text="Šachy s Koláčem — výhry, prohry, rozehraná partie",
+    )
+
     _cc.register(
         "experiment",
         slash_aliases=["experiment", "footgun"],

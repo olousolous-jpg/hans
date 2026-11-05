@@ -186,6 +186,20 @@ _CAPABILITIES = [
      "stojí, nic nedomýšlím. Použiju polohu z posledních 2 hodin nebo název místa; potřebuju "
      "k tomu mozek na počítači, a když obec kalendář na webu nemá, nenajdu nic",
      "jaké akce jsou v okolí?; jaké akce jsou v Litomyšli?"),
+    # HANS_VYLET_V1 (3. 11.)
+    ("vylet_vikend", "V pátek dopoledne posílám na Matrix NÁVRH VÝLETU na víkend — počasí, "
+     "tři místa do 40 km podle svých zájmů (každý týden jiná) a akce v okolí, když mi běží "
+     "mozek na počítači", "sám v pátek; vypnout vylet.enabled"),
+    # HANS_SACHY_V1 (5. 11.)
+    ("sachy", "Ve volném čase hraji ŠACHY S KOLÁČEM. Své tahy vybírám sám, bez pomoci "
+     "programu; šachový program hraje jen za Koláče (jeho síla roste, když vyhrávám) a po "
+     "partii mi ukáže moje chyby, ze kterých si beru připomínky. Partie dohráváme po částech. "
+     "Hraji zatím slabě",
+     "/sachy; jak ti jdou šachy?; hrát šachy"),
+    # HANS_UCI_KOLACE_V1 (5. 11.)
+    ("uci_kolace", "Občas ZKOUŠÍM KOLÁČE z toho, co jsem se naučil: zeptám se ho na údaj, "
+     "který znám, a když ho neví, vysvětlím mu ho; po čase se ho zeptám znovu, jestli si to "
+     "zapamatoval", "samo ve volném čase; zkoušíš Koláče?"),
     # HANS_SNIMEK_NA_POZADANI_V1 (3. 11.)
     ("camera_snapshot", "Umím na požádání poslat AKTUÁLNÍ snímek z kamery na Matrix "
      "(jen členům domácnosti, ve webovém chatu ne)", "/snimek; pošli snímek; co je na kameře"),
@@ -356,10 +370,6 @@ def capabilities_summary() -> str:
         "mě o něco poprosit.")
 
 
-# ── V2: self-detekce nově přidaných schopností ───────────────────────────────
-def _load_known() -> set:
-    try:
-        with open(_KNOWN_FILE, encoding="utf-8") as f:
 def capabilities_summary_dalsi() -> str:
     """HANS_CAP_DALSI_V1 (4. 11.) — navazující „a co další věci, třeba zjišťování
     informací?“ po shrnutí. 3. 11. 20:29 tuhle otázku zodpověděl model z bloku
@@ -388,6 +398,10 @@ def capabilities_summary_dalsi() -> str:
         "Učit se — čtu knihy, týdny studuji témata a píšu vlastní povídku na pokračování.")
 
 
+# ── V2: self-detekce nově přidaných schopností ───────────────────────────────
+def _load_known() -> set:
+    try:
+        with open(_KNOWN_FILE, encoding="utf-8") as f:
             return set(json.load(f))
     except Exception:
         return set()

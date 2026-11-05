@@ -706,6 +706,14 @@ class HansDialog:
                     self._run_dialog_stopa()
                 elif not _base_busy and not self._idle_active:
                     self._samotest_doma()
+                elif not _base_busy and self._idle_active:
+                    # HANS_SACHY_V1 — ve volném čase mezi dialogy partie šachů
+                    # s Koláčem; sezení má strop, nedohraná pokračuje příště.
+                    try:
+                        from scripts import hans_sachy
+                        hans_sachy.tick(self.config)
+                    except Exception as _se:
+                        _log.warning("HANS_SACHY_V1: %s", _se)
             except Exception as e:
                 _log.error("Dialog error: %s", e)
             self._stop.wait(30.0)
@@ -946,6 +954,17 @@ class HansDialog:
                     except Exception as _dze:
                         _log.warning("doplnění zásob selhalo: %s", _dze)
                     _rez = _kp.rezim(self.config, self._dialog_count)
+                    # HANS_UCI_KOLACE_V1 — část zkoušek obráceně: Hans zkouší Koláče
+                    _hzp = float((self.config.get("kolac_exam") or {}).get(
+                        "hans_zkousi_podil", 0))
+                    if (_rez == "zkouska" and _hzp > 0
+                            and __import__("random").random() < _hzp):
+                        try:
+                            if self._run_hans_zkousi():
+                                self._last_dialog = time.time()
+                                return
+                        except Exception as _hze:
+                            _log.warning("HANS_UCI_KOLACE_V1: %s", _hze)
                     if _rez == "zkouska" and _ke.zapnuto(self.config):
                         if self._run_zkouska():
                             # bez tohohle by hned následoval další dialog:
@@ -1584,6 +1603,90 @@ class HansDialog:
         if (self.config.get("kolac_exam", {}) or {}).get("cti_nahlas", False):
             if self.tts and getattr(self.tts, "enabled", False):
                 self._speak_dialog(prepis)
+        return True
+
+    def _run_hans_zkousi(self) -> bool:
+        """HANS_UCI_KOLACE_V1 (5. 11.) — Hans zkouší Koláče z toho, co sám umí.
+        Otázka ze zásoby faktů (jen ty, na které Hans odpověděl správně), Koláč
+        odpoví z hlavy, kód soudí podle klíče, Hans potvrdí nebo vysvětlí.
+        Po odstupu se Hans zeptá znovu (kolo 2) s Koláčovou pamětí vysvětlení.
+        True = proběhlo (běžný rozhovor se přeskočí)."""
+        from scripts import kolac_ucitel as ku
+        from scripts.hans_persona import persona_name
+        if not self._diary_path or not self._brain_up_cached():
+            return False
+        p = ku.vyber(self.config, self._diary_path)
+        if not p:
+            return False
+        name = persona_name(self.config)
+        kname = kolac_name(self.config)
+        dc = self.config.get("hans_dialog", {}) or {}
+        base = self.config.get("openwebui_chat", {}).get(
+            "base_url", "http://127.0.0.1:11434")
+        hans_model = (self.config.get("models", {}).get("dialog")
+                      or dc.get("ollama_model")
+                      or self.config.get("openwebui_chat", {}).get(
+                          "model_name", "jobautomation/OpenEuroLLM-Czech:latest"))
+        kolac_model = dc.get("kolac_model") or hans_model
+        km = self._kolac()
+        kolac_sys = km.build_system(p["tema"], "") if km else _build_system_prompt(self.config)
+        hans_sys = _build_hans_solo_system(self.config, p["tema"])
+        otazka = "%s, zkusím teď já vás: %s" % (kname, p["otazka"])
+        pam = ("\nCO TI %s DŘÍV VYSVĚTLIL (pamatuješ si to): „%s“\n" % (
+            name.upper(), p["pamet"])) if p.get("pamet") else ""
+        user_k = (f"{name} tě zkouší z toho, co se naučil.{pam}\n{name}: „{otazka}“\n\n"
+                  f"Teď řekni JEDNU krátkou repliku jako {kname}: odpověz na otázku, jak "
+                  f"nejlépe víš (konkrétní údaj). Když to nevíš, přiznej to — nic si "
+                  f"nevymýšlej.")
+        odp = self._one_line(kolac_model, kolac_sys, user_k, base)
+        if not odp:
+            return False
+        verdikt = ku.soud(odp, p["klic"], p["otazka"])
+        if verdikt == "ok":
+            ukol = (f"{kname} odpověděl SPRÁVNĚ (správně je: {p['klic']}). Teď řekni JEDNU "
+                    f"krátkou repliku jako {name}: potvrď mu to.")
+        else:
+            ukol = (f"{kname} odpověděl ŠPATNĚ nebo to nevěděl. Správně je: {p['klic']}"
+                    + (f" (tvůj zápisek: „{p['veta'][:300]}“)" if p.get("veta") else "")
+                    + f". Teď řekni JEDNU repliku jako {name}: řekni mu, že to tak není, "
+                      f"a krátce mu vysvětli, jak to je — správný údaj řekni PŘESNĚ tak, "
+                      f"jak je napsaný (číslo nebo rok ČÍSLICEMI), nic dalšího si "
+                      f"nevymýšlej.")
+        user_h = (f"Zkoušíš {kname}e z toho, co ses naučil.\n{name}: „{otazka}“\n"
+                  f"{kname}: „{odp}“\n\n{ukol}")
+        vys = self._one_line(hans_model, hans_sys, user_h, base)
+        if not vys:
+            return False
+        vys_ok = None
+        if verdikt != "ok":
+            vys_ok = 1 if ku.soud(vys, p["klic"], p["otazka"]) == "ok" else 0
+            if not vys_ok:   # jeden opakovaný pokus — správný údaj ve vysvětlení chybí
+                _v2 = self._one_line(hans_model, hans_sys, user_h + (
+                    f"\n\nPOZOR: ve vysvětlení MUSÍ doslova zaznít „{p['klic']}“."), base)
+                if _v2 and ku.soud(_v2, p["klic"], p["otazka"]) == "ok":
+                    vys, vys_ok = _v2, 1
+        # Koláč si pamatuje jen vysvětlení se správným údajem (jinak by se
+        # učil Hansův omyl); jen ta se po odstupu opakují (kolo 2)
+        zid = ku.zapis(self._diary_path, p, odp, verdikt,
+                       vys if vys_ok else "", vys_ok)
+        prepis = "%s: %s\n%s: %s\n%s: %s" % (name, otazka, kname, odp, name, vys)
+        try:
+            import json as _js
+            import sqlite3 as _sql
+            with _sql.connect(self._diary_path) as _db:
+                _db.execute(
+                    "INSERT INTO diary (ts, event_type, title, note, data) VALUES (?,?,?,?,?)",
+                    (time.time(), "hans_zkousi",
+                     "Zkoušel jsem %s: %s" % (kname, p["tema"][:80]), prepis,
+                     _js.dumps({"verdikt": verdikt, "kolo": p["kolo"], "id": zid,
+                                "vysvetleni_ok": vys_ok}, ensure_ascii=False)))
+                _db.commit()
+        except Exception as e:
+            _log.warning("HANS_UCI_KOLACE_V1: zápis do deníku selhal: %s", e)
+        _log.info("HANS_UCI_KOLACE_V1: kolo %d, téma %r — Koláč %s, vysvětlení %s",
+                  p["kolo"], p["tema"], verdikt,
+                  {1: "s údajem", 0: "BEZ údaje", None: "—"}[vys_ok])
+        self._recent_replies.append("%s: %s" % (name, otazka))
         return True
 
     def _cti_nahlas(self) -> bool:

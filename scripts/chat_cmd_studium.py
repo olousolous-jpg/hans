@@ -885,5 +885,14 @@ def _cmd_predikce(handler, name, args) -> str:  # HANS_PREDIKCE_V1
     return souhrn(dbp)
 
 
+def _cmd_sachy(handler, name, args) -> str:  # HANS_SACHY_V1
+    """/sachy — bilance šachů s Koláčem, rozehraná partie, na co si dávat pozor."""
+    from scripts.hans_sachy import prehled
+    cfg = getattr(handler, "config", {}) or {}
+    if not (cfg.get("sachy", {}) or {}).get("enabled", True):
+        return "Šachy s Koláčem mám teď vypnuté."
+    return prehled(cfg)
+
+
 # ROZDELENI_PRIKAZU_V1 — až na konci, viz hlavička
 from scripts import chat_commands as _cc  # noqa: E402
