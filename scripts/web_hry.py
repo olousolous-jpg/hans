@@ -55,6 +55,14 @@ def api_hry():
     except Exception:
         vahy = {}
     zetony = int(zet[0][0]) - len(vys) if zet else 0
+    # HANS_NETHACK_ZAZNAM_V1 — poslední mapa a rozhodnutí (soubor píše hra)
+    posl = {}
+    try:
+        import json as _js
+        posl = _js.load(open("data/nethack/posledni.json", encoding="utf-8"))
+        posl["kdy"] = _datum(posl.get("ts"))
+    except Exception:
+        posl = {}
     return {
         "sachy": {
             "vyhry": sbil.get("výhra", 0), "remizy": sbil.get("remíza", 0),
@@ -69,6 +77,7 @@ def api_hry():
             "patro": (nh_best[0][1] or 0) if nh_best else 0,
             "bezi": ({"skore": nh_bezi[0][0] or 0, "patro": nh_bezi[0][1] or 1,
                       "rozhodnuti": nh_bezi[0][2] or 0} if nh_bezi else None),
+            "posledni": posl,
             "hry": [{"kdy": _datum(t), "skore": s or 0, "patro": p or 1, "konec": d or "",
                      "rozhodnuti": k or 0} for t, s, p, d, k in nh],
         },

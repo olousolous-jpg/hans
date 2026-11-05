@@ -434,6 +434,9 @@ button.btn { border-radius: 999px; font-weight: 700; min-height: 40px; }
       <div><div class="ob-label">NetHack</div><div id="hry-nethack">—</div></div>
       <div><div class="ob-label">Zkouším Koláče</div><div id="hry-ucitel">—</div></div>
     </div>
+    <div id="hry-mapa-box" style="margin-top:16px;display:none"><div class="ob-label">NetHack — poslední pohled do hry <span id="hry-mapa-kdy" style="font-weight:400"></span></div>
+      <pre id="hry-mapa" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.15;background:#14161a;color:#d8dde3;padding:10px;border-radius:8px;overflow-x:auto;margin:6px 0"></pre>
+      <div id="hry-mapa-tahy" style="font-size:13px;color:var(--fg2)"></div></div>
     <div style="margin-top:16px"><div class="ob-label">Síň úspěchů</div><div id="hry-sin" style="font-size:14px;line-height:1.6">—</div></div>
     <div style="font-size:12px;color:var(--fg2);margin-top:8px">Výsledky počítá program (šachový program, hra, kontrola odpovědí), ne Hans sám.</div>
   </section>
@@ -2214,6 +2217,15 @@ async function loadHry() {
     document.getElementById('hry-ucitel').innerHTML =
       `<div style="font-size:19px;font-weight:700">${u.zkouseno||0}× zkoušel</div>
        <div style="font-size:13px;color:var(--fg2)">napoprvé věděl ${u.vedel||0} · napodruhé si zapamatoval ${u.zapamatoval||0} z ${u.opakovano||0}${vaha('ucitel')}</div>`;
+    const pm = n.posledni || {};
+    const mb = document.getElementById('hry-mapa-box');
+    if (pm.mapa) {
+      mb.style.display = '';
+      document.getElementById('hry-mapa').textContent = pm.mapa;
+      document.getElementById('hry-mapa-kdy').textContent = pm.kdy ? '(' + pm.kdy + ')' : '';
+      document.getElementById('hry-mapa-tahy').textContent =
+        'Poslední rozhodnutí: ' + (pm.historie||[]).join(' → ') + (pm.zprava ? ' · hra: ' + pm.zprava : '');
+    } else { mb.style.display = 'none'; }
     document.getElementById('hry-zetony').textContent =
       `žetonů ${m.zetony||0}` + ((m.vysady||[]).length ? ` · výsad využito ${(m.vysady||[]).length}` : '');
     const sin = (m.sin||[]);

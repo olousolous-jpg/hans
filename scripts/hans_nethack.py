@@ -43,6 +43,7 @@ def _akce():
         ("počkat", A.MiscDirection.WAIT), ("hledat", A.Command.SEARCH),
         ("sebrat", A.Command.PICKUP), ("jíst", A.Command.EAT),
         ("vykopnout", A.Command.KICK), ("otevřít", A.Command.OPEN),
+        ("_pray", A.Command.PRAY), ("_quaff", A.Command.QUAFF),
         ("_more", A.MiscAction.MORE), ("_esc", A.Command.ESC),
     ] + _pismena()
 
@@ -228,9 +229,32 @@ def volby(obs, nav=None) -> dict:
     if any("closed door" in D(y + dy, x + dx) for (dy, dx), _ in sous):
         v["otevřít dveře"] = ("otevřít zavřené dveře vedle tebe", "OPENDOOR")
     # jíst jen s jídlem v batohu (jinak „jíst“ dokola bez účinku)
-    if bl[nh.NLE_BL_HUNGER] >= 1 and any(int(o) == int(nh.FOOD_CLASS)
+    # NLE_BL_HUNGER: 0 nasycen, 1 bez hladu, 2 hlad, 3 slabost, 4 omdlévá
+    if bl[nh.NLE_BL_HUNGER] >= 2 and any(int(o) == int(nh.FOOD_CLASS)
                                          for o in obs["inv_oclasses"]):
         v["jíst"] = ("najíst se (máš hlad a jídlo v batohu)", "EAT")
+    # HANS_NETHACK_VIC_V1 (5. 11.) — lektvar, modlitba, ústup
+    hp, hpmax = int(bl[nh.NLE_BL_HP]), max(1, int(bl[nh.NLE_BL_HPMAX]))
+    cas = int(bl[nh.NLE_BL_TIME])
+    if hp < 0.5 * hpmax and _pismeno(obs, lambda s, o: o == int(nh.POTION_CLASS)
+                                     and "healing" in s):
+        v["vypít lektvar"] = ("vypít léčivý lektvar (máš %d z %d životů)" % (hp, hpmax), "QUAFF")
+    _posl_modl = max([a[1] for a in nav if a[0] == "P"] or [-10 ** 6])
+    if (hp < max(6, hpmax / 7)) and cas - _posl_modl > 1000 and cas > 300:
+        v["modlit se"] = ("pomodlit se k bohu o záchranu (životy kriticky nízko; "
+                          "smí se jen zřídka)", "PRAY")
+    if "zaútočit" in v and hp < 0.4 * hpmax:
+        mon = [(dy, dx) for (dy, dx), g in sous if nh.glyph_is_monster(g)
+               and not nh.glyph_is_pet(g)]
+        if mon:
+            my, mx_ = mon[0]
+            kam = [(dy, dx) for (dy, dx) in _SMER
+                   if 0 <= y + dy < H and 0 <= x + dx < W
+                   and _pruchozi(D(y + dy, x + dx), 0)
+                   and not nh.glyph_is_monster(int(gl[y + dy][x + dx]))
+                   and max(abs(y + dy - (y + my)), abs(x + dx - (x + mx_))) >= 2]
+            if kam:
+                v["ustoupit"] = ("ustoupit od příšery (máš málo životů)", ("DIR", kam[0]))
     # HANS_NETHACK_VOLBY_V1 — pasivní volby jen tam, kde dávají smysl (s modelem
     # 5. 11.: jinak „hledat/odpočinout“ dokola a stál na místě)
     if "prozkoumat" not in v and "ke schodům" not in v and "dolů" not in v:
@@ -240,7 +264,31 @@ def volby(obs, nav=None) -> dict:
     return v
 
 
-def _hans_akce(config, obs, historie, stoji, nav=None, zakaz=None) -> tuple:
+def _pismeno(obs, pred):
+    """Písmeno první věci v batohu, pro kterou pred(popis, třída) platí."""
+    for s, l, o in zip(obs["inv_strs"], obs["inv_letters"], obs["inv_oclasses"]):
+        if int(l) and pred(bytes(s).decode("latin1").strip("\x00"), int(o)):
+            return chr(int(l))
+    return None
+
+
+_POUCENI = {"hlad": "Když máš hlad, najez se — minule jsi umřel hlady.",
+            "zabit": "Při málo životech ustup nebo vypij léčivý lektvar — minule tě zabila příšera.",
+            "utopil": "Pozor na vodu — minule ses utopil."}
+
+
+def pouceni(c) -> list:
+    """HANS_NETHACK_POUCENI_V1 — připomínky z příčin konce posledních 5 her (kód)."""
+    rows = [r[0] or "" for r in c.execute(
+        "SELECT duvod FROM nethack_hry WHERE stav='konec' ORDER BY id DESC LIMIT 5")]
+    out = []
+    for k, veta in _POUCENI.items():
+        if any(k in r for r in rows) and veta not in out:
+            out.append(veta)
+    return out[:2]
+
+
+def _hans_akce(config, obs, historie, stoji, nav=None, zakaz=None, pouceni=None) -> tuple:
     from scripts.ollama_client import ollama_generate
     v = volby(obs, nav)
     # HANS_NETHACK_ZAKAZ_V1 — volba, která 3× po sobě nic nezměnila, na chvíli pryč
@@ -252,6 +300,12 @@ def _hans_akce(config, obs, historie, stoji, nav=None, zakaz=None) -> tuple:
             "hledáš schody dolů, abys šel hlouběji. Rozhoduješ, CO udělat; cestu najdeš "
             "sám. Odpověz JEDNOU volbou přesně ze seznamu (jen její název).")
     pr = "%s\nZpráva hry: %s\n%s\n" % (_stav(obs), _zprava(obs) or "-", popis(obs))
+    inv = [bytes(s).decode("latin1").strip("\x00") for s, l in
+           zip(obs["inv_strs"], obs["inv_letters"]) if int(l)]
+    if inv:
+        pr += "Máš u sebe: %s\n" % "; ".join(inv[:12])
+    if pouceni:
+        pr += "Z minulých her víš: %s\n" % " ".join(pouceni)
     if historie:
         pr += "Tvá poslední rozhodnutí: %s\n" % ", ".join(historie[-6:])
     if stoji:
@@ -307,6 +361,23 @@ def _proved(env, idx, obs, volba, v, max_kroku=10, nav=None):
             konec = konec or d or tr
     if co == "DOWN":
         krok(idx["dolů"])
+    elif co == "QUAFF":
+        obs, r, d, tr, _ = env.step(idx["_quaff"])
+        konec = konec or d or tr
+        p = _pismeno(obs, lambda s, o: o == int(nh.POTION_CLASS) and "healing" in s)
+        if not konec and p and ("_k_" + p) in idx and "drink" in _tty(obs):
+            krok(idx["_k_" + p])
+        else:
+            krok(idx["_esc"])
+    elif co == "PRAY":
+        obs, r, d, tr, _ = env.step(idx["_pray"])
+        konec = konec or d or tr
+        if not konec and "Are you sure you want to pray" in _tty(obs):
+            krok(idx["_k_y"])
+        else:
+            krok(idx["_more"]) if "--More--" in _tty(obs) else None
+        if nav is not None:
+            nav.add(("P", int(obs["blstats"][nh.NLE_BL_TIME])))
     elif co == "PICKUP":
         krok(idx["sebrat"])
     elif co == "EAT":
@@ -401,9 +472,18 @@ def _konec_hry(config, c, hid, obs, duvod):
     _HRA.clear()
 
 
-def _duvod_smrti(obs) -> str:
-    t = _tty(obs)
+def _duvod_smrti(obs, zpravy=None) -> str:
+    t = _tty(obs) + "\n" + "\n".join(zpravy or [])
     import re
+    zl = " ".join(zpravy or []).lower()
+    if "starv" in zl or "faint" in zl:
+        return "umřel hlady"
+    if "drown" in zl:
+        return "utopil se"
+    _ut = [z for z in (zpravy or []) if re.search(r"\b(bites|hits|stings|kicks|claws|"
+                                                    r"touches|butts|strikes)\b", z)]
+    if _ut:
+        return "zabit (%s)" % _ut[-1][:60]
     m = re.search(r"killed by ([^\n]{3,60})", t)
     if m:
         return "zabit (%s)" % m.group(1).strip()
@@ -411,6 +491,47 @@ def _duvod_smrti(obs) -> str:
         if k in t.lower():
             return v
     return "smrt"
+
+
+def mapa(obs) -> str:
+    """Mapa jako text (řádky 1–21 obrazovky) + stavový řádek."""
+    r = _tty(obs).splitlines()
+    return "\n".join(x.rstrip() for x in r[1:24])
+
+
+def _denik_tahu(h, volba, ok, volby_, pred, obs, r) -> None:
+    """HANS_NETHACK_ZAZNAM_V1 — data/nethack/hry/<id>.jsonl: každé rozhodnutí
+    (co viděl, z čeho volil, co zvolil, jak dopadlo); mapa každé 10. rozhodnutí."""
+    import os as _os
+    try:
+        d = _os.path.join("data", "nethack", "hry")
+        _os.makedirs(d, exist_ok=True)
+        rec = {"ts": round(time.time(), 1), "n": h.get("kroky", 0), "stav": pred[0],
+               "zprava": pred[1], "volby": volby_, "volba": volba, "platna": ok,
+               "po_zprava": _zprava(obs), "po_stav": _stav(obs), "body": float(r or 0)}
+        if h.get("kroky", 0) % 10 == 0:
+            rec["mapa"] = mapa(obs)
+        h["posledni_mapa"] = mapa(obs)
+        # web běží v jiném procesu → poslední stav i do souboru
+        _tmp = _os.path.join("data", "nethack", "posledni.json.tmp")
+        json.dump({"id": h["id"], "ts": time.time(), "mapa": h["posledni_mapa"],
+                   "historie": list(h.get("historie", []))[-8:] + [volba],
+                   "zprava": _zprava(obs), "stav": _stav(obs)},
+                  open(_tmp, "w", encoding="utf-8"), ensure_ascii=False)
+        _os.replace(_tmp, _os.path.join("data", "nethack", "posledni.json"))
+        with open(_os.path.join(d, "%d.jsonl" % h["id"]), "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:
+        _log.debug("HANS_NETHACK_ZAZNAM_V1: %s", e)
+
+
+def stav_ted() -> dict:
+    """Pro web: rozehraná hra v paměti (mapa, posledních 8 rozhodnutí)."""
+    if not _HRA:
+        return {}
+    return {"id": _HRA.get("id"), "mapa": _HRA.get("posledni_mapa") or "",
+            "historie": list(_HRA.get("historie", []))[-8:],
+            "zpravy": list(_HRA.get("zpravy", []))[-4:]}
 
 
 def tick(config: dict, ted: float = None) -> str:
@@ -442,7 +563,8 @@ def _sezeni(config, cfg, ted) -> str:
             c.execute("UPDATE nethack_hry SET stav='prerusena', konec_ts=?, duvod="
                       "'přerušeno restartem' WHERE stav='bezi'", (ted,))
             c.commit()
-            k = c.execute("SELECT max(konec_ts) FROM nethack_hry").fetchone()[0]
+            # přerušená (restart) pauzu nespouští — jen dohraná
+            k = c.execute("SELECT max(konec_ts) FROM nethack_hry WHERE stav='konec'").fetchone()[0]
             try:   # HANS_MOTIVACE_V1 — víc času, když se zlepšuje
                 from scripts.hans_motivace import vaha as _vaha
                 _m = _vaha(config, "nethack")
@@ -456,12 +578,18 @@ def _sezeni(config, cfg, ted) -> str:
             except ImportError:
                 return "chybí nle"
             akce = _akce()
-            env = gym.make("NetHackScore-v0", actions=tuple(a for _, a in akce))
+            # HANS_NETHACK_ZAZNAM_V1 — celý záznam hry (ttyrec, přehratelný) + deník tahů
+            import os as _os
+            _tdir = _os.path.join("data", "nethack", "ttyrec")
+            _os.makedirs(_tdir, exist_ok=True)
+            env = gym.make("NetHackScore-v0", actions=tuple(a for _, a in akce),
+                           save_ttyrec_every=1, savedir=_tdir, max_episode_steps=200000)
             obs, _ = env.reset()
             cur = c.execute("INSERT INTO nethack_hry (start_ts, posledni_ts, stav, sezeni, "
                             "kroky, neplatne) VALUES (?,?,?,0,0,0)", (ted, ted, "bezi"))
             c.commit()
-            _HRA.update({"env": env, "obs": obs, "id": cur.lastrowid, "akce": akce,
+            _HRA.update({"pouceni": pouceni(c), "env": env, "obs": obs, "id": cur.lastrowid,
+                         "akce": akce,
                          "skore": 0, "kroky": 0, "sezeni": 0, "neplatne": 0,
                          "max_hloubka": 1, "historie": [], "posledni": 0.0, "stoji": 0,
                          "pozice": None, "nav": set()})
@@ -478,12 +606,14 @@ def _sezeni(config, cfg, ted) -> str:
             h.setdefault("zakaz", {})
             h["zakaz"] = {s: k for s, k in h["zakaz"].items() if k > h["kroky"]}
             volba, ok, v = _hans_akce(config, obs, h["historie"], h["stoji"], h["nav"],
-                                      h["zakaz"])
+                                      h["zakaz"], h.get("pouceni"))
             _stav0 = (_zprava(obs), int(obs["blstats"][nh.NLE_BL_TIME]))
             if volba is None:
                 break     # model nedostupný → pokračuje příště
             h["neplatne"] += 0 if ok else 1
+            _pred = (_stav(obs), _zprava(obs))
             obs, r, done = _proved(env, idx, obs, volba, v, nav=h["nav"])
+            _denik_tahu(h, volba, ok, list(v), _pred, obs, r)
             h["kroky"] += 1
             n += 1
             h["historie"] = (h["historie"] + [volba])[-12:]
@@ -497,11 +627,14 @@ def _sezeni(config, cfg, ted) -> str:
             h["cas"] = max(h.get("cas", 0), int(bl[nh.NLE_BL_TIME]))
             h["skore"] += r
             h["obs"] = obs
+            _zp = _zprava(obs)
+            if _zp:
+                h["zpravy"] = (h.get("zpravy", []) + [_zp])[-6:]
             if done:
                 break
         h["posledni"] = time.time()
         if done:
-            _konec_hry(config, c, h["id"], h["obs"], _duvod_smrti(h["obs"]))
+            _konec_hry(config, c, h["id"], h["obs"], _duvod_smrti(h["obs"], h.get("zpravy")))
             return "konec"
         h["sezeni"] += 1
         c.execute("UPDATE nethack_hry SET posledni_ts=?, skore=?, max_hloubka=?, kroky=?, "
