@@ -243,7 +243,8 @@ def krok_mimo(config: dict, db: str):
         _hs._log.info("HANS_STUDY_MIMO_V1: návrh z oboru '%s' nepoužitelný (%s)",
                       obor, (gen or {}).get("topic", ""))
         return None
-    if c.get("direction_topic_auto", False):
+    # HANS_MOTIVACE_V1 — výsada: za úspěchy si Hans zařadí téma bez čekání
+    if c.get("direction_topic_auto", False) or _vysada(config, gen["topic"]):
         from scripts.hans_study_kurikulum import add_pending_topic
         res = add_pending_topic(db, gen["topic"])
         _vloz(db, gen["topic"], gen["why"], -1,
@@ -255,6 +256,17 @@ def krok_mimo(config: dict, db: str):
     _hs._log.info("HANS_STUDY_MIMO_V1: NÁVRH tématu mimo koníčky [%d] '%s' (obor %s)",
                   pid, gen["topic"], obor)
     return "cekam"
+
+
+def _vysada(config: dict, tema: str) -> bool:
+    """HANS_MOTIVACE_V1 — žeton za úspěch → téma studia bez schválení."""
+    try:
+        from scripts.hans_motivace import pouzij_vysadu
+        return pouzij_vysadu(config, "téma studia",
+                             "zařadil jsem si ke studiu téma „%s“ bez čekání na "
+                             "schválení" % tema)
+    except Exception:
+        return False
 
 
 def krok_smeru(config: dict, db: str) -> str:
@@ -312,7 +324,8 @@ def krok_smeru(config: dict, db: str) -> str:
                       "nebo už nastudovaný (%s) → výběr z koníčků",
                       (gen or {}).get("topic", ""))
         return "dal"
-    if c.get("direction_topic_auto", False):
+    # HANS_MOTIVACE_V1 — výsada: za úspěchy si Hans zařadí téma bez čekání
+    if c.get("direction_topic_auto", False) or _vysada(config, gen["topic"]):
         from scripts.hans_study_kurikulum import add_pending_topic
         res = add_pending_topic(db, gen["topic"])
         _vloz(db, gen["topic"], gen["why"], sid,

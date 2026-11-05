@@ -1870,5 +1870,19 @@
         "kolac_sila_start": 0.3,
         "kolac_sila_krok": 0.05,
         "_note": "HANS_SACHY_V1 (5. 11. 2026) — Hans hraje šachy s Koláčem ve volném čase (smyčka hans_dialog). Koláč = Stockfish (/usr/games/stockfish na Pi) se silou kolac_sila (podíl tahů enginu, zbytek náhodný; ±krok podle výsledku). Sezení max_minut/max_tahu, nedohraná partie pokračuje po pauza_min; nová po nova_po_h. Hans táhne modelem evening_reflection.voice_model. Uživatel 5. 11.: činnost mimo četbu pro Severku."
+    },
+    "nethack": {
+        "enabled": true,
+        "max_kroku": 60,
+        "max_minut": 4,
+        "pauza_min": 20,
+        "nova_po_h": 2,
+        "_note": "HANS_NETHACK_V1 (5. 11. 2026) — Hans hraje NetHack (pip nle, na Pi) ve volném čase ve smyčce hans_dialog. Hans volí cíl (prozkoumat, schody, věc, útok…), cestu najde kód. Hra jen v paměti procesu (restart = přerušená). Sezení max_kroku rozhodnutí / max_minut, pauza_min mezi sezeními, nova_po_h po konci (dělí váha motivace)."
+    },
+    "motivace": {
+        "enabled": true,
+        "vaha_min": 0.5,
+        "vaha_max": 2.0,
+        "_note": "HANS_MOTIVACE_V1 (5. 11. 2026) — úspěchy spočítané kódem (výhra v šachu, rekord/patro v NetHacku, Koláč si zapamatoval) → žetony + síň úspěchů (deník uspech, důležitost 9); žeton = výsada (téma studia bez schválení); váha 0,5–2× volného času podle pokroku činnosti."
     }
 }

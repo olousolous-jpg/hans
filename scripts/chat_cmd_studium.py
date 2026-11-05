@@ -885,6 +885,18 @@ def _cmd_predikce(handler, name, args) -> str:  # HANS_PREDIKCE_V1
     return souhrn(dbp)
 
 
+def _cmd_nethack(handler, name, args) -> str:  # HANS_NETHACK_V1
+    from scripts.hans_nethack import prehled
+    return prehled(getattr(handler, "config", {}) or {})
+
+
+def _cmd_uspechy(handler, name, args) -> str:  # HANS_MOTIVACE_V1
+    from scripts.hans_motivace import prehled, vyhodnot
+    cfg = getattr(handler, "config", {}) or {}
+    vyhodnot(cfg)
+    return prehled(cfg)
+
+
 def _cmd_sachy(handler, name, args) -> str:  # HANS_SACHY_V1
     """/sachy — bilance šachů s Koláčem, rozehraná partie, na co si dávat pozor."""
     from scripts.hans_sachy import prehled

@@ -199,14 +199,20 @@ def _do_deniku(config, c, pid, board, chess):
         _log.warning("HANS_SACHY_V1: zápis do deníku selhal: %s", e)
 
 
-def _je_cas(c, cfg, ted) -> tuple:
+def _je_cas(c, cfg, ted, config=None) -> tuple:
     """(id rozehrané partie nebo 0 pro novou, nebo None když není čas)."""
     r = c.execute("SELECT id, posledni_ts FROM sachy_partie WHERE stav='bezi' "
                   "ORDER BY id DESC LIMIT 1").fetchone()
     if r:
         return r[0] if ted - float(r[1] or 0) >= cfg["pauza_min"] * 60 else None
     k = c.execute("SELECT max(konec_ts) FROM sachy_partie").fetchone()[0]
-    if k and ted - float(k) < cfg["nova_po_h"] * 3600:
+    # HANS_MOTIVACE_V1 — kde se Hans zlepšuje, dostane víc času (0,5–2×)
+    try:
+        from scripts.hans_motivace import vaha as _vaha
+        _m = _vaha(config, "sachy")
+    except Exception:
+        _m = 1.0
+    if k and ted - float(k) < cfg["nova_po_h"] * 3600 / _m:
         return None
     return 0
 
@@ -236,7 +242,7 @@ def tick(config: dict, ted: float = None) -> str:
 def _sezeni(config, cfg, ted) -> str:
     c = _db(config)
     try:
-        pid = _je_cas(c, cfg, ted)
+        pid = _je_cas(c, cfg, ted, config)
         if pid is None:
             return "není čas"
         try:

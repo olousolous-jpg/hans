@@ -712,6 +712,10 @@ class HansDialog:
                     try:
                         from scripts import hans_sachy
                         hans_sachy.tick(self.config)
+                        # HANS_NETHACK_V1 + HANS_MOTIVACE_V1
+                        from scripts import hans_nethack, hans_motivace
+                        hans_nethack.tick(self.config)
+                        hans_motivace.vyhodnot(self.config)
                     except Exception as _se:
                         _log.warning("HANS_SACHY_V1: %s", _se)
             except Exception as e:
@@ -957,6 +961,11 @@ class HansDialog:
                     # HANS_UCI_KOLACE_V1 — část zkoušek obráceně: Hans zkouší Koláče
                     _hzp = float((self.config.get("kolac_exam") or {}).get(
                         "hans_zkousi_podil", 0))
+                    try:   # HANS_MOTIVACE_V1 — víc, když se Koláč učí
+                        from scripts.hans_motivace import vaha as _vaha
+                        _hzp = min(0.8, _hzp * _vaha(self.config, "ucitel"))
+                    except Exception:
+                        pass
                     if (_rez == "zkouska" and _hzp > 0
                             and __import__("random").random() < _hzp):
                         try:

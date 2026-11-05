@@ -218,6 +218,23 @@ def _odezva(conn, since: float) -> tuple:
                             "%d z %d" % (b["zapamatoval"], b["opakovano"])))
     except Exception:
         pass
+    # HANS_NETHACK_V1 + HANS_MOTIVACE_V1
+    try:
+        r = conn.execute("SELECT count(*), max(skore), max(max_hloubka) FROM nethack_hry "
+                         "WHERE stav IN ('konec','prerusena') AND konec_ts>=?", (since,)).fetchone()
+        if r and r[0]:
+            vlastni.append(("her NetHacku (nejlepší skóre, nejhlubší patro; počítá hra)",
+                            "%d (%d, %d)" % (r[0], r[1] or 0, r[2] or 1)))
+    except Exception:
+        pass
+    try:
+        r = conn.execute("SELECT count(*), coalesce(sum(zetony),0) FROM motivace_udalosti "
+                         "WHERE ts>=?", (since,)).fetchone()
+        if r and r[0]:
+            vlastni.append(("úspěchů spočítaných programem (žetonů na výsady)",
+                            "%d (%d)" % (r[0], r[1])))
+    except Exception:
+        pass
     # HANS_SACHY_V1 — výsledek počítá engine, ne já
     try:
         r = conn.execute("SELECT sum(vysledek='výhra'), sum(vysledek='remíza'), "

@@ -196,6 +196,15 @@ _CAPABILITIES = [
      "partii mi ukáže moje chyby, ze kterých si beru připomínky. Partie dohráváme po částech. "
      "Hraji zatím slabě",
      "/sachy; jak ti jdou šachy?; hrát šachy"),
+    # HANS_NETHACK_V1 (5. 11.)
+    ("nethack", "Ve volném čase hraji počítačovou hru NETHACK — procházím podzemí, bojuji "
+     "a hledám schody hlouběji; rozhoduji, kam jít a co udělat, cestu mi najde program. "
+     "Skóre a patro počítá hra. Hraji zatím slabě", "/nethack; hraješ nethack?; hrát nethack"),
+    # HANS_MOTIVACE_V1 (5. 11.)
+    ("uspechy", "Za ÚSPĚCHY, které spočítá program (výhra v šachu, rekord v NetHacku, Koláč "
+     "si zapamatoval, co jsem ho naučil), dostávám žetony a zápis do síně úspěchů; žeton "
+     "mohu použít na výsadu — zařadit si téma studia bez čekání na schválení. Víc volného "
+     "času dostává činnost, ve které se zlepšuji", "/uspechy; jaké máš úspěchy?"),
     # HANS_UCI_KOLACE_V1 (5. 11.)
     ("uci_kolace", "Občas ZKOUŠÍM KOLÁČE z toho, co jsem se naučil: zeptám se ho na údaj, "
      "který znám, a když ho neví, vysvětlím mu ho; po čase se ho zeptám znovu, jestli si to "

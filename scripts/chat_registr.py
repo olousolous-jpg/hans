@@ -1241,6 +1241,25 @@ def zaregistruj(_cc):
         help_text="Šachy s Koláčem — výhry, prohry, rozehraná partie",
     )
 
+    _cc.register(  # HANS_NETHACK_V1
+        "nethack",
+        slash_aliases=["nethack"],
+        nl_patterns=[r"\bjak\s+(ti|v[áa]m)\s+jde\s+nethack\b",
+                     r"\b(hraje[šs]|hrajete|hr[áa]l\s+jsi|hr[áa]l\s+jste)\s+(n[ěe]kdy\s+|u[žz]\s+)?nethack"],
+        handler=_cc._cmd_nethack,
+        help_text="NetHack — odehrané hry, nejlepší skóre, nejhlubší patro",
+    )
+
+    _cc.register(  # HANS_MOTIVACE_V1
+        "uspechy",
+        slash_aliases=["uspechy", "úspěchy"],
+        nl_patterns=[r"\bjak[ée]\s+(m[áa][šs]|m[áa]te)\s+[úu]sp[ěe]chy\b",
+                     r"\b(tv[ée]|va[šs]e)\s+[úu]sp[ěe]chy\b",
+                     r"\b[žz]eton(y|ů)\s+za\s+[úu]sp[ěe]ch"],
+        handler=_cc._cmd_uspechy,
+        help_text="Úspěchy spočítané programem, žetony a výsady",
+    )
+
     _cc.register(
         "experiment",
         slash_aliases=["experiment", "footgun"],
