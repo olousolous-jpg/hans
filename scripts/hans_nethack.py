@@ -44,6 +44,8 @@ def _akce():
         ("sebrat", A.Command.PICKUP), ("jíst", A.Command.EAT),
         ("vykopnout", A.Command.KICK), ("otevřít", A.Command.OPEN),
         ("_pray", A.Command.PRAY), ("_quaff", A.Command.QUAFF),
+        ("_wear", A.Command.WEAR), ("_puton", A.Command.PUTON), ("_read", A.Command.READ),
+        ("_zap", A.Command.ZAP), ("_throw", A.Command.THROW), ("_pay", A.Command.PAY),
         ("_more", A.MiscAction.MORE), ("_esc", A.Command.ESC),
     ] + _pismena()
 
@@ -255,6 +257,33 @@ def volby(obs, nav=None) -> dict:
                    and max(abs(y + dy - (y + my)), abs(x + dx - (x + mx_))) >= 2]
             if kam:
                 v["ustoupit"] = ("ustoupit od příšery (máš málo životů)", ("DIR", kam[0]))
+    # HANS_NETHACK_VRSTVA1_V1 (5. 11.) — batoh: obléct, prsten, svitek, hůlka, hodit, zaplatit
+    pris = [(dy, dx) for (dy, dx), g in sous if nh.glyph_is_monster(g) and not nh.glyph_is_pet(g)]
+    if not pris:
+        p = _pismeno(obs, lambda s, o: o == int(nh.ARMOR_CLASS) and "being worn" not in s
+                     and any(k in s for k in _MNICH_ZBROJ))
+        if p:
+            v["obléct"] = ("obléct si zbroj z batohu (%s)" % _jmeno_veci(obs, p), ("USE", "_wear", p, None))
+        p = _pismeno(obs, lambda s, o: o == int(nh.RING_CLASS) and "on " not in s.split("(")[-1])
+        if p and hp >= hpmax:
+            v["nasadit prsten"] = ("nasadit prsten (%s) — neznámý prsten může i škodit"
+                                   % _jmeno_veci(obs, p), ("USE", "_puton", p, None))
+        p = _pismeno(obs, lambda s, o: o == int(nh.SCROLL_CLASS) and "scare monster" not in s)
+        if p:
+            v["přečíst svitek"] = ("přečíst svitek (%s) — neznámý svitek může i škodit"
+                                   % _jmeno_veci(obs, p), ("USE", "_read", p, None))
+    if pris:
+        p = _pismeno(obs, lambda s, o: o == int(nh.WAND_CLASS))
+        if p:
+            v["použít hůlku"] = ("použít kouzelnou hůlku na příšeru vedle (%s)" % _jmeno_veci(obs, p),
+                                 ("USE", "_zap", p, pris[0]))
+        p = _pismeno(obs, lambda s, o: o == int(nh.WEAPON_CLASS) and "in hand" not in s
+                     and any(k in s for k in ("dagger", "shuriken", "dart", "knife")))
+        if p:
+            v["hodit"] = ("hodit po příšeře (%s)" % _jmeno_veci(obs, p), ("USE", "_throw", p, pris[0]))
+    if any("unpaid" in bytes(s).decode("latin1") for s in obs["inv_strs"]):
+        v["zaplatit"] = ("zaplatit obchodníkovi za věci, které neseš (jinak tě napadne)",
+                         ("USE", "_pay", None, None))
     # HANS_NETHACK_VOLBY_V1 — pasivní volby jen tam, kde dávají smysl (s modelem
     # 5. 11.: jinak „hledat/odpočinout“ dokola a stál na místě)
     if "prozkoumat" not in v and "ke schodům" not in v and "dolů" not in v:
@@ -262,6 +291,17 @@ def volby(obs, nav=None) -> dict:
     if bl[nh.NLE_BL_HP] < 0.5 * max(1, bl[nh.NLE_BL_HPMAX]) and "zaútočit" not in v:
         v["odpočinout"] = ("chvíli odpočívat (máš málo životů)", "REST")
     return v
+
+
+_MNICH_ZBROJ = ("boots", "helm", "helmet", "hat", "cap", "gloves", "gauntlets", "cloak",
+                "robe", "fedora", "cornuthaum")   # mnich: bez brnění na tělo a štítu
+
+
+def _jmeno_veci(obs, pis) -> str:
+    for s, l in zip(obs["inv_strs"], obs["inv_letters"]):
+        if int(l) and chr(int(l)) == pis:
+            return bytes(s).decode("latin1").strip("\x00")[:50]
+    return pis
 
 
 def _pismeno(obs, pred):
@@ -277,6 +317,80 @@ _POUCENI = {"hlad": "Když máš hlad, najez se — minule jsi umřel hlady.",
             "utopil": "Pozor na vodu — minule ses utopil."}
 
 
+def _hp(stav: str):
+    import re
+    m = re.search(r"Životy (-?\d+)/(\d+)", stav or "")
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
+def kniha_zapis(c, hid: int, umrel: bool) -> None:
+    """HANS_NETHACK_KNIHA_V1 — po hře sečte z deníku tahů výsledky každé volby
+    (počet, body, ztracené životy, smrt do 3 rozhodnutí) do `nethack_volby`."""
+    import os as _os
+    c.execute("CREATE TABLE IF NOT EXISTS nethack_volby (volba TEXT PRIMARY KEY, pocet INTEGER, "
+              "body REAL, ztrata_hp INTEGER, smrti INTEGER)")
+    p = _os.path.join("data", "nethack", "hry", "%d.jsonl" % hid)
+    try:
+        recs = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
+    except Exception:
+        return
+    agg = {}
+    for i, r in enumerate(recs):
+        a = agg.setdefault(r.get("volba"), [0, 0.0, 0, 0])
+        a[0] += 1
+        a[1] += float(r.get("body") or 0)
+        h0, _ = _hp(r.get("stav"))
+        h1, _ = _hp(r.get("po_stav"))
+        if h0 is not None and h1 is not None and h1 < h0:
+            a[2] += h0 - h1
+        if umrel and i >= len(recs) - 3:
+            a[3] += 1
+    for vb, (n, b, z, s) in agg.items():
+        if not vb:
+            continue
+        c.execute("INSERT INTO nethack_volby VALUES (?,?,?,?,?) ON CONFLICT(volba) DO UPDATE SET "
+                  "pocet=pocet+excluded.pocet, body=body+excluded.body, "
+                  "ztrata_hp=ztrata_hp+excluded.ztrata_hp, smrti=smrti+excluded.smrti",
+                  (vb, n, b, z, s))
+    c.commit()
+
+
+def kniha(c, kolik: int = 3) -> list:
+    """Věty pro zadání: co se Hansovi vyplácí a co ho stojí životy (počítá kód)."""
+    try:
+        rows = c.execute("SELECT volba, pocet, body, ztrata_hp, smrti FROM nethack_volby "
+                         "WHERE pocet >= 5").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    if not rows:
+        return []
+    out = []
+    nej = max(rows, key=lambda r: r[2] / r[1])
+    if nej[2] > 0:
+        out.append("„%s“ ti zatím přineslo nejvíc bodů (průměrně %.1f za rozhodnutí)."
+                   % (nej[0], nej[2] / nej[1]))
+    zl = max(rows, key=lambda r: r[3] / r[1])
+    if zl[3] > 0:
+        out.append("Při „%s“ ztrácíš nejvíc životů (průměrně %.1f)." % (zl[0], zl[3] / zl[1]))
+    sm = [r for r in rows if r[4]]
+    if sm:
+        s = max(sm, key=lambda r: r[4])
+        out.append("Těsně před koncem hry jsi nejčastěji volil „%s“ (%d×)." % (s[0], s[4]))
+    return out[:kolik]
+
+
+def ze_studia(c) -> list:
+    """HANS_NETHACK_STUDIUM_V1 — výtah z Hansových studijních poznámek o NetHacku."""
+    try:
+        rows = c.execute("SELECT coalesce(data, note, '') FROM diary WHERE event_type IN "
+                         "('study_mastery','study_note') AND (title LIKE '%NetHack%' OR "
+                         "title LIKE '%nethack%') ORDER BY ts DESC LIMIT 2").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return ["Ze svého studia víš: " + " ".join((r[0] or "").split())[:350]
+            for r in rows if (r[0] or "").strip()][:1]
+
+
 def pouceni(c) -> list:
     """HANS_NETHACK_POUCENI_V1 — připomínky z příčin konce posledních 5 her (kód)."""
     rows = [r[0] or "" for r in c.execute(
@@ -285,7 +399,7 @@ def pouceni(c) -> list:
     for k, veta in _POUCENI.items():
         if any(k in r for r in rows) and veta not in out:
             out.append(veta)
-    return out[:2]
+    return out[:2] + kniha(c) + ze_studia(c)
 
 
 def _hans_akce(config, obs, historie, stoji, nav=None, zakaz=None, pouceni=None) -> tuple:
@@ -335,6 +449,19 @@ def _proved(env, idx, obs, volba, v, max_kroku=10, nav=None):
     co = v[volba][1]
     dir_akce = {d: idx[s] for d, s in _SMER.items()}
     sk, konec = 0.0, False
+    # nevyřízená otázka z minula (allow_all_yn_questions) → odklepnout / zrušit
+    for _ in range(6):
+        tt = _tty(obs)
+        if "--More--" in tt:
+            a = idx["_more"]
+        elif "[yn" in tt or "What do you want" in tt or "In what direction" in tt:
+            a = idx["_esc"]
+        else:
+            break
+        obs, r, d, tr, _ = env.step(a)
+        sk += float(r or 0)
+        if d or tr:
+            return obs, sk, True
 
     def krok(a):
         nonlocal obs, sk, konec
@@ -361,6 +488,31 @@ def _proved(env, idx, obs, volba, v, max_kroku=10, nav=None):
             konec = konec or d or tr
     if co == "DOWN":
         krok(idx["dolů"])
+    elif isinstance(co, tuple) and co[0] == "USE":
+        # HANS_NETHACK_VRSTVA1_V1 — příkaz → písmeno věci → směr; ostatní otázky ESC
+        _, prikaz, pis, smer = co
+        obs, r, d, tr, _ = env.step(idx[prikaz])
+        sk += float(r or 0)
+        konec = konec or d or tr
+        for _i in range(4):
+            if konec:
+                break
+            tt = _tty(obs)
+            if pis and "What do you want to" in tt and ("_k_" + pis) in idx:
+                a, pis = idx["_k_" + pis], None
+            elif smer and "In what direction" in tt:
+                a, smer = dir_akce[smer], None
+            elif "--More--" in tt:
+                a = idx["_more"]
+            elif "[yn" in tt and prikaz == "_pay":
+                a = idx["_k_y"]
+            else:
+                break
+            obs, r, d, tr, _ = env.step(a)
+            sk += float(r or 0)
+            konec = konec or d or tr
+        krok(idx["_esc"]) if not konec and ("What do you want" in _tty(obs)
+                                           or "In what direction" in _tty(obs)) else None
     elif co == "QUAFF":
         obs, r, d, tr, _ = env.step(idx["_quaff"])
         konec = konec or d or tr
@@ -463,6 +615,10 @@ def _konec_hry(config, c, hid, obs, duvod):
         c.commit()
     except Exception as e:
         _log.warning("HANS_NETHACK_V1: zápis do deníku: %s", e)
+    try:
+        kniha_zapis(c, hid, duvod not in ("přerušeno restartem",))
+    except Exception as e:
+        _log.warning("HANS_NETHACK_KNIHA_V1: %s", e)
     _log.info("HANS_NETHACK_V1: hra %d skončila — %s; skóre %d, patro %d, %d rozhodnutí",
               hid, duvod, skore, int(h.get("max_hloubka", 1)), h.get("kroky", 0))
     try:
@@ -583,7 +739,9 @@ def _sezeni(config, cfg, ted) -> str:
             _tdir = _os.path.join("data", "nethack", "ttyrec")
             _os.makedirs(_tdir, exist_ok=True)
             env = gym.make("NetHackScore-v0", actions=tuple(a for _, a in akce),
-                           save_ttyrec_every=1, savedir=_tdir, max_episode_steps=200000)
+                           save_ttyrec_every=1, savedir=_tdir, max_episode_steps=200000,
+                           # jinak NLE samo ruší „What do you want to read/wear/…?“
+                           allow_all_yn_questions=True)
             obs, _ = env.reset()
             cur = c.execute("INSERT INTO nethack_hry (start_ts, posledni_ts, stav, sezeni, "
                             "kroky, neplatne) VALUES (?,?,?,0,0,0)", (ted, ted, "bezi"))

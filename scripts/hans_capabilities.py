@@ -198,8 +198,10 @@ _CAPABILITIES = [
      "/sachy; jak ti jdou šachy?; hrát šachy"),
     # HANS_NETHACK_V1 (5. 11.)
     ("nethack", "Ve volném čase hraji počítačovou hru NETHACK — procházím podzemí, bojuji "
-     "a hledám schody hlouběji; rozhoduji, kam jít a co udělat, cestu mi najde program. "
-     "Skóre a patro počítá hra. Hraji zatím slabě", "/nethack; hraješ nethack?; hrát nethack"),
+     "a hledám schody hlouběji; rozhoduji, kam jít a co udělat (i lektvary, svitky, prsteny, "
+     "hůlky, modlitbu, ústup), cestu mi najde program. Z vlastních her si program vede "
+     "knihu zkušeností a připomíná mi ji. Skóre a patro počítá hra. Hraji zatím slabě",
+     "/nethack; hraješ nethack?; hrát nethack"),
     # HANS_MOTIVACE_V1 (5. 11.)
     ("uspechy", "Za ÚSPĚCHY, které spočítá program (výhra v šachu, rekord v NetHacku, Koláč "
      "si zapamatoval, co jsem ho naučil), dostávám žetony a zápis do síně úspěchů; žeton "
