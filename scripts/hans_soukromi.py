@@ -52,5 +52,12 @@ def trida_dotazu(veta: str) -> str:
     v = veta
     x = re.sub(r"^\S+\s+se\s+pta:\s*","",f(v))
     for n,R in (("pritomnost",PRITOMNOST),("nepritomnost",NEPRITOMNOST),("obyvatele",OBYVATELE)):
-        if R.search(x): return n
+        if R.search(x):
+            # HANS_STRANGER_MESTO_V1 (5. 11.) — „Kolik lidí v Českém Krumlově žije?“
+            # = počet obyvatel MĚSTA (vlastní jméno místa za „v/ve“), ne domácnost
+            if n == "obyvatele" and re.search(
+                    r"\bv(?:e)?\s+[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]\w+", re.sub(r"^\S+\s+se\s+ptá:\s*", "", v)) \
+                    and not re.search(_KDE, x):
+                continue
+            return n
     return ""

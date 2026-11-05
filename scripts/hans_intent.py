@@ -1192,7 +1192,11 @@ _ZAZ_ZKOUSI = re.compile(r"\bzkou[šs](?:[íi][šs]|[íi]te|el[a]?)\b.{0,30}kol[
 def pta_se_na_hry_hanse(text: str) -> bool:
     """HANS_ASK_HANS_HRY_V1 — ptá se na Hansovy hry, úspěchy nebo zkoušení Koláče?"""
     t = text or ""
-    return bool((_ZAZ_HRY.search(t) and _ZAZ_HRY_OS.search(t)) or _ZAZ_ZKOUSI.search(t))
+    # 2. kolo /tazatel: „Koláč, zapamatoval si něco z tvých zkoušek?“ (jen s Koláčem —
+    # „film Zkouška“ je dotaz na svět)
+    _kz = bool(re.search(r"\bzkou[šs]k\w*|\bzapamatoval\w*", t, re.I)
+               and re.search(r"\bkol[áa][čc]\w*", t, re.I))
+    return bool((_ZAZ_HRY.search(t) and _ZAZ_HRY_OS.search(t)) or _ZAZ_ZKOUSI.search(t) or _kz)
 
 
 def pta_se_na_zazitek_hanse(text: str) -> bool:

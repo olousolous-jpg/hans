@@ -1004,6 +1004,23 @@ def _overit(h, otazka, prepis, odpoved) -> list:
                               _hl, "narození" if _p == "P19" else "úmrtí", _misto_v[2],
                               _misto_v[0], _misto_v[1])}
                 break
+            # HANS_OVERENI_OPRAVA_OBYVATELE_V1 (5. 11.) — počet obyvatel: /tazatel
+            # „v Litomyšli 6 798 obyvatel“ (Wikidata 10 448), stín chytal, oprava
+            # nebyla. Jen údaj ≥ 100 („1. lednu“ není počet), jediná hodnota Wikidat.
+            if _p == "P1082" and len(x.get("wd") or []) == 1:
+                try:
+                    _u = int(re.sub(r"\D", "", str(x["udaj"])) or 0)
+                    _w = int(float(x["wd"][0]))
+                except Exception:
+                    _u = _w = 0
+                if _u >= 100 and _w >= 100:
+                    oprava = {"p": _p, "clanek": _hl, "udaj": str(x["udaj"]).strip(" .,"),
+                              "spravne": str(_w),
+                              "text": "Ještě oprava: podle Wikidat má „%s“ %s obyvatel, ne %s." % (
+                                  _hl, "{:,}".format(_w).replace(",", " "),
+                                  str(x["udaj"]).strip(" .,"))}
+                    break
+                continue
             if _p in _OPRAVA_POPIS and len(x.get("wd") or []) == 1:
                 oprava = {"p": _p, "clanek": _hl, "udaj": str(x["udaj"]).strip(" .,"),
                           "spravne": str(x["wd"][0]),

@@ -545,6 +545,9 @@ def _ft_volne(t: str, slova_v: set) -> bool:
     return True
 
 
+_PRIDAVNE_KONC = r"(?:y|a|e|eho|emu|em|ych|ym|ymi|ou|ost\w*)"   # HANS_FACTS_TITLE_PRIDAVNE_V1 (bez diakritiky)
+
+
 def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
     """Tituly článků s výpisem faktů, které věta jmenuje: všechna slova titulu
     jsou ve větě (kmenem); jednoslovný titul musí ve větě začínat slovo; delší
@@ -586,6 +589,18 @@ def fakta_tituly_ve_vete(db_path: str, veta: str) -> list:
                   r"(?<!\w)%s" % re.escape(ft[:max(4, len(ft) - 2)]))
             if not re.search(vz, fv):
                 continue
+            # HANS_FACTS_TITLE_PRIDAVNE_V1 (5. 11.) — „českého malíře Jana Zrzavého“
+            # → titul „Česko“ (kmen „cesk“) → podklad o Česku a vymyšlený životopis.
+            # Titul na -sko/-cko nesmí sednout jen na přídavné jméno (český, polský…).
+            if len(ft) > 4 and ft.endswith(("sko", "cko")):
+                _kmen = ft[:-1]
+                _tvary = re.findall(r"(?<!\w)%s(\w*)" % re.escape(_kmen), fv)
+                # „z Česka / do Česka“ = podstatné jméno (bez háčků stejné jako „česká“)
+                _po_predl = re.search(r"(?<!\w)(?:z|ze|do|u|bez|kolem|okolo)\s+%sa(?!\w)"
+                                      % re.escape(_kmen), fv)
+                if (_tvary and not _po_predl
+                        and all(re.fullmatch(_PRIDAVNE_KONC, k or "") for k in _tvary)):
+                    continue
             # HANS_ENTITY_DELSI_JMENO_V1 (2. 11.) — jednoslovný titul na začátku delšího
             # jména s vlastním článkem („Marie Stuartovna“ × výpis „Maria (matka Ježíšova)“)
             try:

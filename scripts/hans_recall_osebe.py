@@ -163,8 +163,18 @@ def _self_state_trvale(conn) -> list:
         r2 = conn.execute("SELECT count(*), coalesce(sum(verdikt='ok'),0) FROM kolac_ucitel "
                           "WHERE kolo=2").fetchone()
         if r1 and r1[0]:
-            out.append("zkoušel jsem Koláče %d× (napoprvé věděl %d×; po mém vysvětlení se "
-                       "ptám znovu: zapamatoval si %d z %d)" % (r1[0], r1[1], r2[1], r2[0]))
+            # HANS_SELF_STATE_HRY_V2 — lidsky, bez „0 z 0“ (model z toho dělal „dvě z nuly“)
+            nevedel = r1[0] - r1[1]
+            s = ("Koláče jsem zkoušel %d× z toho, co umím: správně odpověděl %d×, nevěděl %d×"
+                 % (r1[0], r1[1], nevedel))
+            if r2[0]:
+                s += ("; když jsem mu to vysvětlil a zeptal se znovu, zapamatoval si to %d× z %d"
+                      % (r2[1], r2[0]))
+            elif nevedel:
+                s += "; znovu jsem se ho na to ještě neptal"
+            else:
+                s += "; nebylo co vysvětlovat"
+            out.append(s)
     except Exception as e:
         _hr._log.debug("self_state trvale (zkoušení): %s", e)
     # HANS_SELF_STATE_MORE_V1 (2. 10.) — poslední obraz a poslední dočtená kniha.

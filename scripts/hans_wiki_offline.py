@@ -697,7 +697,31 @@ def extrakt(titul: str, intro_only: bool = False):
         return "", True, r[1]
     if intro_only:
         text = text[:uvod]
-    return _jako_online(text), False, r[1]
+    return _doplnit_obyvatele(_jako_online(text), r[1]), False, r[1]
+
+
+# HANS_WIKI_OBYVATELE_V1 (5. 11.) — počet obyvatel obcí vkládá cs Wikipedie šablonou,
+# která se do výpisu nepropíše: „Žije zde obyvatel.“ (/tazatel 5. 11.: „Město Český
+# Krumlov má obyvatel.“). Prázdné místo se doplní z Wikidat (P1082, preferovaná
+# hodnota; mezipaměť hans_overeni). Selže-li to, text zůstane, jak byl.
+_OBYV_PRAZDNE = re.compile(r"\b([Žž]ije|[Žž]ilo)\s+(zde|tu|ve?\s+\w+)\s+(obyvatel)\b")
+
+
+def _doplnit_obyvatele(text: str, titul: str) -> str:
+    if not text or not _OBYV_PRAZDNE.search(text[:6000]):
+        return text
+    try:
+        from scripts import hans_overeni as _ho
+        _ho._nacti_wd([titul])
+        v = ((_ho._c().get(titul) or {}).get("p") or {}).get("P1082") or []
+        n = int(max(float(x) for x in v if isinstance(x, (int, float)))) if v else 0
+    except Exception:
+        n = 0
+    if not n:
+        return text
+    cislo = "{:,}".format(n).replace(",", " ")
+    return _OBYV_PRAZDNE.sub(lambda m: "%s %s %s %s (podle Wikidat)" % (
+        m.group(1), m.group(2), cislo, m.group(3)), text, count=1)
 
 
 def infobox(titul: str):
