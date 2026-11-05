@@ -152,6 +152,27 @@ class ZdraviMixin:
                     _ltth.Thread(target=_letaky_prace, name="letaky", daemon=True).start()
             except Exception as _lte:
                 _rt._log.warning("letáky: %s", _lte)
+            # HANS_VYLET_V1 (3. 11.) — páteční návrh výletu na víkend (`hans_vylet.tick`:
+            # pátek 9–13 h, 1× týdně, vypínač vylet.enabled). Ve vlákně: Wikidata ~15 s.
+            try:
+                import time as _vyt
+                if (_vyt.time() - getattr(self, "_vylet_ts", 0.0) > 600
+                        and not getattr(self, "_vylet_bezi", False)):
+                    self._vylet_ts = _vyt.time()
+                    self._vylet_bezi = True
+
+                    def _vylet_prace():
+                        try:
+                            from scripts.hans_vylet import tick as _vy_tick
+                            _vy_tick(self.config, self._notifier)
+                        except Exception as _vye:
+                            _rt._log.warning("výlet: %s", _vye)
+                        finally:
+                            self._vylet_bezi = False
+                    import threading as _vyth
+                    _vyth.Thread(target=_vylet_prace, name="vylet", daemon=True).start()
+            except Exception as _vye:
+                _rt._log.warning("výlet: %s", _vye)
             # HANS_COMFY_GPUCORE_V1 (3. 11.) — výpisy paměti GPU po pádu ComfyUI pryč
             # (`hans_health.uklid_gpucore`), á 6 h; když PC spí, zkusí se za 10 min.
             try:

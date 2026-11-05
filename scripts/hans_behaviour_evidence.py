@@ -41,6 +41,8 @@ API:  block(config, diary_db_path, window_days=60) -> str   ('' když nic)
 """
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
 import time
 
@@ -102,6 +104,9 @@ def _cinnost(conn, since: float) -> list:
             "event_type='web_read' AND ts>=?", (since,))),
         ("zápisků k filmům", _q1(conn, "SELECT count(*) FROM diary WHERE "
             "event_type='movie_opinion' AND ts>=?", (since,))),
+        # HANS_SACHY_V1
+        ("dohraných partií šachů s Koláčem", _q1(conn, "SELECT count(*) FROM diary "
+            "WHERE event_type='sachy_partie' AND ts>=?", (since,))),
     ]
     return [(k, v) for k, v in d if v]
 
@@ -200,7 +205,74 @@ def _odezva(conn, since: float) -> tuple:
     if hotovo or vzdano:
         vlastni.append(("cílů dotažených / vzdaných", "%d / %d"
                         % (hotovo, vzdano)))
+    # HANS_UCI_KOLACE_V1 — Hans zkouší Koláče; soudí kód podle klíče
+    try:
+        from scripts.kolac_ucitel import bilance as _bil
+        _db = conn.execute("PRAGMA database_list").fetchone()[2]
+        b = _bil(_db, since)
+        if b["zkouseno"]:
+            vlastni.append(("kolikrát jsem zkoušel Koláče z toho, co umím (napoprvé věděl)",
+                            "%d (%d)" % (b["zkouseno"], b["vedel"])))
+        if b["opakovano"]:
+            vlastni.append(("z mého vysvětlení si Koláč při opakování zapamatoval",
+                            "%d z %d" % (b["zapamatoval"], b["opakovano"])))
+    except Exception:
+        pass
+    # HANS_SACHY_V1 — výsledek počítá engine, ne já
+    try:
+        r = conn.execute("SELECT sum(vysledek='výhra'), sum(vysledek='remíza'), "
+                         "sum(vysledek='prohra'), min(kolac_sila), max(kolac_sila) FROM "
+                         "sachy_partie WHERE stav='konec' AND konec_ts>=?", (since,)).fetchone()
+        if r and (r[0] or r[1] or r[2]):
+            vlastni.append(("šachy s Koláčem výhry / remízy / prohry (výsledek počítá "
+                            "šachový program)", "%d / %d / %d" % (r[0] or 0, r[1] or 0, r[2] or 0)))
+    except Exception:
+        pass
     return ven, vnitr, vlastni
+
+
+def _pro_lidi(conn, since: float, config: dict) -> list:
+    """HANS_BEHAVIOUR_PRO_LIDI_V1 (5. 11.) — co Hans udělal PRO LIDI v domácnosti.
+    Blok činnosti počítal jen četbu a tvorbu → Severka viděla jen čtenáře.
+    Čísla jsou malá (lidé se ptají málo), ale poctivá; testovací identity
+    (`test_persons`) se nepočítají. Každý řádek jen když je nenulový."""
+    out = []
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import sqlite3 as _s
+        c = _s.connect("file:%s?mode=ro" % os.path.join(_root, "data", "hans_letaky.db"),
+                       uri=True, timeout=2.0)
+        try:
+            n = c.execute("SELECT count(*) FROM behy WHERE odeslano=1 AND ts>=?",
+                          (since,)).fetchone()[0]
+        finally:
+            c.close()
+        if n:
+            out.append(("týdenních přehledů slev, které jsem sám poslal", str(n)))
+    except Exception:
+        pass
+    try:
+        st = json.load(open(os.path.join(_root, "data", "vylet_stav.json"), encoding="utf-8"))
+        n = sum(1 for t in (st.get("odeslano_ts") or []) if float(t) >= since)
+        if n:
+            out.append(("návrhů víkendového výletu, které jsem sám poslal", str(n)))
+    except Exception:
+        pass
+    test = [str(x) for x in ((config or {}).get("test_persons") or [])]
+    ph = ",".join("?" * len(test)) or "''"
+    n = _q1(conn, "SELECT count(*) FROM diary WHERE event_type='human_chat' AND ts>=? "
+            "AND title NOT IN (%s) AND (note LIKE '%%právě podíval%%' "
+            "OR note LIKE '%%co jsem teď našel%%')" % ph, (since, *test))
+    if n:
+        out.append(("otázek lidí, na které jsem odpověď dohledal", str(n)))
+    for typ, pop in (("translate_done", "přeložených dokumentů na požádání"),
+                     ("webshare_download", "filmů stažených na požádání"),
+                     ("guard_alert", "upozornění z hlídání domu")):
+        n = _q1(conn, "SELECT count(*) FROM diary WHERE event_type=? AND ts>=?",
+                (typ, since))
+        if n:
+            out.append((pop, str(n)))
+    return out
 
 
 def block(config: dict, diary_db_path: str, window_days: int = None) -> str:
@@ -214,6 +286,7 @@ def block(config: dict, diary_db_path: str, window_days: int = None) -> str:
         conn = _ro(diary_db_path)
         ins, cin = _insights(conn, since), _cinnost(conn, since)
         ven, vnitr, vlastni = _odezva(conn, since)   # HANS_BEHAVIOUR_EVIDENCE_V3
+        pro = _pro_lidi(conn, since, config)          # HANS_BEHAVIOUR_PRO_LIDI_V1
     except Exception as e:
         _log.debug("behaviour block failed: %s", e)
         return ""
@@ -223,12 +296,16 @@ def block(config: dict, diary_db_path: str, window_days: int = None) -> str:
                 conn.close()
             except Exception:
                 pass
-    if not (ins or cin or ven or vnitr or vlastni):
+    if not (ins or cin or ven or vnitr or vlastni or pro):
         return ""
     p = []
     if cin:
         p.append("Čím jsem strávil posledních %d dní:" % window_days)
         p += ["- %s: %d" % (k, v) for k, v in cin]
+    if pro:
+        p.append("\nCo jsem udělal pro lidi v domácnosti za posledních %d dní:"
+                 % window_days)
+        p += ["- %s: %s" % (k, v) for k, v in pro]
     # V3_SEKCE — tri oddelene sekce s poctivymi popisky misto jedne.
     if ven:
         p.append("\nCo na mě doopravdy přišlo ZVENČÍ za posledních %d dní "
