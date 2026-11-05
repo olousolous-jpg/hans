@@ -2277,6 +2277,11 @@ _ROUTE_ANTICUE = {
                           # na 3 484 větách lidí 4 shody, všechny o třetí osobě
                           r"\bkde\b(?![^?.!]{0,20}\b(?:jsi|jste)\b)[^?.!]{0,20}\bstudoval[aiy]?\b",
                           re.I),
+    # HANS_NALEZ_ANTI_UCITEL_V1 (5. 11.) — „zkoušíš Koláče? co se naučil?“ = Hans
+    # zkouší Koláče (HANS_UCI_KOLACE_V1), ne nálezy z Koláčových zkoušek Hanse;
+    # /tazatel 5. 11. → /nalez → cizímu „jen pro domácnost“. Téma šachů taky ne.
+    "nalez": re.compile(r"\bzkous(?:is|ite|el[a]?)\b.{0,30}kolac|\bkolac\w*\s+zkous|"
+                        r"\bsach|\bnethack|\bpartii?\b", re.I),
 }
 
 

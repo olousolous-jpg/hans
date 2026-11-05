@@ -67,8 +67,10 @@ def _udalosti(c) -> list:
                                 % round(100 * sila), 0, True))
                 max_sila = sila
     if _tab(c, "nethack_hry"):
-        rows = c.execute("SELECT id, skore, max_hloubka FROM nethack_hry WHERE stav IN "
-                         "('konec','prerusena') ORDER BY id").fetchall()
+        # HANS_MOTIVACE_JEN_DOHRANE_V1 — přerušená hra (restart) není úspěch
+        # (5. 11.: žeton „rekord 50“ z hry, kterou přerušil restart)
+        rows = c.execute("SELECT id, skore, max_hloubka FROM nethack_hry WHERE stav='konec' "
+                         "ORDER BY id").fetchall()
         best, hl = None, 1
         for hid, sk, mh in rows:
             sk, mh = int(sk or 0), int(mh or 1)

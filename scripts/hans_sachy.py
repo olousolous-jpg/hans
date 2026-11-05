@@ -365,7 +365,8 @@ def prehled(config: dict) -> str:
             ted = kolac_sila(c)
         finally:
             c.close()
-        out.append("Koláčova síla: na začátku %d %%, teď %d %% (roste, když vyhrávám)." % (
+        out.append("Koláčova síla: na začátku %d %%, teď %d %% (když vyhrávám, zesílí; "
+                   "po mé prohře zeslábne)." % (
             round(100 * sily[0]), round(100 * (ted if ted is not None else sily[-1]))))
     if bezi:
         out.append("Rozehranou partii mám po %d tazích, hraji %s; dohrajeme ji ve volném "

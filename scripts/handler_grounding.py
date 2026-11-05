@@ -604,7 +604,15 @@ class GroundingMixin:
         return _h._POKRACUJ
 
     def _grr_nefakticky(self, ctx):
-        if not ctx.res.is_factual:
+        # HANS_SELF_STATE_HRY_V1 — otázka na Hansovy hry/úspěchy jde do bloku
+        # o sobě, i když ji klasifikátor záměru vzal jako faktickou
+        # („kolik partií jsi odehrál s Koláčem?“ → dřív A1 „nemám záznam“)
+        try:
+            from scripts.hans_intent import pta_se_na_hry_hanse as _psh0
+            _hry0 = _psh0(self._bez_tazatele(str(ctx._text)))
+        except Exception:
+            _hry0 = False
+        if not ctx.res.is_factual or _hry0:
             # HANS_SELF_STATE_V1 (5.8.) — volná konverzace ještě NEZNAMENÁ
             # „bez faktů". Když se ptá NA HANSE („jak se máš?", „co jsi
             # dnes dělal?"), dej mu jeho VLASTNÍ dnešek z deníku. Bez toho
@@ -650,7 +658,16 @@ class GroundingMixin:
                             return '\n\n' + _h.ANTIKONFAB_NOFACTS
                     except Exception:
                         pass
-                if not _hist_rok and is_about_self(str(ctx._text), self.config):
+                # HANS_SELF_STATE_HRY_V1 (5. 11.) — otázka na Hansovy hry/úspěchy
+                # („kolik partií jsi odehrál s Koláčem“, „jak skončila hra NetHack“)
+                # klasifikátor nebere jako dotaz na Hanse → A1 „nemám záznam“ nebo
+                # výmysl („zabil mě kobold“); data jsou v bloku o sobě.
+                try:
+                    from scripts.hans_intent import pta_se_na_hry_hanse as _psh
+                    _hry_ss = _psh(self._bez_tazatele(str(ctx._text)))
+                except Exception:
+                    _hry_ss = False
+                if not _hist_rok and (_hry_ss or is_about_self(str(ctx._text), self.config)):
                     from scripts.hans_recall import self_state_facts
                     _dbp_ss = (self.config.get("diary_db")
                                or (self.config.get("hans_idle", {}) or {}).get("diary_db")

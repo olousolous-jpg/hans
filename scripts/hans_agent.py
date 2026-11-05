@@ -1979,6 +1979,14 @@ class AgentRouter:
         # → „Koláč zrovna tiše přemítá…“ (router: „co říká…“ jako u Koláče).
         # 📏 deník: 15× akce, 11 se zmínkou, 1 navazuje („co ho ještě zaujalo…“),
         # 3 bez souvislosti („jak se máš?“, „jak šlo malování?“ — Hansova věc).
+        # HANS_AGENT_KOLAC_HRA_V1 (5. 11.) — „jak je Koláč v šachách silný“, „ta partie
+        # dnes ráno…“, „zkoušíš Koláče?“ = Hansova hra/zkoušení, ne stav Koláčova
+        # dialogu (/tazatel 5. 11.: 3× „Koláč je čilý… dnes už 8×“)
+        dict(marker="HANS_AGENT_KOLAC_HRA_V1",
+             akce=("report_kolac_status",),
+             podminka=lambda s, aid, msg, dec, h: __import__(
+                 "scripts.hans_intent", fromlist=["x"]).pta_se_na_hry_hanse(msg),
+             verdikt=None, duvod="otázka na Hansovu hru nebo zkoušení Koláče"),
         dict(marker="HANS_AGENT_KOLAC_JEN_ZMINKA_V1",
              akce=("report_kolac_status",),
              podminka=lambda s, aid, msg, dec, h: not s._kolac_ve_vete_nebo_vlakne(msg, h),

@@ -117,6 +117,56 @@ def _self_state_trvale(conn) -> list:
             out.append("další studium v pořadí: " + ", ".join("„%s“" % d for d in dalsi[:3]))
     except Exception as e:
         _hr._log.debug("self_state trvale (studium): %s", e)
+    # HANS_SELF_STATE_HRY_V1 (5. 11.) — šachy, NetHack, žetony, zkoušení Koláče.
+    # /tazatel 5. 11. (60 tahů): ~15 výmyslů („patro 31, skóre 9200“, žetonů 7/12/1,
+    # „27 partií“, „jako jazykový model neumím šachy“) — blok o nich nic neměl.
+    try:
+        r = conn.execute("SELECT coalesce(sum(vysledek='výhra'),0), coalesce(sum(vysledek='remíza'),0), "
+                         "coalesce(sum(vysledek='prohra'),0), count(*) FROM sachy_partie "
+                         "WHERE stav='konec'").fetchone()
+        b = conn.execute("SELECT count(*) FROM sachy_partie WHERE stav='bezi'").fetchone()[0]
+        if r and (r[3] or b):
+            out.append("šachy s Koláčem (tahy vybírám sám, Koláč hraje šachovým programem): "
+                       "dohraných partií %d — výhry %d, remízy %d, prohry %d%s"
+                       % (r[3], r[0], r[1], r[2], ", jednu mám rozehranou" if b else ""))
+    except Exception as e:
+        _hr._log.debug("self_state trvale (šachy): %s", e)
+    try:
+        r = conn.execute("SELECT count(*), max(skore), max(max_hloubka) FROM nethack_hry "
+                         "WHERE stav='konec'").fetchone()
+        b = conn.execute("SELECT skore, max_hloubka FROM nethack_hry WHERE stav='bezi' "
+                         "ORDER BY id DESC LIMIT 1").fetchone()
+        if (r and r[0]) or b:
+            # NetHack se dohrát skoro nedá — každá hra končí smrtí; měří se skóre a patro
+            if r and r[0]:
+                t = ("hra NetHack: skončených her %d (hra končí smrtí postavy), nejlepší "
+                     "skóre %d, nejhlubší patro %d" % (r[0], r[1] or 0, r[2] or 1))
+            else:
+                t = "hra NetHack: zatím mi žádná hra NEskončila"
+            if b:
+                t += "; právě mám rozehranou hru (ještě neskončila): skóre %d, patro %d" % (
+                    b[0] or 0, b[1] or 1)
+            out.append(t)
+    except Exception as e:
+        _hr._log.debug("self_state trvale (nethack): %s", e)
+    try:
+        z = conn.execute("SELECT coalesce(sum(zetony),0), count(*) FROM motivace_udalosti").fetchone()
+        u = conn.execute("SELECT count(*) FROM motivace_vysady").fetchone()[0]
+        p = conn.execute("SELECT popis FROM motivace_udalosti ORDER BY ts DESC LIMIT 1").fetchone()
+        out.append("úspěchy spočítané programem: %d, žetonů mám %d (výsad využito %d)%s"
+                   % (z[1], (z[0] or 0) - u, u, ("; poslední: " + p[0]) if p else ""))
+    except Exception as e:
+        _hr._log.debug("self_state trvale (úspěchy): %s", e)
+    try:
+        r1 = conn.execute("SELECT count(*), coalesce(sum(verdikt='ok'),0) FROM kolac_ucitel "
+                          "WHERE kolo=1").fetchone()
+        r2 = conn.execute("SELECT count(*), coalesce(sum(verdikt='ok'),0) FROM kolac_ucitel "
+                          "WHERE kolo=2").fetchone()
+        if r1 and r1[0]:
+            out.append("zkoušel jsem Koláče %d× (napoprvé věděl %d×; po mém vysvětlení se "
+                       "ptám znovu: zapamatoval si %d z %d)" % (r1[0], r1[1], r2[1], r2[0]))
+    except Exception as e:
+        _hr._log.debug("self_state trvale (zkoušení): %s", e)
     # HANS_SELF_STATE_MORE_V1 (2. 10.) — poslední obraz a poslední dočtená kniha.
     # /tazatel 2. 10.: o obraze „Sen“ (1. 10. 23:24, muž na stezce do lesa)
     # tvrdil „14 h 27 min od pátku“ a popsal zříceninu s notami; jako poslední

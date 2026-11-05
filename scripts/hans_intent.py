@@ -1174,10 +1174,33 @@ _ZAZ_BYL_KDE = re.compile(
     r"naposledy)\s+)?byl[a]?\s+(?:v|ve|na|do|u)\b", re.IGNORECASE)
 
 
+# HANS_ASK_HANS_HRY_V1 (5. 11.) — otázka na Hansovy hry a úspěchy (šachy s Koláčem,
+# NetHack, žetony, zkoušení Koláče) není fakt o světě: /tazatel 5. 11. „kolik
+# partií s Koláčem“ → Wikipedie „Koláč je druh pečiva“, „jak skončila poslední hra
+# NetHack“ → „28. července 1987“, „kolik tahů měla ta partie“ → pořad Partička.
+# 📏 4 171 vět: 31 zásahů, vše otázky na Hansovy hry/úspěchy nebo rozloučení
+# s přáním úspěchu; „kdo vymyslel šachy“, „znáš pravidla šachů“ ne.
+_ZAZ_HRY = re.compile(r"\b(?:[šs]ach\w*|nethack\w*|parti[ie]\w*|partii|[žz]eton\w*|"
+                      r"[úu]sp[ěe]ch\w*)", re.IGNORECASE)
+_ZAZ_HRY_OS = re.compile(r"\b(?:hraje[šs]|hrajete|hr[áa]l[a]?|vyhr\w*|prohr\w*|odehr\w*|"
+                         r"tv[ée]\w*|tvoj\w*|tv[ůu]j|va[šs]\w*|v[áa][šs]|m[áa][šs]|m[áa]te|jste|"
+                         r"jsi|ty|vy|kol[áa][čc]\w*|t[ay]\s+parti\w*|tu\s+parti\w*|t[ée]\s+parti\w*)\b",
+                         re.IGNORECASE)
+_ZAZ_ZKOUSI = re.compile(r"\bzkou[šs](?:[íi][šs]|[íi]te|el[a]?)\b.{0,30}kol[áa][čc]", re.IGNORECASE)
+
+
+def pta_se_na_hry_hanse(text: str) -> bool:
+    """HANS_ASK_HANS_HRY_V1 — ptá se na Hansovy hry, úspěchy nebo zkoušení Koláče?"""
+    t = text or ""
+    return bool((_ZAZ_HRY.search(t) and _ZAZ_HRY_OS.search(t)) or _ZAZ_ZKOUSI.search(t))
+
+
 def pta_se_na_zazitek_hanse(text: str) -> bool:
     """Ptá se otázková část zprávy na Hansův vlastní zážitek nebo dílo?"""
     if not text or zada_dohledani(text):
         return False
+    if pta_se_na_hry_hanse(text):     # HANS_ASK_HANS_HRY_V1
+        return True
     try:
         from scripts.hans_podklad import otazkova_cast
         q = otazkova_cast(text)
