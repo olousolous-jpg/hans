@@ -87,7 +87,7 @@ def study_dialog_seed(config: dict, diary_db_path: str,
 
 
 def completed_studies_block(config: dict, diary_db_path: str,
-                            limit: int = 4, max_chars: int = 900) -> str:
+                            limit: int = 4, max_chars: int = 1400) -> str:
     """Blok pro Severku (#3): dokončené studijní programy + aktivní směr.
     Grounduje vocational návrh identity REÁLNOU znalostí. '' když nic."""
     try:
@@ -98,6 +98,13 @@ def completed_studies_block(config: dict, diary_db_path: str,
     if not progs:
         return ""
     lines = []
+    # SEVERKA_STUDIUM_AKTIVNI_V1 (5. 11.) — aktivní studium bylo až na konci
+    # a strop 900 zn ho uřízl (Severka ho neviděla, poslední dokončené
+    # skončilo uprostřed věty) → aktivní napřed, strop 1400.
+    active = next((p for p in progs if p["status"] == "active"), None)
+    if active:
+        lines.append(f"- Právě studuji do hloubky \u201e{active['topic']}\u201c "
+                     f"({active['current_index']}/{len(active['curriculum'])}).")
     done = [p for p in progs if p["status"] == "completed"]
     for p in done[:limit]:
         _t, data, _ts = _hs._latest_diary_text(
@@ -105,10 +112,6 @@ def completed_studies_block(config: dict, diary_db_path: str,
         gist = (data or "").strip().replace("\n", " ")
         lines.append(f"- Dostudoval jsem do hloubky \u201e{p['topic']}\u201c. "
                      + (gist[:200] if gist else ""))
-    active = next((p for p in progs if p["status"] == "active"), None)
-    if active:
-        lines.append(f"- Právě studuji do hloubky \u201e{active['topic']}\u201c "
-                     f"({active['current_index']}/{len(active['curriculum'])}).")
     if not lines:
         return ""
     return "\n".join(lines)[:max_chars]

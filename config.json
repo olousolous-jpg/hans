@@ -1509,7 +1509,10 @@
         "podnety_davka": 20,
         "hlasit_max_denne": 2,
         "_hlasit_note": "KOLAC_EXAM_NOTIFY_CAP_V1 (15. 10., uživatel): hlášení zkoušek na Matrix zapnuto i pro zkoušky z faktů (vedle, nevedel), nejvýš hlasit_max_denne za den; potvrzení / zamítnutí: /nalez N, /nalez N ne",
-        "podnety_zvenku_podil": 0.25
+        "podnety_zvenku_podil": 0.25,
+        "hans_zkousi_podil": 0.4,
+        "hans_zkousi_opakovat_dni": 1,
+        "_hans_zkousi_note": "HANS_UCI_KOLACE_V1 (5. 11. 2026) — podíl zkouškových dialogů, kde zkouší Hans Koláče (otázka ze zásoby faktů, kterou Hans sám zodpověděl správně; soudí kód; Koláč si pamatuje jen vysvětlení se správným údajem a po hans_zkousi_opakovat_dni se ptá znovu). 0 = vypnuto."
     },
     "subtitles": {
         "enabled": true,
@@ -1610,7 +1613,11 @@
         "cadence_days": 7,
         "min_days_since_change": 7,
         "_min_days_since_change_note": "SEVERKA_CHANGE_COOLDOWN_V1 (24. 9. 2026) — po schválené změně identity Severka tolik dní nic nenavrhuje (bez brzdy navrhovala přejmenování role při každém běhu). Výchozí v kódu 30; 7 = zkušební období na pokyn uživatele. /severka teď brzdu obchází.",
-        "_cadence_days_note": "SEVERKA_CADENCE_V1 (17. 9. 2026) — po kolika dnech smi Severka znovu zvazit zmenu identity. Puvodne 7 natvrdo, 17. 9. zmeneno na 30 (uzivatel: 7 dni je asi moc malo), a TYZ DEN vraceno na 7: ukazalo se, ze navrhy vypousteli umeni a historii kvuli POSKOZENE narativni kapitole (NARRATIVE_NUM_CTX_V1), ne kvuli kadenci — a oprava se potrebuje overit driv nez za mesic. Az bude overeno, zvaz navrat na 30. Konvence jako direction.cadence_days (14), synthesis.cadence_days (3)."
+        "_cadence_days_note": "SEVERKA_CADENCE_V1 (17. 9. 2026) — po kolika dnech smi Severka znovu zvazit zmenu identity. Puvodne 7 natvrdo, 17. 9. zmeneno na 30 (uzivatel: 7 dni je asi moc malo), a TYZ DEN vraceno na 7: ukazalo se, ze navrhy vypousteli umeni a historii kvuli POSKOZENE narativni kapitole (NARRATIVE_NUM_CTX_V1), ne kvuli kadenci — a oprava se potrebuje overit driv nez za mesic. Az bude overeno, zvaz navrat na 30. Konvence jako direction.cadence_days (14), synthesis.cadence_days (3).",
+        "min_evidence_postoje": 2,
+        "_min_evidence_postoje_note": "SEVERKA_POSTOJE_PRAH_V1 (5. 11. 2026) — práh dokladů jen pro postoje (koníčky dál min_evidence 8). Při 8 neprošel po vyčištění ozvěny ani jeden postoj; A/B 5. 11. (data/mereni/severka_ab_5_11/): s 2 + bez výčtu rolí se role poprvé hne.",
+        "opakovany_navrh_po": 3,
+        "_opakovany_navrh_po_note": "SEVERKA_OPAKOVANY_NAVRH_V1 (5. 11. 2026) — kolik běhů po sobě smí pojistka zahodit návrh jako „jen jiné pojmenování role“; pak jde návrh ke schválení (pending + Matrix). 0 = vypnuto."
     },
     "climate": {
         "offset_c": -2,
@@ -1853,5 +1860,15 @@
         "keep_alive": "30m",
         "_note": "HANS_VYPOCTY_MODEL_V1 (31. 10.): matematika, slovní úlohy a datum — qwen3 na CPU Ollamě napíše výraz s povolenými funkcemi (splatka, procento, datum, dny, den_v_tydnu, velikonoce, reseni…), program spočítá (scripts/hans_vypocty_model.py, AST bez eval); čísla mimo otázku = zahodit. 📏 34/37 správně, 0 nesmyslů. false = vypnuto. 3. 11.: qwen3:30b (18 GB RAM) → qwen3:14b (~9 GB; PC zamrzlo při nedostatku RAM): 29/37 + osoby 16/17, ~9–16 s (data/mereni/vypocty_maly_3_11/). Načte se jen při volné RAM na PC ≥ min_ram_gb_nacteni (HANS_VYPOCTY_RAM_V1).",
         "min_ram_gb_nacteni": 12
+    },
+    "sachy": {
+        "enabled": true,
+        "max_minut": 4,
+        "max_tahu": 30,
+        "pauza_min": 30,
+        "nova_po_h": 6,
+        "kolac_sila_start": 0.3,
+        "kolac_sila_krok": 0.05,
+        "_note": "HANS_SACHY_V1 (5. 11. 2026) — Hans hraje šachy s Koláčem ve volném čase (smyčka hans_dialog). Koláč = Stockfish (/usr/games/stockfish na Pi) se silou kolac_sila (podíl tahů enginu, zbytek náhodný; ±krok podle výsledku). Sezení max_minut/max_tahu, nedohraná partie pokračuje po pauza_min; nová po nova_po_h. Hans táhne modelem evening_reflection.voice_model. Uživatel 5. 11.: činnost mimo četbu pro Severku."
     }
 }

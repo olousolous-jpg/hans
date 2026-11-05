@@ -168,8 +168,11 @@ _SYSTEM = (
     "výchozí role a jeho vztah k lidem, se kterými žije. Tím, co studuje a čemu "
     "se věnuje, se z něj může stát něco jiného, ale vždy to musí být KONKRÉTNÍ "
     "ROLE, kterou člověk zná ze života a hned si představí, co dělá a pro koho — "
-    "například knihovník, archivář, kronikář, učitel, průvodce nebo správce "
-    "sbírky. Role musí vyrůstat z koníčků a studia výše, ne z tohoto výčtu.\n"
+    # SEVERKA_BEZ_VYCTU_ROLI_V1 (5. 11.) — výčet „knihovník, archivář,
+    # kronikář…“ táhl návrhy k archiváři (6 běhů po sobě); A/B 5. 11.
+    # (data/mereni/severka_ab_5_11/): spolu s postoji v zadání se role hne.
+    "role musí vyrůstat z koníčků, studia a z toho, co skutečně dělá "
+    "(bloky výše), ne z obecné představy.\n"
     "  Zkouška: člen domácnosti ho představí návštěvě větou 'To je náš …' a věta "
     "musí znít přirozeně.\n"
     "  ⛔ Abstraktní popisy NEJSOU role: 'analytický dokumentátor složitých "
@@ -194,6 +197,12 @@ class Severka:
         self._identity = identity_store  # IdentityStore | None (lazy)
         cfg = (self._config.get("severka", {}) or {})
         self._min_evidence = int(cfg.get("min_evidence", MIN_EVIDENCE))
+        # SEVERKA_POSTOJE_PRAH_V1 (5. 11.) — po vyčištění ozvěny postoje rostou
+        # pomalu (nejsilnější živý 5 dokladů) → při prahu 8 neprošel ani jeden
+        # z 92 a Severka rozhodovala bez postojů. Vlastní práh jen pro postoje,
+        # koníčky dál `min_evidence`.
+        self._min_evidence_postoje = int(cfg.get("min_evidence_postoje",
+                                                 self._min_evidence))
         self._min_age_days = int(cfg.get("min_age_days", MIN_AGE_DAYS))
         self._min_recent_days = int(cfg.get("min_recent_days", MIN_RECENT_DAYS))
         # analytický model: reuse base z evening_reflection (hans-czech konfabuluje)
@@ -330,7 +339,7 @@ class Severka:
                 "SELECT * FROM stances WHERE status='active' "
                 "AND evidence_count >= ? AND first_seen <= ? AND last_seen >= ? "
                 "ORDER BY confidence DESC, evidence_count DESC",
-                (self._min_evidence, min_first, min_last)).fetchall()
+                (self._min_evidence_postoje, min_first, min_last)).fetchall()
         except Exception as e:
             _log.debug("durable_tendencies read failed: %s", e)
             rows = []
@@ -455,6 +464,13 @@ class Severka:
         try:
             from scripts.hans_narrative import latest_chapter
             chapter = latest_chapter(self._diary_path) or "(zatím žádná)"
+            # SEVERKA_KAPITOLA_BEZ_SEVERKY_V1 (5. 11.) — kapitola nese klíčovou
+            # scénu se zastaveným návrhem Severky a model k ní domyslí Hansův
+            # postoj („zdálo se mi to omezení“) → Severka by četla vlastní
+            # odmítnutí jako Hansův hlas. Pro Severku věty o ní vypustit.
+            import re as _re
+            _vety = _re.split(r"(?<=[.!?])\s+", chapter)
+            chapter = " ".join(v for v in _vety if "everk" not in v) or "(zatím žádná)"
         except Exception as _ce:
             _log.debug("severka latest_chapter failed: %s", _ce)
             chapter = "(zatím žádná)"
@@ -606,8 +622,23 @@ class Severka:
                 self._write_rejected_diary(_role, new_core, rationale,
                                            parsed.get("analysis", ""), date_str,
                                            "jen jiné pojmenování role „%s“" % _cur_role)
-                return {"decision": "keep", "gate": True, "durable": durable,
-                        "message": "", "role_same": _role}
+                # SEVERKA_OPAKOVANY_NAVRH_V1 (5. 11.) — pojistka přejmenování
+                # zahodila 8. 10.–5. 11. šestkrát po sobě týž směr („archivář
+                # rodinných dějin / správce rodinné kroniky“) a nikdo se o něm
+                # nedozvěděl. Drží-li se směr N běhů po sobě, není to nahodilé
+                # přejmenování → návrh jde k člověku (pending), rozhodne on.
+                _po = int((self._config.get("severka", {}) or {})
+                          .get("opakovany_navrh_po", 3))
+                _n = self._opakovane_prejmenovani()
+                if not (_po > 0 and _n >= _po):
+                    return {"decision": "keep", "gate": True, "durable": durable,
+                            "message": "", "role_same": _role}
+                _log.info("severka %s: SEVERKA_OPAKOVANY_NAVRH_V1: „%s“ vychází %d× po "
+                          "sobě → návrh předávám ke schválení", date_str, _role, _n)
+                rationale = ("Podobný směr mi vychází už %d× po sobě; pojistka ho "
+                             "dosud brala jen jako jiné pojmenování mé role „%s“. "
+                             "Posuďte prosím, jestli jde o skutečný posun. %s"
+                             % (_n, _cur_role, rationale)).strip()
 
         # Vytvoř PENDING verzi (NIC se neaplikuje) + zapiš návrh do deníku
         st = self._store()
@@ -651,6 +682,43 @@ class Severka:
         out += ("\n\nNic se nezmění bez Vašeho svolení. Přejete-li si to schválit, "
                 "řekněte „/severka schválit\"; zamítnout „/severka zamítnout\".")
         return out
+
+    def _opakovane_prejmenovani(self) -> int:
+        """SEVERKA_OPAKOVANY_NAVRH_V1 — kolik posledních běhů Severky po sobě
+        skončilo pojistkou „jen jiné pojmenování role“ (nejnovější první).
+        Počítá se jen od poslední verze identity (návrh, schválení, zamítnutí
+        člověkem) — po tvém rozhodnutí se začíná znovu od nuly."""
+        try:
+            db = sqlite3.connect("file:%s?mode=ro" % self._diary_path, uri=True, timeout=3.0)
+            try:
+                rows = db.execute(
+                    "SELECT ts, event_type, note FROM diary WHERE event_type IN "
+                    "('severka_zamitnuto','severka_proposal') ORDER BY ts DESC LIMIT 20"
+                ).fetchall()
+            finally:
+                db.close()
+        except Exception as e:
+            _log.debug("severka opakovani: %s", e)
+            return 0
+        od = 0.0
+        try:
+            con = sqlite3.connect("file:%s?mode=ro" % self._diary_path, uri=True, timeout=3.0)
+            try:
+                r = con.execute("SELECT max(ts) FROM identity_versions").fetchone()
+                od = float((r or [0])[0] or 0)
+            finally:
+                con.close()
+        except Exception as e:
+            _log.debug("severka opakovani verze: %s", e)
+        n = 0
+        for ts, et, note in rows:
+            if float(ts or 0) <= od:
+                break
+            if et == "severka_zamitnuto" and "jen jiné pojmenování" in (note or ""):
+                n += 1
+            else:
+                break
+        return n
 
     def _write_rejected_diary(self, role, new_core, rationale, analysis, date_str, duvod):
         """SEVERKA_ZAMITNUTO_V1 (27. 10.) — i návrh, který zastavila pojistka
