@@ -46,7 +46,7 @@ mkdir -p "$OUT_DIR" "$STAGE/data"
 echo "== Hans backup ($KIND) $STAMP =="
 
 # --- 1) SQLite DB konzistentně přes .backup ---
-CORE_DBS=(hans_diary.db hans_knowledge.db surroundings.db)
+CORE_DBS=(hans_diary.db hans_knowledge.db surroundings.db hans_spotreba.db)   # + zásoby (6. 11.)
 FULL_DBS=(kodi_monitor.db unknown_tracker.db)
 DBS=("${CORE_DBS[@]}")
 [ "$FULL" = 1 ] && DBS+=("${FULL_DBS[@]}")

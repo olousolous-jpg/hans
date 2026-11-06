@@ -173,6 +173,19 @@ class ZdraviMixin:
                     _vyth.Thread(target=_vylet_prace, name="vylet", daemon=True).start()
             except Exception as _vye:
                 _rt._log.warning("výlet: %s", _vye)
+            # HANS_SPOTREBA_V1 (6. 11.) — ráno na Matrix, co ze zásob brzy končí
+            # (`hans_spotreba.tick`: 1× denně od spotreba.hodina, vypínač spotreba.enabled)
+            try:
+                import time as _spt
+                if _spt.time() - getattr(self, "_spotreba_ts", 0.0) > 600:
+                    self._spotreba_ts = _spt.time()
+                    from scripts.hans_spotreba import tick as _sp_tick
+                    _sp_tick(self.config, self._notifier)
+                    # HANS_SPOTREBA_OFF_TABULKA_V1 — offline tabulka výrobků, v noci á 30 dní
+                    from scripts.hans_spotreba import obnov_off as _sp_off
+                    _sp_off(self.config)
+            except Exception as _spe:
+                _rt._log.warning("spotřeba: %s", _spe)
             # HANS_COMFY_GPUCORE_V1 (3. 11.) — výpisy paměti GPU po pádu ComfyUI pryč
             # (`hans_health.uklid_gpucore`), á 6 h; když PC spí, zkusí se za 10 min.
             try:

@@ -1,0 +1,5 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- čárový kód -->
+    <path android:fillColor="#FFFFFF" android:pathData="M34,38h3v32h-3z M40,38h2v32h-2z M45,38h4v32h-4z M52,38h2v32h-2z M57,38h3v32h-3z M63,38h2v32h-2z M68,38h4v32h-4z" />
+</vector>

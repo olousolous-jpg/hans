@@ -187,6 +187,10 @@ _CAPABILITIES = [
      "k tomu mozek na počítači, a když obec kalendář na webu nemá, nenajdu nic",
      "jaké akce jsou v okolí?; jaké akce jsou v Litomyšli?"),
     # HANS_VYLET_V1 (3. 11.)
+    ("zasoby_spotreba", "Hlídám zásoby potravin s datem spotřeby: v telefonu je aplikace Zásoby "
+     "(čárový kód, datum z fotky nebo ručně, funguje i mimo domov), doma se se mnou "
+     "synchronizuje; ráno pošlu na Matrix, co brzy končí, a přehled je na mém webu (Domů › Zásoby)",
+     "aplikace Zásoby v telefonu; vypnout spotreba.enabled"),
     ("vylet_vikend", "V pátek dopoledne posílám na Matrix NÁVRH VÝLETU na víkend — počasí, "
      "tři místa do 40 km podle svých zájmů (každý týden jiná) a akce v okolí od pátku do neděle, "
      "když mi běží mozek na počítači; když je akcí hodně, pošlu jen pár a celý přehled dám "

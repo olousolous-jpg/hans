@@ -1884,5 +1884,10 @@
         "vaha_min": 0.5,
         "vaha_max": 2.0,
         "_note": "HANS_MOTIVACE_V1 (5. 11. 2026) — úspěchy spočítané kódem (výhra v šachu, rekord/patro v NetHacku, Koláč si zapamatoval) → žetony + síň úspěchů (deník uspech, důležitost 9); žeton = výsada (téma studia bez schválení); váha 0,5–2× volného času podle pokroku činnosti."
+    },
+    "spotreba": {
+        "enabled": true,
+        "hodina": 9,
+        "dni": 3
     }
 }

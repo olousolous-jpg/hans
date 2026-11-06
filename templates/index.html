@@ -441,6 +441,13 @@ button.btn { border-radius: 999px; font-weight: 700; min-height: 40px; }
     <div style="font-size:12px;color:var(--fg2);margin-top:8px">Výsledky počítá program (šachový program, hra, kontrola odpovědí), ne Hans sám.</div>
   </section>
 
+  <!-- HANS_SPOTREBA_V1 — zásoby potravin s datem spotřeby (aplikace Zásoby v telefonu) -->
+  <section class="card" id="spotreba-card" style="display:none">
+    <div class="ob-head"><h2>Zásoby</h2><span id="spotreba-pocet" style="font-size:14px;color:var(--fg2)"></span></div>
+    <div id="spotreba-seznam" style="font-size:14px;line-height:1.6;max-height:360px;overflow:auto">—</div>
+    <div style="font-size:12px;color:var(--fg2);margin-top:8px">Zapisuje se v telefonu (aplikace Zásoby); názvy výrobků z Open Food Facts (ODbL).</div>
+  </section>
+
   <!-- HANS_VYLET_WEB_V1 — víkendový návrh výletu a akce v okolí -->
   <section class="card" id="vylet-card" style="display:none">
     <div class="ob-head"><h2>Víkendový výlet</h2><span id="vylet-kdy" style="font-size:14px;color:var(--fg2)"></span></div>
@@ -2283,6 +2290,23 @@ async function loadVylet() {
 }
 loadVylet();
 setInterval(loadVylet, 300000);
+// HANS_SPOTREBA_V1 — zásoby (/api/spotreba)
+async function loadSpotreba() {
+  try {
+    const d = await (await fetch('/api/spotreba')).json();
+    const card = document.getElementById('spotreba-card'); if (!card) return;
+    const p = d.polozky || []; card.style.display = p.length ? '' : 'none';
+    document.getElementById('spotreba-pocet').textContent = p.length + ' v zásobě';
+    const kdy = n => n == null ? 'bez data' : n < 0 ? 'prošlo' : n === 0 ? 'dnes' : n === 1 ? 'zítra' : n < 5 ? `za ${n} dny` : `za ${n} dní`;
+    const barva = n => n == null ? 'var(--fg2)' : n <= 0 ? '#c62828' : n <= 2 ? '#e65100' : n <= 5 ? '#9e7b00' : 'inherit';
+    const den = s => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s||''); return m ? (+m[3]) + '. ' + (+m[2]) + '.' : ''; };
+    document.getElementById('spotreba-seznam').innerHTML = p.map(x =>
+      `<div style="display:flex;justify-content:space-between;gap:12px"><span>${esc(x.nazev || ('výrobek ' + x.kod))}${x.mnozstvi ? ' <span style="color:var(--fg2)">· ' + esc(x.mnozstvi) + '</span>' : ''}</span>` +
+      `<span style="white-space:nowrap;color:${barva(x.dni)};font-weight:600">${kdy(x.dni)} <span style="color:var(--fg2);font-weight:400">${den(x.datum)}</span></span></div>`).join('');
+  } catch (e) {}
+}
+loadSpotreba();
+setInterval(loadSpotreba, 120000);
 // ── HANS_LETAKY_WEB_V1 (9. 10.) — záložka Slevy ─────────────────────────────
 // Čte poslední stažení (/api/slevy); „Stáhnout znovu“ pustí stažení na pozadí.
 const slEsc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));

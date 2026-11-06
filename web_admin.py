@@ -60,6 +60,8 @@ try:
     app.include_router(_hry_router)
     from scripts.web_vylet import router as _vylet_router   # HANS_VYLET_WEB_V1
     app.include_router(_vylet_router)
+    from scripts.web_spotreba import router as _spotreba_router   # HANS_SPOTREBA_V1
+    app.include_router(_spotreba_router)
 except Exception as _he:
     print(f"[web_admin] hry module FAILED: {_he}")
 
