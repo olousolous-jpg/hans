@@ -58,6 +58,8 @@ except Exception as _qe:
 try:
     from scripts.web_hry import router as _hry_router
     app.include_router(_hry_router)
+    from scripts.web_vylet import router as _vylet_router   # HANS_VYLET_WEB_V1
+    app.include_router(_vylet_router)
 except Exception as _he:
     print(f"[web_admin] hry module FAILED: {_he}")
 

@@ -95,13 +95,44 @@ def navrh(config: dict, ted: _dt.datetime = None, s_akcemi: bool = True) -> str:
     for i, x in enumerate(vyber, 1):
         radky.append("%d. %s — %s, %s%s" % (i, hm._jmeno(x["titul"]), x["druh"], hm._km(x["km"]),
                                            (". " + x["veta"]) if x.get("veta") else ""))
+    global _posledni_web
+    _posledni_web = {"ts": time.time(), "sobota": so.isoformat(), "nedele": ne.isoformat(),
+                     "patek": (so - _dt.timedelta(days=1)).isoformat(),
+                     "pocasi": poc or "",
+                     "mista": [{"nazev": hm._jmeno(x["titul"]), "titul": x["titul"], "druh": x["druh"],
+                                "km": round(float(x["km"]), 1), "veta": x.get("veta") or ""}
+                               for x in vyber],
+                     "akce": [], "bez": []}
     if s_akcemi:
         try:
             from scripts import hans_akce as ha
-            dni = max(1, (ne - ted.date()).days)
-            a = ha.zprava(config, d[0], d[1], dni=dni)
-            if a.startswith("Akce v okolí"):
-                radky.append(a)
+            # HANS_VYLET_AKCE_VIKEND_V1 (6. 11.) — jen sobota a neděle (dřív od dneška
+            # a prvních 6 akcí = páteční program)
+            # HANS_VYLET_AKCE_PATEK_V1 (6. 11., uživatel) — i pátek (návrh chodí v pátek ráno)
+            pa = so - _dt.timedelta(days=1)
+            a = ha.zprava(config, d[0], d[1], dni=max(0, (ne - pa).days), od=pa)
+            akce = [{"obec": ob, "km": round(float(km), 1), "datum": dd.isoformat(),
+                     "nazev": n, "misto": m}
+                    for ob, km, ak in ha.posledni_seznam for dd, n, m in ak if pa <= dd <= ne]
+            _posledni_web["akce"] = akce
+            if akce and len(akce) <= int(k.get("akce_na_matrix", 6)):
+                radky.append(a.replace("na nejbližších %d dní" % max(0, (ne - pa).days),
+                                       "od pátku do neděle"))
+            elif akce:
+                # HANS_VYLET_WEB_V1 (6. 11., uživatel: „když je akcí hodně, ne na Matrix,
+                # ale na Hansův web“) — ukázka po jedné z každé obce a dne, celek na webu
+                uk, vid = [], set()
+                for x in akce:
+                    if (x["obec"], x["datum"]) in vid:
+                        continue
+                    vid.add((x["obec"], x["datum"]))
+                    dd = _dt.date.fromisoformat(x["datum"])
+                    uk.append("  • %s %d. %d. — %s%s (%s)" % (
+                        ("pá", "so", "ne")[min(2, max(0, dd.weekday() - 4))], dd.day, dd.month, x["nazev"],
+                        (", " + x["misto"]) if x["misto"] else "", x["obec"]))
+                radky.append("Akce od pátku do neděle: našel jsem jich %d, třeba:" % len(akce))
+                radky.extend(uk[:5])
+                radky.append("Celý přehled je na mém webu (Domů › Víkendový výlet).")
         except Exception as e:
             _log.info("HANS_VYLET_V1: akce: %s", str(e)[:80])
     radky.append("(Pošlete mi polohu na místě a řeknu víc o okolí.)")
@@ -111,6 +142,8 @@ def navrh(config: dict, ted: _dt.datetime = None, s_akcemi: bool = True) -> str:
 
 
 _posledni_vyber: list = []
+_posledni_web: dict = {}
+_WEB = "data/vylet_posledni.json"
 
 
 def tick(config: dict, notifier=None, ted: float | None = None) -> str | None:
@@ -144,5 +177,11 @@ def tick(config: dict, notifier=None, ted: float | None = None) -> str | None:
         # HANS_BEHAVIOUR_PRO_LIDI_V1 — kdy návrh odešel (pro Severku: co dělám pro lidi)
         st["odeslano_ts"] = ((st.get("odeslano_ts") or []) + [time.time()])[-100:]
         _uloz(st)
+        try:     # HANS_VYLET_WEB_V1 — poslední návrh pro web (/api/vylet)
+            json.dump(_posledni_web, open(_WEB + ".tmp", "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=1)
+            os.replace(_WEB + ".tmp", _WEB)
+        except Exception as e:
+            _log.info("HANS_VYLET_WEB_V1: %s", e)
     _log.info("HANS_VYLET_V1: víkendový návrh %s", "odeslán" if ok else "NEODESLÁN")
     return text if ok else None

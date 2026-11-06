@@ -220,11 +220,51 @@ def _html_prohlizec(url: str, timeout: int = 45) -> str:
         _prohlizec_zamek.release()
 
 
+# HANS_AKCE_DALSI_STRANKY_V1 (6. 11., povolil uživatel) — kalendář s tlačítkem
+# „Načíst další“ (Nette: `?append=1&page=2…&do=changePage`, Pardubice) ukáže napoprvé
+# jen 12 nejbližších akcí = dnešek → víkendový návrh nesl páteční akce. Stránka N
+# vrací prvních 12×N akcí → JEDEN dotaz na page=8 (≈ 4 dny). robots.txt zakazuje
+# `page=`; uživatel 6. 11. výslovně povolil (dotaz na pozadí 1× týdně + na dotaz člověka).
+_DALSI_RE = re.compile(r'[?&]append=1&(?:amp;)?page=2(?:&(?:amp;)?[\w\[\]]*=[^"&]*)*&(?:amp;)?do=changePage')
+
+
+def _s_dalsimi(url: str, s: str, stranek: int = 8):
+    m = _DALSI_RE.search(s or "")
+    if not m:
+        return None
+    q = m.group(0).replace("&amp;", "&").replace("page=2", "page=%d" % stranek)
+    return url.split("?")[0] + "?" + q.lstrip("?&")
+
+
+_DISK = "data/akce_cache"
+
+
 def text_stranky(url: str, strop: int = 14000, prohlizec: bool = False) -> str:
     c = _text_ram.get((url, prohlizec))
     if c and time.time() - c[0] < 24 * 3600:
-        return c[1]
+        return c[1][:strop]
+    # HANS_AKCE_OPATRNE_V1 (6. 11., uživatel: „s dotazy na web opatrně, ať nedostaneme
+    # ban“) — mezipaměť i na disku (12 h), sdílí ji Hans i zkušební skripty
+    import hashlib
+    _kl = os.path.join(_DISK, hashlib.sha1(("%s|%s" % (url, prohlizec)).encode()).hexdigest() + ".txt")
+    try:
+        if time.time() - os.path.getmtime(_kl) < 12 * 3600:
+            _t = open(_kl, encoding="utf-8").read()
+            _text_ram[(url, prohlizec)] = (os.path.getmtime(_kl), _t)
+            return _t[:strop]
+    except OSError:
+        pass
     s = _html_prohlizec(url) if prohlizec else _html(url)
+    if not prohlizec:
+        _u2 = _s_dalsimi(url, s)
+        if _u2:
+            try:
+                s2 = _html(_u2)
+                if len(s2) > len(s):
+                    _log.info("HANS_AKCE_DALSI_STRANKY_V1: %s → víc akcí (%d zn)", url, len(s2))
+                    s = s2
+            except Exception as e:
+                _log.info("HANS_AKCE_DALSI_STRANKY_V1: %s: %s", url, str(e)[:80])
     s = re.sub(r"(?is)<(script|style|noscript|nav|footer|header)\b.*?</\1>", " ", s)
     s = re.sub(r"(?i)<br\s*/?>|</(p|div|li|tr|h\d)>", "\n", s)
     s = re.sub(r"<[^>]+>", " ", s)
@@ -232,8 +272,34 @@ def text_stranky(url: str, strop: int = 14000, prohlizec: bool = False) -> str:
     s = _h.unescape(s)
     s = re.sub(r"[ \t\xa0]+", " ", s)
     s = re.sub(r"\n\s*\n+", "\n", s)
-    _text_ram[(url, prohlizec)] = (time.time(), s.strip()[:strop])
-    return _text_ram[(url, prohlizec)][1]
+    _text_ram[(url, prohlizec)] = (time.time(), s.strip()[:max(strop, 30000)])
+    try:
+        os.makedirs(_DISK, exist_ok=True)
+        with open(_kl + ".tmp", "w", encoding="utf-8") as f:
+            f.write(_text_ram[(url, prohlizec)][1])
+        os.replace(_kl + ".tmp", _kl)
+    except OSError:
+        pass
+    return _text_ram[(url, prohlizec)][1][:strop]
+
+
+def _vyrez(text: str, od: _dt.date, do: _dt.date, strop: int = 14000) -> str:
+    """HANS_AKCE_DALSI_STRANKY_V1 — z dlouhého kalendáře jen úsek od prvního data
+    v rozsahu po první datum za ním (kalendář je seřazený); bez dat v rozsahu celý."""
+    poz = []
+    for m in _DATUM.finditer(text or ""):
+        try:
+            d = _dt.date(int(m.group(3) or od.year), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            continue
+        poz.append((m.start(), d))
+    v = [p for p, d in poz if od <= d <= do]
+    if not v:
+        return (text or "")[:strop]
+    a = max(0, v[0] - 200)
+    za = [p for p, d in poz if p > v[0] and d > do]
+    b = (za[0] if za else len(text))
+    return text[a:b][:strop]
 
 
 # ── 3. akce z textu (model) + ověření kódem ─────────────────────────────────
@@ -243,8 +309,8 @@ class ModelDole(RuntimeError):
 
 _DATUM = re.compile(r"\b(\d{1,2})\.\s?(\d{1,2})\.(?:\s?(20\d\d))?")
 _ZADANI = (
-    "Níže je text stránky s kalendářem akcí obce %s. Dnes je %s. Vypiš akce, které se konají "
-    "od dneška do %s. Každou na samostatný řádek ve tvaru:\n"
+    "Níže je text stránky s kalendářem akcí obce %s. Vypiš akce, které se konají "
+    "od %s do %s (včetně). Každou na samostatný řádek ve tvaru:\n"
     "DATUM | NÁZEV | MÍSTO\n"
     "DATUM piš přesně tak, jak stojí v textu (např. 5. 11. nebo 5.11.2026), NÁZEV doslova "
     "z textu, MÍSTO jen když ho text uvádí, jinak nech prázdné. Nic nevymýšlej, nic "
@@ -299,35 +365,80 @@ def over_akce(radky: list, text: str, od: _dt.date, do: _dt.date) -> list:
     return sorted(set(out))
 
 
-def akce_obce(config: dict, titul: str, dni: int = 7, smi_prohlizec: bool = False) -> list:
-    """[(datum, název, místo)] z kalendáře obce. Prázdné = nic / nejde."""
+def _radky_modelu(out: str) -> list:
+    """HANS_AKCE_RADKY_V1 (6. 11.) — výstup modelu → řádky „DATUM | NÁZEV | MÍSTO“.
+    Model občas píše datum na samostatný řádek a vkládá kategorii z kalendáře
+    („6.11.“ ↵ „volný čas | Jonášovy dílny | Gočárova galerie“) → dřív 24 z 24 zahozeno."""
+    res, datum = [], ""
+    for r in (out or "").splitlines():
+        r = r.strip()
+        if not r:
+            continue
+        if "|" not in r:
+            m = _DATUM.fullmatch(r.strip(" .:")) or _DATUM.fullmatch(r.strip(" :"))
+            if m:
+                datum = m.group(0)
+            continue
+        casti = [x.strip() for x in r.split("|")]
+        if _DATUM.search(casti[0]):
+            datum = _DATUM.search(casti[0]).group(0)
+        else:
+            if not datum:
+                continue
+            casti = [datum] + casti
+        # kategorie (malým písmenem, ≤ 2 slova) před názvem pryč
+        while len(casti) > 3 and casti[1][:1].islower() and len(casti[1].split()) <= 2:
+            del casti[1]
+        res.append(" | ".join(casti))
+    return res
+
+
+def akce_obce(config: dict, titul: str, dni: int = 7, smi_prohlizec: bool = False,
+              od: _dt.date = None) -> list:
+    """[(datum, název, místo)] z kalendáře obce. Prázdné = nic / nejde.
+    `od` — první den (víkendový návrh: sobota), jinak dnes."""
     kal = kalendar_obce(titul)
     if not kal or not _smi(kal):
         return []
-    text = text_stranky(kal)
+    _od = od or _dt.date.today()
+    text = _vyrez(text_stranky(kal, strop=30000), _od, _od + _dt.timedelta(days=dni))
     if len(_DATUM.findall(text)) < 2 and smi_prohlizec:
         _log.info("HANS_AKCE_V1: %r — kalendář bez dat, zkusím prohlížeč", titul)
         text = text_stranky(kal, prohlizec=True)
     if len(_DATUM.findall(text)) < 2:
         _log.info("HANS_AKCE_V1: %r — kalendář bez dat v textu (skript v prohlížeči?)", titul)
         return []
-    od = _dt.date.today()
+    od = _od
     do = od + _dt.timedelta(days=dni)
     from scripts.ollama_client import ollama_chat
     model = str((config.get("hans_dialog", {}) or {}).get("ollama_model", "hans-czech:latest"))
-    out = ollama_chat(model, [{"role": "user", "content": _ZADANI % (
-        titul, od.strftime("%-d. %-m. %Y"), do.strftime("%-d. %-m. %Y"), text)}],
-        config=config, timeout=90, options={"temperature": 0, "num_ctx": 8192, "num_predict": 700})
-    if not (out or "").strip():
-        raise ModelDole("model nedostupný")
-    radky = [r for r in (out or "").splitlines() if "|" in r]
-    ok = over_akce(radky, text, od, do)
-    _log.info("HANS_AKCE_V1: %r — model %d řádků, ověřeno %d", titul, len(radky), len(ok))
+    # HANS_AKCE_PO_DNECH_V1 (6. 11.) — dlouhý kalendář (Pardubice: 38 akcí v sobotu)
+    # po dnech, jinak model výpis nedokončí (neděle 3 z 18)
+    useky = ([(od, do, text)] if len(text) <= 6000 else
+             [(den, den, _vyrez(text, den, den)) for den in
+              (od + _dt.timedelta(days=i) for i in range(dni + 1))])
+    ok, nr = [], 0
+    for u_od, u_do, u_text in useky:
+        if len(_DATUM.findall(u_text)) < 1:
+            continue
+        out = ollama_chat(model, [{"role": "user", "content": _ZADANI % (
+            titul, u_od.strftime("%-d. %-m. %Y"), u_do.strftime("%-d. %-m. %Y"), u_text)}],
+            config=config, timeout=120, options={"temperature": 0, "num_ctx": 8192, "num_predict": 1500})
+        if not (out or "").strip():
+            raise ModelDole("model nedostupný")
+        radky = _radky_modelu(out)
+        nr += len(radky)
+        ok += over_akce(radky, u_text, u_od, u_do)
+    ok = sorted(set(ok))
+    _log.info("HANS_AKCE_V1: %r — model %d řádků, ověřeno %d", titul, nr, len(ok))
     return ok
 
 
 # ── 4. odpověď ─────────────────────────────────────────────────────────────
-def zprava(config: dict, lat: float, lon: float, dni: int = 7) -> str:
+posledni_seznam: list = []     # [(obec, km, [(datum, název, místo)])] z posledního `zprava`
+
+
+def zprava(config: dict, lat: float, lon: float, dni: int = 7, od: _dt.date = None) -> str:
     try:
         obce = obce_v_okoli(lat, lon)
     except Exception as e:
@@ -336,11 +447,12 @@ def zprava(config: dict, lat: float, lon: float, dni: int = 7) -> str:
     if not obce:
         return "V okolí jsem nenašel žádnou obec, jejíž akce bych uměl dohledat."
     radky, bez = [], []
+    posledni_seznam.clear()     # HANS_VYLET_WEB_V1 — celý seznam pro web
     prohlizec = [True]          # HANS_AKCE_PROHLIZEC_V1 — nejvýš jednou na dotaz
     for titul, km, st in obce:
         try:
             _p = prohlizec[0]
-            ak = akce_obce(config, titul, dni, smi_prohlizec=_p)
+            ak = akce_obce(config, titul, dni, smi_prohlizec=_p, od=od)
             if _p and any(k[1] for k in _text_ram if k[0] == kalendar_obce(titul)):
                 prohlizec[0] = False
             time.sleep(0.5)
@@ -355,6 +467,7 @@ def zprava(config: dict, lat: float, lon: float, dni: int = 7) -> str:
             bez.append(jm)
             continue
         radky.append("%s (%s km):" % (jm, ("%.1f" % km).replace(".", ",")))
+        posledni_seznam.append((jm, km, list(ak)))
         for d, n, m in ak[:6]:
             radky.append("  • %s — %s%s" % (d.strftime("%-d. %-m."), n, (", " + m) if m else ""))
     if not radky:

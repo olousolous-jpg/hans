@@ -188,8 +188,9 @@ _CAPABILITIES = [
      "jaké akce jsou v okolí?; jaké akce jsou v Litomyšli?"),
     # HANS_VYLET_V1 (3. 11.)
     ("vylet_vikend", "V pátek dopoledne posílám na Matrix NÁVRH VÝLETU na víkend — počasí, "
-     "tři místa do 40 km podle svých zájmů (každý týden jiná) a akce v okolí, když mi běží "
-     "mozek na počítači", "sám v pátek; vypnout vylet.enabled"),
+     "tři místa do 40 km podle svých zájmů (každý týden jiná) a akce v okolí od pátku do neděle, "
+     "když mi běží mozek na počítači; když je akcí hodně, pošlu jen pár a celý přehled dám "
+     "na svůj web (Domů › Víkendový výlet)", "sám v pátek; vypnout vylet.enabled"),
     # HANS_SACHY_V1 (5. 11.)
     ("sachy", "Ve volném čase hraji ŠACHY S KOLÁČEM. Své tahy vybírám sám, bez pomoci "
      "programu; šachový program hraje jen za Koláče (jeho síla roste, když vyhrávám) a po "

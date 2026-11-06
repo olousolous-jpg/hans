@@ -441,6 +441,18 @@ button.btn { border-radius: 999px; font-weight: 700; min-height: 40px; }
     <div style="font-size:12px;color:var(--fg2);margin-top:8px">Výsledky počítá program (šachový program, hra, kontrola odpovědí), ne Hans sám.</div>
   </section>
 
+  <!-- HANS_VYLET_WEB_V1 — víkendový návrh výletu a akce v okolí -->
+  <section class="card" id="vylet-card" style="display:none">
+    <div class="ob-head"><h2>Víkendový výlet</h2><span id="vylet-kdy" style="font-size:14px;color:var(--fg2)"></span></div>
+    <div id="vylet-pocasi" style="font-size:14px;color:var(--fg2);margin-bottom:10px"></div>
+    <div class="ob-label">Kam bych se podíval</div>
+    <div id="vylet-mista" style="font-size:14px;line-height:1.6;margin-bottom:14px">—</div>
+    <div class="ob-label">Akce v okolí od pátku do neděle <span id="vylet-pocet" style="font-weight:400"></span></div>
+    <div id="vylet-filtr" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 8px"></div>
+    <div id="vylet-akce" style="font-size:14px;line-height:1.55;max-height:420px;overflow:auto">—</div>
+    <div style="font-size:12px;color:var(--fg2);margin-top:8px">Akce opsané z kalendářů na webech obcí; každá ověřena proti textu stránky.</div>
+  </section>
+
   <section class="card ob-stav">
     <div class="ob-head"><h2>Stav Hanse</h2><button type="button" class="ob-link" onclick="showTab('system')">Podrobnosti</button></div>
     <div class="grid3">
@@ -2236,6 +2248,41 @@ async function loadHry() {
 }
 loadHry();
 setInterval(loadHry, 60000);
+// HANS_VYLET_WEB_V1 — víkendový výlet (/api/vylet)
+let vyletData = null, vyletObec = '';
+function vyletAkce() {
+  const d = vyletData || {}; const a = (d.akce||[]).filter(x => !vyletObec || x.obec === vyletObec);
+  const den = s => { const t = new Date(s + 'T12:00'); return ['ne','po','út','st','čt','pá','so'][t.getDay()] + ' ' + t.getDate() + '. ' + (t.getMonth()+1) + '.'; };
+  let html = '', posl = '';
+  for (const x of a) {
+    if (x.datum !== posl) { html += `<div style="font-weight:600;margin-top:8px">${esc(den(x.datum))}</div>`; posl = x.datum; }
+    html += `<div>${esc(x.nazev)}${x.misto ? ' <span style="color:var(--fg2)">— ' + esc(x.misto) + '</span>' : ''}${vyletObec ? '' : ' <span style="color:var(--fg2)">(' + esc(x.obec) + ')</span>'}</div>`;
+  }
+  document.getElementById('vylet-akce').innerHTML = html || 'Od pátku do neděle jsem na webech obcí žádné akce nenašel.';
+}
+async function loadVylet() {
+  try {
+    const d = await (await fetch('/api/vylet')).json();
+    const card = document.getElementById('vylet-card');
+    if (!card) return;
+    if (!d || !d.sobota) { card.style.display = 'none'; return; }
+    card.style.display = ''; vyletData = d;
+    const t = new Date(d.sobota + 'T12:00');
+    document.getElementById('vylet-kdy').textContent = 'víkend ' + t.getDate() + '. ' + (t.getMonth()+1) + '.';
+    document.getElementById('vylet-pocasi').textContent = d.pocasi ? 'Počasí: ' + d.pocasi : '';
+    document.getElementById('vylet-mista').innerHTML = (d.mista||[]).map((m, i) =>
+      `<div><b>${i+1}. ${esc(m.nazev)}</b> — ${esc(m.druh)}, ${String(m.km).replace('.', ',')} km${m.veta ? '<div style="font-size:13px;color:var(--fg2)">' + esc(m.veta) + '</div>' : ''}</div>`).join('') || '—';
+    const obce = [...new Set((d.akce||[]).map(x => x.obec))];
+    document.getElementById('vylet-pocet').textContent = (d.akce||[]).length ? '(' + d.akce.length + ')' : '';
+    const f = document.getElementById('vylet-filtr');
+    f.innerHTML = obce.length > 1 ? ['', ...obce].map(o =>
+      `<button class="btn" style="padding:2px 10px;font-size:13px${o === vyletObec ? ';font-weight:700' : ''}" data-obec="${esc(o)}">${o ? esc(o) : 'vše'}</button>`).join('') : '';
+    f.querySelectorAll('button').forEach(b => b.onclick = () => { vyletObec = b.dataset.obec; loadVylet(); });
+    vyletAkce();
+  } catch (e) {}
+}
+loadVylet();
+setInterval(loadVylet, 300000);
 // ── HANS_LETAKY_WEB_V1 (9. 10.) — záložka Slevy ─────────────────────────────
 // Čte poslední stažení (/api/slevy); „Stáhnout znovu“ pustí stažení na pozadí.
 const slEsc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
