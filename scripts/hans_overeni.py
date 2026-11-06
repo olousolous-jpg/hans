@@ -1201,6 +1201,17 @@ def opravit(h, ctx) -> None:
                   odpoved[len(_bez.rstrip()):][:160] if odpoved.startswith(_bez.rstrip()) else "")
         odpoved = _bez.rstrip()
         ctx.response = odpoved
+    # HANS_OVERENI_HRY_V1 (6. 11.) — čísla o Hansových hrách proti záznamu (bez sítě)
+    try:
+        from scripts import hans_overeni_hry as _ohr
+        _oh = _ohr.oprava(h.config, str(getattr(ctx, "_raw_message", "") or
+                                        getattr(ctx, "user_message", "") or ""),
+                          str(getattr(h, "_f1_query", None) or ""), odpoved)
+        if _oh:
+            odpoved = odpoved.rstrip() + "\n\n" + _oh
+            ctx.response = odpoved
+    except Exception as _ohe:
+        _log.debug("HANS_OVERENI_HRY_V1: %s", _ohe)
     try:
         from scripts import hans_wiki_offline as wo
         if not wo.dostupna():

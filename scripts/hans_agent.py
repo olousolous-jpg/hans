@@ -198,8 +198,14 @@ _KODI_OVLADANI = re.compile(
 
 
 _AUTOR_DILA = re.compile(
-    r"\bkdo\s+(?:je\s+autor\w*|napsal\w*|re[zž][ií]roval\w*|slo[zž]il\w*|"
+    # HANS_AGENT_DILO_NE_OSOBA_V1 (6. 11.) — i se zájmenem („kdo ji složil?“)
+    r"\bkdo\s+(?:(?:ho|ji|je|to|ty|ten|tu)\s+)?(?:je\s+autor\w*|napsal\w*|re[zž][ií]roval\w*|slo[zž]il\w*|"
     r"zkomponoval\w*|namaloval\w*|nato[cč]il\w*|nazp[ií]val\w*)\b", re.IGNORECASE)
+
+
+_DILO_VE_VETE = re.compile(
+    r"\bje\s+(?:to\s+)?(?:tak[ée]\s+|taky\s+)?(?:skladb\w*|oper\w*|symfoni\w*|b[áa]se[ňn]|"
+    r"obraz\w*|soch\w*|rom[áa]n\w*|novel\w*|p[íi]se[ňn]|d[íi]lo|kniha|film)\b", re.IGNORECASE)
 
 
 def _ma_kodi_ovladani(msg: str) -> bool:
@@ -2205,6 +2211,21 @@ class AgentRouter:
         dict(marker="HANS_AGENT_AUTHOR_NOT_PERSON_V1", akce=("report_person",),
              podminka=lambda s, aid, msg, dec, h: bool(_AUTOR_DILA.search(msg or "")),
              verdikt=None, duvod="ptá se na autora díla, ne na osobu"),
+        # HANS_AGENT_DILO_NE_OSOBA_V1 (6. 11., /tazatel) — „A <název>? Je to také skladba
+        # z téhož cyklu?“ (skladba se jmenuje jako člen domácnosti) → report_person → cizímu odmítnuto. Věta,
+        # která sama říká, že jde o dílo, se na osobu neptá (📏 5 565 vět: 22 shod,
+        # karta osoby by odpadla 1× — „kdo ho režíroval“ u filmu).
+        dict(marker="HANS_AGENT_DILO_NE_OSOBA_V1", akce=("report_person",),
+             podminka=lambda s, aid, msg, dec, h: bool(_DILO_VE_VETE.search(msg or "")),
+             verdikt=None, duvod="věta mluví o díle, ne o osobě"),
+        # HANS_AGENT_HRA_NE_DUM_V1 (6. 11., /tazatel) — „jak skončila vaše poslední hra
+        # NetHacku?“ → report_pc_health → cizímu odmítnuto; Hansova hra patří bloku o sobě
+        dict(marker="HANS_AGENT_HRA_NE_DUM_V1",
+             akce=("report_pc_health", "report_home_status", "report_household",
+                   "report_who_is_home", "report_climate", "report_now_playing"),
+             podminka=lambda s, aid, msg, dec, h: __import__(
+                 "scripts.hans_intent", fromlist=["x"]).pta_se_na_hry_hanse(msg),
+             verdikt=None, duvod="otázka na Hansovu hru"),
         # HANS_AGENT_KODI_CTRL_CUE_V1 (19. 10.) — viz `_ma_kodi_ovladani`.
         dict(marker="HANS_AGENT_KODI_CTRL_CUE_V1",
              akce=("kodi_pause", "kodi_stop", "kodi_resume"),

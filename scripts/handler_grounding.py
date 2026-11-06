@@ -445,6 +445,19 @@ class GroundingMixin:
             if _r is not _h._POKRACUJ:
                 return _r
             self._grr_prepis(ctx)
+            # HANS_ASK_HANS_HRY_F1_V1 (6. 11.) — přepis navazující otázky je o Hansově
+            # hře („jen dve? a kdo vyhral tu posledni“ → „Jak dopadla poslední partie
+            # šachu s Koláčem?“) → blok o sobě, i když holá věta hru nejmenuje
+            try:
+                from scripts.hans_intent import pta_se_na_hry_hanse as _psh1
+                if (not getattr(ctx, '_hry_f1', False) and self._f1_query
+                        and _psh1(self._f1_query)):
+                    ctx._hry_f1 = True
+                    _r = self._grr_nefakticky(ctx)
+                    if _r is not _h._POKRACUJ:
+                        return _r
+            except Exception as _h1e:
+                logging.getLogger(_h.__name__).debug('HANS_ASK_HANS_HRY_F1_V1: %s', _h1e)
 
             # HANS_KODI_CAST_FACT_V2 (21.8.) — KDO V TOM HRAJE: odpověz
             # z KNIHOVNY, ne z hlavy. Doloženo 20.8.: „kdo tam hraje?" →
@@ -609,7 +622,10 @@ class GroundingMixin:
         # („kolik partií jsi odehrál s Koláčem?“ → dřív A1 „nemám záznam“)
         try:
             from scripts.hans_intent import pta_se_na_hry_hanse as _psh0
-            _hry0 = _psh0(self._bez_tazatele(str(ctx._text)))
+            # HANS_ASK_HANS_HRY_F1_V1 (6. 11.) — i přepis navazující otázky („Jen tolik?
+            # Kolik jich bylo?“ → „Kolik šachových partií s Koláčem odehrál?“)
+            _hry0 = (_psh0(self._bez_tazatele(str(ctx._text)))
+                     or getattr(ctx, '_hry_f1', False))
         except Exception:
             _hry0 = False
         if not ctx.res.is_factual or _hry0:
@@ -664,7 +680,8 @@ class GroundingMixin:
                 # výmysl („zabil mě kobold“); data jsou v bloku o sobě.
                 try:
                     from scripts.hans_intent import pta_se_na_hry_hanse as _psh
-                    _hry_ss = _psh(self._bez_tazatele(str(ctx._text)))
+                    _hry_ss = (_psh(self._bez_tazatele(str(ctx._text)))
+                               or _psh(getattr(self, '_f1_query', None) or ""))   # HANS_ASK_HANS_HRY_F1_V1
                 except Exception:
                     _hry_ss = False
                 if not _hist_rok and (_hry_ss or is_about_self(str(ctx._text), self.config)):

@@ -92,8 +92,19 @@ def is_opinion_query(text: str) -> bool:
         # HANS_OPINION_FAKT_JMENO_V1: bez předpony — produkce posílá větu
         # jako „<jméno> se ptá: …“ (týž ořez jako hans_intent)
         _bez = re.sub(r"^[^\W\d_]+ se ptá:\s*", "", msg)
-        if (_FAKT_ZACATEK.match(_bez) and not _OSOBNI_NAZOR.search(_bez)
-                and _VLASTNI_JMENO.search(_bez[1:])):
+        # HANS_OPINION_OTAZKOVA_VETA_V1 (6. 11., /tazatel) — filosofické slovo jen
+        # v ÚVODU („Ještě jednu otázku z umění, pokud dovolíte. Kdo namaloval
+        # Slovanskou epopej?“ → názor → „namaloval Josef Vladislav Štefan“).
+        # Rozhoduje otázková věta; osobní názor v ní cestu názoru drží.
+        # 📏 4 291 vět: změna 26 — faktické otázky s úvodem o umění + otázky na
+        # Hanse samého (jdou běžnou cestou), žádná žádost o názor.
+        _vs = [v for v in re.split(r"(?<=[.!?])\s+", _bez) if "?" in v]
+        _q = " ".join(_vs)
+        if _vs and not _PHIL_PAT.search(_q) and not _OSOBNI_NAZOR.search(_q):
+            return False
+        _q1 = _vs[0] if _vs else _bez
+        if ((_FAKT_ZACATEK.match(_bez) or _FAKT_ZACATEK.match(_q1)) and not _OSOBNI_NAZOR.search(_bez)
+                and _VLASTNI_JMENO.search(_q1[1:])):
             return False
         return True
     return False

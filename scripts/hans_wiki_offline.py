@@ -1158,6 +1158,121 @@ def rozcestnik_1p(q: str):
     return None
 
 
+# HANS_WIKI_ROZC_POPIS_V1 (6. 11., /tazatel 5. 11.) — rozcestník + slovo z otázky,
+# které stojí v POPISU právě jednoho řádku rozcestníku: „operu Rusalka“ → řádek
+# „Rusalka (Dvořák) – pohádková opera…“ (dřív pramen / mytologie), „básníka
+# Otakara Březinu“ → „Otokar Březina – český básník“ (dřív agronom). Platí i pro
+# hlavní článek, ke kterému existuje „X (rozcestník)“. Víc řádků se stejnou
+# shodou → jen výrazně delší článek (≥ 1,3×), jinak None.
+_POPIS_NE = {"kdy", "kdo", "jak", "jaky", "jaka", "jake", "ktery", "ktera", "ktere", "prosim",
+             "muzete", "muzes", "rict", "znate", "znas", "presne", "poprve", "vite", "vis",
+             "zajima", "zajimalo", "dekuji", "dobre", "jeste", "jedna", "otazka", "byl",
+             "byla", "bylo", "jsou", "mate", "mel", "mela", "rekl", "rekla", "tedy", "take"}
+
+
+def vyznam_podle_popisu(titul: str, veta: str):
+    try:
+        if not titul:
+            return None
+        db = _db()
+        zak = re.sub(r"\s*\(.*?\)\s*$", "", titul).strip()
+        rr = db.execute("SELECT text FROM clanek WHERE titul_norm=? AND titul=? AND rozcestnik=1",
+                        (_norm(titul), titul)).fetchone()
+        if not rr:
+            rr = db.execute("SELECT text FROM clanek WHERE titul_norm=?",
+                            (_norm(zak + " (rozcestník)"),)).fetchone()
+        if not rr:
+            return None
+        jm = {_fold_tzv(w)[:4] for w in re.findall(r"\w+", zak)}
+        # jen slova TĚSNĚ u názvu (≤ 2 před, ≤ 3 za): „operu Rusalka“, „básníka
+        # Otakara Březinu“, „Rusalka od Antonína Dvořáka“; slovo odjinud z věty
+        # („textu“ → Tyl (textil), „film Duna“ → Smetana (film)) ne
+        sl_v = re.findall(r"\w+", re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or ""))
+        fv = [_fold_tzv(w) for w in sl_v]
+        pozice = [i for i, f in enumerate(fv) if f[:4] in jm]
+        if not pozice:
+            return None
+        okno = set()
+        for i in pozice:
+            okno |= set(range(max(0, i - 2), i)) | set(range(i + 1, min(len(fv), i + 4)))
+        kmeny = []
+        for i in sorted(okno):
+            fw = fv[i]
+            if len(fw) < 4 or fw in _POPIS_NE or fw[:4] in jm:
+                continue
+            # dlouhé slovo o 3 (přivlastňovací „Smetanova“ → „smetan“ ~ „Smetany“)
+            kmeny.append(fw[:max(4, len(fw) - (3 if len(fw) >= 8 else 2))])
+        kmeny = list(dict.fromkeys(kmeny))
+        if not kmeny:
+            return None
+        # křestní jméno těsně před názvem („Richard Schmidt“) musí být i ve vybraném
+        # titulu (jinak „Loki Schmidtová“)
+        krestni = {fv[i - 1][:4] for i in pozice if i > 0 and sl_v[i - 1][:1].isupper()
+                   and fv[i - 1][:4] not in jm}
+        body = []
+        for radek in rr[0].split("\n"):
+            if " – " not in radek:
+                continue
+            levy, popis = radek.split(" – ", 1)
+            levy = re.sub(r"\s*\([^)]*\d[^)]*\)\s*$", "", levy.strip())   # „(* 1965)“
+            slova = re.findall(r"\w+", _fold_tzv(popis))
+            sk = sum(any(s.startswith(k) for s in slova) for k in kmeny)
+            if not sk:
+                continue
+            r2 = db.execute("SELECT titul, length(text) FROM clanek WHERE titul_norm=? "
+                            "AND rozcestnik=0 ORDER BY titul=? DESC", (_norm(levy), levy)).fetchone()
+            if r2 and all(any(_fold_tzv(x).startswith(k) for x in re.findall(r"\w+", r2[0]))
+                          for k in krestni):
+                body.append((sk, r2[1] or 0, r2[0]))
+        if not body:
+            return None
+        nej = max(b[0] for b in body)
+        kand = sorted((b for b in body if b[0] == nej), key=lambda b: -b[1])
+        if len(kand) > 1 and kand[0][1] < 1.3 * kand[1][1]:
+            return None
+        if kand[0][2] == titul:
+            return None
+        _log.info("HANS_WIKI_ROZC_POPIS_V1: %r + %s → %r", titul, kmeny, kand[0][2])
+        return kand[0][2]
+    except Exception as e:
+        _log.debug("HANS_WIKI_ROZC_POPIS_V1 %r: %s", titul, e)
+    return None
+
+
+# HANS_WIKI_DILO_NA_ZACATKU_V1 (6. 11., /tazatel) — „Libuse, to je Smetanova opera
+# taky? Kdy se hrala poprvé?“, „Vltava, to je Smetanova skladba, jo?“: předmětem je
+# dílo na začátku věty, ne autor (kotva brala „Bedřicha Smetany“ / nic → z hlavy
+# „premiéra 10. 10. 1872“). Název → titul (i bez háčků) → význam podle popisu
+# rozcestníku z druhu a autora.
+_DILO_ZACATEK = re.compile(
+    r"^\s*(?:a\s+|no\s+a\s+|a\s+co\s+)?(?P<n>[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w]+(?:\s+[\w]+){0,3}?)\s*[,–-]\s*"
+    r"(?:to\s+)?(?:je|bylo|byla|byl)\s+(?:to\s+)?(?P<pr>(?:\w+\s+){0,2}?)"
+    r"(?P<d>oper\w*|skladb\w*|symfoni\w*|b[áa]se[ňn]\w*|obraz\w*|soch\w*|rom[áa]n\w*|knih\w*|"
+    r"film\w*|p[íi]se[ňn]\w*|seri[áa]l\w*|novel\w*|d[íi]lo)\b", re.IGNORECASE)
+
+
+def dilo_na_zacatku(veta: str):
+    try:
+        m = _DILO_ZACATEK.search(re.sub(r"^\S+\s+se\s+pt[áa]:\s*", "", veta or ""))
+        if not m or re.search(r"\b(?:či|ci|nebo)\b", m.group(0), re.I):   # „předseda či film?“
+            return None
+        n = m.group("n").strip()
+        rows = _fold_db().execute("SELECT titul, rozcestnik FROM t WHERE fold=?",
+                                  (_fold_tzv(n),)).fetchall()
+        if not rows:
+            return None
+        titul = rows[0][0]
+        _za = " ".join(re.findall(r"\w+", (veta or "")[m.end():])[:3])
+        kontext = "%s %s %s %s" % (m.group("pr") or "", m.group("d"), n, _za)
+        v = vyznam_podle_popisu(titul, kontext)
+        if v:
+            _log.info("HANS_WIKI_DILO_NA_ZACATKU_V1: %r (%s) → %r", n, m.group("d"), v)
+            return v
+    except Exception as e:
+        _log.debug("HANS_WIKI_DILO_NA_ZACATKU_V1: %s", e)
+    return None
+
+
 def vyznam_podle_mista(titul: str, veta: str, plny: bool = True):
     """Rozcestník `titul` + místo ve `veta` → jediný význam, nebo None.
     `plny=False` — bez pomalého hledání přívlastku před názvem (celá tabulka),
@@ -1218,14 +1333,21 @@ def vyznam_podle_mista(titul: str, veta: str, plny: bool = True):
             return None
         _sedi = lambda hay: any(all(re.search(r"\b" + re.escape(s), hay) for s in sk)
                                 for sk in mista)
+        # HANS_WIKI_MISTO_VELKE_V1 (6. 11.) — v NÁZVU sedí krátký kmen (< 4 znaky)
+        # jen na slovo s velkým písmenem: místo je „Pražská“, „Malá Strana“, ale
+        # druh v závorce malým („Rusalka (pramen)“ — „v Praze“ → „pra“ → pramen)
+        def _sedi_t(t, sk):
+            sl_ = [(w[:1].isupper(), _fold_tzv(w)) for w in re.findall(r"\w+", t)]
+            return all(any(fw.startswith(s) and (len(s) >= 4 or up) for up, fw in sl_)
+                       for s in sk)
         # nejdřív místo v NÁZVU (levné, i u stovek kandidátů), text článku jen
         # když název nerozhodne a kandidátů je málo
-        sedi = [t for t in kand if _sedi(_fold_tzv(t))]
+        sedi = [t for t in kand if any(_sedi_t(t, sk) for sk in mista)]
         if len(sedi) > 1:
             # HANS_WIKI_MISTO_NEJUZSI_V1 (27. 10.) — „na Malé Straně v Praze“: Praze
             # sedí víc kostelů → nejdřív místo, které dá JEDINÝ význam
             for sk in mista:
-                _j = [t for t in kand if all(re.search(r"\b" + re.escape(s), _fold_tzv(t)) for s in sk)]
+                _j = [t for t in kand if _sedi_t(t, sk)]
                 if len(_j) == 1:
                     sedi = _j
                     break

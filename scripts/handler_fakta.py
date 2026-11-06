@@ -1172,8 +1172,18 @@ class FaktaMixin:
             from scripts.hans_intent import pta_se_na_zazitek_hanse, dotaz_na_pojem
             from scripts.hans_convindex import kotva_tematu
             from scripts import hans_wiki_offline as _wo
-            if not _wo.dostupna() or pta_se_na_zazitek_hanse(veta):
+            if not _wo.dostupna() or _zazitek_nebo_hra(self, veta):
                 return None
+            # HANS_WIKI_DILO_NA_ZACATKU_V1 (6. 11.) — „Libuse, to je Smetanova opera?“
+            # → předmětem je dílo na začátku, ne autor (📏 korpus: 2 shody, obě takové)
+            try:
+                _dz = _wo.dilo_na_zacatku(veta)
+            except Exception:
+                _dz = None
+            if _dz:
+                self._presny_titul = _dz
+                self._presny_z_vety = _dz
+                return _dz
             _kp = self.config.get("known_persons", {}) or {}
             _known = tuple(_kp.keys()) + tuple(str(v.get("nom", "")) for v in _kp.values())
             try:
@@ -1297,6 +1307,30 @@ class FaktaMixin:
                             self._presny_z_vety = titul
             except Exception as _sde:
                 logging.getLogger(__name__).debug("HANS_LOOKUP_SLOVESO_DRUH_V1: %s", _sde)
+            # HANS_WIKI_ROZC_POPIS_V1 (6. 11.) — slovo u názvu v popisu jediného řádku
+            # rozcestníku („operu Rusalka“ → Rusalka (Dvořák), „básníka Otakara
+            # Březinu“ → Otokar Březina). 📏 395 otázek s článkem: změna 8, všechny
+            # správně (Libuše (opera), Vltava (Má vlast), Pražská Loreta, Noční hlídka (obraz)…)
+            if (titul or tema) and "(" not in (titul or tema):
+                try:
+                    # i když hledání rozcestník odmítlo (titul None: „Otakar Březina“)
+                    _vp = _wo.vyznam_podle_popisu(titul or tema, (veta or "") + " " + (_prepis or ""))
+                    # přednost má HANS_LOOKUP_SLOVESA_TVORBY_V1 níž (druh díla podle první
+                    # věty článku: „autorem básně Kytice“ → báseň, ne sbírka)
+                    _vv5 = _f(veta) + " " + _f(_prepis or "")
+                    _dr5 = (["opera"] if re.search(r"\boper\w*|\bhudb\w*", _vv5) else
+                            ["kniha"] if re.search(r"\bkdo\s+(?:napsal|je\s+autor\w*|byl\s+autor\w*)", _vv5) else
+                            ["film"] if re.search(r"\bkdo\s+(?:re[zž][ií]roval|nato[cč]il)", _vv5) else
+                            ["opera"] if re.search(r"\bkdo\s+(?:slo[zž]il|zkomponoval)", _vv5) else [])
+                    if _vp and _dr5 and _wo._dilo_z_rozcestniku(
+                            _f(re.sub(r"\s*\(.*?\)", "", titul or tema)), _dr5):
+                        _vp = None
+                except Exception:
+                    _vp = None
+                if _vp:
+                    self._presny_titul = _vp
+                    self._presny_z_vety = _vp
+                    return _vp
             self._presny_titul = titul     # HANS_LOOKUP_PRESNY_PODKLAD_V1
             if (titul and not _wo.extrakt(titul)[1] and "(" not in titul
                     and _wo._MISTO_PRED.search((veta or "") + " " + (_prepis or ""))):
@@ -1506,7 +1540,7 @@ class FaktaMixin:
             from scripts.hans_convindex import kotva_tematu
             from scripts import hans_wiki_offline as _wo
             from scripts import hans_overeni as _O
-            if not _wo.dostupna() or pta_se_na_zazitek_hanse(veta):
+            if not _wo.dostupna() or _zazitek_nebo_hra(self, veta):
                 return None
             _kp = self.config.get("known_persons", {}) or {}
             _known = tuple(_kp.keys()) + tuple(str(v.get("nom", "")) for v in _kp.values())
@@ -1824,7 +1858,7 @@ class FaktaMixin:
         # nedohledávat (dřív film „Paříži, miluji tě“)
         try:
             from scripts.hans_intent import pta_se_na_zazitek_hanse
-            if pta_se_na_zazitek_hanse(veta):
+            if _zazitek_nebo_hra(self, veta):
                 logging.getLogger(__name__).info(
                     "HANS_ASK_HANS_EXPERIENCE_V1: otázka na můj zážitek/dílo → "
                     "nedohledávám: %.60s", veta or "")
@@ -1985,7 +2019,7 @@ class FaktaMixin:
         vázané na čas, nesmysl) bez dohledání."""
         try:
             from scripts.hans_intent import pta_se_na_zazitek_hanse
-            if pta_se_na_zazitek_hanse(veta) or self._je_dotaz_na_novinky(veta):
+            if _zazitek_nebo_hra(self, veta) or self._je_dotaz_na_novinky(veta):
                 return None
             from scripts.hans_findings import clanek_obsahem, lookup_now
             _prepis = getattr(self, '_f1_query', None)
@@ -2506,3 +2540,11 @@ class FaktaMixin:
 
 # ROZDELENI_METOD_V1 — až na konci, viz hlavička
 from scripts import openwebui_direct_handler as _h  # noqa: E402
+
+
+def _zazitek_nebo_hra(h, veta):
+    """HANS_ASK_HANS_HRY_F1_V1 (6. 11.) — zážitek Hanse z holé věty, nebo jeho hra
+    i z přepisu navazující otázky (bez slova „šachy“ ve větě → dřív heslo Koláč = pečivo)."""
+    from scripts.hans_intent import pta_se_na_zazitek_hanse, pta_se_na_hry_hanse
+    return bool(pta_se_na_zazitek_hanse(veta)
+                or pta_se_na_hry_hanse(getattr(h, '_f1_query', None) or ""))

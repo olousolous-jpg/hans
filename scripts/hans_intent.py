@@ -1194,9 +1194,19 @@ def pta_se_na_hry_hanse(text: str) -> bool:
     t = text or ""
     # 2. kolo /tazatel: „Koláč, zapamatoval si něco z tvých zkoušek?“ (jen s Koláčem —
     # „film Zkouška“ je dotaz na svět)
-    _kz = bool(re.search(r"\bzkou[šs]k\w*|\bzapamatoval\w*", t, re.I)
+    _kz = bool(re.search(r"\bzkou[šs]\w*|\bzapamatoval\w*", t, re.I)   # i „Koláč tě zkouší?“
                and re.search(r"\bkol[áa][čc]\w*", t, re.I))
-    return bool((_ZAZ_HRY.search(t) and _ZAZ_HRY_OS.search(t)) or _ZAZ_ZKOUSI.search(t) or _kz)
+    # HANS_ASK_HANS_HRY_F1_V1 (6. 11.) — „ses dostal“, přepis ve 3. osobě „do jakého
+    # patra se dostal v NetHacku“ (NetHack hraje jen Hans; 📏 5 565 vět: nově 2, obě takové)
+    _nh = bool(_ZAZ_NH.search(t))
+    return bool((_ZAZ_HRY.search(t) and (_ZAZ_HRY_OS.search(t) or _ZAZ_HRY_OS2.search(t)))
+                or _ZAZ_ZKOUSI.search(t) or _kz or _nh)
+
+
+_ZAZ_HRY_OS2 = re.compile(r"\b(?:ses|sis|rozehr\w*)\b", re.IGNORECASE)   # rozehranou partii má jen Hans (📏 nově 3, všechny takové)
+_ZAZ_NH = re.compile(r"\bnethack\w*\b.*\b(?:patr\w*|sk[óo]r\w*|rekord\w*|dostal\w*|zem[řr]el\w*|"
+                     r"um[řr]el\w*|hr[áa]l\w*)|\b(?:patr\w*|sk[óo]r\w*|rekord\w*)\b.*\bnethack",
+                     re.IGNORECASE)
 
 
 def pta_se_na_zazitek_hanse(text: str) -> bool:

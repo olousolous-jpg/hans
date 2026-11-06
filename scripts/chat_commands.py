@@ -2280,7 +2280,7 @@ _ROUTE_ANTICUE = {
     # HANS_NALEZ_ANTI_UCITEL_V1 (5. 11.) — „zkoušíš Koláče? co se naučil?“ = Hans
     # zkouší Koláče (HANS_UCI_KOLACE_V1), ne nálezy z Koláčových zkoušek Hanse;
     # /tazatel 5. 11. → /nalez → cizímu „jen pro domácnost“. Téma šachů taky ne.
-    "nalez": re.compile(r"\bzkous(?:is|ite|el[a]?)\b.{0,30}kolac|\bkolac\w*\s+zkous|"
+    "nalez": re.compile(r"\bzkous(?:is|ite|el[a]?)\b.{0,30}kolac|\bkolac\w*\s+(?:te\s+|vas\s+)?zkous|"
                         r"\bsach|\bnethack|\bpartii?\b|"
                         # 2. kolo /tazatel: „Koláč, zapamatoval si něco z tvých zkoušek?“
                         r"\bzapamatoval|\b(?:tvych|vasich|tvoje|vase)\s+zkous", re.I),

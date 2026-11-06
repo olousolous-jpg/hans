@@ -177,6 +177,22 @@ def _self_state_trvale(conn) -> list:
             out.append(s)
     except Exception as e:
         _hr._log.debug("self_state trvale (zkoušení): %s", e)
+    # HANS_SELF_STATE_KOLAC_ZKOUSI_V1 (6. 11., /tazatel) — Koláč zkouší HANSE (opak
+    # zkoušení Koláče výš); „Koláč tě zkouší? co ti dal za otázku?“ → dřív /nalez
+    # „jen pro domácnost“, bez dat by model otázku vymyslel
+    try:
+        r = conn.execute("SELECT count(*), coalesce(sum(verdikt='ok'),0) FROM kolac_exam").fetchone()
+        p = conn.execute("SELECT otazka, verdikt FROM kolac_exam ORDER BY ts DESC LIMIT 1").fetchone()
+        if r and r[0] and p:
+            out.append("Koláč zkouší mě z toho, co jsem si přečetl: zkoušek %d, správně %d; "
+                       "naposledy se ptal „%s“ — %s"
+                       % (r[0], r[1], (p[0] or "").strip()[:160],
+                          "odpověděl jsem správně" if p[1] in ("ok", "dohledal") else
+                          "nevěděl jsem" if p[1] in ("nevedel", "priznal") else
+                          "odpověděl jsem jen zčásti" if p[1] == "castecne" else
+                          "odpověděl jsem vedle"))
+    except Exception as e:
+        _hr._log.debug("self_state trvale (Koláč zkouší): %s", e)
     # HANS_SELF_STATE_MORE_V1 (2. 10.) — poslední obraz a poslední dočtená kniha.
     # /tazatel 2. 10.: o obraze „Sen“ (1. 10. 23:24, muž na stezce do lesa)
     # tvrdil „14 h 27 min od pátku“ a popsal zříceninu s notami; jako poslední
@@ -373,12 +389,18 @@ def je_dotaz_na_vlastni_dilo(text: str, db_path: str) -> bool:
         finally:
             if conn is not None:
                 conn.close()
-        slova = {w[:5] for n in nazvy for w in re.findall(r"\w{5,}", fold(n))}
+        # HANS_OWN_WORK_PREFIX6_V1 (6. 11.) — 5 písmen bylo málo: „patří“ ~
+        # „Patrick“ (obraz) → otázka na Rembrandta = vlastní dílo. Teď celé slovo
+        # nebo společných 6 písmen (📏 65 vět o malbě/psaní: změna 3, žádná
+        # otázka na Hansovo dílo).
+        _cela_t = {w for n in nazvy for w in re.findall(r"\w{5,}", fold(n))}
+        slova = {w[:6] for w in _cela_t if len(w) >= 6}
         # krátký název s velkým písmenem („obraz Sen“) — celé slovo názvu
         cela = {w for n in nazvy for w in re.findall(r"\w{3,}", fold(n))}
         if any(fold(m.group(1)) in cela for m in _JMENO_RE.finditer(t)):
             return True
-        return any(w[:5] in slova for w in re.findall(r"\w{5,}", fold(t))
+        return any((w in _cela_t or (len(w) >= 6 and w[:6] in slova))
+                   for w in re.findall(r"\w{5,}", fold(t))
                    if not w.startswith(_hr._VLASTNI_OBECNE))
     if _hr._DRUHA_OS.search(t) or re.search(r"\bsv(?:[ůu]j|[ée]|ou|[ée]m|[ée]ho|ými?)\b", t, re.I):
         # HANS_OWN_WORK_FOREIGN_NAME_V1 (18. 10.) — zdvořilé „víte / mohl byste“

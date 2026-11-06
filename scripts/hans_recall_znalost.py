@@ -183,6 +183,14 @@ def _extract_knowledge_topic(text: str) -> Optional[str]:
                r"v[íi]ce?|trochu)\s+(?:o|z|ze)\s+", "", x, flags=re.I)
     if re.fullmatch(r"(?:je|ho|ji|jej|jich|n[ěe]m|n[íi]|nich|n[ěe]j|jim|mu)", x, flags=re.I):
         return None
+    # HANS_KNOWLEDGE_TOPIC_ADVERB_V1 (6. 11., /tazatel) — „a co od něj znáte
+    # NEJVÍC?“ → téma „nejvic“ → kmen „nejv“ našel v četbě „nejvyšší fotbalovou
+    # ligu“ a teplotní rekordy → model k tomu vymyslel dílo. Příslovce míry a
+    # neurčité zájmeno tématem nejsou (📏 4 230 vět: „nejvic“ 1×, „někoho“ 1×).
+    if re.fullmatch(r"(?:nej)?v[íi]ce?|nejl[ée]pe|nejm[ée]n[ěe]|hodn[ěe]|moc|dob[řr]e|"
+                    r"trochu|m[áa]lo|n[ěe]koho|n[ěe]co|n[ěe]kdo|nikoho|nic|v[šs]echno|"
+                    r"osobn[ěe]|taky|tak[ée]|v[ůu]bec", x, flags=re.I):
+        return None
     x = re.sub(r"^(?:ten|ta|to|tu|toho|tom|tomu|t[ée]|ty|ti|t[ěe]ch|t[íi]m|"
                r"tohle|tenhle|tahle|tamten|tamta|onen|ona)(?:\s+|$)",
                "", x, flags=re.I)
