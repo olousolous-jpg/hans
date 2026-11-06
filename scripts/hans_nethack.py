@@ -162,7 +162,8 @@ def _bfs(obs, cil, max_d=200, nav=None):
         y, x = q.popleft()
         if (y, x) != (sy, sx) and cil(y, x):
             return prvni[(y, x)]
-        here_door = "door" in D(y, x)
+        here_door = "door" in D(y, x) or (nav is not None and
+                                          ("D", int(bl[nh.NLE_BL_DEPTH]), y, x) in nav)
         for (dy, dx) in _SMER:
             yy, xx = y + dy, x + dx
             if not (0 <= yy < H and 0 <= xx < W) or (yy, xx) in prvni:
@@ -173,7 +174,8 @@ def _bfs(obs, cil, max_d=200, nav=None):
                 continue
             if not (_pruchozi(d, int(gl[yy][xx])) or cil(yy, xx)):
                 continue
-            if dy and dx and (here_door or "door" in d):
+            if dy and dx and (here_door or "door" in d or (
+                    nav is not None and ("D", int(bl[nh.NLE_BL_DEPTH]), yy, xx) in nav)):
                 continue
             if "closed door" in d and not cil(yy, xx):
                 continue
@@ -199,6 +201,11 @@ def volby(obs, nav=None) -> dict:
         for xx in range(W):
             if "staircase down" in D(yy, xx):
                 nav.add(("S", hl, yy, xx))
+            # HANS_NETHACK_DVERE_V1 (6. 11.) — dveře si pamatuje kód: stojí-li na
+            # nich postava, popis pole je „Agent“ → cesta šla šikmo z dveří,
+            # krok selhal a sousední pole se označila za neprůchozí (hra 4 uvízla)
+            if "door" in D(yy, xx):
+                nav.add(("D", hl, yy, xx))
     schody = {(a[2], a[3]) for a in nav if a[0] == "S" and a[1] == hl}
     if (y, x) in schody:
         v["dolů"] = ("sejít po schodech dolů (stojíš na nich)", "DOWN")
@@ -230,6 +237,11 @@ def volby(obs, nav=None) -> dict:
         v["prozkoumat"] = ("jít prozkoumat nejbližší neznámé místo", hranice)
     if any("closed door" in D(y + dy, x + dx) for (dy, dx), _ in sous):
         v["otevřít dveře"] = ("otevřít zavřené dveře vedle tebe", "OPENDOOR")
+    # HANS_NETHACK_DVERE_V1 — zamčené dveře (zapamatované) jdou vykopnout
+    zam = [(dy, dx) for (dy, dx), _ in sous if "closed door" in D(y + dy, x + dx)
+           and ("L", hl, y + dy, x + dx) in nav]
+    if zam:
+        v["vykopnout dveře"] = ("vykopnout zamčené dveře vedle tebe", ("KICK", zam[0]))
     # jíst jen s jídlem v batohu (jinak „jíst“ dokola bez účinku)
     # NLE_BL_HUNGER: 0 nasycen, 1 bez hladu, 2 hlad, 3 slabost, 4 omdlévá
     if bl[nh.NLE_BL_HUNGER] >= 2 and any(int(o) == int(nh.FOOD_CLASS)
@@ -287,7 +299,38 @@ def volby(obs, nav=None) -> dict:
     # HANS_NETHACK_VOLBY_V1 — pasivní volby jen tam, kde dávají smysl (s modelem
     # 5. 11.: jinak „hledat/odpočinout“ dokola a stál na místě)
     if "prozkoumat" not in v and "ke schodům" not in v and "dolů" not in v:
-        v["hledat"] = ("hledat skryté dveře a chodby (není kam jít)", "SEARCH")
+        # HANS_NETHACK_DVERE_V1 — nemá kam jít a má pole označená za neprůchozí →
+        # jednou za 100 herních tahů je zapomenout a zkusit znovu (označení umí být
+        # omyl: příšera zmizela, dveře se otevřely)
+        blok = {a for a in nav if a[0] == "B" and a[1] == hl}
+        _posl = max([a[2] for a in nav if a[0] == "R" and a[1] == hl] or [-10 ** 6])
+        if blok and cas - _posl >= 100:
+            nav -= blok
+            nav.add(("R", hl, cas))
+            return volby(obs, nav)
+        # HANS_NETHACK_HLEDANI_V1 (6. 11.) — skryté chodby se hledají u slepého
+        # konce chodby nebo u zdi, ne uprostřed místnosti (hra 4: 120× na jednom poli)
+        def _orth(yy, xx):
+            return [(yy + a, xx + b) for a, b in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                    if 0 <= yy + a < H and 0 <= xx + b < W]
+        def _misto(yy, xx, slepy):
+            if ("H", hl, yy, xx) in nav or not _pruchozi(D(yy, xx), 0) or "door" in D(yy, xx):
+                return False
+            sous_ = _orth(yy, xx)
+            if slepy:
+                return ("corridor" in D(yy, xx)
+                        and sum(_pruchozi(D(a, b), 0) for a, b in sous_) <= 1)
+            return any(not D(a, b) or D(a, b).endswith("wall") for a, b in sous_)
+        cil_s = None
+        for slepy in (True, False):
+            f = (lambda yy, xx, s=slepy: _misto(yy, xx, s))
+            if f(y, x) or _bfs(obs, f, nav=nav) is not None:
+                cil_s = f
+                break
+        if cil_s is None and any(a[0] == "H" and a[1] == hl for a in nav):
+            nav -= {a for a in nav if a[0] == "H" and a[1] == hl}   # další kolo
+        v["hledat"] = ("hledat skryté dveře a chodby (není kam jít)",
+                       ("SEARCH", cil_s) if cil_s else "SEARCH")
     if bl[nh.NLE_BL_HP] < 0.5 * max(1, bl[nh.NLE_BL_HPMAX]) and "zaútočit" not in v:
         v["odpočinout"] = ("chvíli odpočívat (máš málo životů)", "REST")
     return v
@@ -410,6 +453,8 @@ def _hans_akce(config, obs, historie, stoji, nav=None, zakaz=None, pouceni=None)
         if s in v and len(v) > 1:
             del v[s]
     stitky = list(v)
+    if len(stitky) == 1:     # HANS_NETHACK_DVERE_V1 — není z čeho volit, model netřeba
+        return stitky[0], True, v
     sysp = ("Hraješ hru NetHack: procházíš podzemí, sbíráš věci, bojuješ s příšerami a "
             "hledáš schody dolů, abys šel hlouběji. Rozhoduješ, CO udělat; cestu najdeš "
             "sám. Odpověz JEDNOU volbou přesně ze seznamu (jen její název).")
@@ -486,6 +531,18 @@ def _proved(env, idx, obs, volba, v, max_kroku=10, nav=None):
                 break
             sk += float(r or 0)
             konec = konec or d or tr
+    # HANS_NETHACK_HLEDANI_V1 — na místě k hledání hledat 15 tahů, jinak k němu
+    # dojít stejnou chůzí jako průzkum (šikmo ze dveří, příšera v cestě…)
+    if isinstance(co, tuple) and co[0] == "SEARCH":
+        _b = obs["blstats"]
+        yy, xx, hh = int(_b[nh.NLE_BL_Y]), int(_b[nh.NLE_BL_X]), int(_b[nh.NLE_BL_DEPTH])
+        if co[1](yy, xx):
+            for _ in range(15):
+                krok(idx["hledat"])
+            if nav is not None:
+                nav.add(("H", hh, yy, xx))
+            return obs, sk, konec
+        co = co[1]
     if co == "DOWN":
         krok(idx["dolů"])
     elif isinstance(co, tuple) and co[0] == "USE":
@@ -564,9 +621,19 @@ def _proved(env, idx, obs, volba, v, max_kroku=10, nav=None):
                     obs, r, dn, tr, _ = env.step(dir_akce[d])
                 sk += float(r or 0)
                 konec = konec or dn or tr
+                if nav is not None and "locked" in _zprava(obs):
+                    nav.add(("L", int(obs["blstats"][nh.NLE_BL_DEPTH]), y + d[0], x + d[1]))
                 break
     elif isinstance(co, tuple) and co[0] == "DIR":
         krok(dir_akce[co[1]])
+    elif isinstance(co, tuple) and co[0] == "KICK":
+        obs, r, dn, tr, _ = env.step(idx["vykopnout"])
+        sk += float(r or 0)
+        konec = konec or dn or tr
+        if not konec and "In what direction" in _tty(obs):
+            krok(dir_akce[co[1]])
+        else:
+            krok(idx["_esc"])
     elif callable(co):
         hp0 = int(obs["blstats"][nh.NLE_BL_HP])
         for _ in range(max_kroku):
@@ -575,16 +642,36 @@ def _proved(env, idx, obs, volba, v, max_kroku=10, nav=None):
                 break
             _b0 = obs["blstats"]
             p0 = (int(_b0[nh.NLE_BL_Y]), int(_b0[nh.NLE_BL_X]), int(_b0[nh.NLE_BL_DEPTH]))
+            if nav is not None and "door" in bytes(
+                    obs["screen_descriptions"][p0[0] + d[0]][p0[1] + d[1]]).decode("latin1"):
+                nav.add(("D", p0[2], p0[0] + d[0], p0[1] + d[1]))
             krok(dir_akce[d])
             _b1 = obs["blstats"]
             if nav is not None and (int(_b1[nh.NLE_BL_Y]), int(_b1[nh.NLE_BL_X]),
                                     int(_b1[nh.NLE_BL_DEPTH])) == p0:
                 # zeď/balvan ano, příšera (boj) ne
                 _g = int(obs["glyphs"][p0[0] + d[0]][p0[1] + d[1]])
-                if not nh.glyph_is_monster(_g):
+                _cd = bytes(obs["screen_descriptions"][p0[0] + d[0]][p0[1] + d[1]]).decode("latin1")
+                if "trap" in _zprava(obs) or "stuck" in _zprava(obs):
+                    pass               # past drží postavu, pole je průchozí
+                elif "door" in _cd:      # dveře ≠ zeď: zamčené zapamatovat, jinak nic
+                    if "locked" in _zprava(obs):
+                        nav.add(("L", p0[2], p0[0] + d[0], p0[1] + d[1]))
+                    if "diagonally" in _zprava(obs):
+                        nav.add(("D", p0[2], p0[0] + d[0], p0[1] + d[1]))
+                elif "diagonally into" in _zprava(obs):
+                    nav.add(("D", p0[2], p0[0] + d[0], p0[1] + d[1]))
+                elif "diagonally" in _zprava(obs):
+                    nav.add(("D", p0[2], p0[0], p0[1]))   # stojí ve dveřích
+                elif not nh.glyph_is_monster(_g) and (
+                        not _zprava(obs) or "boulder" in _zprava(obs) or "vain" in _zprava(obs)):
+                    # jen zeď (hra mlčí) nebo balvan; „dog is in the way“ apod. ne
                     nav.add(("B", p0[2], p0[0] + d[0], p0[1] + d[1]))
                 break
-            if (_zprava(obs) or int(obs["blstats"][nh.NLE_BL_HP]) < hp0
+            _zp = _zprava(obs)
+            if "swap places" in _zp:     # výměna se psem chůzi nepřerušuje
+                _zp = ""
+            if (_zp or int(obs["blstats"][nh.NLE_BL_HP]) < hp0
                     or co(int(obs["blstats"][nh.NLE_BL_Y]), int(obs["blstats"][nh.NLE_BL_X]))):
                 break
     return obs, sk, konec

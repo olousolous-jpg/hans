@@ -1822,7 +1822,14 @@ class PicamDisplayController:
             cv2.imwrite(str(_cesta), cv2.cvtColor(_img, cv2.COLOR_RGB2BGR),
                         [cv2.IMWRITE_JPEG_QUALITY, 85])
             _keep = int(cfg.get("keep", 60))
-            for _old in sorted(_d.glob("*.jpg"))[:-_keep]:
+            # HANS_CINNOSTI_STITKY_KEEP_V1 (6. 11.) — označené snímky rotace nemaže
+            # (33 ze 49 štítků přišlo o snímek dřív, než se měřilo)
+            try:
+                import json as _json
+                _oznac = set(_json.load(open(_d / "labels.json", encoding="utf-8")))
+            except Exception:
+                _oznac = set()
+            for _old in [o for o in sorted(_d.glob("*.jpg")) if o.name not in _oznac][:-_keep]:
                 try: _old.unlink()
                 except Exception: pass
         except Exception as _e:

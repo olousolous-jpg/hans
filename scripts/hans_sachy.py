@@ -303,6 +303,9 @@ def _sezeni(config, cfg, ted) -> str:
                                   "ztrata, motiv, ts) VALUES (?,?,?,?,?,?,?)",
                                   (pid, len(board.move_stack), san,
                                    b0.san(best) if best else "", int(ztr), mot, time.time()))
+                        # HANS_SACHY_COMMIT_V1 (6. 11.) — uložit hned: otevřený zápis
+                        # přes volání modelu zamykal deník ostatním (23:01 9× locked)
+                        c.commit()
                     nh += 1
                 else:
                     board.push(_kolac_tah(eng, board, chess, float(sila)))
