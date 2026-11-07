@@ -24,8 +24,8 @@ android {
         applicationId = "cz.hans.spotreba"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.8"
+        versionCode = 10
+        versionName = "1.9"
         buildConfigField("String", "HANS_URL", "\"${hans.getProperty("url", "")}\"")
         buildConfigField("String", "HANS_KLIC", "\"${hans.getProperty("klic", "")}\"")
         ndk { abiFilters += listOf("arm64-v8a") }   // současné telefony; menší soubor

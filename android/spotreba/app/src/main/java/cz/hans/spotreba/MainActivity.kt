@@ -222,29 +222,55 @@ fun Aplikace() {
     }
 
     vybrana?.let { p ->
+        // změna data: pole na číslice jako ve formuláři („271028“, „27.10.28“), kalendář jako druhá možnost
+        var menim by remember(p.id) { mutableStateOf(false) }
+        var rucne by remember(p.id) { mutableStateOf("") }
+        fun ulozDatum(d: LocalDate) {
+            db.uloz(p.copy(datum = d.toString(), zmeneno = System.currentTimeMillis(), neodeslano = true))
+            vybrana = null; obnov(); synchronizuj(true)
+        }
         AlertDialog(onDismissRequest = { vybrana = null },
             title = { Text(p.nazev.ifBlank { "Výrobek ${p.kod}" }) },
-            text = { Text("Spotřebovat do " + (runCatching { LocalDate.parse(p.datum).format(CZ) }.getOrDefault("—"))) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Spotřebovat do " + (runCatching { LocalDate.parse(p.datum).format(CZ) }.getOrDefault("—")))
+                    if (menim) {
+                        val nove = Datum.zRuky(rucne)
+                        OutlinedTextField(rucne, { rucne = it },
+                            label = { Text("Nové datum (např. 271028 nebo 27.10.28)") },
+                            isError = rucne.length >= 4 && nove == null,
+                            supportingText = { Text(when {
+                                nove != null -> "Nové datum: " + nove.format(CZ)
+                                rucne.length >= 4 -> "Tohle jako datum nepřečtu"
+                                else -> "" }) },
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                            singleLine = true)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(enabled = nove != null, onClick = { nove?.let { ulozDatum(it) } }) { Text("Uložit datum") }
+                            OutlinedButton(onClick = {
+                                val d = runCatching { LocalDate.parse(p.datum) }.getOrDefault(LocalDate.now())
+                                DatePickerDialog(ctx, { _, r, m, den -> ulozDatum(LocalDate.of(r, m + 1, den)) },
+                                    d.year, d.monthValue - 1, d.dayOfMonth).show()
+                            }) { Text("Kalendář") }
+                        }
+                    }
+                }
+            },
             confirmButton = {
-                Column {
+                if (!menim) Column {
                     fun zmen(stav: String) {
                         db.uloz(p.copy(stav = stav, zmeneno = System.currentTimeMillis(), neodeslano = true))
                         vybrana = null; obnov(); synchronizuj(true)
                     }
                     TextButton(onClick = { zmen("snedeno") }) { Text("Snědeno") }
                     TextButton(onClick = { zmen("vyhozeno") }) { Text("Vyhozeno") }
-                    TextButton(onClick = {
-                        val d = runCatching { LocalDate.parse(p.datum) }.getOrDefault(LocalDate.now())
-                        DatePickerDialog(ctx, { _, r, m, den ->
-                            db.uloz(p.copy(datum = LocalDate.of(r, m + 1, den).toString(),
-                                zmeneno = System.currentTimeMillis(), neodeslano = true))
-                            vybrana = null; obnov(); synchronizuj(true)
-                        }, d.year, d.monthValue - 1, d.dayOfMonth).show()
-                    }) { Text("Změnit datum") }
+                    TextButton(onClick = { menim = true }) { Text("Změnit datum") }
                     TextButton(onClick = { zmen("smazano") }) { Text("Smazat (omyl)") }
                 }
             },
-            dismissButton = { TextButton(onClick = { vybrana = null }) { Text("Zavřít") } })
+            dismissButton = { TextButton(onClick = { if (menim) menim = false else vybrana = null }) {
+                Text(if (menim) "Zpět" else "Zavřít") } })
     }
 }
 
