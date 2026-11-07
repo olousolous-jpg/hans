@@ -356,11 +356,13 @@ def prehled(config: dict) -> str:
         sily = [r[0] for r in c.execute("SELECT kolac_sila FROM sachy_partie "
                                         "ORDER BY id").fetchall()]
         pr = pripominky(c, kolik=3)
+        _od = c.execute("SELECT min(start_ts) FROM sachy_partie").fetchone()[0]   # HANS_SELF_STATE_HRY_OD_V1
     finally:
         c.close()
     if not d and not bezi:
         return "S Koláčem jsem zatím žádnou partii šachů nehrál."
-    out = ["Šachy s Koláčem — výhry %d, remízy %d, prohry %d." % (
+    out = ["Šachy s Koláčem%s — výhry %d, remízy %d, prohry %d." % (
+        (" (hraji od %s)" % time.strftime("%-d. %-m. %Y", time.localtime(_od))) if _od else "",
         d.get("výhra", 0), d.get("remíza", 0), d.get("prohra", 0))]
     if sily:   # HANS_SACHY_PREHLED_V1 — „teď“ = síla pro další partii
         c = _db(config)

@@ -125,10 +125,14 @@ def _self_state_trvale(conn) -> list:
                          "coalesce(sum(vysledek='prohra'),0), count(*) FROM sachy_partie "
                          "WHERE stav='konec'").fetchone()
         b = conn.execute("SELECT count(*) FROM sachy_partie WHERE stav='bezi'").fetchone()[0]
+        # HANS_SELF_STATE_HRY_OD_V1 (7. 11.) — odkdy: bez data model psal „hrajeme od
+        # začátku října“ (první partie 5. 11.) a vymyslel knihu „Strategie“
+        _od = conn.execute("SELECT min(start_ts) FROM sachy_partie").fetchone()[0]
+        _od = (" (hraji od %s)" % time.strftime("%-d. %-m. %Y", time.localtime(_od))) if _od else ""
         if r and (r[3] or b):
-            out.append("šachy s Koláčem (tahy vybírám sám, Koláč hraje šachovým programem): "
+            out.append("šachy s Koláčem (tahy vybírám sám, Koláč hraje šachovým programem)%s: "
                        "dohraných partií %d — výhry %d, remízy %d, prohry %d%s"
-                       % (r[3], r[0], r[1], r[2], ", jednu mám rozehranou" if b else ""))
+                       % (_od, r[3], r[0], r[1], r[2], ", jednu mám rozehranou" if b else ""))
     except Exception as e:
         _hr._log.debug("self_state trvale (šachy): %s", e)
     try:
@@ -138,11 +142,13 @@ def _self_state_trvale(conn) -> list:
                          "ORDER BY id DESC LIMIT 1").fetchone()
         if (r and r[0]) or b:
             # NetHack se dohrát skoro nedá — každá hra končí smrtí; měří se skóre a patro
+            _odn = conn.execute("SELECT min(start_ts) FROM nethack_hry").fetchone()[0]   # HANS_SELF_STATE_HRY_OD_V1
+            _odn = (" (hraji od %s)" % time.strftime("%-d. %-m. %Y", time.localtime(_odn))) if _odn else ""
             if r and r[0]:
-                t = ("hra NetHack: skončených her %d (hra končí smrtí postavy), nejlepší "
+                t = ("hra NetHack" + _odn + ": skončených her %d (hra končí smrtí postavy), nejlepší "
                      "skóre %d, nejhlubší patro %d" % (r[0], r[1] or 0, r[2] or 1))
             else:
-                t = "hra NetHack: zatím mi žádná hra NEskončila"
+                t = "hra NetHack" + _odn + ": zatím mi žádná hra NEskončila"
             if b:
                 t += "; právě mám rozehranou hru (ještě neskončila): skóre %d, patro %d" % (
                     b[0] or 0, b[1] or 1)
