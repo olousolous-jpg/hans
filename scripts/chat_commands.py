@@ -291,7 +291,8 @@ _BEZ_SVOLENI = "K tomu ode mne nemáte svolení. Snad mi to prominete."  # HANS_
 # dílo, sny, obrazy, zájmy, nápady) zůstává otevřené — rozhodnutí uživatele.
 # Na rozdíl od `_JEN_ZNAMYM` se týká JEN cizího: známý bez práva „akce“
 # seznam dál přečte (mutace seznamu hlídá větev níž jako dosud).
-_CHOD_DOMACNOSTI = frozenset({"hraje", "seznam", "zdravi"})
+_CHOD_DOMACNOSTI = frozenset({"hraje", "seznam", "zdravi",
+                              "zasoby"})   # HANS_SPOTREBA_HOVOR_V1
 
 
 def _cizi_nesmi(cmd_id: str, args, name) -> str:
@@ -1611,6 +1612,7 @@ from scripts.chat_cmd_zpravy import _cmd_hlavnizprava   # ROZDELENI_PRIKAZU_V1 �
 
 
 from scripts.chat_cmd_dum import _cmd_sleva   # HANS_LETAKY_V1
+from scripts.chat_cmd_dum import _cmd_zasoby   # HANS_SPOTREBA_HOVOR_V1
 
 
 

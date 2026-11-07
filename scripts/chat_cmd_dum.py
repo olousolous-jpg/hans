@@ -842,5 +842,66 @@ def _cmd_sleva(handler, name, args) -> str:
             "/sleva teď, položku přidá /sleva přidej …, odebere /sleva odeber …"
             % "; ".join(p + ((" (jako: %s)" % ", ".join(al)) if al else "") for p, al in pol))
 
+# ─── /zasoby — zásoby potravin z aplikace Zásoby (HANS_SPOTREBA_HOVOR_V1) ────
+_ZAS_KONCI = re.compile(r"\b(?:kon[cč]|pro[sš]l|projd|propadn|brzy|nejd[rř][ií]v|sn[ií]st|spot[rř]ebovat|vyhodit)", re.I)
+_ZAS_STOP = {"zasoby", "zasobach", "zasob", "zasobami", "mame", "doma", "brzy", "konci", "proslo",
+             "prosla", "projde", "datum", "spotreby", "spotreba", "lednici", "lednice", "kdy",
+             "jake", "jaky", "jaka", "kolik", "neco", "nejdriv", "snist", "bych", "mel", "mela",
+             "potravin", "jidla", "trvanlivost", "minimalni", "toho", "tech", "tomu", "prosim",
+             "podivej", "rekni", "rekl", "muzes", "muzete", "mohl", "mohla", "spotrebovat", "vyhodit"}
+
+
+def _zas_fold(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", (s or "").lower())
+                   if not unicodedata.combining(c))
+
+
+def _cmd_zasoby(handler, name, args) -> str:
+    """HANS_SPOTREBA_HOVOR_V1 (7. 11.) — Hans o zásobách z aplikace Zásoby (uživatel 7. 11.:
+    „ať Hans o zásobách ví“). Odpověď jen z tabulky `polozky` (nic nedomýšlí), jen domácnosti
+    (`_CHOD_DOMACNOSTI`). Holý tvar = celý přehled podle data; „co končí / prošlo / sníst
+    nejdřív“ = jen to, co končí do týdne; jméno výrobku v otázce = jen ten výrobek."""
+    import datetime as _dt
+    from scripts import hans_spotreba as _sp
+    a = re.sub(r"^\s*/\w+\s*", "", str(args or "")).strip()
+    dnes = _dt.date.today()
+    pol = _sp.zasoby()
+    if not pol:
+        return ("V zásobách teď nic nemám. Položky se přidávají v aplikaci Zásoby v telefonu "
+                "a doma se se mnou synchronizují.")
+
+    def radek(p):
+        n = p.get("nazev") or "výrobek %s" % (p.get("kod") or "?")
+        if p.get("mnozstvi"):
+            n += " (%s)" % p["mnozstvi"]
+        d = _sp._dny(p.get("datum") or "", dnes)
+        if d is None:
+            return "• %s — bez data" % n
+        kdy = "prošlo" if d < 0 else "končí " + _sp._kdy(d)
+        return "• %s — %s (%s)" % (n, kdy, _dt.date.fromisoformat(p["datum"]).strftime("%-d. %-m. %Y"))
+
+    af = _zas_fold(a)
+    slova = [w for w in re.findall(r"[a-z]{4,}", af) if w not in _ZAS_STOP]
+    if slova:
+        trefa = [p for p in pol if any(w[:4 if len(w) <= 5 else 5] in _zas_fold(p.get("nazev") or "")
+                                         for w in slova)]   # „džemu“ ~ „Džem“
+        if trefa:
+            return "Podle aplikace Zásoby:\n" + "\n".join(radek(p) for p in trefa[:10])
+    if a and _ZAS_KONCI.search(af):
+        kon = _sp.koncici(7, dnes)
+        if not kon:
+            return ("Do týdne nic nekončí. Nejbližší je %s." % radek(pol[0])[2:]
+                    if (pol[0].get("datum") or "") else "Do týdne nic nekončí.")
+        return ("Do týdne končí (podle aplikace Zásoby):\n" +
+                "\n".join(radek(p) for p, _d in kon[:15]))
+    out = ["V zásobách mám %d %s (podle data spotřeby):" % (
+        len(pol), "položku" if len(pol) == 1 else "položky" if len(pol) < 5 else "položek")]
+    out += [radek(p) for p in pol[:20]]
+    if len(pol) > 20:
+        out.append("… a dalších %d — celý přehled je na mém webu (Domů › Zásoby)." % (len(pol) - 20))
+    return "\n".join(out)
+
+
 # ROZDELENI_PRIKAZU_V1 — až na konci, viz hlavička
 from scripts import chat_commands as _cc  # noqa: E402

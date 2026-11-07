@@ -189,8 +189,10 @@ _CAPABILITIES = [
     # HANS_VYLET_V1 (3. 11.)
     ("zasoby_spotreba", "Hlídám zásoby potravin s datem spotřeby: v telefonu je aplikace Zásoby "
      "(čárový kód, datum z fotky nebo ručně, funguje i mimo domov), doma se se mnou "
-     "synchronizuje; ráno pošlu na Matrix, co brzy končí, a přehled je na mém webu (Domů › Zásoby)",
-     "aplikace Zásoby v telefonu; vypnout spotreba.enabled"),
+     "synchronizuje; ráno pošlu na Matrix, co brzy končí, a přehled je na mém webu (Domů › Zásoby). "
+     "Domácnosti řeknu i v hovoru, co máme v zásobách a co brzy končí (jen podle aplikace — co v ní "
+     "není, nevím)",
+     "aplikace Zásoby v telefonu; „co nám brzy končí?“, „co máme v zásobách?“, /zasoby; vypnout spotreba.enabled"),
     ("vylet_vikend", "V pátek dopoledne posílám na Matrix NÁVRH VÝLETU na víkend — počasí, "
      "tři místa do 40 km podle svých zájmů (každý týden jiná) a akce v okolí od pátku do neděle, "
      "když mi běží mozek na počítači; když je akcí hodně, pošlu jen pár a celý přehled dám "

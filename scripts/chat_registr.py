@@ -844,6 +844,23 @@ def zaregistruj(_cc):
         help_text="Slevy z letáků podle hlídaného seznamu — /sleva (přidej …, odeber …, teď)",
     )
 
+    # HANS_SPOTREBA_HOVOR_V1 (7. 11.) — zásoby potravin; 📏 1 439 zpráv chatu: 0 shod
+    _cc.register(
+        "zasoby",
+        slash_aliases=["zasoby", "zásoby", "spotreba", "lednice"],
+        nl_patterns=[
+            r"\b(?:co|jak[eé]|kolik)\b.{0,30}\bz[aá]sob(?:y|[aá]ch|ami|[aá]m)?\b",
+            r"\bv\s+z[aá]sob[aá]ch\b",
+            r"\bz[aá]sob(?:y|[aá]ch)?\s+(?:potravin|j[ií]dla)\b",
+            r"\bco\s+(?:n[aá]m|mi|brzy|u[zž])\b.{0,20}\b(?:kon[cč][ií]|pro[sš]l[oa]?|projde|propadne)\b",
+            r"\bdatum\s+spot[rř]eby\b|\bdatem\s+spot[rř]eby\b|\bminim[aá]ln[ií]\s+trvanlivost",
+            r"\b(?:kon[cč][ií]|pro[sš]l[oa]?|projde)\b.{0,25}\b(?:v\s+lednic|z\s+lednic|spot[rř]eb|trvanlivost)",
+            r"\bco\b.{0,20}\b(?:sn[ií]st|spot[rř]ebovat|vyhodit)\b.{0,20}\b(?:nejd[rř][ií]v|brzy|d[rř][ií]v)\b",
+        ],
+        handler=_cc._cmd_zasoby,
+        help_text="Zásoby potravin z aplikace Zásoby — /zasoby (co končí, nebo název výrobku)",
+    )
+
     _cc.register(
         "zdroje",
         slash_aliases=["zdroje", "odkazy", "literatura", "zdroj", "odkaz"],
