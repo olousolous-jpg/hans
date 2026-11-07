@@ -36,6 +36,13 @@ def _db():
         stav TEXT DEFAULT 'zasoba', zarizeni TEXT, vytvoreno INTEGER, zmeneno INTEGER,
         prijato INTEGER)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_pol_prijato ON polozky(prijato)")
+    # HANS_SPOTREBA_FOTO_V1 (7. 11.) — číslo kusu (uživatel ho píše fixem na obal: víc
+    # kusů téhož výrobku s jiným datem) a příznak fotky (data/spotreba_foto/<id>.jpg)
+    for _sl in ("cislo INTEGER DEFAULT 0", "ma_foto INTEGER DEFAULT 0"):
+        try:
+            c.execute("ALTER TABLE polozky ADD COLUMN " + _sl)
+        except sqlite3.OperationalError:
+            pass
     c.execute("""CREATE TABLE IF NOT EXISTS produkty (
         kod TEXT PRIMARY KEY, nazev TEXT, zdroj TEXT, ts INTEGER)""")
     c.execute("""CREATE TABLE IF NOT EXISTS zarizeni (
@@ -291,9 +298,19 @@ def sync(zarizeni: str, polozky: list, od: int = 0, jmeno: str = "") -> dict:
                     continue
                 kod = re.sub(r"\D", "", str(p.get("kod") or ""))[:14]
                 nazev = str(p.get("nazev") or "").strip()[:120]
-                c.execute("INSERT OR REPLACE INTO polozky VALUES (?,?,?,?,?,?,?,?,?,?)",
+                try:
+                    cislo = max(0, min(9999, int(p.get("cislo") or 0)))
+                except (TypeError, ValueError):
+                    cislo = 0
+                # HANS_SPOTREBA_FOTO_V1 — pojmenované sloupce; příznak fotky zůstává
+                c.execute("INSERT INTO polozky (id, kod, nazev, datum, mnozstvi, stav, zarizeni, "
+                          "vytvoreno, zmeneno, prijato, cislo) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                          "ON CONFLICT(id) DO UPDATE SET kod=excluded.kod, nazev=excluded.nazev, "
+                          "datum=excluded.datum, mnozstvi=excluded.mnozstvi, stav=excluded.stav, "
+                          "zarizeni=excluded.zarizeni, vytvoreno=excluded.vytvoreno, "
+                          "zmeneno=excluded.zmeneno, prijato=excluded.prijato, cislo=excluded.cislo",
                           (pid, kod, nazev, datum, str(p.get("mnozstvi") or "")[:40], stav,
-                           zarizeni[:64], int(p.get("vytvoreno") or zm), zm, ted))
+                           zarizeni[:64], int(p.get("vytvoreno") or zm), zm, ted, cislo))
                 if nazev and p.get("nazev_rucne"):
                     _zapamatuj_nazev(c, kod, nazev)
                 prijato += 1
@@ -321,7 +338,7 @@ def sync(zarizeni: str, polozky: list, od: int = 0, jmeno: str = "") -> dict:
     c = _db()
     try:
         zpet = [dict(r) for r in c.execute("SELECT id, kod, nazev, datum, mnozstvi, stav, zarizeni, "
-                                          "vytvoreno, zmeneno FROM polozky WHERE prijato > ?",
+                                          "vytvoreno, zmeneno, cislo, ma_foto FROM polozky WHERE prijato > ?",
                                           (int(od or 0),))]
         produkty = {r["kod"]: r["nazev"] for r in c.execute(
             "SELECT kod, nazev FROM produkty WHERE nazev!='' AND ts*1000 > ?", (int(od or 0) - 1,))}
@@ -331,6 +348,54 @@ def sync(zarizeni: str, polozky: list, od: int = 0, jmeno: str = "") -> dict:
               zarizeni[:12], prijato, zamitnuto, len(zpet))
     return {"cas": _ms(), "polozky": zpet, "produkty": produkty,
             "prijato": prijato, "zamitnuto": zamitnuto}
+
+
+FOTO_DIR = "data/spotreba_foto"
+
+
+def _foto_cesta(pid: str):
+    import os
+    if not re.fullmatch(r"[\w-]{8,64}", pid or ""):
+        return None
+    return os.path.join(FOTO_DIR, pid + ".jpg")
+
+
+def uloz_foto(pid: str, data: bytes) -> str:
+    """HANS_SPOTREBA_FOTO_V1 — fotka položky z telefonu (zmenšený JPEG). Uloží a označí
+    položku `ma_foto=1` s novým `prijato` (ostatní telefony se o ní dozví). '' = OK."""
+    import os
+    cesta = _foto_cesta(pid)
+    if not cesta:
+        return "špatné id"
+    if not data or len(data) > 4 * 1024 * 1024 or not data.startswith(b"\xff\xd8"):
+        return "není to JPEG do 4 MB"
+    os.makedirs(FOTO_DIR, exist_ok=True)
+    tmp = cesta + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, cesta)
+    with _zamek:
+        c = _db()
+        try:
+            c.execute("UPDATE polozky SET ma_foto=1, prijato=? WHERE id=?", (_ms(), pid))
+            c.commit()
+        finally:
+            c.close()
+    _log.info("HANS_SPOTREBA_FOTO_V1: fotka %s (%d kB)", pid[:8], len(data) // 1024)
+    return ""
+
+
+def foto(pid: str):
+    """Cesta k fotce položky, nebo None."""
+    import os
+    cesta = _foto_cesta(pid)
+    return cesta if cesta and os.path.exists(cesta) else None
+
+
+def nazev_s_cislem(p: dict) -> str:
+    """„Kinder bueno č. 2“ (HANS_SPOTREBA_FOTO_V1 — číslo napsané fixem na obalu)."""
+    n = p.get("nazev") or "výrobek %s" % (p.get("kod") or "?")
+    return n + (" č. %d" % int(p["cislo"]) if p.get("cislo") else "")
 
 
 def zasoby(jen_zasoba: bool = True) -> list:
@@ -373,7 +438,7 @@ def zprava(config: dict) -> str:
         return ""
     radky = ["Ze zásob brzy končí:"]
     for p, d in kon[:15]:
-        radky.append("• %s — %s (%s)" % (p.get("nazev") or "výrobek %s" % (p.get("kod") or "?"),
+        radky.append("• %s — %s (%s)" % (nazev_s_cislem(p),
                                           _kdy(d), _dt.date.fromisoformat(p["datum"]).strftime("%-d. %-m.")))
     if len(kon) > 15:
         radky.append("… a dalších %d — celý přehled na mém webu (Domů › Zásoby)." % (len(kon) - 15))

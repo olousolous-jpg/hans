@@ -27,6 +27,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,7 +48,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Obr { PREHLED, KOD, FORMULAR, FOTO_DATA, NASTAVENI }
+private enum class Obr { PREHLED, KOD, FORMULAR, FOTO_DATA, FOTO_POLOZKY, NASTAVENI }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +67,9 @@ fun Aplikace() {
     var datum by remember { mutableStateOf<LocalDate?>(null) }
     var kandidati by remember { mutableStateOf(listOf<LocalDate>()) }
     var mnozstvi by remember { mutableStateOf("") }
+    // číslo kusu napsané fixem na obal + fotka celé položky
+    var cislo by remember { mutableStateOf("") }
+    var fotoCesta by remember { mutableStateOf("") }
     var vybrana by remember { mutableStateOf<Polozka?>(null) }
     val zachyt = remember { Zachyt() }
 
@@ -88,6 +95,7 @@ fun Aplikace() {
         upravovana = Polozka(kod = kod, zarizeni = nast.zarizeni)
         nazev = db.produkt(kod) ?: ""; nazevRucne = false
         datum = null; kandidati = emptyList(); mnozstvi = ""
+        cislo = db.dalsiCislo(kod, nazev).toString(); fotoCesta = ""
         obr = Obr.FORMULAR
         if (nazev.isEmpty() && kod.isNotEmpty()) scope.launch {
             val n = withContext(Dispatchers.IO) { Off.nazev(ctx, kod) ?: Sit.nazevOff(kod) }
@@ -96,14 +104,15 @@ fun Aplikace() {
     }
 
     BackHandler(enabled = obr != Obr.PREHLED) {
-        obr = if (obr == Obr.FOTO_DATA) Obr.FORMULAR else Obr.PREHLED
+        obr = if (obr == Obr.FOTO_DATA || obr == Obr.FOTO_POLOZKY) Obr.FORMULAR else Obr.PREHLED
     }
 
     Scaffold(
         topBar = {
             TopAppBar(title = { Text(when (obr) {
                 Obr.PREHLED -> "Zásoby"; Obr.KOD -> "Načti čárový kód"; Obr.FORMULAR -> "Nová položka"
-                Obr.FOTO_DATA -> "Vyfoť datum spotřeby"; Obr.NASTAVENI -> "Nastavení" }) },
+                Obr.FOTO_DATA -> "Vyfoť datum spotřeby"; Obr.FOTO_POLOZKY -> "Vyfoť celou položku"
+                Obr.NASTAVENI -> "Nastavení" }) },
                 actions = {
                     if (obr == Obr.PREHLED) {
                         TextButton(onClick = { synchronizuj(false) }) { Text("Hans") }
@@ -164,6 +173,29 @@ fun Aplikace() {
                                 d.year, d.monthValue - 1, d.dayOfMonth).show()
                         }) { Text("Kalendář") }
                     }
+                    // číslo kusu: víc kusů téhož výrobku s jiným datem se rozliší fixem na obalu
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Napiš na obal fixem:", fontSize = 13.sp, color = Color.Gray)
+                            Text(if (cislo.isNotBlank()) "č. $cislo" else "bez čísla", fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedTextField(cislo, { v -> cislo = v.filter { it.isDigit() }.take(4) },
+                            label = { Text("Číslo") }, singleLine = true, modifier = Modifier.width(96.dp),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                    }
+                    // fotka celé položky (i s napsaným číslem)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        val nahl by produceState<android.graphics.Bitmap?>(null, fotoCesta) {
+                            value = withContext(Dispatchers.IO) { Foto.nacti(fotoCesta, 300) }
+                        }
+                        nahl?.let { Image(it.asImageBitmap(), null, Modifier.size(84.dp).clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop) }
+                        Button(onClick = {
+                            if (!kameraOk.value) pravo.launch(Manifest.permission.CAMERA)
+                            obr = Obr.FOTO_POLOZKY
+                        }) { Text(if (fotoCesta.isEmpty()) "Vyfotit položku" else "Vyfotit znovu") }
+                    }
                     OutlinedTextField(mnozstvi, { mnozstvi = it }, label = { Text("Množství (nepovinné)") },
                         modifier = Modifier.fillMaxWidth(), singleLine = true)
                     if (zprava.isNotEmpty() && obr == Obr.FORMULAR) Text(zprava, color = Color.Gray, fontSize = 13.sp)
@@ -172,7 +204,9 @@ fun Aplikace() {
                             val ted = System.currentTimeMillis()
                             db.uloz((p ?: Polozka(zarizeni = nast.zarizeni)).copy(
                                 nazev = nazev.trim(), nazevRucne = nazevRucne, datum = datum.toString(),
-                                mnozstvi = mnozstvi.trim(), zmeneno = ted, neodeslano = true))
+                                mnozstvi = mnozstvi.trim(), zmeneno = ted, neodeslano = true,
+                                cislo = cislo.toIntOrNull() ?: 0, foto = fotoCesta,
+                                fotoNeodeslana = fotoCesta.isNotEmpty()))
                             zprava = ""; obnov(); obr = Obr.PREHLED; synchronizuj(true)
                         }) { Text("Uložit") }
                         OutlinedButton(onClick = { zprava = ""; obr = Obr.PREHLED }) { Text("Zrušit") }
@@ -216,6 +250,26 @@ fun Aplikace() {
                         OutlinedButton(onClick = { obr = Obr.FORMULAR }) { Text("Zpět") }
                     }
                 }
+                Obr.FOTO_POLOZKY -> Column(Modifier.fillMaxSize()) {
+                    var foti by remember { mutableStateOf(false) }
+                    if (kameraOk.value) Kamera(Modifier.weight(1f).fillMaxWidth(), false, zachyt) {}
+                    else Text("Aplikace potřebuje přístup ke kameře.", Modifier.padding(16.dp).weight(1f))
+                    Text("Vyfoť celou položku i s číslem" + (if (cislo.isNotBlank()) " č. $cislo" else "") +
+                        ", které jsi napsal fixem.", Modifier.padding(horizontal = 12.dp), fontSize = 13.sp)
+                    Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(enabled = !foti, onClick = {
+                            val p = upravovana ?: return@Button
+                            foti = true
+                            Foto.vyfot(ctx, zachyt, p.id) { cesta, chyba ->
+                                foti = false
+                                if (cesta != null) { fotoCesta = ""; fotoCesta = cesta; zprava = "" }
+                                else zprava = chyba ?: "Fotka se nepovedla"
+                                obr = Obr.FORMULAR
+                            }
+                        }) { Text(if (foti) "Fotím…" else "Vyfotit") }
+                        OutlinedButton(onClick = { obr = Obr.FORMULAR }) { Text("Zpět") }
+                    }
+                }
                 Obr.NASTAVENI -> NastaveniObr(nast) { synchronizuj(false); obr = Obr.PREHLED }
             }
         }
@@ -230,9 +284,17 @@ fun Aplikace() {
             vybrana = null; obnov(); synchronizuj(true)
         }
         AlertDialog(onDismissRequest = { vybrana = null },
-            title = { Text(p.nazev.ifBlank { "Výrobek ${p.kod}" }) },
+            title = { Text(p.nazev.ifBlank { "Výrobek ${p.kod}" } + (if (p.cislo > 0) " č. ${p.cislo}" else "")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // fotka položky — z telefonu, jinak od Hanse (vyfotil ji jiný telefon)
+                    val velka by produceState<android.graphics.Bitmap?>(null, p.id) {
+                        value = withContext(Dispatchers.IO) {
+                            Foto.nacti(p.foto, 900) ?: if (p.maFoto) Sit.stahniFoto(ctx, p.id)?.let { Foto.nacti(it, 900) } else null
+                        }
+                    }
+                    velka?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth().heightIn(max = 260.dp)
+                        .clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Fit) }
                     Text("Spotřebovat do " + (runCatching { LocalDate.parse(p.datum).format(CZ) }.getOrDefault("—")))
                     if (menim) {
                         val nove = Datum.zRuky(rucne)
@@ -293,8 +355,14 @@ private fun Prehled(seznam: List<Polozka>, zprava: String, vyber: (Polozka) -> U
                 }
                 Row(Modifier.fillMaxWidth().background(barva, RoundedCornerShape(10.dp)).clickable { vyber(p) }
                     .padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val mini by produceState<android.graphics.Bitmap?>(null, p.foto) {
+                        value = withContext(Dispatchers.IO) { Foto.nacti(p.foto, 160) }
+                    }
+                    mini?.let { Image(it.asImageBitmap(), null, Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)),
+                        contentScale = ContentScale.Crop); Spacer(Modifier.width(10.dp)) }
                     Column(Modifier.weight(1f)) {
-                        Text(p.nazev.ifBlank { "Výrobek ${p.kod}" }, fontWeight = FontWeight.SemiBold)
+                        Text(p.nazev.ifBlank { "Výrobek ${p.kod}" } + (if (p.cislo > 0) "  č. ${p.cislo}" else ""),
+                            fontWeight = FontWeight.SemiBold)
                         if (p.mnozstvi.isNotEmpty()) Text(p.mnozstvi, fontSize = 13.sp, color = Color.DarkGray)
                     }
                     Column(horizontalAlignment = Alignment.End) {

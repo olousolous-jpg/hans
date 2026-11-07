@@ -872,7 +872,7 @@ def _cmd_zasoby(handler, name, args) -> str:
                 "a doma se se mnou synchronizují.")
 
     def radek(p):
-        n = p.get("nazev") or "výrobek %s" % (p.get("kod") or "?")
+        n = _sp.nazev_s_cislem(p)   # „Kinder bueno č. 2“ (HANS_SPOTREBA_FOTO_V1)
         if p.get("mnozstvi"):
             n += " (%s)" % p["mnozstvi"]
         d = _sp._dny(p.get("datum") or "", dnes)

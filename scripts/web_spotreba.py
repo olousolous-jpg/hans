@@ -65,6 +65,32 @@ def api_spotreba_off(verze: str = "", x_hans_klic: str = Header(default="")):
     return FileResponse(hs._OFF_GZ, media_type="application/gzip", headers={"X-Verze": v})
 
 
+@router.post("/api/spotreba/foto/{pid}")
+async def api_spotreba_foto_post(pid: str, request: Request, x_hans_klic: str = Header(default="")):
+    """HANS_SPOTREBA_FOTO_V1 — telefon pošle zmenšenou fotku položky (tělo = JPEG)."""
+    tok = str(((_config().get("spotreba") or {}).get("token")) or "")
+    if not tok or not hmac.compare_digest(tok, x_hans_klic or ""):
+        return JSONResponse({"chyba": "neplatný klíč"}, status_code=403)
+    from scripts import hans_spotreba as hs
+    data = await request.body()
+    import asyncio
+    chyba = await asyncio.to_thread(hs.uloz_foto, pid, data)
+    if chyba:
+        return JSONResponse({"chyba": chyba}, status_code=400)
+    return {"ok": True}
+
+
+@router.get("/api/spotreba/foto/{pid}")
+def api_spotreba_foto_get(pid: str):
+    """Fotka položky pro web a druhý telefon (web je v LAN bez hesla jako ostatní karty)."""
+    from scripts import hans_spotreba as hs
+    cesta = hs.foto(pid)
+    if not cesta:
+        return JSONResponse({"chyba": "fotka není"}, status_code=404)
+    from fastapi.responses import FileResponse
+    return FileResponse(cesta, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+
+
 @router.get("/api/spotreba")
 def api_spotreba():
     import datetime as _dt
@@ -75,5 +101,7 @@ def api_spotreba():
         d = hs._dny(p.get("datum") or "", dnes)
         out.append({"nazev": p.get("nazev") or "", "kod": p.get("kod") or "",
                     "datum": p.get("datum") or "", "dni": d,
-                    "mnozstvi": p.get("mnozstvi") or ""})
+                    "mnozstvi": p.get("mnozstvi") or "",
+                    "cislo": p.get("cislo") or 0,   # HANS_SPOTREBA_FOTO_V1
+                    "foto": ("/api/spotreba/foto/" + p["id"]) if p.get("ma_foto") else ""})
     return {"polozky": out}

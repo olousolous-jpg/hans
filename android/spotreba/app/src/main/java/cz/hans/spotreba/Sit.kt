@@ -46,6 +46,36 @@ object Sit {
         }
     }
 
+    private fun postBajty(url: String, klic: String, data: ByteArray) {
+        val c = URL(url).openConnection() as HttpURLConnection
+        try {
+            c.requestMethod = "POST"; c.connectTimeout = 8000; c.readTimeout = 30000
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "image/jpeg")
+            c.setRequestProperty("X-Hans-Klic", klic)
+            c.outputStream.use { it.write(data) }
+            if (c.responseCode !in 200..299) throw RuntimeException("Hans odpověděl ${c.responseCode}")
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    /** Fotka položky, kterou má Hans (poslal ji jiný telefon) → uloží do telefonu; cesta nebo null. */
+    fun stahniFoto(ctx: Context, id: String): String? = runCatching {
+        val n = Nastaveni(ctx)
+        val c = URL("${n.url}/api/spotreba/foto/$id").openConnection() as HttpURLConnection
+        c.connectTimeout = 6000; c.readTimeout = 20000
+        try {
+            if (c.responseCode != 200) return@runCatching null
+            val f = Foto.soubor(ctx, id)
+            c.inputStream.use { v -> f.outputStream().use { v.copyTo(it) } }
+            Db(ctx).nastavFoto(id, f.path)
+            f.path
+        } finally {
+            c.disconnect()
+        }
+    }.getOrNull()
+
     /** Synchronizace s Hansem. Vrací text pro uživatele. Bez sítě vyhodí výjimku. */
     fun sync(ctx: Context): String {
         val n = Nastaveni(ctx)
@@ -57,7 +87,7 @@ object Sit {
         for (p in ven) pole.put(JSONObject().apply {
             put("id", p.id); put("kod", p.kod); put("nazev", p.nazev); put("nazev_rucne", p.nazevRucne)
             put("datum", p.datum); put("mnozstvi", p.mnozstvi); put("stav", p.stav)
-            put("vytvoreno", p.vytvoreno); put("zmeneno", p.zmeneno)
+            put("vytvoreno", p.vytvoreno); put("zmeneno", p.zmeneno); put("cislo", p.cislo)
         })
         val odp = post("${n.url}/api/spotreba/sync", n.klic, JSONObject().apply {
             put("zarizeni", n.zarizeni); put("jmeno", n.jmeno); put("od", od); put("polozky", pole)
@@ -72,12 +102,26 @@ object Sit {
             val id = o.getString("id")
             val mist = db.polozka(id)
             val zm = o.optLong("zmeneno")
-            if (mist != null && mist.zmeneno >= zm) continue
+            val maFoto = o.optInt("ma_foto") == 1
+            if (mist != null && mist.zmeneno >= zm) {
+                // jen nová fotka od jiného telefonu (změna `prijato` bez změny položky)
+                if (maFoto && !mist.maFoto) db.uloz(mist.copy(maFoto = true))
+                continue
+            }
             db.uloz(Polozka(id = id, kod = o.optString("kod"), nazev = o.optString("nazev"),
                 datum = o.optString("datum"), mnozstvi = o.optString("mnozstvi"),
                 stav = o.optString("stav", "zasoba"), zarizeni = o.optString("zarizeni"),
-                vytvoreno = o.optLong("vytvoreno"), zmeneno = zm, neodeslano = false))
+                vytvoreno = o.optLong("vytvoreno"), zmeneno = zm, neodeslano = false,
+                cislo = o.optInt("cislo"), foto = mist?.foto ?: "",
+                fotoNeodeslana = mist?.fotoNeodeslana ?: false, maFoto = maFoto || (mist?.maFoto ?: false)))
             zmen++
+        }
+        // fotky položek (zmenšené) — každá zvlášť, po položkách
+        var fotek = 0
+        for (p in db.fotkyKOdeslani()) {
+            val data = Foto.proHanse(p.foto) ?: continue
+            runCatching { postBajty("${n.url}/api/spotreba/foto/${p.id}", n.klic, data) }
+                .onSuccess { db.fotoOdeslana(p.id); fotek++ }
         }
         val prod = odp.optJSONObject("produkty")
         prod?.keys()?.forEach { k -> db.doplnNazev(k, prod.getString(k)) }
@@ -87,7 +131,8 @@ object Sit {
             "tabulku výrobků se nepodařilo stáhnout (${it.javaClass.simpleName}: ${it.message?.take(60)})"
         }
         val cas = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
-        return "Synchronizováno s Hansem v $cas: odesláno ${ven.size}, přijato $zmen; $off."
+        return "Synchronizováno s Hansem v $cas: odesláno ${ven.size}" + (if (fotek > 0) " (fotek $fotek)" else "") +
+            ", přijato $zmen; $off."
     }
 
     /**
