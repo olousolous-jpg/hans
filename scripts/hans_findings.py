@@ -103,6 +103,29 @@ def posledni_heslo(asker: str, veta: str, prepis: str = "", max_s: float = 1800)
         return src
     return ""
 
+def upresnene_heslo(asker: str, tema: str, max_s: float = 1800) -> str:
+    """HANS_LOOKUP_NAVAZ_UPRESNENE_V1 (7. 11., /tazatel 6. 11.) — doptávka s kotvou,
+    která je jen základem hesla upřesněného závorkou, jež se téže osobě dohledalo
+    před chvílí: „Kdo složil operu Rusalka?“ → „Rusalka (Dvořák)“, pak „Na který
+    rok připadla premiéra Rusalky…?“ → kotva „Rusalky“ → článek o bytosti ze
+    slovanské mytologie a anglická Wikipedie. Vrací upřesněné heslo, jinak ''."""
+    import unicodedata as _ud
+    f = lambda s: "".join(c for c in _ud.normalize("NFD", (s or "").lower())
+                          if _ud.category(c) != "Mn")
+    if not tema or "(" in tema:
+        return ""
+    kdo = (asker or "").strip().lower()
+    kand = sorted(((ts, src) for (a, src), ts in _NEDAVNO.items()
+                   if a == kdo and time.time() - ts < max_s and "(" in (src or "")), reverse=True)
+    tw = re.findall(r"\w{3,}", f(tema))
+    for _ts, src in kand:
+        zw = re.findall(r"\w{3,}", f(re.sub(r"\s*\(.*?\)", "", src)))
+        if tw and len(tw) == len(zw) and all(
+                a[:max(3, min(5, len(b) - 1))] == b[:max(3, min(5, len(b) - 1))] for a, b in zip(tw, zw)):
+            return src
+    return ""
+
+
 _CORRECTION_TMPL = (
     "%(oslov)s, ještě k tomu, na co jste se ptal — „%(topic)s\". "
     "Odpověděl jsem tehdy z toho, co jsem narychlo našel, ale při nočním "

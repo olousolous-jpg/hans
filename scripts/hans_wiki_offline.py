@@ -1220,7 +1220,9 @@ def vyznam_podle_popisu(titul: str, veta: str):
         # křestní jméno těsně před názvem („Richard Schmidt“) musí být i ve vybraném
         # titulu (jinak „Loki Schmidtová“)
         krestni = {fv[i - 1][:4] for i in pozice if i > 0 and sl_v[i - 1][:1].isupper()
-                   and fv[i - 1][:4] not in jm}
+                   and fv[i - 1][:4] not in jm
+                   # HANS_WIKI_ROZC_DILO_V1 — „Operu Rusalka…“ na začátku věty není křestní jméno
+                   and not any(fv[i - 1].startswith(d) for d in _DILO_DRUHY + ("dilo", "dila", "hrad", "zam"))}
         body = []
         for radek in rr[0].split("\n"):
             if " – " not in radek:
@@ -1241,7 +1243,19 @@ def vyznam_podle_popisu(titul: str, veta: str):
         nej = max(b[0] for b in body)
         kand = sorted((b for b in body if b[0] == nej), key=lambda b: -b[1])
         if len(kand) > 1 and kand[0][1] < 1.3 * kand[1][1]:
-            return None
+            # HANS_WIKI_ROZC_PORADI_V1 (7. 11., /tazatel 6. 11.: „Kdo složil operu
+            # Rusalka?“ → Dvořák × Dargomyžskij, obě „opera“ → nic → článek o bytosti
+            # a anglická Wikipedie) — rovnost popisem rozhodne pořadí v rozcestníku
+            # (nahoře bývá nejznámější význam); jen když vítěz má i článek ≥ 0,5× druhého
+            prv = [b for b in body if b[0] == nej][0]
+            # jen u druhu díla („opera“, „film“…); „společnost Apple“ ne (Apple Corps)
+            _druh_k = any(k.startswith(d) or d.startswith(k) for k in kmeny for d in _DILO_DRUHY)
+            if _druh_k and prv[1] >= 0.5 * max(b[1] for b in kand):
+                _log.info("HANS_WIKI_ROZC_PORADI_V1: %r — shoda %d řádků, beru první v rozcestníku %r",
+                          titul, len(kand), prv[2])
+                kand = [prv]
+            else:
+                return None
         if kand[0][2] == titul:
             return None
         _log.info("HANS_WIKI_ROZC_POPIS_V1: %r + %s → %r", titul, kmeny, kand[0][2])

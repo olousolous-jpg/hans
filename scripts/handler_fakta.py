@@ -2006,6 +2006,16 @@ class FaktaMixin:
                 logging.getLogger(_h.__name__).info(
                     'HANS_WIKI_TITUL_Z_VETY_V1: téma dohledání %r → %r', tema, _pz)
                 tema = _pz
+            if tema and not _pz:
+                try:   # HANS_LOOKUP_NAVAZ_UPRESNENE_V1 — „Rusalky“ po „Rusalka (Dvořák)“
+                    from scripts.hans_findings import upresnene_heslo
+                    _uh = upresnene_heslo(name or "", tema)
+                    if _uh:
+                        logging.getLogger(_h.__name__).info(
+                            'HANS_LOOKUP_NAVAZ_UPRESNENE_V1: kotva %r → nedávné heslo %r', tema, _uh)
+                        tema = _uh
+                except Exception:
+                    pass
             if not tema:
                 # HANS_LOOKUP_NAVAZ_HESLO_V1 (23. 10.) — doptávka na heslo, které
                 # se téže osobě právě dohledalo („kdo objevil Higgsův boson“ →

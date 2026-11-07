@@ -830,6 +830,10 @@ def _pribuzni(veta: str, kany: list) -> list:
     return list(vys.values())
 
 
+_DRUH_KAND = re.compile(r"^((?:[Oo]per|[Ff]ilm|[Kk]nih|[Rr]om[aá]n|[Oo]braz|[Ss]ymfoni|[Ss]kladb|[Bb]alet|"
+                        r"[Ss]eri[aá]l|[Mm]uzik[aá]l|[Nn]ovel|[Pp]ov[ií]d|[Hh]rad|[Zz][aá]m)\w*)\s+(.+)$")   # HANS_OVERENI_DRUH_KAND_V1
+
+
 def _overit(h, otazka, prepis, odpoved) -> list:
     from scripts import hans_wiki_offline as wo
     from scripts import hans_podklad as P
@@ -849,8 +853,18 @@ def _overit(h, otazka, prepis, odpoved) -> list:
     def _clanek(k):
         if k not in clanky:
             t = None
+            # HANS_OVERENI_DRUH_KAND_V1 (7. 11.) — kandidát s druhem díla na začátku
+            # věty („Operu Rusalka složil Antonín Dvořák.“) → význam z rozcestníku
+            # podle druhu; dřív hledání našlo „Rusalky (opera)“ (jiná opera) a planá
+            # oprava „skladatel Baronne Almaury de Maistre, ne Antonín Dvořák“
+            _md = _DRUH_KAND.match(k or "")
+            if _md:
+                try:
+                    t = wo.vyznam_podle_popisu(_md.group(2), _md.group(1).lower() + " " + _md.group(2))   # „Operu“ ≠ křestní jméno
+                except Exception:
+                    t = None
             try:
-                t = wr._wikipedia_search(k)
+                t = t or wr._wikipedia_search(k)
             except Exception:
                 pass
             text, roz, kan = wo.extrakt(t) if t else ("", False, None)
