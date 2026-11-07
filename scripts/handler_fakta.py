@@ -50,6 +50,59 @@ def _f1_ztratil_slovo(veta: str, prepis: str) -> bool:
 _PO_OSOBE = re.compile(r"\b(?:po|před|pred)\s+((?:[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][\w.]*\s*){1,4})")
 
 
+# HANS_LOOKUP_DRUH_DILA_PREDNOST_V1 (7. 11., /tazatel 6. 11.) — přepis F1 „Kdy bylo
+# dokončeno a uvedeno Národním divadlem dílo Libuše?“ (námitka „Libuse to ale nebylo
+# až 1881? Když se otevřelo Národní divadlo“): kotva je první jméno ve větě („Národním“
+# → Národní divadlo), ačkoli předmět označuje druh díla před názvem („dílo / operu /
+# film … X“). Druh díla před jiným názvem → předmětem je to dílo.
+_DRUH_DILA = re.compile(
+    r"\b(?:d[ií]l(?:o|a|em)|oper(?:a|y|u|ou)|ope[rř]e|film(?:u|em)?|knih(?:a|y|u|ou)|knize|"
+    r"rom[aá]n(?:u|em)?|obraz(?:u|em)?|symfoni[ei]|skladb(?:a|y|u|ou)|balet(?:u|em)?|"
+    r"seri[aá]l(?:u|em)?|p[ií]se[nň]|p[ií]sn[eě]|b[aá]se[nň]|b[aá]sn[eě]|muzik[aá]l(?:u)?|"
+    r"novel(?:a|y|u)|pov[ií]dk(?:a|y|u))\s+(?=[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ])")
+
+
+def _tema_dilo_s_druhem(prepis, tema, vynech=()):
+    if not prepis or not tema:
+        return tema
+    m = _DRUH_DILA.search(prepis)
+    if not m:
+        return tema
+    import unicodedata as _ud
+
+    def _f(x):
+        return "".join(c for c in _ud.normalize("NFD", (x or "").lower()) if _ud.category(c) != "Mn")
+    prvni = _f(re.sub(r"^(?:film|kniha|knihu|román|opera|hrad)\s+", "", tema, flags=re.I)).split()
+    za = _f(prepis[m.end():]).split()
+    if prvni and za and prvni[0][:4] == za[0][:4]:
+        return tema            # kotva už je to dílo
+    # osoba („skladatele Jaromíra Kubíčka, který složil operu …“) → otázka je o ní
+    if re.search(r"\b(?:skladatel|mal[ií][rř]|spisovatel|autor|re[zž]is[eé]r|herc|here[cč]k|b[aá]sn[ií]k|"
+                 r"zp[eě]v[aá]k|sochař|socha[rř]|kr[aá]l|prezident|v[eě]dc|fyzik|architekt)\w*\s+"
+                 + re.escape(tema.split()[0][:4]), prepis, flags=re.I):
+        return tema
+    try:   # kotva je článek o člověku („Kde žil Bedřich Smetana, když psal operu …“)
+        from scripts import hans_wiki_offline as _wo
+        _c = _wo._cil(tema)
+        if _c:
+            _tx = (_wo._db().execute("SELECT substr(text,1,400) FROM clanek WHERE id=?",
+                                     (_c[0],)).fetchone() or [""])[0]
+            if re.search(r"\(\s*\*|\bnarozen|\bnar\.\s", _tx):
+                return tema
+    except Exception:
+        pass
+    # kotva sama stojí za druhem díla („filmu Titanic … Leonarda“) → nechat
+    if re.search(_DRUH_DILA.pattern + re.escape(tema.split()[-1][:4]), prepis, flags=re.I):
+        return tema
+    from scripts.hans_convindex import kotva_tematu
+    nova = kotva_tematu("Kdy " + prepis[m.start():], vynech=vynech)
+    if not nova or _f(nova)[:4] != za[0][:4]:
+        return tema
+    logging.getLogger(__name__).info(
+        "HANS_LOOKUP_DRUH_DILA_PREDNOST_V1: předmět %r → %r (druh díla před názvem)", tema, nova)
+    return nova
+
+
 def _tema_po_osobe(prepis, tema):
     """HANS_LOOKUP_PO_OSOBE_V1 — „kdo byl … po/před <Jméno>“ v přepisu F1:
     předmětem je ta osoba, ne stát/úřad z vlákna. Jinak `tema` beze změny."""
@@ -1203,6 +1256,7 @@ class FaktaMixin:
             # otázky (kdy/kde/jak) ne. 📏 2 201 přepisů: vzor 11, změna 6 (+ Karlštejn
             # vynechán).
             tema = _tema_po_osobe(_prepis, tema)
+            tema = _tema_dilo_s_druhem(_prepis, tema, _known)   # HANS_LOOKUP_DRUH_DILA_PREDNOST_V1
             # HANS_WIKI_TITUL_Z_VETY_V1 (19. 10.) — přesný titul článku přímo
             # z holé věty, když kotva chybí, v holé větě není (přepis F1 si ji
             # vymyslel: „babicku“ → „Babí léto“, „karluv“ → „Karlov“), nebo je

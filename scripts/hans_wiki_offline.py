@@ -1170,6 +1170,12 @@ _POPIS_NE = {"kdy", "kdo", "jak", "jaky", "jaka", "jake", "ktery", "ktera", "kte
              "byla", "bylo", "jsou", "mate", "mel", "mela", "rekl", "rekla", "tedy", "take"}
 
 
+# HANS_WIKI_ROZC_DILO_V1 — kmeny druhů díla v popisu řádku rozcestníku
+_DILO_DRUHY = ("oper", "film", "roman", "knih", "kniz", "obraz", "sklad", "pisen", "basen",
+               "symfon", "balet", "serial", "album", "novel", "povid", "dram", "divadel",
+               "kompoz", "socha", "skulpt", "kantat", "oratori", "muzikal", "komiks")
+
+
 def vyznam_podle_popisu(titul: str, veta: str):
     try:
         if not titul:
@@ -1202,6 +1208,12 @@ def vyznam_podle_popisu(titul: str, veta: str):
                 continue
             # dlouhé slovo o 3 (přivlastňovací „Smetanova“ → „smetan“ ~ „Smetany“)
             kmeny.append(fw[:max(4, len(fw) - (3 if len(fw) >= 8 else 2))])
+        # HANS_WIKI_ROZC_DILO_V1 (7. 11., /tazatel 6. 11.) — „dílo Libuše“ (přepis F1
+        # námitky „Libuse to ale nebylo až 1881? Když se otevřelo Národní divadlo“):
+        # slovo „dílo“ u názvu = řádek rozcestníku, který popisuje DÍLO (opera, film,
+        # kniha…), ne kněžnu ani jméno; dřív nic → předmět „Národním“ → Národní divadlo
+        if any(fv[i] in ("dilo", "dila", "dilem") for i in okno):
+            kmeny = [k for k in kmeny if k != "dilo" and k != "dila" and k != "dilem"] + list(_DILO_DRUHY)
         kmeny = list(dict.fromkeys(kmeny))
         if not kmeny:
             return None
