@@ -1196,7 +1196,7 @@ _WD_POPIS = [("P571", "založení / začátek"), ("P569", "narození"), ("P570",
              ("P577", "vydání / premiéra"), ("P84", "architekt"), ("P50", "autor"),
              ("P57", "režie"), ("P22", "otec"), ("P25", "matka"), ("P19", "místo narození"),
              ("P20", "místo úmrtí"), ("P112", "zakladatel"), ("P86", "skladatel"),
-             ("P800", "nejznámější díla"), ("P26", "manžel / manželka"), ("P551", "bydliště"),
+             ("P800", "významná díla (podle Wikidat; výčet nemusí být úplný)"),   # HANS_WD_DILA_DRUH_V1 ("P26", "manžel / manželka"), ("P551", "bydliště"),
              ("P40", "děti"), ("P3373", "sourozenci"),   # HANS_LOOKUP_PRIBUZNI_V1
              # HANS_LOOKUP_WD_OBSAZENI_V1 (22. 10.) — český článek o filmu obsazení
              # často nemá (Sedm samurajů 920 zn) a model pak spletl režii s rolí;
@@ -1579,6 +1579,53 @@ def _podklad_podle_otazky(titul: str, otazka: str, config: Optional[dict] = None
     return out
 
 
+def _dila_druh(qs: list) -> dict:
+    """HANS_WD_DILA_DRUH_V1 (7. 11., /tazatel 6. 11.) — druh a rok významných děl
+    (P800) z Wikidat: „Krakatit (román, 1924)“. Dřív holé „nejznámější díla:
+    Krakatit“ s předností → „nejznámější HRA Karla Čapka je Krakatit“; Vrchlický
+    „Noc na Karlštejně“ (hra) → „nejznámější sbírka“. {q: "román, 1924"}."""
+    from scripts import hans_overeni as O
+    C = O._c()
+    chybi = [q for q in qs if "D:" + q not in C]
+    if chybi:
+        d = O._wd(O.API + "?action=wbgetentities&props=claims&format=json&ids=" + "|".join(chybi[:40]))
+        if isinstance(d, dict) and d.get("entities"):
+            for q, e in d["entities"].items():
+                cl = e.get("claims") or {}
+                # P7937 forma díla (román, divadelní hra, sbírka) přednost před P31 („literární dílo“)
+                typy = [((c.get("mainsnak") or {}).get("datavalue") or {}).get("value", {}).get("id")
+                        for c in cl.get("P7937", []) + cl.get("P31", [])]
+                typy = [x for x in typy if isinstance(x, str)][:2]
+                rok = None
+                for pp in ("P577", "P571", "P1191"):
+                    for c in cl.get(pp, []):
+                        v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value")
+                        m = re.match(r"[+-]0*(\d+)", (v or {}).get("time", "")) if isinstance(v, dict) else None
+                        if m and (rok is None or int(m.group(1)) < rok):
+                            rok = int(m.group(1))
+                    if rok:
+                        break
+                C["D:" + q] = [typy, rok]
+            nove = [x for q in chybi for x in (C.get("D:" + q) or [[]])[0] if "TL:" + x not in C]
+            if nove:
+                d2 = O._wd(O.API + "?action=wbgetentities&props=labels&languages=cs&format=json&ids="
+                           + "|".join(list(dict.fromkeys(nove))[:40]))
+                for q, e in ((d2 or {}).get("entities") or {}).items():
+                    C["TL:" + q] = ((e.get("labels") or {}).get("cs") or {}).get("value", "")
+            try:
+                O._uloz()
+            except Exception:
+                pass
+    out = {}
+    for q in qs:
+        typy, rok = (C.get("D:" + q) or [[], None])[:2]
+        druh = next((C.get("TL:" + x) for x in typy if C.get("TL:" + x)), "")
+        kus = ", ".join(x for x in (druh, str(rok) if rok else "") if x)
+        if kus:
+            out[q] = kus
+    return out
+
+
 def _wikidata_blok(titul: str) -> str:
     """Řádky ověřených údajů z Wikidat k titulu (kanonickému), nebo ''."""
     try:
@@ -1658,10 +1705,16 @@ def _wikidata_blok(titul: str) -> str:
                     out.append("děti (podle matky): " + "; ".join(_cast)
                                + " (výčet nemusí být úplný)")
                     continue
+            _dd = {}
+            if p == "P800" and _qs:   # HANS_WD_DILA_DRUH_V1
+                try:
+                    _dd = _dila_druh(_qs)
+                except Exception:
+                    _dd = {}
             for v in _qs:
                 jm = _jmeno(v)
                 if jm:
-                    hod.append(jm)
+                    hod.append("%s (%s)" % (jm, _dd[v]) if _dd.get(v) else jm)
             if hod:
                 if p == "P26":
                     # HANS_WD_MANZEL_ROD_V1 (24. 10.) — model opisoval štítek
